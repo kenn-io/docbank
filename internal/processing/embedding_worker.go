@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,6 +45,7 @@ type EmbeddingAttemptReceipt = store.EmbeddingAttemptReceipt
 
 type embeddingWorkerCatalog interface {
 	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork, after, semanticID string) (store.EmbeddingSetRecord, error)
+	WriteRevision() uint64
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
@@ -294,6 +296,11 @@ type EmbeddingWorker struct {
 	reconcileTextDone, reconcileImageDone          bool
 	imageAfter                                     store.ImageReconcilePosition
 	reconcileAt                                    time.Time
+	reconcileActive, reconcileSettled              bool
+	reconcileRevision                              uint64
+	reconcileConfig                                string
+	reconcileExpiry                                time.Time
+	reconcileSkipped                               int
 	imageRejections                                map[store.ImagePreparationRejectionKey]struct{}
 }
 
@@ -406,35 +413,65 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				}
 				registry.mu.RUnlock()
 			}
-			var prepareImage func(context.Context, store.ProcessingProfileRecord, document.EmbeddingBindingV1, string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
-			if runtime, ok := worker.runtime.(interface {
-				ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
-			}); ok {
-				prepareImage = runtime.ImageGeneration
-			}
-			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
-				After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
-				SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
-				ImageRejections:        worker.imageRejections,
-				DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
-				HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
-					return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
-				},
-			})
+			slices.SortFunc(imageProfiles, func(a, b store.ProcessingProfileRecord) int { return cmp.Compare(a.Fingerprint, b.Fingerprint) })
+			configJSON, err := json.Marshal(struct {
+				Descriptors []string
+				Spaces      map[string]store.EmbeddingVectorSpaceRecord
+				Profiles    []store.ProcessingProfileRecord
+			}{worker.descriptorFingerprints, spaces, imageProfiles}, json.Deterministic(true))
 			if err != nil {
-				if ctx.Err() != nil {
-					return processed, ctx.Err()
-				}
 				return processed, ErrEmbeddingPersistence
 			}
-			worker.reconcileAfter = result.Next
-			worker.imageAfter = result.ImageNext
-			worker.reconcileTextDone = result.Next == ""
-			worker.reconcileImageDone = result.ImageNext == (store.ImageReconcilePosition{})
-			if worker.reconcileTextDone && worker.reconcileImageDone {
-				worker.reconcileTextDone, worker.reconcileImageDone = false, false
+			configKey := string(configJSON)
+			if !worker.reconcileActive && worker.reconcileSettled && worker.catalog.WriteRevision() == worker.reconcileRevision && configKey == worker.reconcileConfig && (worker.reconcileExpiry.IsZero() || worker.clock().Before(worker.reconcileExpiry)) {
 				worker.reconcileAt = worker.clock().Add(time.Minute)
+			} else {
+				if !worker.reconcileActive {
+					worker.reconcileSettled = false
+					worker.reconcileConfig = configKey
+					worker.reconcileExpiry = time.Time{}
+					worker.reconcileSkipped = 0
+				}
+				var prepareImage func(context.Context, store.ProcessingProfileRecord, document.EmbeddingBindingV1, string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
+				if runtime, ok := worker.runtime.(interface {
+					ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
+				}); ok {
+					prepareImage = runtime.ImageGeneration
+				}
+				result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
+					Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
+					After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
+					SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
+					ImageRejections:        worker.imageRejections,
+					DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
+					HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
+						return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
+					},
+				})
+				if err != nil {
+					if ctx.Err() != nil {
+						return processed, ctx.Err()
+					}
+					return processed, ErrEmbeddingPersistence
+				}
+				if !worker.reconcileActive {
+					worker.reconcileRevision = result.Revision
+					worker.reconcileActive = true
+				}
+				worker.reconcileSkipped += result.Skipped
+				if !result.ConsentExpiresAt.IsZero() && (worker.reconcileExpiry.IsZero() || result.ConsentExpiresAt.Before(worker.reconcileExpiry)) {
+					worker.reconcileExpiry = result.ConsentExpiresAt
+				}
+				worker.reconcileAfter = result.Next
+				worker.imageAfter = result.ImageNext
+				worker.reconcileTextDone = result.Next == ""
+				worker.reconcileImageDone = result.ImageNext == (store.ImageReconcilePosition{})
+				if worker.reconcileTextDone && worker.reconcileImageDone {
+					worker.reconcileTextDone, worker.reconcileImageDone = false, false
+					worker.reconcileAt = worker.clock().Add(time.Minute)
+					worker.reconcileActive = false
+					worker.reconcileSettled = worker.reconcileSkipped == 0
+				}
 			}
 			reconciled = true
 		}

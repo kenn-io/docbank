@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -218,6 +219,27 @@ func (*blockedRollbackConnection) Prepare(string) (driver.Stmt, error) {
 }
 func (c *blockedRollbackConnection) Begin() (driver.Tx, error) { return blockedRollback{c}, nil }
 func (*blockedRollbackConnection) Close() error                { return nil }
+
+// The transaction measures writes before invoking the cancellation callback.
+func (*blockedRollbackConnection) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if query != "SELECT total_changes()" {
+		return nil, errors.New("unexpected query")
+	}
+	return &rollbackChangeRows{}, nil
+}
+
+type rollbackChangeRows struct{ read bool }
+
+func (*rollbackChangeRows) Columns() []string { return []string{"total_changes()"} }
+func (*rollbackChangeRows) Close() error      { return nil }
+func (r *rollbackChangeRows) Next(values []driver.Value) error {
+	if r.read {
+		return io.EOF
+	}
+	r.read = true
+	values[0] = int64(0)
+	return nil
+}
 
 type blockedRollback struct{ connection *blockedRollbackConnection }
 

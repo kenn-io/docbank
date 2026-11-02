@@ -675,6 +675,7 @@ func mutateEmbeddingWorkerBinding(t *testing.T, work EmbeddingWork,
 // The rest of this file is a deterministic authority harness. Assertions are
 // made on worker-visible catalog state, never on fake call existence alone.
 type embeddingWorkerFakeCatalog struct {
+	revision                        uint64
 	reconcilePage                   func(store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	reconcileError                  func() error
 	mu                              sync.Mutex
@@ -700,7 +701,14 @@ func (c *embeddingWorkerFakeCatalog) enqueue(work ...EmbeddingWork) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.queue = append(c.queue, work...)
+	c.revision++
 }
+func (c *embeddingWorkerFakeCatalog) WriteRevision() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.revision
+}
+
 func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(_ context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -713,7 +721,7 @@ func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(_ context.Context, r
 			return store.EmbeddingReconcileResult{}, err
 		}
 	}
-	return store.EmbeddingReconcileResult{}, nil
+	return store.EmbeddingReconcileResult{Revision: c.revision}, nil
 }
 func (c *embeddingWorkerFakeCatalog) ClaimNextEmbeddingWork(_ context.Context, owner string, now time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error) {
 	c.mu.Lock()
@@ -2454,7 +2462,12 @@ func TestEmbeddingWorkerCompletesUnalignedDiscoveryStreams(t *testing.T) {
 			now = now.Add(time.Minute)
 			_, err = worker.ScanOnce(t.Context())
 			require.NoError(t, err)
-			require.Equal(t, 4, calls)
+			require.Equal(t, 3, calls, "unchanged catalog stays settled")
+			worker.descriptorFingerprints = append(worker.descriptorFingerprints, workerHash("new-runtime"))
+			now = now.Add(time.Minute)
+			_, err = worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 4, calls, "executable configuration changes restart discovery")
 		})
 	}
 }

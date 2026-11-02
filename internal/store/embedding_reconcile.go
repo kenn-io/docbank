@@ -60,11 +60,13 @@ type EmbeddingReconcileRequest struct {
 // EmbeddingReconcileResult reports work materialized from existing portable
 // authority. Next is empty when the scan reached the end.
 type EmbeddingReconcileResult struct {
-	ImageNext ImageReconcilePosition
-	Next      string
-	Examined  int
-	Enqueued  int
-	Skipped   int
+	Revision         uint64
+	ConsentExpiresAt time.Time
+	ImageNext        ImageReconcilePosition
+	Next             string
+	Examined         int
+	Enqueued         int
+	Skipped          int
 }
 
 type embeddingReconcileCandidate struct {
@@ -88,6 +90,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 		}
 		executable[fingerprint] = struct{}{}
 	}
+	result := EmbeddingReconcileResult{Revision: s.WriteRevision()}
 	var generationIDs []string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if request.SkipGenerations {
@@ -104,10 +107,9 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if err != nil {
 		return EmbeddingReconcileResult{}, err
 	}
-	result := EmbeddingReconcileResult{}
 	if !request.SkipImages && request.PrepareImageGeneration != nil {
 		var err error
-		result.ImageNext, err = s.discoverImageEmbeddingJobs(ctx, request, executable)
+		result.ImageNext, err = s.discoverImageEmbeddingJobs(ctx, request, executable, &result)
 		if err != nil {
 			return result, err
 		}
@@ -116,6 +118,12 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if more {
 		generationIDs = generationIDs[:request.Limit]
 	}
+	type cachedProfile struct {
+		record       ProcessingProfileRecord
+		portable     document.ProcessingProfileV1
+		fingerprints document.FingerprintSet
+	}
+	profiles := make(map[string]cachedProfile)
 	var candidates []embeddingReconcileCandidate
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, generationID := range generationIDs {
@@ -123,18 +131,22 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			if err != nil {
 				return err
 			}
-			profile, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
-			if err != nil {
-				return err
+			cached, ok := profiles[generation.ProcessingProfileFingerprint]
+			if !ok {
+				cached.record, err = loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(cached.record.CanonicalProfile, &cached.portable); err != nil {
+					return err
+				}
+				_, cached.fingerprints, err = document.CanonicalProfile(cached.portable)
+				if err != nil {
+					return err
+				}
+				profiles[generation.ProcessingProfileFingerprint] = cached
 			}
-			var portable document.ProcessingProfileV1
-			if err := json.Unmarshal(profile.CanonicalProfile, &portable); err != nil {
-				return err
-			}
-			_, fingerprints, err := document.CanonicalProfile(portable)
-			if err != nil {
-				return err
-			}
+			profile, portable, fingerprints := cached.record, cached.portable, cached.fingerprints
 			// Image generations carry the image producer policy; original-file generations never do.
 			imageGeneration := generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint()
 			for _, binding := range portable.Embeddings {
@@ -193,7 +205,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					continue
 				}
 				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
-					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC())
+					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC(), &result.ConsentExpiresAt)
 				if err != nil {
 					return err
 				}
@@ -299,11 +311,11 @@ func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, prof
 }
 
 func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profile, disclosure string,
-	inputKind document.EmbeddingInputKind, at time.Time,
+	inputKind document.EmbeddingInputKind, at time.Time, expiry *time.Time,
 ) (ProviderOperationAuthorizationRequest, bool, error) {
 	inputs, _ := json.Marshal([]string{string(inputKind)})
 	retained, _ := json.Marshal([]string{"embedding_vector_set"})
-	rows, err := tx.QueryContext(ctx, `SELECT g.principal,g.scope FROM processing_consent_grants g
+	rows, err := tx.QueryContext(ctx, `SELECT g.principal,g.scope,g.expires_at FROM processing_consent_grants g
 		JOIN current_processing_incarnation c ON c.incarnation_id=g.incarnation_id
 		WHERE g.vault_uid=$1 AND g.profile_fingerprint=$2 AND g.disclosure_fingerprint=$3
 		AND g.input_classes_json=$4 AND g.retained_classes_json=$5
@@ -317,8 +329,18 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 	var candidates []ProviderOperationAuthorizationRequest
 	for rows.Next() {
 		var principal, scope string
-		if err := rows.Scan(&principal, &scope); err != nil {
+		var expires sql.NullString
+		if err := rows.Scan(&principal, &scope, &expires); err != nil {
 			return ProviderOperationAuthorizationRequest{}, false, err
+		}
+		if expires.Valid {
+			value, err := time.Parse(timestampLayout, expires.String)
+			if err != nil {
+				return ProviderOperationAuthorizationRequest{}, false, fmt.Errorf("parsing embedding consent expiry: %w", err)
+			}
+			if expiry.IsZero() || value.Before(*expiry) {
+				*expiry = value
+			}
 		}
 		candidate := ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile, DisclosureFingerprint: disclosure,
@@ -339,7 +361,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 	return ProviderOperationAuthorizationRequest{}, false, nil
 }
 
-func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest, executable map[string]struct{}) (ImageReconcilePosition, error) {
+func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest, executable map[string]struct{}, result *EmbeddingReconcileResult) (ImageReconcilePosition, error) {
 	type target struct {
 		version  string
 		profile  ProcessingProfileRecord
@@ -420,7 +442,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				if _, rejected := request.ImageRejections[key]; rejected {
 					continue
 				}
-				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At)
+				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, &result.ConsentExpiresAt)
 				if err != nil {
 					return err
 				}
@@ -447,8 +469,12 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			if preparation.Rejected && preparation.EvidenceFingerprint == target.checksum && request.ImageRejections != nil {
 				if len(request.ImageRejections) >= 1024 {
 					clear(request.ImageRejections)
+					// Evicted rejections need another sweep.
+					result.Skipped++
 				}
 				request.ImageRejections[ImagePreparationRejectionKey{target.profile.Fingerprint, target.binding.Name, target.version, target.checksum}] = struct{}{}
+			} else {
+				result.Skipped++
 			}
 			continue
 		}
