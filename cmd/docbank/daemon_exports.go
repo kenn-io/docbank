@@ -13,7 +13,7 @@ func startExportWorker(supervisor *jobs.Supervisor, catalog *store.Store, blobs 
 	if err != nil {
 		return nil, err
 	}
-	if err = supervisor.Start("exports:write", worker.Run); err != nil {
+	if err = supervisor.StartWorker("exports:write", worker.Run); err != nil {
 		return nil, err
 	}
 	return worker, nil

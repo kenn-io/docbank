@@ -75,7 +75,7 @@ type embeddingJobRunner interface {
 }
 
 type embeddingJobStarter interface {
-	Start(name string, run func(context.Context) error) error
+	StartWorker(name string, run func(context.Context) error) error
 }
 
 // startEmbeddingWorkerIfReady preserves the daemon's normal supervisor-owned
@@ -95,7 +95,7 @@ func startEmbeddingWorkerIfReady(starter embeddingJobStarter, readiness embeddin
 	if worker == nil {
 		return errors.New("embedding worker builder returned nil")
 	}
-	return starter.Start("process:embeddings", worker.Run)
+	return starter.StartWorker("process:embeddings", worker.Run)
 }
 
 func startVectorIndexWorker(starter embeddingJobStarter,
@@ -108,7 +108,7 @@ func startVectorIndexWorker(starter embeddingJobStarter,
 	if worker == nil {
 		return errors.New("vector index worker builder returned nil")
 	}
-	return starter.Start("process:vector-indexes", worker.Run)
+	return starter.StartWorker("process:vector-indexes", worker.Run)
 }
 
 func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
@@ -130,11 +130,17 @@ func runServe(ctx context.Context) error {
 	return serveDaemon(ctx, nil)
 }
 
+// serveReady describes a daemon that is ready to serve. In-process tests use
+// it to wait for background work and to check idle shutdown without polling.
+type serveReady struct {
+	tracker *api.ActivityTracker
+	jobs    *jobs.Supervisor
+}
+
 // serveDaemon runs the daemon until ctx ends or a shutdown request arrives.
 // A non-nil ready runs once the runtime record, listeners, and supervised jobs
-// are in place, just before the HTTP servers start; in-process tests use it to
-// learn the daemon is ready without polling.
-func serveDaemon(ctx context.Context, ready func()) (retErr error) {
+// are in place, just before the HTTP servers start.
+func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -376,7 +382,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 		Process: processingService.ContinueMediaProcessing,
 		Logger:  logger,
 	}
-	if err := jobSupervisor.Start("process:media-continuations", mediaContinuations.Run); err != nil {
+	if err := jobSupervisor.StartWorker("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
 	}
 	if len(mediaOriginProbes) > 0 {
@@ -385,7 +391,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 		}
 	}
 	if processingService.HasPhotoDescriptionProfiles() {
-		if err := jobSupervisor.Start("process:photo-descriptions", func(ctx context.Context) error {
+		if err := jobSupervisor.StartWorker("process:photo-descriptions", func(ctx context.Context) error {
 			return processingService.PhotoDescriptionBackfill(ctx, logger, renditionWorkers)
 		}); err != nil {
 			return fmt.Errorf("starting photo descriptions: %w", err)
@@ -393,7 +399,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 	}
 
 	if processingService.HasPhotoFaceDetectionProfiles() {
-		if err := jobSupervisor.Start("process:photo-face-detection", func(ctx context.Context) error {
+		if err := jobSupervisor.StartWorker("process:photo-face-detection", func(ctx context.Context) error {
 			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
 		}); err != nil {
 			return fmt.Errorf("starting photo face detection: %w", err)
@@ -557,7 +563,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
 			}
 		}
-		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
+		if err := jobSupervisor.StartWorker("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
 	}
@@ -565,7 +571,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring text extraction: %w", err)
 	}
-	if err := jobSupervisor.Start("extract:plain-text", textWorker.Run); err != nil {
+	if err := jobSupervisor.StartWorker("extract:plain-text", textWorker.Run); err != nil {
 		return fmt.Errorf("starting text extraction: %w", err)
 	}
 	packageMailbox := mailbox.Service{Store: s, Blobs: blobs}
@@ -587,7 +593,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring package import worker: %w", err)
 	}
-	if err := jobSupervisor.Start("import:packages", packageWorker.Run); err != nil {
+	if err := jobSupervisor.StartWorker("import:packages", packageWorker.Run); err != nil {
 		return fmt.Errorf("starting package import worker: %w", err)
 	}
 	if cfg.Storage.PackInterval.Std() > 0 {
@@ -601,7 +607,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 			})
 			return report, err
 		}
-		if err := jobSupervisor.Start("storage:pack", func(ctx context.Context) error {
+		if err := jobSupervisor.StartWorker("storage:pack", func(ctx context.Context) error {
 			return internalmaintenance.RunPackSchedule(
 				ctx, cfg.Storage.PackInterval.Std(), packRun, logger)
 		}); err != nil {
@@ -695,7 +701,7 @@ func serveDaemon(ctx context.Context, ready func()) (retErr error) {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
 	}
 	if ready != nil {
-		ready()
+		ready(serveReady{tracker: tracker, jobs: jobSupervisor})
 	}
 
 	return serveDaemonHTTP(sigCtx, stopCh, servers, drainMCP, func() {
@@ -861,7 +867,7 @@ func startProcessingJobs(
 			if err != nil {
 				return fmt.Errorf("configuring rendition worker: %w", err)
 			}
-			if err := supervisor.Start(name, worker.Run); err != nil {
+			if err := supervisor.StartWorker(name, worker.Run); err != nil {
 				return fmt.Errorf("starting rendition worker: %w", err)
 			}
 		}
@@ -878,7 +884,7 @@ func startProcessingJobs(
 			return err
 		},
 	}
-	if err := supervisor.Start("maintenance:auxiliary-checksums", checksums.Run); err != nil {
+	if err := supervisor.StartWorker("maintenance:auxiliary-checksums", checksums.Run); err != nil {
 		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
 	}
 	metadata := &processing.Backfill[store.SourceMetadataTarget]{
@@ -896,17 +902,17 @@ func startProcessingJobs(
 			return err
 		},
 	}
-	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
+	if err := supervisor.StartWorker("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
 	}
-	if err := supervisor.Start("extract:photo-sidecars", newPhotoSidecarBackfill(s, blobs, gate, logger)); err != nil {
+	if err := supervisor.StartWorker("extract:photo-sidecars", newPhotoSidecarBackfill(s, blobs, gate, logger)); err != nil {
 		return fmt.Errorf("starting photo sidecar backfill: %w", err)
 	}
 	previews, err := newVisualPreviewBackfill(s, blobs, gate, logger)
 	if err != nil {
 		return err
 	}
-	if err := supervisor.Start(store.VisualPreviewLane, previews.Run); err != nil {
+	if err := supervisor.StartWorker(store.VisualPreviewLane, previews.Run); err != nil {
 		return fmt.Errorf("starting visual preview backfill: %w", err)
 	}
 
@@ -919,7 +925,7 @@ func startProcessingJobs(
 			return processing.EvaluatePhotoQuality(ctx, s, blobs, target)
 		},
 	}
-	if err := supervisor.Start("derive:photo-quality", quality.Run); err != nil {
+	if err := supervisor.StartWorker("derive:photo-quality", quality.Run); err != nil {
 		return fmt.Errorf("starting photo quality backfill: %w", err)
 	}
 	emailFingerprint, err := processing.EmailDecoderFingerprint()
@@ -947,15 +953,15 @@ func startProcessingJobs(
 			return processErr
 		},
 	}
-	if err := supervisor.Start("extract:email", email.Run); err != nil {
+	if err := supervisor.StartWorker("extract:email", email.Run); err != nil {
 		return fmt.Errorf("starting email backfill: %w", err)
 	}
 	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
-	if err := supervisor.Start("derive:document-events", documentEvents.Run); err != nil {
+	if err := supervisor.StartWorker("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)
 	}
 	documentPeople := processing.NewDocumentPeopleBackfill(s, gate.MutateContext, logger)
-	if err := supervisor.Start("derive:document-people", documentPeople.Run); err != nil {
+	if err := supervisor.StartWorker("derive:document-people", documentPeople.Run); err != nil {
 		return fmt.Errorf("starting document people derivation: %w", err)
 	}
 	return startRetentionMaintenance(supervisor, s, gate, logger)

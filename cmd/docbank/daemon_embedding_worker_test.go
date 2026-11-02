@@ -303,7 +303,7 @@ type fakeEmbeddingJobStarter struct {
 	run  func(context.Context) error
 }
 
-func (starter *fakeEmbeddingJobStarter) Start(name string, run func(context.Context) error) error {
+func (starter *fakeEmbeddingJobStarter) StartWorker(name string, run func(context.Context) error) error {
 	starter.name, starter.run = name, run
 	return nil
 }

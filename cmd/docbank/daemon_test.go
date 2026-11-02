@@ -330,12 +330,24 @@ const (
 // and waits for it to exit so TempDir removal never races a live daemon. It
 // returns once the daemon reports it is ready to serve.
 func startServe(t *testing.T) (stop func()) {
+	stop, _ = startServeReady(t)
+	return stop
+}
+
+// testDaemons maps the DOCBANK_HOME of each running in-process test daemon to
+// what it reported when it became ready.
+var testDaemons sync.Map
+
+// startServeReady is startServe that also returns the ready daemon's handle.
+func startServeReady(t *testing.T) (stop func(), daemon serveReady) {
 	t.Helper()
+	home := os.Getenv("DOCBANK_HOME")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	ready := make(chan struct{})
-	go func() { done <- serveDaemon(ctx, func() { close(ready) }) }()
+	ready := make(chan serveReady, 1)
+	go func() { done <- serveDaemon(ctx, func(r serveReady) { ready <- r }) }()
 	stop = sync.OnceFunc(func() {
+		testDaemons.Delete(home)
 		cancel()
 		select {
 		case err := <-done:
@@ -346,13 +358,26 @@ func startServe(t *testing.T) (stop func()) {
 	})
 	t.Cleanup(stop)
 	select {
-	case <-ready:
+	case daemon = <-ready:
 	case err := <-done:
 		require.FailNow(t, "daemon exited before becoming ready", "%v", err)
 	case <-time.After(daemonStartTimeout):
 		require.FailNow(t, "daemon never became ready")
 	}
-	return stop
+	testDaemons.Store(home, daemon)
+	return stop, daemon
+}
+
+// settleDaemon waits until the in-process daemon serving DOCBANK_HOME has no
+// background work left that its workers can do now.
+func settleDaemon(t *testing.T) {
+	t.Helper()
+	value, ok := testDaemons.Load(os.Getenv("DOCBANK_HOME"))
+	require.True(t, ok, "no in-process daemon serves DOCBANK_HOME")
+	// The timeout is a safety net for a hung worker; Settle never waits for it.
+	ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
+	defer cancel()
+	require.NoError(t, value.(serveReady).jobs.Settle(ctx))
 }
 
 // waitForDaemon discovers the ready daemon through its runtime record like a

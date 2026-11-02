@@ -31,7 +31,7 @@ func startTelemetryTestDaemon(t *testing.T) telemetryTestDaemon {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	ready := make(chan struct{})
-	go func() { done <- serveDaemon(ctx, func() { close(ready) }) }()
+	go func() { done <- serveDaemon(ctx, func(serveReady) { close(ready) }) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
