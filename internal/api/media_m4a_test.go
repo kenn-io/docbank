@@ -12,7 +12,7 @@ import (
 
 func TestMediaM4AHTTPPublicationAndReuse(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	data := mediatest.M4A("alac")
 	hash := processingTestHash(string(data))

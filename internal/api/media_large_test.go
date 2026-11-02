@@ -10,7 +10,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -29,7 +28,8 @@ func TestMediaUploadThroughSuppliedTranscript(t *testing.T) { //nolint:parallelt
 	}
 	previous := debug.SetMemoryLimit(256 << 20)
 	defer debug.SetMemoryLimit(previous)
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	var worker renditionTestWorker
+	ts, catalog := newTestServer(t, configureMediaTestServiceWith(t, mediaTestOptions{Worker: &worker}))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	hash := sha256.New()
 	_, err := io.Copy(hash, mediatest.SizedWAV(size))
@@ -64,14 +64,11 @@ func TestMediaUploadThroughSuppliedTranscript(t *testing.T) { //nolint:parallelt
 		Processing:  &api.MediaProcessingBody{Profile: processing.SuppliedMediaProfileName, SuppliedInputID: input.SuppliedInputID},
 	})
 	require.NoError(t, err)
-	pollInterval := 20 * time.Millisecond
-	if size > 1<<30 {
-		pollInterval = time.Second
-	}
-	require.Eventually(t, func() bool {
-		status, statusErr := client.MediaStatus(t.Context(), retained.SourceID)
-		return statusErr == nil && status.OperationID == queued.OperationID && status.OperationState == "succeeded"
-	}, 3*time.Minute, pollInterval)
+	worker.runQueued(t)
+	status, err := client.MediaStatus(t.Context(), retained.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, queued.OperationID, status.OperationID)
+	require.Equal(t, "succeeded", status.OperationState)
 	evidence, err := client.MediaTranscript(t.Context(), retained.SourceID, retained.SourceVersionID, retained.ContentVersionID)
 	require.NoError(t, err)
 	require.NotNil(t, evidence.Transcript)
@@ -110,7 +107,7 @@ func TestMediaUploadRejectsActualExtraByte(t *testing.T) { //nolint:paralleltest
 	if os.Getenv("DOCBANK_TEST_4GIB_MEDIA") == "1" {
 		size = 4 << 30
 	}
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	_, err := client.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
 		OperationID: "00000000-0000-4000-8000-000000000907", Filename: "generated.wav", MediaType: "audio/wav",
