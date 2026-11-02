@@ -797,6 +797,9 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 	return source, annRows, err
 }
 
+// semanticANNRowsTx reads the whole eligible space because SearchRows scores only
+// the supplied rows. This allowlist excludes other bindings, trashed, non-current,
+// out-of-scope, and non-representative rows before scoring.
 func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) ([]vectorindex.RowIdentity, error) {
@@ -921,12 +924,11 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 	var err error
 	filterSQL, filterArgs := searchFilterSQL(normalized)
 	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
-	seenRows := make(map[semanticEligibilityKey]struct{})
 	representatives := make(map[string]int64)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
 		members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-			filterSQL, filterArgs, semanticNeighborKeys(neighbors[walked:prefix], seenRows))
+			filterSQL, filterArgs, semanticNeighborKeys(neighbors[walked:prefix]))
 		if err != nil {
 			return err
 		}
@@ -1002,15 +1004,11 @@ type semanticEligibilityKey struct {
 	InputChecksum string
 }
 
-// semanticNeighborKeys returns only rows newly encountered in rank order.
-func semanticNeighborKeys(neighbors []vectorindex.Neighbor, seen map[semanticEligibilityKey]struct{}) []semanticEligibilityKey {
-	var keys []semanticEligibilityKey
-	for _, neighbor := range neighbors {
-		key := semanticEligibilityKey{neighbor.SetID, neighbor.InputKey, neighbor.InputChecksum}
-		if _, ok := seen[key]; !ok {
-			seen[key] = struct{}{}
-			keys = append(keys, key)
-		}
+// semanticNeighborKeys preserves the unique row identities returned by vector search.
+func semanticNeighborKeys(neighbors []vectorindex.Neighbor) []semanticEligibilityKey {
+	keys := make([]semanticEligibilityKey, len(neighbors))
+	for i, neighbor := range neighbors {
+		keys[i] = semanticEligibilityKey{neighbor.SetID, neighbor.InputKey, neighbor.InputChecksum}
 	}
 	return keys
 }

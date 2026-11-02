@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -128,7 +129,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					return err
 				}
 				defer func() { require.NoError(b, insert.Close()) }()
-				for i := 1; i <= count; i++ {
+				for i := 1; i < count; i++ {
 					version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
 					hash := fmt.Sprintf("%064x", (i-1)/100+1)
 					vectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
@@ -143,7 +144,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					if err != nil {
 						return err
 					}
-					if i == 1 || i == count {
+					if i == 1 || i == count-1 {
 						sample := cloneEmbeddingSetRecord(record)
 						sample.ID = testSHA256([]byte(version + "set"))
 						sample.ContentVersionID = version
@@ -198,8 +199,8 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 			// Exercise the same loader as production source capture before timing membership work.
 			source, err := s.CaptureVectorIndexSource(ctx, record.VectorSpace.ID)
 			require.NoError(b, err)
-			require.Len(b, source.Members, count+1)
-			neighbors := make([]vectorindex.Neighbor, count)
+			require.Len(b, source.Members, count)
+			neighbors := make([]vectorindex.Neighbor, count-1)
 			rows, err := s.db.QueryContext(ctx, `SELECT es.vector_set_id,es.content_version_id,cv.blob_hash FROM embedding_sets es JOIN content_versions cv ON cv.version_id=es.content_version_id WHERE es.embedding_set_id<>? ORDER BY cv.version_id`, record.ID)
 			require.NoError(b, err)
 			defer func() { require.NoError(b, rows.Close()) }()
@@ -215,23 +216,39 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 				b.Run(scope, func(b *testing.B) {
 					opts := SearchOptions{}
 					ranked := append([]vectorindex.Neighbor(nil), neighbors...)
-					wantRows := count + 1
+					wantRows := count
 					wantSimilar, similarTruncated := 20, true
 					switch scope {
 					case "all":
 						// Interleave copies so an ordinary page starts with distinct groups.
-						for i := range ranked {
-							ranked[i] = neighbors[(i%(count/100))*100+i/(count/100)]
+						ranked = ranked[:0]
+						for copy := range 100 {
+							for group := range count / 100 {
+								if index := group*100 + copy; index < len(neighbors) {
+									ranked = append(ranked, neighbors[index])
+								}
+							}
 						}
 					case "narrow":
 						opts.ModifiedSince = "2026-02-01"
-						wantRows = count / 100
+						wantRows = count/100 - 1
 						wantSimilar, similarTruncated = min(20, count/10000), count/10000 > 20
 					case "collapse":
 						lexical := query.Query{Filters: query.Filters{CollapseDuplicates: true}}
 						opts.PhotoScope, opts.PhotoLexicalQuery = &PhotoBrowseRequest{}, &lexical
 						wantRows = count/100 + 1
 					}
+					allowed, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
+					require.NoError(b, err)
+					require.Len(b, allowed, wantRows)
+					allowlist := make(map[vectorindex.RowIdentity]struct{}, len(allowed))
+					for _, row := range allowed {
+						allowlist[row] = struct{}{}
+					}
+					ranked = slices.DeleteFunc(ranked, func(neighbor vectorindex.Neighbor) bool {
+						_, included := allowlist[vectorindex.RowIdentity{SetID: neighbor.SetID, InputKey: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
+						return !included
+					})
 					for i := range ranked {
 						ranked[i].Score = 1 - float64(i)/float64(count)
 					}

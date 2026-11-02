@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"maps"
 	"slices"
 	"time"
 
@@ -168,20 +167,17 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 	opts SearchOptions, source SimilarSource, result *SimilarSearchResolution,
 ) error {
 	filter, args := searchFilterSQL(opts)
-	seenRows := make(map[semanticEligibilityKey]struct{})
-	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	byNode := make(map[int64]struct{})
 	groups := make(map[string]*SimilarSearchCandidate)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
 		members, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args,
-			semanticNeighborKeys(neighbors[walked:prefix], seenRows))
+			semanticNeighborKeys(neighbors[walked:prefix]))
 		if err != nil {
 			return err
 		}
-		maps.Copy(eligible, members)
 		for _, neighbor := range neighbors[walked:prefix] {
-			for _, member := range eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID, InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}] {
+			for _, member := range members[semanticEligibilityKey{VectorSetID: neighbor.SetID, InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}] {
 				if member.NodeID == source.NodeID {
 					continue
 				}
@@ -206,7 +202,7 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 				strong++
 			}
 		}
-		if strong > limit {
+		if strong >= limit && len(groups) > limit {
 			break
 		}
 		walked, prefix = prefix, min(prefix*2, len(neighbors))

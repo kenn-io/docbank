@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -75,9 +77,8 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 				require.NoError(t, err)
 			}
 		}
-		seen := make(map[semanticEligibilityKey]struct{})
 		for i := range 2 {
-			keys := semanticNeighborKeys(neighbors[i:i+1], seen)
+			keys := semanticNeighborKeys(neighbors[i : i+1])
 			members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
 			require.NoError(t, err)
 			require.Len(t, members, 1, "a neighbor must not load the other inputs in its set")
@@ -85,8 +86,7 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 		}
 		wrongChecksum := neighbors[0]
 		wrongChecksum.InputChecksum = catalogSourceHash
-		keys := semanticNeighborKeys([]vectorindex.Neighbor{wrongChecksum}, seen)
-		require.Len(t, keys, 1, "seen tracking includes the checksum")
+		keys := semanticNeighborKeys([]vectorindex.Neighbor{wrongChecksum})
 		members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
 		require.NoError(t, err)
 		require.Empty(t, members, "the checksum is part of row authority")
@@ -2978,9 +2978,17 @@ func TestSimilarCandidatesCountUnvisitedCopiesAndKeepBoundaryTies(t *testing.T) 
 		require.NoError(t, err)
 		nodes = append(nodes, node)
 	}
+	for i := range 64 {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("tied-tail-%d.txt", i), testSHA256(fmt.Appendf(nil, "tied-tail-%d", i)), 20, "text/plain")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
 	// new, other, old all tie. tail starts below the two strong groups;
 	// low is beyond that stopping point.
 	order := []int{1, 2, 0, 4, 3}
+	for i := 5; i < len(nodes); i++ {
+		order = append(order, i)
+	}
 	var neighbors []vectorindex.Neighbor
 	var space string
 	versions := []string{version}
@@ -3015,4 +3023,45 @@ func TestSimilarCandidatesCountUnvisitedCopiesAndKeepBoundaryTies(t *testing.T) 
 	assert.Equal(t, nodes[0].ID, result.Candidates[0].NodeID)
 	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
 	assert.True(t, result.Truncated)
+
+	// One winner and a tied zero-score tail settle the page as soon as an
+	// overflow group appears. Walking the rest cannot change the winner.
+	for i := range neighbors {
+		neighbors[i].Score = 0
+	}
+	neighbors[0].Score = 1
+	loaded := 0
+	result = SimilarSearchResolution{}
+	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return s.similarCandidatesTx(t.Context(), semanticMembershipCountingQuerier{metadataQuerier: tx, loaded: &loaded},
+			profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, neighbors, 1,
+			SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID}, &result)
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	assert.Equal(t, nodes[1].ID, result.Candidates[0].NodeID)
+	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
+	assert.True(t, result.Truncated)
+	assert.LessOrEqual(t, loaded, 4, "a tied tail must not force loading every identity")
+}
+
+type semanticMembershipCountingQuerier struct {
+	metadataQuerier
+
+	loaded *int
+}
+
+func (q semanticMembershipCountingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "$.VectorSetID") {
+		var keys []json.RawMessage
+		encoded, ok := args[0].(string)
+		if !ok {
+			return nil, errors.New("membership identities must be JSON text")
+		}
+		if err := json.Unmarshal([]byte(encoded), &keys); err != nil {
+			return nil, err
+		}
+		*q.loaded += len(keys)
+	}
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
