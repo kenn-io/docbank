@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -100,21 +101,26 @@ func TestSearchRejectsInvalidScopeBeforeEgress(t *testing.T) {
 }
 
 func TestSearchPreservesResponseBodyDeadline(t *testing.T) {
-	root, _, _ := exportFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		if flusher, ok := writer.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		<-request.Context().Done()
-	}))
-	t.Cleanup(server.Close)
-	client := newTestClient(t, server, root, &authorizerStub{}, &authorityStub{}, 1<<20)
-	client.profile.RequestTimeout = 25 * time.Millisecond //nolint:kennlint // deadlinetest: the real HTTP body waits for cancellation, so its request deadline must expire
+	synctest.Test(t, func(t *testing.T) {
+		root, _, _ := exportFixture(t)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			if flusher, ok := writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-request.Context().Done()
+		}))
+		client := newTestClientAt(t, 80, root, &authorizerStub{}, &authorityStub{}, 1<<20)
+		// The in-memory network carries the request, so the deadline runs on the bubble's clock.
+		client.http.Transport = server.Client().Transport
+		client.profile.RequestTimeout = time.Minute
 
-	_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+		started := time.Now()
+		_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, time.Minute, time.Since(started), "only the request deadline ends the open body")
+	})
 }
 
 func TestSearchRejectsUnknownDuplicateOversizedAndStaleResults(t *testing.T) {
@@ -176,6 +182,11 @@ func newTestClient(t *testing.T, server *httptest.Server, root string, authorize
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
+	return newTestClientAt(t, port, root, authorizer, authority, responseBytes)
+}
+
+func newTestClientAt(t *testing.T, port int, root string, authorizer Authorizer, authority Authority, responseBytes int64) *Client {
+	t.Helper()
 	client, err := New(Profile{ID: "qmd-test", CompatibilityEpoch: "qmd-current", SecretBinding: "secret:qmd",
 		EndpointPath: "/query", MaxResponseBytes: responseBytes,
 		EgressPolicy: providerhttp.EgressPolicy{Scheme: "http", Host: "qmd.test", Port: uint16(port),
@@ -370,28 +381,14 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 			query := Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5}
 			go func() { _, err := client.Search(ctx, query); done <- err }()
 			<-authorizer.authorized
-			revoked := make(chan error, 1)
-			go func() {
+			revocation := startFencedRevocation(func() error {
 				_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: "search-user", Scope: "search"})
-				revoked <- err
-			}()
-			early := false
-			select {
-			case err := <-revoked:
-				t.Errorf("revocation completed before the authorized HTTP request: %v", err)
-				early = true
-			case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized request fence keeps revocation blocked
-			}
+				return err
+			})
+			revocation.requireWaiting(t, "revocation completed before the authorized HTTP request")
 			close(authorizer.proceed)
 			<-started
-			if !early {
-				select {
-				case err := <-revoked:
-					t.Errorf("revocation completed while reading the response: %v", err)
-					early = true
-				case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open response keeps revocation blocked
-				}
-			}
+			revocation.requireWaiting(t, "revocation completed while reading the response")
 			if outcome == "canceled" {
 				cancel()
 			} else {
@@ -406,14 +403,7 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 			case "canceled":
 				require.ErrorIs(t, searchErr, context.Canceled)
 			}
-			if !early {
-				select {
-				case err := <-revoked:
-					require.NoError(t, err)
-				case <-time.After(time.Second):
-					t.Fatal("search did not release its consent lease")
-				}
-			}
+			require.NoError(t, <-revocation.done, "search must release its consent lease")
 			_, err = client.Search(t.Context(), query)
 			require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
 		})

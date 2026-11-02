@@ -13,9 +13,11 @@ import (
 )
 
 func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []ProviderStage{ProviderStageExpansion, ProviderStageReranking} {
 		for _, outcome := range []string{"success", "failure", "canceled"} {
 			t.Run(string(stage)+"/"+outcome, func(t *testing.T) {
+				t.Parallel()
 				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
@@ -62,28 +64,14 @@ func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
 				done := make(chan error, 1)
 				go func() { _, err := searcher.Search(ctx, Query{Text: "needle", Mode: ModeLexical}); done <- err }()
 				<-authorized
-				revoked := make(chan error, 1)
-				go func() {
+				revocation := startFencedRevocation(func() error {
 					_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Principal, Scope: request.Scope})
-					revoked <- err
-				}()
-				early := false
-				select {
-				case err := <-revoked:
-					t.Errorf("revocation completed between authorization and provider execution: %v", err)
-					early = true
-				case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
-				}
+					return err
+				})
+				revocation.requireWaiting(t, "revocation completed between authorization and provider execution")
 				close(proceed)
 				<-started
-				if !early {
-					select {
-					case err := <-revoked:
-						t.Errorf("revocation completed during provider execution: %v", err)
-						early = true
-					case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the running provider keeps revocation blocked
-					}
-				}
+				revocation.requireWaiting(t, "revocation completed during provider execution")
 				if outcome == "canceled" {
 					cancel()
 				} else {
@@ -98,9 +86,7 @@ func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
 				case "failure":
 					require.Error(t, searchErr)
 				}
-				if !early {
-					require.NoError(t, <-revoked)
-				}
+				require.NoError(t, <-revocation.done)
 				authorizer.afterAuthorize = nil
 				_, err = searcher.Search(t.Context(), Query{Text: "needle", Mode: ModeLexical})
 				require.Error(t, err, "revoked consent must reject the next provider call")
