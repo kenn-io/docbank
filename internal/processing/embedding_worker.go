@@ -295,6 +295,9 @@ type EmbeddingWorker struct {
 	imageAfter                                     store.ImageReconcilePosition
 	reconcileAt                                    time.Time
 	imageRejections                                map[store.ImagePreparationRejectionKey]struct{}
+
+	// injectedWait makes wait replace the idle wait between scans too.
+	injectedWait bool
 }
 
 func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) {
@@ -326,7 +329,8 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 	if config.Clock == nil {
 		config.Clock = func() time.Time { return time.Now().UTC() }
 	}
-	if config.Wait == nil {
+	injectedWait := config.Wait != nil
+	if !injectedWait {
 		config.Wait = jobs.Wait
 	}
 	return &EmbeddingWorker{
@@ -337,7 +341,7 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		retryLimit: config.RetryLimit, retryBaseDelay: config.RetryBaseDelay,
 		maxRetryDelay: config.MaxRetryDelay, attemptLifetime: config.AttemptLifetime,
 		maxRows: config.MaxRows, maxDimensions: config.MaxDimensions,
-		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait,
+		maxVectorBlobBytes: config.MaxVectorBlobBytes, clock: config.Clock, wait: config.Wait, injectedWait: injectedWait,
 		descriptorFingerprints: slices.Clone(config.DescriptorFingerprints),
 	}, nil
 }
@@ -350,6 +354,8 @@ func (worker *EmbeddingWorker) Run(ctx context.Context) error {
 		return errors.New("embedding worker is nil")
 	}
 	storageFailures := 0
+	// found records whether any scan since the last idle wait processed work.
+	found := false
 	for {
 		processed, err := worker.ScanOnce(ctx)
 		if err != nil {
@@ -367,12 +373,24 @@ func (worker *EmbeddingWorker) Run(ctx context.Context) error {
 			continue
 		}
 		storageFailures = 0
-		if processed == 0 {
-			if err := worker.wait(ctx, worker.idleDelay); err != nil {
-				return err
-			}
+		if processed > 0 {
+			found = true
+			continue
 		}
+		if err := worker.idle(ctx, found); err != nil {
+			return err
+		}
+		found = false
 	}
+}
+
+// idle waits for the next scan. found reports whether a scan since the last
+// wait processed work.
+func (worker *EmbeddingWorker) idle(ctx context.Context, found bool) error {
+	if worker.injectedWait {
+		return worker.wait(ctx, worker.idleDelay)
+	}
+	return jobs.Idle(ctx, worker.idleDelay, found)
 }
 
 // ScanOnce drains the currently eligible queue snapshot. Each claim is a

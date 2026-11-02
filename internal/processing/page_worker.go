@@ -36,16 +36,21 @@ func (w *PageWorker) Run(ctx context.Context) error {
 	if err := w.retryCatalogMutation(ctx, func() error { return w.catalog.RequeuePageJobs(ctx) }); err != nil {
 		return err
 	}
+	// found records whether any page job since the last idle wait ran.
+	found := false
 	for {
 		processed, err := w.RunOne(ctx)
 		if err != nil {
 			return err
 		}
-		if !processed {
-			if err := jobs.Wait(ctx, time.Second); err != nil {
-				return err
-			}
+		if processed {
+			found = true
+			continue
 		}
+		if err := jobs.Idle(ctx, time.Second, found); err != nil {
+			return err
+		}
+		found = false
 	}
 }
 

@@ -69,6 +69,9 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 	cursor := ""
 	idleDelay := b.IdleDelay
 	listFailures := 0
+	// passFound records whether the scan since the cursor last reset attempted
+	// any target.
+	passFound := false
 	for {
 		targets, err := b.List(ctx, cursor, b.Page)
 		if err != nil {
@@ -92,14 +95,18 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			if b.DrainOnce && len(retries) == 0 {
 				return nil
 			}
-			if err := jobs.Wait(ctx, retries.waitDelay(b.now(), idleDelay)); err != nil {
+			// Only a completed scan reports to Settle; the waits inside a scan
+			// below do not, because later pages are still unread.
+			if err := jobs.Idle(ctx, retries.waitDelay(b.now(), idleDelay), passFound); err != nil {
 				return err
 			}
+			passFound = false
 			idleDelay = min(idleDelay*2, backfillMaxIdleDelay)
 			continue
 		}
 		idleDelay = b.IdleDelay
 		attempted, err := b.processPage(ctx, targets, retries)
+		passFound = passFound || attempted > 0
 		// A failed control read can stop mid-page; relist it instead of skipping the rest.
 		if !errors.Is(err, errBackfillControl) {
 			cursor = b.Key(targets[len(targets)-1])

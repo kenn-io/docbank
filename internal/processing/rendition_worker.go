@@ -334,6 +334,8 @@ func (worker *RenditionWorker) Run(ctx context.Context) error {
 			return err
 		}
 	}
+	// found records whether any build since the last idle wait ran.
+	found := false
 	for {
 		processed, err := worker.RunOne(ctx)
 		if err != nil {
@@ -355,11 +357,13 @@ func (worker *RenditionWorker) Run(ctx context.Context) error {
 			return renditionWorkerFatal(err)
 		}
 		if processed {
+			found = true
 			continue
 		}
-		if err := jobs.Wait(ctx, worker.idleDelay); err != nil {
+		if err := jobs.Idle(ctx, worker.idleDelay, found); err != nil {
 			return err
 		}
+		found = false
 	}
 }
 
