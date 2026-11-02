@@ -322,9 +322,7 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 
 func newPublishedVectorIndexFixture(tb testing.TB) (*Store, EmbeddingSetRecord, VectorIndexSource) {
 	tb.Helper()
-	s, err := Open(tb.Context(), filepath.Join(tb.TempDir(), "docbank.db"))
-	require.NoError(tb, err)
-	tb.Cleanup(func() { require.NoError(tb, s.Close()) })
+	s := newTestStore(tb)
 	_, versionID, profile, _ := seedEmbeddingCatalog(tb, s)
 	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(tb, s.StageEmbeddingSet(tb.Context(), record))
