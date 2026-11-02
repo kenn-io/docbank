@@ -431,6 +431,7 @@ the collection records.
 For a folder on another machine, use [folder push](pushing.md). It reads the
 folder on the client and uploads verified bytes to the daemon.
 
+First run `docbank tag create agent-sessions`.
 For directories that receive files over time, configure a daemon-owned
 `[[watch]]` entry instead of repeatedly running `docbank document add`:
 
@@ -439,6 +440,7 @@ For directories that receive files over time, configure a daemon-owned
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["agent-sessions"]
 settle_time = "30s"
 minimum_age = "168h"
 scan_interval = "5s"

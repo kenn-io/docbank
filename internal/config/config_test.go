@@ -811,7 +811,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[[watch]]\nname = \"documents\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
 			"destination = \"/inbox/documents\"\nexclude = [\".tmp\", \"cache/\"]\nexclude_patterns = [\"*.swp\", \".syncthing.*.tmp\"]\n"+
-			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\ncapture_on_change = true\n\n"+
+			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\ntags = [\"receipts\", \"2026\"]\ncapture_on_change = true\n\n"+
 			"[[watch]]\nname = \"sessions\"\nsource = \""+relativeHomeSource+"\"\n"+
 			"destination = \"/agents/sessions\"\n"), 0o600))
 
@@ -820,6 +820,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.Len(t, c.Watches, 2)
 	assert.Equal(t, filepath.Clean(source), c.Watches[0].Source)
 	assert.Equal(t, "/inbox/documents", c.Watches[0].Destination)
+	assert.Equal(t, []string{"receipts", "2026"}, c.Watches[0].Tags)
 	assert.Equal(t, 45*time.Second, c.Watches[0].SettleTime.Std())
 	assert.Equal(t, 7*24*time.Hour, c.Watches[0].MinimumAge.Std())
 	assert.Equal(t, 3*time.Second, c.Watches[0].ScanInterval.Std())
