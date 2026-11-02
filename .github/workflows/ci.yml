@@ -443,6 +443,9 @@ jobs:
           group: linux-lint
           extra-path: ~/.cache/golangci-lint
 
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
+
       - name: Run golangci-lint
         uses: step-security/golangci-lint-action@v9.3.0
         with:
