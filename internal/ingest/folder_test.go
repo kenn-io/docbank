@@ -57,9 +57,11 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		changeModTime bool
+		noChangeTime  bool
 		retry         bool
 	}{
 		{name: "content edit"},
+		{name: "no change time", noChangeTime: true},
 		{name: "metadata edit", changeModTime: true},
 		{name: "retryable failure", retry: true},
 	} {
@@ -84,6 +86,11 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 				return err
 			}, failOnReject(t))
 			require.NoError(t, err)
+			if test.noChangeTime {
+				scanner.watcher.observeFile = func(source watchSource, _ bool) (watchFileState, error) {
+					return source.observe(false)
+				}
+			}
 			now := time.Now()
 			scanner.watcher.now = func() time.Time { return now }
 			root, err := scanner.openRoot()
@@ -99,13 +106,21 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 			if test.changeModTime {
 				modTime = modTime.Add(time.Minute)
 			}
-			require.NoError(t, os.WriteFile(file, []byte("other"), 0o600))
-			require.NoError(t, os.Chtimes(file, modTime, modTime))
+			if test.changeModTime || test.noChangeTime {
+				require.NoError(t, os.WriteFile(file, []byte("other"), 0o600))
+				require.NoError(t, os.Chtimes(file, modTime, modTime))
+			} else {
+				rewriteSourceWithRestoredMtime(t, file, []byte("other"))
+			}
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1, "a digest change must settle before processing")
 			now = now.Add(9 * time.Second)
-			require.NoError(t, os.WriteFile(file, []byte("third"), 0o600))
-			require.NoError(t, os.Chtimes(file, modTime, modTime))
+			if test.changeModTime || test.noChangeTime {
+				require.NoError(t, os.WriteFile(file, []byte("third"), 0o600))
+				require.NoError(t, os.Chtimes(file, modTime, modTime))
+			} else {
+				rewriteSourceWithRestoredMtime(t, file, []byte("third"))
+			}
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1)
 			now = now.Add(time.Second)
@@ -372,6 +387,17 @@ func TestFolderWatchHintDoesNotHashUnrelatedAcceptedFile(t *testing.T) {
 		return err
 	}, failOnReject(t))
 	require.NoError(t, err)
+	var twoChange int64
+	scanner.watcher.observeFile = func(source watchSource, withChange bool) (watchFileState, error) {
+		state, err := source.observe(withChange)
+		if source.ref == "two.txt" && withChange {
+			if twoChange == 0 {
+				twoChange = state.fingerprint.change
+			}
+			state.fingerprint.change = twoChange
+		}
+		return state, err
+	}
 	root, err := scanner.openRoot()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, root.Close()) }()
@@ -391,5 +417,7 @@ func TestFolderWatchHintDoesNotHashUnrelatedAcceptedFile(t *testing.T) {
 	requireScanComplete(t, checkedScan(scanner.watcher.scanWithHints(t.Context(), root, watchScanHints{
 		Dirty: map[string]struct{}{"one.txt": {}},
 	})))
+	require.Equal(t, map[string]int{"one.txt": 2, "two.txt": 1}, processed)
+	requireScanComplete(t, checkedScan(scanner.watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})))
 	require.Equal(t, map[string]int{"one.txt": 2, "two.txt": 1}, processed)
 }

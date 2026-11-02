@@ -183,13 +183,18 @@ still apply. For example, add `--capture-on-change --scan-interval 1h` to the
 command above. The flag is rejected without `--watch`, before a credential or
 daemon connection is resolved.
 
-In settled mode, each periodic scan rechecks accepted file hashes. An
-equal-length edit with a restored modification time starts a new settle window
-and is then uploaded. In prompt mode, a notification hint can read that changed
-file sooner, while periodic scans keep the full digest check. A matching hash
-sends no daemon request and leaves an independent Docbank edit intact.
-Periodic checks reread local files; increase `--scan-interval` to reduce disk
-activity for large folders.
+Periodic scans compare file identity, size, modification time, and native change
+time. Unchanged files keep their accepted hashes without rereading their bytes.
+An equal-length edit with a restored modification time changes the native change
+time, starts a new settle window in settled mode, and is then uploaded. In prompt
+mode, a notification hint can read that changed file sooner.
+
+On filesystems that report no change time, periodic scans reread every file to
+detect these edits. Increase `--scan-interval` there to reduce disk activity for
+large folders. Metadata-only changes, such as permissions, extended attributes,
+or a hard link, also move the change time. The file settles again, is reread, and
+is checked against the daemon. A matching hash skips the upload and leaves an
+independent Docbank edit intact.
 
 Prompt capture is best effort. Notifications can merge saves, and slow uploads
 can miss bytes overwritten before the client reads them. Readable intermediate
@@ -201,7 +206,7 @@ requests a full scan. Native subscriptions use a 32,768-entry-unit budget:
 each admitted directory costs one plus its immediate entry count. A backend
 or budget failure closes subscriptions, reports degraded polling, and keeps
 periodic scans running. A directory that vanishes during enrollment is retried
-at the next periodic tick. Polling uses existing digest checks, so a later
+at the next periodic tick. Polling uses fingerprints and digest checks, so a later
 same-size, restored-mtime edit remains detectable while the client runs.
 
 Repeat `--exclude` for literal rules. A basename matches anywhere; a relative
