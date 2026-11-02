@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
+func checkEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, firstProfile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, firstProfile, _ := seedEmbeddingCatalog(t, open(t))
 	secondProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(t.Context(), tx, secondProfile)
@@ -52,8 +53,8 @@ func TestEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T) {
 
 	var heads, failures int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
-		(SELECT COUNT(*) FROM embedding_heads WHERE content_version_id=?),
-		(SELECT COUNT(*) FROM embedding_failures WHERE content_version_id=?)`,
+		(SELECT COUNT(*) FROM embedding_heads WHERE content_version_id=$1),
+		(SELECT COUNT(*) FROM embedding_failures WHERE content_version_id=$2)`,
 		versionID, versionID).Scan(&heads, &failures))
 	assert.Equal(t, 2, heads)
 	assert.Equal(t, 2, failures)

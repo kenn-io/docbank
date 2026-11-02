@@ -324,11 +324,13 @@ definition management use the native Store operations on both databases.
 Extracted source metadata, typed photo facts, and document-event evidence,
 publication, terminal attempts and rebuild receipts also use shared operations.
 Original-file rendition jobs include consent, resumable claims, artifact staging
-and atomic head publication through the same Store.
+and atomic head publication through the same Store. Document embedding jobs
+include reconciliation, consent-bound claims, immutable vector staging, atomic
+publication and coverage reads.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, extraction, embedding, page and media workers, search,
+photo-derived processing, extraction, image embedding preparation, page and media workers, search,
 transfer, backup recovery, multi-store placement and storage-operation jobs
 remain unqualified.
 
@@ -486,6 +488,16 @@ GRANT INSERT ON documents.rendition_blob_staging TO docbank_runtime;
 GRANT INSERT, UPDATE(attachment_id, published_at) ON documents.rendition_heads TO docbank_runtime;
 GRANT UPDATE(provider_attempts) ON documents.rendition_jobs TO docbank_runtime;
 GRANT UPDATE(attachment_id) ON documents.rendition_job_waiters TO docbank_runtime;
+GRANT INSERT ON documents.embedding_vector_spaces, documents.embedding_input_generations,
+    documents.embedding_generation_inputs, documents.embedding_vector_sets,
+    documents.embedding_vector_rows, documents.embedding_sets TO docbank_runtime;
+GRANT INSERT, UPDATE(embedding_set_id, vector_space_id, profile_fingerprint,
+    published_at, fencing_token) ON documents.embedding_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(failure_code, failed_at, fencing_token, attachment_id)
+    ON documents.embedding_failures TO docbank_runtime;
+GRANT INSERT, UPDATE(state, claim_owner, claim_epoch, claim_count, lease_expires_at,
+    available_at, failure_code, receipt_json, updated_at)
+    ON documents.embedding_jobs TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -797,8 +809,39 @@ qualified by publication tests.
 The `renditions` backend suite covers this native lifecycle, including provider
 resume, revocation, lease theft, staged-build reuse, failed publication and
 concurrent purge. It does not qualify photo-description or face-detection jobs,
-email/media producers, extraction workers, embedding publication, or public
+email/media producers, extraction workers, or public
 PostgreSQL vault opening.
+
+#### Document embedding jobs and publication
+
+Original-file and rendition-chunk embeddings use the same Store operations on
+both backends. Jobs retain their exact consent grant, processing incarnation and
+revocation fence. Replacement consent creates a successor job; it cannot adopt
+an earlier job or its provider calls. Claims exclude live leases, renew under
+the same epoch, and preserve retry counts when another worker resumes them.
+Reconciliation checks current source and rendition authority, purge suppression,
+executable providers and current consent before scheduling retained inputs.
+
+Vector spaces, input generations, vector sets and their ordered row manifests
+are immutable. Vector values and rendered inputs stay in blob artifacts; the
+database retains their checksums, references and bounded projections. Runtime
+credentials may insert those records but cannot update them. Exact duplicates
+reuse the existing authority; a conflicting record fails the transaction.
+Publication advances the serving head and completes the job in one writer
+transaction. Failed staging retains no partial set, and failed completion
+leaves the previous serving state and live claim unchanged. Purge and source
+replacement fence older attempts, including failures arriving after publication.
+
+Processing coverage uses one repeatable-read snapshot for source visibility,
+rendition and embedding heads, and pending replacements. It shares current-head
+eligibility with semantic retrieval. A replacement can be rebuilding while its
+previous complete generation remains available. These metadata counts do not
+establish that a vector search index is built or that its payloads are readable.
+
+The `embeddings` backend suite covers native document jobs, artifact publication,
+consent, leases, reconciliation, cleanup and coverage. Image preparation, vector
+index construction, ranked retrieval and public PostgreSQL vault opening remain
+unqualified.
 
 #### Recoverable deletion
 

@@ -58,9 +58,11 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 		Complete: 1, Stale: 1, Unavailable: total - 2}, coverage.Embeddings[1])
 }
 
-func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T) {
+func checkProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	oldBuild := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), oldBuild))
@@ -117,9 +119,10 @@ func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testin
 	assert.Zero(t, coverage.Renditions.PreviousGenerationServing)
 }
 
-func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
+func checkProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -198,9 +201,11 @@ func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	assert.Zero(t, coverage.Embeddings[0].Complete)
 }
 
-func TestProcessingCoverageSharedBuildKeepsVersionStates(t *testing.T) {
+func checkProcessingCoverageSharedBuildKeepsVersionStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))

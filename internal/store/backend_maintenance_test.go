@@ -67,7 +67,8 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"retained processing records", "no runtime UPDATE grant; producers unported", "enrollment validates retained rows; derivatives/retention may delete them, never rewrite them", `
  document_people_generations_immutable_update
  media_sources_immutable_update media_source_versions_immutable_update
- media_input_artifacts_immutable_update visual_preview_generations_immutable_update
+ media_input_artifacts_immutable_update visual_preview_generations_immutable_update`},
+	{"embedding records", "embedding_catalog.go; runtime has no UPDATE grant", "embeddings contracts; immutable records may be collected after roots expire", `
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
