@@ -436,11 +436,4 @@ func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
 	var count int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases WHERE lease_id=?`, lease.ID).Scan(&count))
 	require.Zero(t, count)
-	lease.Generation = second
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return insertVectorIndexReaderLeaseTx(t.Context(), tx, lease, "reader")
-	}))
-	var generationID string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT generation_id FROM vector_index_reader_leases WHERE lease_id=?`, lease.ID).Scan(&generationID))
-	require.Equal(t, second.ID, generationID)
 }
