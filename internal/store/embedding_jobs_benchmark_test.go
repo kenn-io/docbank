@@ -37,13 +37,21 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 			}))
 			record := embeddingSetFixture(ctx, s, retained.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(b, s.StageEmbeddingSet(ctx, record))
-			// Reuse the vector payload across retained generations of one source.
+			// Reuse the vector payload across retained source versions.
 			// Bulk inserts keep setup bounded without disabling foreign keys.
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				_, err := tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
+					INSERT INTO content_versions
+					SELECT printf('%064x',i),node_id,blob_hash,size,mime_type,recorded_at,i+1,
+					printf('%064x',i),'content_replace',NULL
+					FROM seq CROSS JOIN content_versions WHERE version_id=$2`, sets-1, retained.CurrentVersionID)
+				if err != nil {
+					return err
+				}
+				_, err = tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
 					INSERT INTO embedding_input_generations
 					SELECT printf('%064x',i),generation_blob_hash,generation_encoded_size,generation_checksum,
-					source_version_id,profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
+					printf('%064x',i),profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
 					chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at
 					FROM seq CROSS JOIN embedding_input_generations WHERE generation_id=$2`, sets-1, record.InputGeneration.ID)
 				if err != nil {
@@ -57,37 +65,27 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 					return err
 				}
 				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_sets
-					SELECT g.generation_id,s.vault_uid,s.binding_id,s.input_kind,s.content_version_id,
+					SELECT g.generation_id,s.vault_uid,s.binding_id,s.input_kind,g.source_version_id,
 					s.profile_fingerprint,s.embedding_input_fingerprint,s.vector_space_id,g.generation_id,s.vector_set_id,s.created_at
 					FROM embedding_input_generations g CROSS JOIN embedding_sets s
 					WHERE g.generation_id<>$1 AND s.embedding_set_id=$2`, record.InputGeneration.ID, record.ID)
+				if err != nil {
+					return err
+				}
+				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_heads
+					SELECT content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
+					profile_fingerprint,created_at,1 FROM embedding_sets`)
 				return err
 			}))
-			requestRecord := embeddingSetFixture(ctx, s, pending.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
-			binding, _, err := embeddingBindingFromProfile(profile, "optional")
-			require.NoError(b, err)
-			consent := ProviderOperationAuthorizationRequest{
-				Principal: "operator:benchmark", Scope: "embedding:optional",
-				ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
-				InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
-			}
-			_, err = s.GrantConsent(ctx, ProcessingConsentGrantRequest{
-				Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
-				DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
-				RetainedArtifactClasses: consent.RetainedArtifactClasses,
-			})
-			require.NoError(b, err)
-			job, err := s.EnqueueEmbeddingJob(ctx, EmbeddingJobRequest{
-				ContentVersionID: pending.CurrentVersionID, Profile: profile, BindingID: binding.Name,
-				Descriptor: requestRecord.VectorSpace.Descriptor, InputGeneration: requestRecord.InputGeneration, Authorization: consent,
-			})
+			request := embeddingJobTestRequest(b, s, pending.CurrentVersionID, profile, "benchmark")
+			job, err := s.EnqueueEmbeddingJob(ctx, request)
 			require.NoError(b, err)
 			at := time.Now().UTC()
-			fingerprints := []string{requestRecord.VectorSpace.Descriptor.Fingerprint}
+			fingerprints := []string{request.Descriptor.Fingerprint}
 			b.ReportAllocs()
 			for b.Loop() {
 				claim, work, found, err := s.ClaimNextEmbeddingWork(ctx, "benchmark-worker", at, time.Minute, fingerprints)
-				if err != nil || !found || claim.AttemptID != job.ID || work.InputGeneration.ID != requestRecord.InputGeneration.ID {
+				if err != nil || !found || claim.AttemptID != job.ID || work.InputGeneration.ID != request.InputGeneration.ID {
 					b.Fatalf("claim=%+v generation=%s found=%v err=%v", claim, work.InputGeneration.ID, found, err)
 				}
 				b.StopTimer()

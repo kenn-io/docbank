@@ -496,26 +496,27 @@ func TestVersionPruneRemovesQueuedEmbeddingJobGenerationAndRoot(t *testing.T) {
 	assert.Zero(t, remaining)
 }
 
-func embeddingJobTestRequest(t *testing.T, s *Store, versionID string,
+func embeddingJobTestRequest(tb testing.TB, s *Store, versionID string,
 	profile ProcessingProfileRecord, generationSeed string,
 ) EmbeddingJobRequest {
-	t.Helper()
+	tb.Helper()
 	const bindingID = "optional"
-	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, bindingID, "")
 	record.InputGeneration.ID = testSHA256([]byte(generationSeed))
-	binding := workerOptionalEmbeddingBinding(t, profile)
+	binding, _, err := embeddingBindingFromProfile(profile, bindingID)
+	require.NoError(tb, err)
 	consent := ProviderOperationAuthorizationRequest{
 		Principal: "operator:" + generationSeed, Scope: "embedding:" + bindingID,
 		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
 	}
-	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+	_, err = s.GrantConsent(tb.Context(), ProcessingConsentGrantRequest{
 		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
 		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
 		RetainedArtifactClasses: consent.RetainedArtifactClasses,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: bindingID,
 		Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent}
 }
