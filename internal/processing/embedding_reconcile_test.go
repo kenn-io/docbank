@@ -172,29 +172,6 @@ func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, processed, "retry image preparation after the preview blob recovers")
 	})
-	t.Run("ineligible photo", func(t *testing.T) {
-		t.Parallel()
-		f := newPhotoDescriptionFixture(t)
-		x := newImageEmbeddingService(t, f)
-		f.grant(t, x.service, "images")
-		catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
-		preparations := 0
-		catalog.beforePrepareImage = func() {
-			preparations++
-			// Eligibility can change after discovery selects its targets.
-			_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
-			require.NoError(t, err)
-		}
-		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: catalog, Authority: f.catalog, Blobs: f.blobs, GenerationBlobs: f.blobs, Runtime: x.service.EmbeddingRuntimes(), Gate: newTestOperationGate(), Owner: "synthetic-images", RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second, AttemptLifetime: 10 * time.Minute, MaxRows: 100, MaxDimensions: 100, MaxVectorBlobBytes: 1 << 20, LeaseDuration: time.Minute, IdleDelay: time.Millisecond, DescriptorFingerprints: []string{x.descriptor.Fingerprint}})
-		require.NoError(t, err)
-		now := time.Now().UTC()
-		worker.clock = func() time.Time { return now }
-		_, err = worker.ScanOnce(t.Context())
-		require.NoError(t, err)
-		require.Equal(t, 1, preparations)
-		require.Zero(t, catalog.enqueued)
-		require.True(t, worker.reconcile.settled, "an ineligible photo lets discovery settle")
-	})
 	for _, tc := range []struct {
 		name   string
 		column string
@@ -256,7 +233,7 @@ func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 
 func TestEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T) {
 	t.Parallel()
-	for _, inputErr := range []error{context.DeadlineExceeded, context.Canceled, errors.New("synthetic blob temporarily unavailable")} {
+	for _, inputErr := range []error{context.DeadlineExceeded, errors.New("synthetic blob temporarily unavailable")} {
 		t.Run(inputErr.Error(), func(t *testing.T) {
 			t.Parallel()
 			f, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)

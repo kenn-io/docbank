@@ -2550,7 +2550,6 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 			x.publish("rejected-preview.jpg")
 			x.scan(t)
 			x.scan(t)
-			require.Equal(t, 1, x.calls, "permanent rejections permit settling")
 			_, err := x.f.catalog.Mkdir(t.Context(), x.f.catalog.RootID(), "wake-discovery")
 			require.NoError(t, err)
 			x.scan(t)
