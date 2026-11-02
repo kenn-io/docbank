@@ -125,18 +125,52 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 
 // TagByName returns the tag whose normalized name exactly matches name.
 func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
+	return tagByNameQuery(ctx, s.db, name, true)
+}
+
+func tagByNameQuery(ctx context.Context, queryer rowQuerier, name string, countAssignments bool) (Tag, error) {
 	name, err := NormalizeTagName(name)
 	if err != nil {
 		return Tag{}, err
 	}
-	tag, err := scanTag(s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision,
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
+	count := "0"
+	if countAssignments {
+		count = "(SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)"
+	}
+	tag, err := scanTag(queryer.QueryRowContext(ctx, `
+		SELECT t.id, t.name, t.revision, `+count+`
 		FROM tags t WHERE t.name = $1`, name))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
 	}
 	return tag, nil
+}
+
+// TagResolutionError identifies a missing or invalid configured watch tag.
+type TagResolutionError struct {
+	Name string
+	Err  error
+}
+
+func (e *TagResolutionError) Error() string {
+	if errors.Is(e.Err, ErrInvalidTag) {
+		return fmt.Sprintf("tag %q is unavailable: %v", e.Name, e.Err)
+	}
+	return fmt.Sprintf("tag %q is unavailable", e.Name)
+}
+func (e *TagResolutionError) Unwrap() error { return e.Err }
+
+// ResolveWatchTag resolves a configured watch tag name without counting assignments.
+func (s *Store) ResolveWatchTag(ctx context.Context, name string) (Tag, error) {
+	return resolveWatchTagQuery(ctx, s.db, name)
+}
+
+func resolveWatchTagQuery(ctx context.Context, queryer rowQuerier, name string) (Tag, error) {
+	tag, err := tagByNameQuery(ctx, queryer, name, false)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidTag) {
+		return Tag{}, &TagResolutionError{Name: name, Err: err}
+	}
+	return tag, err
 }
 
 // Tags lists one name-sorted page and the total number of definitions.

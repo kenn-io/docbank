@@ -3,12 +3,14 @@ package api
 import (
 	"cmp"
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func registerWatchRoutes(api huma.API, d Deps) {
@@ -32,7 +34,9 @@ func registerWatchRoutes(api huma.API, d Deps) {
 		out := &output{Body: WatchedInboxList{Items: make([]WatchedInbox, 0, len(watches))}}
 		for _, watch := range watches {
 			item := WatchedInbox{
-				Name: watch.Name, Source: watch.Source, Destination: watch.Destination,
+				Tags:     append([]string{}, watch.Tags...),
+				TagError: watchTagError(ctx, d, watch.Tags),
+				Name:     watch.Name, Source: watch.Source, Destination: watch.Destination,
 				CaptureOnChange: watch.CaptureOnChange,
 				SettleTime:      watch.SettleTime.Std().String(),
 				MinimumAge:      watch.MinimumAge.Std().String(),
@@ -66,4 +70,19 @@ func watchProcessingStatus(ctx context.Context, d Deps, profile string) *WatchPr
 		status.ConsentState = state
 	}
 	return status
+}
+
+func watchTagError(ctx context.Context, d Deps, tags []string) string {
+	for _, name := range tags {
+		if d.Store == nil {
+			return "Tag status unavailable"
+		}
+		if _, err := d.Store.ResolveWatchTag(ctx, name); err != nil {
+			if tagErr, ok := errors.AsType[*store.TagResolutionError](err); ok {
+				return tagErr.Error()
+			}
+			return "Tag status unavailable"
+		}
+	}
+	return ""
 }

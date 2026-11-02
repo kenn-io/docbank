@@ -309,6 +309,7 @@
           <tbody>
             {#each lanes as lane (lane.key)}
               {@const processing = lane.members.find((item) => item.processing)?.processing}
+              {@const watch = lane.members.find((item) => item.tags?.length)}
               <tr>
                 <th scope="row"
                   >{lane.title}
@@ -321,6 +322,13 @@
                       {:else}
                         Waiting on consent for {processing.profile} ({processing.consent_state})
                       {/if}
+                    </p>
+                  {/if}
+                  {#if watch}
+                    <p class="operation processing">
+                      Tags: {watch.tags?.join(", ")}
+                      {#if watch.tag_error}
+                        ({watch.tag_error}){/if}
                     </p>
                   {/if}
                 </th>

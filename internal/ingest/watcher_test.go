@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -520,7 +521,7 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ing.ingestWatchedFile(
 		ctx, "conflict", "/inbox", "conflict.txt", fingerprint,
-		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) },
+		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) }, nil,
 	)
 	require.ErrorIs(t, err, store.ErrExists)
 }
@@ -682,7 +683,7 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 		rewriteSourceWithRestoredMtime(t, sourcePath, []byte("other"))
 		_, err = ing.ingestWatchedFile(
 			t.Context(), "documents", "/inbox", "document.txt", local,
-			func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
+			func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) }, nil,
 		)
 		require.ErrorIs(t, err, ErrSourceChanged)
 		_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
@@ -710,7 +711,7 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 
 	_, err = ing.ingestWatchedFile(
 		t.Context(), "documents", "/inbox", "document.txt", settled,
-		func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
+		func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) }, nil,
 	)
 	require.ErrorIs(t, err, ErrSourceChanged)
 	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
@@ -1209,4 +1210,75 @@ func TestWatcherAfterImportKeepsCommittedVersionAndScannerStatus(t *testing.T) {
 	require.Len(t, imported, 2)
 	require.Equal(t, imported[0].ID, imported[1].ID)
 	require.NotEqual(t, imported[0].CurrentVersionID, imported[1].CurrentVersionID)
+}
+
+func TestWatcherTagsImportedFiles(t *testing.T) {
+	watcher, root, ing, source, _ := watcherFinalPair(t)
+	receipts, err := ing.Store.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	watcher.config.Tags = []string{"receipts"}
+	require.NoError(t, os.WriteFile(filepath.Join(source, "receipt.txt"), []byte("first"), 0o600))
+	require.NoError(t, watcher.scan(t.Context(), root))
+	node, err := ing.Store.NodeByPath(t.Context(), "/archive/receipt.txt")
+	require.NoError(t, err)
+	tags, total, err := ing.Store.NodeTags(t.Context(), node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	assert.Equal(t, "receipts", tags[0].Name)
+	_, err = ing.Store.UnassignTag(t.Context(), receipts.ID, node.ID, node.Revision)
+	require.NoError(t, err)
+	_, err = ing.Store.DeleteTag(t.Context(), receipts.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	// A fresh watcher must recognize existing imports from stored membership.
+	watcher, err = NewWatcher(ing, t.TempDir(), watcher.config, runTestMutation, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	root = openWatcherRoot(t, watcher)
+	pendingContents := []string{"new receipt", "rewritten pending receipt"}
+	for i, content := range []string{"second version", "third distinct version"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte(pendingContents[i]), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(source, "receipt.txt"), []byte(content), 0o600))
+		require.NoError(t, watcher.scan(t.Context(), root))
+		_, versions, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, i+2, versions, "each edit must be recorded while new imports are blocked")
+		_, err = ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
+		require.ErrorIs(t, err, store.ErrNotFound)
+		loose, err := ing.Blobs.ListDetailed()
+		require.NoError(t, err)
+		assert.NotContains(t, loose, fmt.Sprintf("%x", sha256.Sum256([]byte(pendingContents[i]))), "rejected source must not publish a loose blob")
+	}
+	_, err = ing.Store.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	require.NoError(t, watcher.scan(t.Context(), root))
+	imported, err := ing.Store.NodeByPath(t.Context(), "/archive/new.txt")
+	require.NoError(t, err)
+	tags, total, err = ing.Store.NodeTags(t.Context(), imported.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	assert.Equal(t, "receipts", tags[0].Name)
+	_, total, err = ing.Store.NodeTags(t.Context(), node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Zero(t, total)
+}
+
+func TestWatcherMissingTagKeepsTrashedTargetFailure(t *testing.T) {
+	watcher, root, ing, source, _ := watcherFinalPair(t)
+	ctx := t.Context()
+	tag, err := ing.Store.CreateTag(ctx, "receipts")
+	require.NoError(t, err)
+	watcher.config.Tags = []string{"receipts"}
+	require.NoError(t, os.WriteFile(filepath.Join(source, "a.txt"), []byte("first"), 0o600))
+	require.NoError(t, watcher.scan(ctx, root))
+	node, err := ing.Store.NodeByPath(ctx, "/archive/a.txt")
+	require.NoError(t, err)
+	_, _, err = ing.Store.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	_, err = ing.Store.DeleteTag(ctx, tag.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(source, "a.txt"), []byte("second version"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte("new receipt"), 0o600))
+	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	err = watcher.run(runCtx, root, nil)
+	require.ErrorContains(t, err, "maps to trashed node")
 }

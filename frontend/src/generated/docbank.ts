@@ -3707,6 +3707,10 @@ export interface Job {
   processing?: WatchProcessingStatus;
   started_at: string;
   status: JobStatus;
+  /** Why configured watch tags are unavailable. */
+  tag_error?: string;
+  /** Existing tag names applied to files imported by this watch. */
+  tags?: string[];
   total_bytes?: number;
   total_objects?: number;
 }
@@ -8982,6 +8986,10 @@ export interface WatchedInbox {
   scan_interval: string;
   settle_time: string;
   source: string;
+  /** Why configured watch tags are unavailable. */
+  tag_error?: string;
+  /** Existing tag names applied to files imported by this watch. */
+  tags: string[];
 }
 
 export interface WatchedInboxList {

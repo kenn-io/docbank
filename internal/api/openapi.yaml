@@ -8189,6 +8189,14 @@ components:
             - failed
             - cancelled
           type: string
+        tag_error:
+          description: Why configured watch tags are unavailable.
+          type: string
+        tags:
+          description: Existing tag names applied to files imported by this watch.
+          items:
+            type: string
+          type: array
         total_bytes:
           format: int64
           type: integer
@@ -21669,7 +21677,16 @@ components:
           type: string
         source:
           type: string
+        tag_error:
+          description: Why configured watch tags are unavailable.
+          type: string
+        tags:
+          description: Existing tag names applied to files imported by this watch.
+          items:
+            type: string
+          type: array
       required:
+        - tags
         - capture_on_change
         - name
         - source

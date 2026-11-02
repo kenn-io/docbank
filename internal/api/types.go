@@ -1239,6 +1239,8 @@ type VerifyReport struct {
 type Job struct {
 	Processing *WatchProcessingStatus `json:"processing,omitzero"`
 
+	Tags              []string         `json:"tags,omitempty" doc:"Existing tag names applied to files imported by this watch."`
+	TagError          string           `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
 	Busy              bool             `json:"busy" doc:"Whether this job is processing work rather than waiting for an item or its next scheduled run."`
 	Lane              string           `json:"lane"`
 	CheckoutResults   map[string]int64 `json:"checkout_results,omitempty"`
@@ -1306,6 +1308,8 @@ type WatchProcessingStatus struct {
 type WatchedInbox struct {
 	Processing *WatchProcessingStatus `json:"processing,omitzero"`
 
+	Tags            []string `json:"tags" doc:"Existing tag names applied to files imported by this watch."`
+	TagError        string   `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
 	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`
