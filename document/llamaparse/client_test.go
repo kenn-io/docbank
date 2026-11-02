@@ -31,103 +31,106 @@ const testJobID = "123e4567-e89b-12d3-a456-426614174000"
 var _ document.ResumableRenditionProvider = (*Client)(nil)
 
 func TestClientUploadsExactAuthorizedBytesAndMapsNaturalPages(t *testing.T) {
-	source := []byte("%PDF-1.7\nsynthetic exact bytes\n%%EOF\n")
-	fixture := newFixture(t, source)
-	var requests []*http.Request
-	pollCount := 0
-	var transport http.RoundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests = append(requests, request.Clone(request.Context()))
-		assert.Equal(t, "Bearer synthetic-secret", request.Header.Get("Authorization"))
-		switch request.URL.Path {
-		case uploadPath:
-			assert.Equal(t, http.MethodPost, request.Method)
-			mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-			require.NoError(t, err)
-			assert.Equal(t, "multipart/form-data", mediaType)
-			reader := multipart.NewReader(request.Body, parameters["boundary"])
-			fields := map[string]string{}
-			for {
-				part, nextErr := reader.NextPart()
-				if errors.Is(nextErr, io.EOF) {
-					break
+	// The first status poll is pending, so run the poll interval on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		source := []byte("%PDF-1.7\nsynthetic exact bytes\n%%EOF\n")
+		fixture := newFixture(t, source)
+		var requests []*http.Request
+		pollCount := 0
+		var transport http.RoundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests = append(requests, request.Clone(request.Context()))
+			assert.Equal(t, "Bearer synthetic-secret", request.Header.Get("Authorization"))
+			switch request.URL.Path {
+			case uploadPath:
+				assert.Equal(t, http.MethodPost, request.Method)
+				mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+				require.NoError(t, err)
+				assert.Equal(t, "multipart/form-data", mediaType)
+				reader := multipart.NewReader(request.Body, parameters["boundary"])
+				fields := map[string]string{}
+				for {
+					part, nextErr := reader.NextPart()
+					if errors.Is(nextErr, io.EOF) {
+						break
+					}
+					require.NoError(t, nextErr)
+					payload, readErr := io.ReadAll(part)
+					require.NoError(t, readErr)
+					if part.FormName() == "file" {
+						assert.Equal(t, "synthetic.pdf", part.FileName())
+						assert.Equal(t, "application/pdf", part.Header.Get("Content-Type"))
+						assert.Equal(t, source, payload)
+					} else {
+						fields[part.FormName()] = string(payload)
+					}
 				}
-				require.NoError(t, nextErr)
-				payload, readErr := io.ReadAll(part)
-				require.NoError(t, readErr)
-				if part.FormName() == "file" {
-					assert.Equal(t, "synthetic.pdf", part.FileName())
-					assert.Equal(t, "application/pdf", part.Header.Get("Content-Type"))
-					assert.Equal(t, source, payload)
-				} else {
-					fields[part.FormName()] = string(payload)
-				}
-			}
-			assert.Equal(t, "parse-model-v1", fields["model"])
-			assert.Equal(t, "document-v1", fields["preset"])
-			assert.Equal(t, "0", fields["page_error_tolerance"])
-			return response(request, http.StatusOK,
-				`{"id":"`+testJobID+`","status":"PENDING"}`), nil
-		case statusPath(testJobID):
-			pollCount++
-			if pollCount == 1 {
+				assert.Equal(t, "parse-model-v1", fields["model"])
+				assert.Equal(t, "document-v1", fields["preset"])
+				assert.Equal(t, "0", fields["page_error_tolerance"])
 				return response(request, http.StatusOK,
 					`{"id":"`+testJobID+`","status":"PENDING"}`), nil
+			case statusPath(testJobID):
+				pollCount++
+				if pollCount == 1 {
+					return response(request, http.StatusOK,
+						`{"id":"`+testJobID+`","status":"PENDING"}`), nil
+				}
+				return response(request, http.StatusOK,
+					`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
+			case jsonResultPath(testJobID):
+				return response(request, http.StatusOK, `{
+					"pages":[
+						{"page":1,"text":"First page","md":"# First page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false},
+						{"page":2,"text":"Second page","md":"Second page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}
+					],
+					"job_metadata":{"job_pages":2}
+				}`), nil
+			default:
+				t.Fatalf("unexpected route %s", request.URL.String())
+				return nil, errors.New("unexpected route")
 			}
-			return response(request, http.StatusOK,
-				`{"id":"`+testJobID+`","status":"SUCCESS"}`), nil
-		case jsonResultPath(testJobID):
-			return response(request, http.StatusOK, `{
-				"pages":[
-					{"page":1,"text":"First page","md":"# First page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false},
-					{"page":2,"text":"Second page","md":"Second page","images":[],"charts":[],"tables":[],"layout":[],"items":[],"links":[],"parsingMode":"parse_page","noStructuredContent":true,"noTextContent":false,"triggeredAutoMode":false}
-				],
-				"job_metadata":{"job_pages":2}
-			}`), nil
-		default:
-			t.Fatalf("unexpected route %s", request.URL.String())
-			return nil, errors.New("unexpected route")
-		}
-	})
-	client := fixture.client(t, transport)
-	var checkpoint document.RenditionResumeHandle
-	result, err := document.RenderRenditionWithResume(
-		t.Context(), client, fixture.upload(), fixture.authorization, nil,
-		func(handle document.RenditionResumeHandle) error {
-			checkpoint = handle
-			return nil
-		},
-	)
-	require.NoError(t, err)
+		})
+		client := fixture.client(t, transport)
+		var checkpoint document.RenditionResumeHandle
+		result, err := document.RenderRenditionWithResume(
+			t.Context(), client, fixture.upload(), fixture.authorization, nil,
+			func(handle document.RenditionResumeHandle) error {
+				checkpoint = handle
+				return nil
+			},
+		)
+		require.NoError(t, err)
 
-	assert.True(t, strings.HasPrefix(checkpoint.Value, "lp2."+testJobID+"."))
-	handleParts := strings.Split(checkpoint.Value, ".")
-	require.Len(t, handleParts, 5)
-	authorizationFingerprint, err := fixture.authorization.Fingerprint()
-	require.NoError(t, err)
-	assert.Equal(t, authorizationFingerprint, handleParts[2])
-	checkpointNanos, err := strconv.ParseInt(handleParts[4], 10, 64)
-	require.NoError(t, err)
-	completedAt, err := time.Parse(timeForm, result.Receipt.CompletedAt)
-	require.NoError(t, err)
-	assert.True(t, completedAt.After(time.Unix(0, checkpointNanos)),
-		"fresh completion must follow the durable checkpoint")
-	assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
-	assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
-	require.Len(t, result.Evidence.Units, 2)
-	assert.Equal(t, document.EvidenceIndexOriginOne, result.Evidence.Units[0].Locator.IndexOrigin)
-	assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
-	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
-	assert.Equal(t, "# First page", result.Evidence.Units[0].Text)
-	assert.Equal(t, "# First page\n\n---\n\nSecond page", string(result.ProviderMarkdown))
-	assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
-	assert.Equal(t, testJobID[:8], result.Receipt.OperationID[len("llamaparse-"):])
-	require.Len(t, requests, 4)
-	for _, request := range requests {
-		assert.Equal(t, "https", request.URL.Scheme)
-		assert.Equal(t, apiHost, request.URL.Host)
-		assert.Empty(t, request.URL.RawQuery)
-	}
-	assert.Equal(t, 4, fixture.secrets.calls())
+		assert.True(t, strings.HasPrefix(checkpoint.Value, "lp2."+testJobID+"."))
+		handleParts := strings.Split(checkpoint.Value, ".")
+		require.Len(t, handleParts, 5)
+		authorizationFingerprint, err := fixture.authorization.Fingerprint()
+		require.NoError(t, err)
+		assert.Equal(t, authorizationFingerprint, handleParts[2])
+		checkpointNanos, err := strconv.ParseInt(handleParts[4], 10, 64)
+		require.NoError(t, err)
+		completedAt, err := time.Parse(timeForm, result.Receipt.CompletedAt)
+		require.NoError(t, err)
+		assert.True(t, completedAt.After(time.Unix(0, checkpointNanos)),
+			"fresh completion must follow the durable checkpoint")
+		assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
+		assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
+		require.Len(t, result.Evidence.Units, 2)
+		assert.Equal(t, document.EvidenceIndexOriginOne, result.Evidence.Units[0].Locator.IndexOrigin)
+		assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
+		assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
+		assert.Equal(t, "# First page", result.Evidence.Units[0].Text)
+		assert.Equal(t, "# First page\n\n---\n\nSecond page", string(result.ProviderMarkdown))
+		assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
+		assert.Equal(t, testJobID[:8], result.Receipt.OperationID[len("llamaparse-"):])
+		require.Len(t, requests, 4)
+		for _, request := range requests {
+			assert.Equal(t, "https", request.URL.Scheme)
+			assert.Equal(t, apiHost, request.URL.Host)
+			assert.Empty(t, request.URL.RawQuery)
+		}
+		assert.Equal(t, 4, fixture.secrets.calls())
+	})
 }
 
 func TestClientDoesNotRequestOrRetainUnauthorizedImages(t *testing.T) {
@@ -935,16 +938,19 @@ func TestClientEnforcesUploadPollResultAndArtifactBounds(t *testing.T) {
 	})
 
 	t.Run("poll limit", func(t *testing.T) {
-		fixture := newFixture(t, []byte("%PDF-1.7\npoll\n%%EOF\n"))
-		fixture.profile.MaxPolls = 2
-		transport := routeTransport(t, map[string]routeResponse{
-			uploadPath:            {body: `{"id":"` + testJobID + `","status":"PENDING"}`},
-			statusPath(testJobID): {body: `{"id":"` + testJobID + `","status":"PENDING"}`},
+		// The pending job waits one poll interval, which runs on fake time.
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\npoll\n%%EOF\n"))
+			fixture.profile.MaxPolls = 2
+			transport := routeTransport(t, map[string]routeResponse{
+				uploadPath:            {body: `{"id":"` + testJobID + `","status":"PENDING"}`},
+				statusPath(testJobID): {body: `{"id":"` + testJobID + `","status":"PENDING"}`},
+			})
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil,
+				func(document.RenditionResumeHandle) error { return nil })
+			assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 		})
-		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-			fixture.upload(), fixture.authorization, nil,
-			func(document.RenditionResumeHandle) error { return nil })
-		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 	})
 
 	t.Run("result bytes", func(t *testing.T) {
@@ -1274,32 +1280,36 @@ func TestClientRechecksLifecycleAfterResponseBodiesAndBeforeReturn(t *testing.T)
 	})
 
 	t.Run("accepted job is checkpointed before wall timeout", func(t *testing.T) {
-		fixture := newFixture(t, []byte("%PDF-1.7\ncheckpoint before timeout\n%%EOF\n"))
-		fixture.profile.MaxWallTime = 20 * time.Millisecond
-		checkpointed := false
-		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			if request.URL.Path != uploadPath {
-				t.Fatalf("timed-out accepted job reached %s", request.URL.Path)
-			}
-			result := response(request, http.StatusOK,
-				`{"id":"`+testJobID+`","status":"PENDING"}`)
-			result.Body = &callbackReadCloser{
-				reader: result.Body,
-				afterClose: func() {
-					<-request.Context().Done()
-				},
-			}
-			return result, nil
-		})
-
-		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error {
-				checkpointed = true
-				return nil
+		// The wall timeout expires on fake time while the accepted response body
+		// waits for the request to end.
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, []byte("%PDF-1.7\ncheckpoint before timeout\n%%EOF\n"))
+			fixture.profile.MaxWallTime = 20 * time.Millisecond
+			checkpointed := false
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != uploadPath {
+					t.Fatalf("timed-out accepted job reached %s", request.URL.Path)
+				}
+				result := response(request, http.StatusOK,
+					`{"id":"`+testJobID+`","status":"PENDING"}`)
+				result.Body = &callbackReadCloser{
+					reader: result.Body,
+					afterClose: func() {
+						<-request.Context().Done()
+					},
+				}
+				return result, nil
 			})
 
-		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
-		assert.True(t, checkpointed)
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error {
+					checkpointed = true
+					return nil
+				})
+
+			assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
+			assert.True(t, checkpointed)
+		})
 	})
 }
 
