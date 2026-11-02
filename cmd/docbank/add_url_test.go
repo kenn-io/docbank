@@ -25,15 +25,14 @@ import (
 func TestAddURLImportsEvidence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DOCBANK_HOME", home)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\nidle_timeout = \"150ms\"\n"), 0o600))
 	binary := buildDocbank(t)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), home) })
 	content := "synthetic filing\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Eventually(t, func() bool {
-			records, err := daemonconn.RuntimeStore(home).List()
-			return err == nil && len(records) == 0
-		}, 5*time.Second, 10*time.Millisecond, "daemon should idle out during the download")
+		// Stop the daemon the CLI started before downloading, so the upload must start a new one.
+		stopped, err := daemonconn.Stop(r.Context(), home)
+		assert.NoError(t, err)
+		assert.True(t, stopped, "the daemon should be running when the download starts")
 		_, _ = io.WriteString(w, content)
 	}))
 	defer server.Close()
