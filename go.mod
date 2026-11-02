@@ -37,8 +37,8 @@ require (
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kata v0.19.0
-	go.kenn.io/kit v0.47.4
+	go.kenn.io/kata v0.20.0
+	go.kenn.io/kit v0.47.5
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.62.0
@@ -110,6 +110,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
+	github.com/netresearch/go-cron v0.16.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/posthog/posthog-go v1.39.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect

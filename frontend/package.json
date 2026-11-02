@@ -21,7 +21,7 @@
   "dependencies": {
     "@embedpdf/pdfium": "2.15.1",
     "@embedpdf/svelte-pdf-viewer": "2.15.1",
-    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#a6bfaffcfb05da95b90600c95daf7272cfaf0196",
+    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#08023f691e50bb667ea68f32477252044a6828f8",
     "@lucide/svelte": "1.24.0",
     "@noble/hashes": "^2.2.0",
     "leaflet": "1.9.4",
