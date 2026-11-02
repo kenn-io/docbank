@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 
@@ -89,37 +89,35 @@ func TestVaultEnsureEmailMetadataPreservesUndeclaredSource(t *testing.T) {
 
 func TestVaultOpenEmailPartHoldsLifecycleLease(t *testing.T) {
 	t.Parallel()
-	v, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	raw := []byte("Content-Type: text/plain\r\n\r\nlease-body")
-	created, err := v.Create(t.Context(), "/mail.eml", bytes.NewReader(raw), CreateOptions{
-		MediaType: "message/rfc822", Expected: contentIdentity(raw),
-	})
-	require.NoError(t, err)
-	view, err := v.EnsureEmailMetadata(t.Context(), created.Version.ID)
-	require.NoError(t, err)
-	stream, _, err := v.OpenEmailPart(t.Context(), created.Version.ID, view.GenerationID, "1", "decoded_payload")
-	require.NoError(t, err)
-	_, err = io.Copy(io.Discard, stream)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		v, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		raw := []byte("Content-Type: text/plain\r\n\r\nlease-body")
+		created, err := v.Create(t.Context(), "/mail.eml", bytes.NewReader(raw), CreateOptions{
+			MediaType: "message/rfc822", Expected: contentIdentity(raw),
+		})
+		require.NoError(t, err)
+		view, err := v.EnsureEmailMetadata(t.Context(), created.Version.ID)
+		require.NoError(t, err)
+		stream, _, err := v.OpenEmailPart(t.Context(), created.Version.ID, view.GenerationID, "1", "decoded_payload")
+		require.NoError(t, err)
+		_, err = io.Copy(io.Discard, stream)
+		require.NoError(t, err)
 
-	closeStarted := make(chan struct{})
-	closeDone := make(chan error, 1)
-	go func() {
-		close(closeStarted)
-		closeDone <- v.Close()
-	}()
-	<-closeStarted
-	select {
-	case err := <-closeDone:
-		require.FailNow(t, "vault closed while an email part held its lifecycle lease", "error: %v", err)
-	case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open email part's lease keeps Close blocked
-	}
-	require.NoError(t, stream.Close())
-	// Closing also drains workers and storage. The suite timeout bounds this wait.
-	require.NoError(t, <-closeDone)
-	_, _, err = v.OpenEmailPart(t.Context(), created.Version.ID, view.GenerationID, "1", "decoded_payload")
-	require.ErrorIs(t, err, ErrClosed)
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- v.Close() }()
+		// Wait until Close is blocked; the open email part's lease keeps it queued.
+		synctest.Wait()
+		select {
+		case err := <-closeDone:
+			require.FailNow(t, "vault closed while an email part held its lifecycle lease", "error: %v", err)
+		default:
+		}
+		require.NoError(t, stream.Close())
+		require.NoError(t, <-closeDone)
+		_, _, err = v.OpenEmailPart(t.Context(), created.Version.ID, view.GenerationID, "1", "decoded_payload")
+		require.ErrorIs(t, err, ErrClosed)
+	})
 }
 
 func TestVaultOpenEmailPartPhysicalFailureReleasesLifecycleLease(t *testing.T) {

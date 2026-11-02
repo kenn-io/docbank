@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,8 +190,8 @@ func TestBackupReaderBackupContention(t *testing.T) {
 	})
 	select {
 	case <-paused:
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "backup did not reach host preparation")
+	case createErr := <-done:
+		require.FailNow(t, "backup returned before host preparation", "error: %v", createErr)
 	}
 	_, err = repository.OpenSnapshot(t.Context(), snapshot.ID)
 	require.ErrorIs(t, err, docbank.ErrBackupRepositoryLocked)

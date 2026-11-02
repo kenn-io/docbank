@@ -342,55 +342,57 @@ func TestEmbeddedProcessingRejectsForeignFenceAndClosedVault(t *testing.T) {
 
 func TestEmbeddedProcessingWaitsForSharedRenditionAndHonorsCancellation(t *testing.T) {
 	t.Parallel()
-	plaintextProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-	require.NoError(t, err)
-	provider := &waitingRenditionProvider{RenditionProvider: plaintextProvider,
-		started: make(chan struct{}), release: make(chan struct{})}
-	release := sync.OnceFunc(func() { close(provider.release) })
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
-		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
-			"shared": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider},
-		}}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	requests := make([]docbank.StartProcessingRequest, 2)
-	for index := range requests {
-		receipt, err := vault.Put(t.Context(), fmt.Sprintf("/shared-%d.txt", index),
-			strings.NewReader("shared rendition source"), docbank.PutOptions{MediaType: "text/plain"})
+	synctest.Test(t, func(t *testing.T) {
+		plaintextProvider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 		require.NoError(t, err)
-		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
-			NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "shared"}}
-		plan, err := vault.PlanProcessing(t.Context(), request)
+		provider := &waitingRenditionProvider{RenditionProvider: plaintextProvider,
+			started: make(chan struct{}), release: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(provider.release) })
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+			Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+				"shared": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider},
+			}}})
 		require.NoError(t, err)
-		requests[index] = docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
-	}
-	var first docbank.ProcessingJob
-	var firstErr error
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		first, firstErr = vault.StartProcessing(t.Context(), requests[0])
-	}()
-	t.Cleanup(func() { release(); <-done })
-	select {
-	case <-provider.started:
-	case <-done:
-		t.Fatalf("first processing request returned before rendering: %v", firstErr)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the blocked provider keeps the joined rendition running
-	defer cancel()
-	_, err = vault.StartProcessing(ctx, requests[1])
-	require.ErrorIs(t, err, context.DeadlineExceeded, "joining a live rendition must wait without failing its lease")
-	release()
-	<-done
-	require.NoError(t, firstErr)
-	joined, err := vault.StartProcessing(t.Context(), requests[1])
-	require.NoError(t, err)
-	require.Equal(t, first.RenditionJobID, joined.RenditionJobID)
-	require.Equal(t, int32(1), provider.calls.Load(), "both versions must share one provider execution")
-	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: joined.ID})
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.State)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		requests := make([]docbank.StartProcessingRequest, 2)
+		for index := range requests {
+			receipt, err := vault.Put(t.Context(), fmt.Sprintf("/shared-%d.txt", index),
+				strings.NewReader("shared rendition source"), docbank.PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
+				NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "shared"}}
+			plan, err := vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			requests[index] = docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
+		}
+		var first docbank.ProcessingJob
+		var firstErr error
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			first, firstErr = vault.StartProcessing(t.Context(), requests[0])
+		}()
+		t.Cleanup(func() { release(); <-done })
+		select {
+		case <-provider.started:
+		case <-done:
+			t.Fatalf("first processing request returned before rendering: %v", firstErr)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		_, err = vault.StartProcessing(ctx, requests[1])
+		require.ErrorIs(t, err, context.DeadlineExceeded, "joining a live rendition must wait without failing its lease")
+		release()
+		<-done
+		require.NoError(t, firstErr)
+		joined, err := vault.StartProcessing(t.Context(), requests[1])
+		require.NoError(t, err)
+		require.Equal(t, first.RenditionJobID, joined.RenditionJobID)
+		require.Equal(t, int32(1), provider.calls.Load(), "both versions must share one provider execution")
+		status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: joined.ID})
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
+	})
 }
 
 func TestEmbeddedProcessingRenewalDuringRenditionKeepsEmbeddingStatus(t *testing.T) {
@@ -461,104 +463,106 @@ func TestEmbeddedProcessingRequiresOwnRenditionPublication(t *testing.T) {
 	for _, chunks := range []bool{false, true} {
 		for _, trash := range []bool{false, true} {
 			t.Run(fmt.Sprintf("chunks=%t/trash=%t", chunks, trash), func(t *testing.T) {
-				base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-				require.NoError(t, err)
-				provider := &waitingRenditionProvider{RenditionProvider: base, started: make(chan struct{}), release: make(chan struct{})}
-				release := sync.OnceFunc(func() { close(provider.release) })
-				embedding := newSyntheticEmbeddingProvider(t)
-				config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}
-				if chunks {
-					config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
-					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"chunks": embedding}
-					config.Tokenizers = map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}
-				}
-				root := t.TempDir()
-				vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, vault.Close()) })
-				requests := make([]docbank.StartProcessingRequest, 2)
-				for i := range requests {
-					receipt, err := vault.Put(t.Context(), fmt.Sprintf("/source-%d.txt", i), strings.NewReader("synthetic shared source"), docbank.PutOptions{MediaType: "text/plain"})
+				synctest.Test(t, func(t *testing.T) {
+					base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 					require.NoError(t, err)
-					request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
-					plan, err := vault.PlanProcessing(t.Context(), request)
-					require.NoError(t, err)
-					requests[i] = docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
-				}
-				db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, db.Close()) })
-				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-				jobs := make([]docbank.ProcessingJob, 2)
-				errs := make([]error, 2)
-				dones := []chan struct{}{make(chan struct{}), make(chan struct{})}
-				go func() {
-					defer close(dones[0])
-					jobs[0], errs[0] = vault.StartProcessing(ctx, requests[0])
-				}()
-				t.Cleanup(func() { release(); cancel(); <-dones[0] })
-				select {
-				case <-provider.started:
-				case <-dones[0]:
-					t.Fatalf("first returned: %v", errs[0])
-				}
-				go func() {
-					defer close(dones[1])
-					jobs[1], errs[1] = vault.StartProcessing(ctx, requests[1])
-				}()
-				t.Cleanup(func() { release(); cancel(); <-dones[1] })
-				require.Eventually(t, func() bool {
-					var n int
-					return db.QueryRowContext(ctx, "SELECT COUNT(*) FROM rendition_job_waiters WHERE state='waiting'").Scan(&n) == nil && n == 2
-				}, 10*time.Second, 10*time.Millisecond)
-				if trash {
-					_, err = vault.TrashPath(ctx, "/source-1.txt", docbank.RevisionOptions{})
-					require.NoError(t, err)
-				}
-				release()
-				<-dones[0]
-				<-dones[1]
-				require.NoError(t, errs[0])
-				var shared, waiterID, waiterState, code string
-				require.NoError(t, db.QueryRowContext(ctx, "SELECT j.state,w.waiter_id,w.state,COALESCE(w.failure_code,'') FROM rendition_job_waiters w JOIN rendition_jobs j ON w.job_id=j.job_id WHERE w.content_version_id=?", requests[1].PlanRequest.Selector.ContentVersionID).Scan(&shared, &waiterID, &waiterState, &code))
-				status, err := vault.ProcessingStatus(ctx, docbank.ProcessingStatusRequest{JobID: waiterID})
-				require.NoError(t, err)
-				var embeddingJobs int
-				require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=?", requests[1].PlanRequest.Selector.ContentVersionID).Scan(&embeddingJobs))
-				require.Equal(t, "completed", shared)
-				require.Equal(t, int32(1), provider.calls.Load(), "both requests share one provider execution")
-				if trash {
-					require.Equal(t, "rejected", waiterState)
-					require.Equal(t, "stale_authority", code)
-					require.ErrorIs(t, errs[1], docbank.ErrProcessingPlanChanged)
-					require.Empty(t, jobs[1].ID)
-					require.Zero(t, embeddingJobs, "rejected requests must not enqueue embeddings")
-				} else {
-					require.NoError(t, errs[1])
-					require.Equal(t, "published", waiterState)
-					require.Equal(t, "completed", status.State)
-					// Repeated starts also exercise the already-completed path.
-					repeated, err := vault.StartProcessing(ctx, requests[1])
-					require.NoError(t, err)
-					require.NotEqual(t, jobs[1].ID, repeated.ID, "fresh consent has its own waiter")
-					require.Equal(t, jobs[1].RenditionJobID, repeated.RenditionJobID)
-					require.Equal(t, jobs[1].AttachmentID, repeated.AttachmentID)
-					require.NotEmpty(t, repeated.AttachmentID)
-					require.Equal(t, jobs[1].ProfileFingerprint, repeated.ProfileFingerprint)
-					require.Equal(t, jobs[1].ContentVersionID, repeated.ContentVersionID)
+					provider := &waitingRenditionProvider{RenditionProvider: base, started: make(chan struct{}), release: make(chan struct{})}
+					release := sync.OnceFunc(func() { close(provider.release) })
+					embedding := newSyntheticEmbeddingProvider(t)
+					config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}
 					if chunks {
-						require.Len(t, repeated.EmbeddingJobIDs, 1)
-						require.NotEqual(t, jobs[1].EmbeddingJobIDs, repeated.EmbeddingJobIDs,
-							"fresh consent has its own embedding authority")
-					} else {
-						require.Empty(t, repeated.EmbeddingJobIDs)
+						config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+						config.EmbeddingProviders = map[string]document.EmbeddingProvider{"chunks": embedding}
+						config.Tokenizers = map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}
 					}
-					repeatedStatus, err := vault.ProcessingStatus(ctx,
-						docbank.ProcessingStatusRequest{JobID: repeated.ID})
+					root := t.TempDir()
+					vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
 					require.NoError(t, err)
-					require.Equal(t, "completed", repeatedStatus.State)
-					require.Equal(t, int32(1), provider.calls.Load())
-				}
+					t.Cleanup(func() { require.NoError(t, vault.Close()) })
+					requests := make([]docbank.StartProcessingRequest, 2)
+					for i := range requests {
+						receipt, err := vault.Put(t.Context(), fmt.Sprintf("/source-%d.txt", i), strings.NewReader("synthetic shared source"), docbank.PutOptions{MediaType: "text/plain"})
+						require.NoError(t, err)
+						request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+						plan, err := vault.PlanProcessing(t.Context(), request)
+						require.NoError(t, err)
+						requests[i] = docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
+					}
+					db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, db.Close()) })
+					ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+					jobs := make([]docbank.ProcessingJob, 2)
+					errs := make([]error, 2)
+					dones := []chan struct{}{make(chan struct{}), make(chan struct{})}
+					go func() {
+						defer close(dones[0])
+						jobs[0], errs[0] = vault.StartProcessing(ctx, requests[0])
+					}()
+					t.Cleanup(func() { release(); cancel(); <-dones[0] })
+					select {
+					case <-provider.started:
+					case <-dones[0]:
+						t.Fatalf("first returned: %v", errs[0])
+					}
+					go func() {
+						defer close(dones[1])
+						jobs[1], errs[1] = vault.StartProcessing(ctx, requests[1])
+					}()
+					t.Cleanup(func() { release(); cancel(); <-dones[1] })
+					require.Eventually(t, func() bool {
+						var n int
+						return db.QueryRowContext(ctx, "SELECT COUNT(*) FROM rendition_job_waiters WHERE state='waiting'").Scan(&n) == nil && n == 2
+					}, 10*time.Second, 10*time.Millisecond)
+					if trash {
+						_, err = vault.TrashPath(ctx, "/source-1.txt", docbank.RevisionOptions{})
+						require.NoError(t, err)
+					}
+					release()
+					<-dones[0]
+					<-dones[1]
+					require.NoError(t, errs[0])
+					var shared, waiterID, waiterState, code string
+					require.NoError(t, db.QueryRowContext(ctx, "SELECT j.state,w.waiter_id,w.state,COALESCE(w.failure_code,'') FROM rendition_job_waiters w JOIN rendition_jobs j ON w.job_id=j.job_id WHERE w.content_version_id=?", requests[1].PlanRequest.Selector.ContentVersionID).Scan(&shared, &waiterID, &waiterState, &code))
+					status, err := vault.ProcessingStatus(ctx, docbank.ProcessingStatusRequest{JobID: waiterID})
+					require.NoError(t, err)
+					var embeddingJobs int
+					require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=?", requests[1].PlanRequest.Selector.ContentVersionID).Scan(&embeddingJobs))
+					require.Equal(t, "completed", shared)
+					require.Equal(t, int32(1), provider.calls.Load(), "both requests share one provider execution")
+					if trash {
+						require.Equal(t, "rejected", waiterState)
+						require.Equal(t, "stale_authority", code)
+						require.ErrorIs(t, errs[1], docbank.ErrProcessingPlanChanged)
+						require.Empty(t, jobs[1].ID)
+						require.Zero(t, embeddingJobs, "rejected requests must not enqueue embeddings")
+					} else {
+						require.NoError(t, errs[1])
+						require.Equal(t, "published", waiterState)
+						require.Equal(t, "completed", status.State)
+						// Repeated starts also exercise the already-completed path.
+						repeated, err := vault.StartProcessing(ctx, requests[1])
+						require.NoError(t, err)
+						require.NotEqual(t, jobs[1].ID, repeated.ID, "fresh consent has its own waiter")
+						require.Equal(t, jobs[1].RenditionJobID, repeated.RenditionJobID)
+						require.Equal(t, jobs[1].AttachmentID, repeated.AttachmentID)
+						require.NotEmpty(t, repeated.AttachmentID)
+						require.Equal(t, jobs[1].ProfileFingerprint, repeated.ProfileFingerprint)
+						require.Equal(t, jobs[1].ContentVersionID, repeated.ContentVersionID)
+						if chunks {
+							require.Len(t, repeated.EmbeddingJobIDs, 1)
+							require.NotEqual(t, jobs[1].EmbeddingJobIDs, repeated.EmbeddingJobIDs,
+								"fresh consent has its own embedding authority")
+						} else {
+							require.Empty(t, repeated.EmbeddingJobIDs)
+						}
+						repeatedStatus, err := vault.ProcessingStatus(ctx,
+							docbank.ProcessingStatusRequest{JobID: repeated.ID})
+						require.NoError(t, err)
+						require.Equal(t, "completed", repeatedStatus.State)
+						require.Equal(t, int32(1), provider.calls.Load())
+					}
+				})
 			})
 		}
 	}
@@ -585,51 +589,53 @@ func TestEmbeddedProcessingWaitsForRenditionOutcome(t *testing.T) {
 			{"operator required", document.RenditionErrorAmbiguousSubmission, docbank.ErrRenditionOperatorRequired},
 		} {
 			t.Run(fmt.Sprintf("%s/chunks=%t", test.name, chunks), func(t *testing.T) {
-				plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-				require.NoError(t, err)
-				delay := time.Duration(0)
-				if test.want == nil {
-					delay = 20 * time.Millisecond
-				}
-				failure, err := document.NewRenditionProviderError(test.code, delay, nil)
-				require.NoError(t, err)
-				provider := &outcomeRenditionProvider{RenditionProvider: plain, failure: failure}
-				embedding := newSyntheticEmbeddingProvider(t)
-				config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}
-				if chunks {
-					config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
-					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"chunks": embedding}
-					config.Tokenizers = map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}
-				}
-				vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
-					Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, vault.Close()) })
-				receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
-				require.NoError(t, err)
-				request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
-				plan, err := vault.PlanProcessing(t.Context(), request)
-				require.NoError(t, err)
-				start := docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
-				job, err := vault.StartProcessing(t.Context(), start)
-				if test.want != nil {
-					require.ErrorIs(t, err, test.want)
-					require.Zero(t, embedding.calls.Load())
-					_, err = vault.StartProcessing(t.Context(), start)
-					require.ErrorIs(t, err, test.want)
-					require.Equal(t, int32(1), provider.calls.Load(), "terminal work must not be retried")
-					return
-				}
-				require.NoError(t, err)
-				status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
-				require.NoError(t, err)
-				require.Equal(t, "completed", status.State)
-				require.Equal(t, int32(2), provider.calls.Load())
-				if chunks {
-					require.Len(t, job.EmbeddingJobIDs, 1)
-					require.Equal(t, 1, status.CompletedBindings)
-					require.Equal(t, int32(1), embedding.calls.Load())
-				}
+				synctest.Test(t, func(t *testing.T) {
+					plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+					require.NoError(t, err)
+					delay := time.Duration(0)
+					if test.want == nil {
+						delay = 20 * time.Millisecond
+					}
+					failure, err := document.NewRenditionProviderError(test.code, delay, nil)
+					require.NoError(t, err)
+					provider := &outcomeRenditionProvider{RenditionProvider: plain, failure: failure}
+					embedding := newSyntheticEmbeddingProvider(t)
+					config := docbank.ProcessingProfileConfig{Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider}
+					if chunks {
+						config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+						config.EmbeddingProviders = map[string]document.EmbeddingProvider{"chunks": embedding}
+						config.Tokenizers = map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}
+					}
+					vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+						Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, vault.Close()) })
+					receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
+					require.NoError(t, err)
+					request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+					plan, err := vault.PlanProcessing(t.Context(), request)
+					require.NoError(t, err)
+					start := docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true}
+					job, err := vault.StartProcessing(t.Context(), start)
+					if test.want != nil {
+						require.ErrorIs(t, err, test.want)
+						require.Zero(t, embedding.calls.Load())
+						_, err = vault.StartProcessing(t.Context(), start)
+						require.ErrorIs(t, err, test.want)
+						require.Equal(t, int32(1), provider.calls.Load(), "terminal work must not be retried")
+						return
+					}
+					require.NoError(t, err)
+					status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+					require.NoError(t, err)
+					require.Equal(t, "completed", status.State)
+					require.Equal(t, int32(2), provider.calls.Load())
+					if chunks {
+						require.Len(t, job.EmbeddingJobIDs, 1)
+						require.Equal(t, 1, status.CompletedBindings)
+						require.Equal(t, int32(1), embedding.calls.Load())
+					}
+				})
 			})
 		}
 	}
@@ -637,48 +643,50 @@ func TestEmbeddedProcessingWaitsForRenditionOutcome(t *testing.T) {
 
 func TestEmbeddedProcessingCancelsRenditionBackoff(t *testing.T) {
 	t.Parallel()
-	plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-	require.NoError(t, err)
-	failure, err := document.NewRenditionProviderError(document.RenditionErrorRateLimited, 10*time.Minute, nil)
-	require.NoError(t, err)
-	provider := &outcomeRenditionProvider{RenditionProvider: plain, failure: failure}
-	embedding := newSyntheticEmbeddingProvider(t)
-	profile := embeddedProcessingProfile(t, provider.Descriptor())
-	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
-	root := t.TempDir()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{
-		Profiles: map[string]docbank.ProcessingProfileConfig{"test": {Profile: profile, RenditionProvider: provider,
-			EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedding},
-			Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}}}}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
-	require.NoError(t, err)
-	request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
-	plan, err := vault.PlanProcessing(t.Context(), request)
-	require.NoError(t, err)
-	// Observe the committed retry state before canceling, without timing the provider.
-	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	var runErr error
-	go func() {
-		defer close(done)
-		_, runErr = vault.StartProcessing(ctx, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
-	}()
-	t.Cleanup(func() { cancel(); <-done })
-	require.Eventually(t, func() bool {
-		var state string
-		return db.QueryRowContext(t.Context(), "SELECT state FROM rendition_jobs").Scan(&state) == nil && state == "retry_wait"
-	}, 10*time.Second, 10*time.Millisecond)
-	cancel()
-	<-done
-	require.ErrorIs(t, runErr, context.Canceled)
-	require.Equal(t, int32(1), provider.calls.Load(), "cancellation must not bypass the retry delay")
-	require.Zero(t, embedding.calls.Load())
+	synctest.Test(t, func(t *testing.T) {
+		plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+		require.NoError(t, err)
+		failure, err := document.NewRenditionProviderError(document.RenditionErrorRateLimited, 10*time.Minute, nil)
+		require.NoError(t, err)
+		provider := &outcomeRenditionProvider{RenditionProvider: plain, failure: failure}
+		embedding := newSyntheticEmbeddingProvider(t)
+		profile := embeddedProcessingProfile(t, provider.Descriptor())
+		profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedding.descriptor)}
+		root := t.TempDir()
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{
+			Profiles: map[string]docbank.ProcessingProfileConfig{"test": {Profile: profile, RenditionProvider: provider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedding},
+				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}}}}}})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic chunk semantic needle"), docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		// Observe the committed retry state before canceling, without timing the provider.
+		db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{
+			Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, db.Close()) })
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan struct{})
+		var runErr error
+		go func() {
+			defer close(done)
+			_, runErr = vault.StartProcessing(ctx, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		}()
+		t.Cleanup(func() { cancel(); <-done })
+		require.Eventually(t, func() bool {
+			var state string
+			return db.QueryRowContext(t.Context(), "SELECT state FROM rendition_jobs").Scan(&state) == nil && state == "retry_wait"
+		}, 10*time.Second, 10*time.Millisecond)
+		cancel()
+		<-done
+		require.ErrorIs(t, runErr, context.Canceled)
+		require.Equal(t, int32(1), provider.calls.Load(), "cancellation must not bypass the retry delay")
+		require.Zero(t, embedding.calls.Load())
+	})
 }
 
 type outcomeRenditionProvider struct {
@@ -809,63 +817,68 @@ func TestEmbeddedProcessingReturnsStatusWhenOptionalEmbeddingFails(t *testing.T)
 
 func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
 	t.Parallel()
-	provider := newSyntheticEmbeddingProvider(t)
-	provider.started, provider.release = make(chan struct{}), make(chan struct{})
-	release := sync.OnceFunc(func() { close(provider.release) })
-	profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
-	profile.Rendition = nil
-	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-	profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
-		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
-			"shared": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider}},
-		}}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	receipt, err := vault.Put(t.Context(), "/shared.txt", strings.NewReader("shared embedding needle"),
-		docbank.PutOptions{MediaType: "text/plain"})
-	require.NoError(t, err)
-	planRequest := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
-		NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "shared"}}
-	plan, err := vault.PlanProcessing(t.Context(), planRequest)
-	require.NoError(t, err)
-	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
-		PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+	synctest.Test(t, func(t *testing.T) {
+		provider := newSyntheticEmbeddingProvider(t)
+		provider.started, provider.release = make(chan struct{}), make(chan struct{})
+		release := sync.OnceFunc(func() { close(provider.release) })
+		profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+		profile.Rendition = nil
+		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+		profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+			Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+				"shared": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider}},
+			}}})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		receipt, err := vault.Put(t.Context(), "/shared.txt", strings.NewReader("shared embedding needle"),
+			docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		planRequest := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{
+			NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "shared"}}
+		plan, err := vault.PlanProcessing(t.Context(), planRequest)
+		require.NoError(t, err)
+		_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
+			PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		request := docbank.StartProcessingRequest{PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint}
+		type result struct {
+			job docbank.ProcessingJob
+			err error
+		}
+		first, joined := make(chan result, 1), make(chan result, 1)
+		var callers sync.WaitGroup
+		callers.Go(func() { job, err := vault.StartProcessing(t.Context(), request); first <- result{job, err} })
+		t.Cleanup(func() { release(); callers.Wait() })
+		select {
+		case <-provider.started:
+		case result := <-first:
+			t.Fatalf("processing returned before embedding: %v", result.err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		_, err = vault.StartProcessing(ctx, request)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		callers.Go(func() { job, err := vault.StartProcessing(t.Context(), request); joined <- result{job, err} })
+		// Let the joining caller poll on fake time, then check it is still waiting.
+		time.Sleep(time.Second)
+		synctest.Wait()
+		select {
+		case result := <-joined:
+			t.Fatalf("joining caller returned before shared embedding finished: %v", result.err)
+		default:
+		}
+		release()
+		owner, waiter := <-first, <-joined
+		require.NoError(t, owner.err)
+		require.NoError(t, waiter.err)
+		require.Equal(t, owner.job.ID, waiter.job.ID)
+		require.Equal(t, int32(1), provider.calls.Load())
+		status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: waiter.job.ID})
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
 	})
-	require.NoError(t, err)
-	request := docbank.StartProcessingRequest{PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint}
-	type result struct {
-		job docbank.ProcessingJob
-		err error
-	}
-	first, joined := make(chan result, 1), make(chan result, 1)
-	var callers sync.WaitGroup
-	callers.Go(func() { job, err := vault.StartProcessing(t.Context(), request); first <- result{job, err} })
-	t.Cleanup(func() { release(); callers.Wait() })
-	select {
-	case <-provider.started:
-	case result := <-first:
-		t.Fatalf("processing returned before embedding: %v", result.err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the blocked provider keeps the shared embedding running
-	defer cancel()
-	_, err = vault.StartProcessing(ctx, request)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	callers.Go(func() { job, err := vault.StartProcessing(t.Context(), request); joined <- result{job, err} })
-	select {
-	case result := <-joined:
-		t.Fatalf("joining caller returned before shared embedding finished: %v", result.err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the blocked provider keeps the joining caller waiting
-	}
-	release()
-	owner, waiter := <-first, <-joined
-	require.NoError(t, owner.err)
-	require.NoError(t, waiter.err)
-	require.Equal(t, owner.job.ID, waiter.job.ID)
-	require.Equal(t, int32(1), provider.calls.Load())
-	status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: waiter.job.ID})
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.State)
 }
 
 func TestEmbeddedProcessingRejectsSourceChangesDuringEmbedding(t *testing.T) {
@@ -944,77 +957,79 @@ func TestEmbeddedProcessingRejectsSourceChangesDuringEmbedding(t *testing.T) {
 
 func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
 	t.Parallel()
-	provider := newSyntheticEmbeddingProvider(t)
-	provider.failure = errors.New("synthetic provider failure")
-	profiles := make(map[string]docbank.ProcessingProfileConfig)
-	classifications := []docbank.EmbeddingFailureClass{docbank.EmbeddingFailurePermanent, docbank.EmbeddingFailureTransient}
-	for index, classification := range classifications {
-		profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
-		profile.Rendition = nil
-		profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-		profile.Retrieval.LexicalLimit = index + 1
-		profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
-		profiles[fmt.Sprintf("profile-%d", index)] = docbank.ProcessingProfileConfig{Profile: profile,
-			EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider},
-			EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{
-				"direct": func(error) (docbank.EmbeddingFailureClass, time.Duration) { return classification, 0 },
-			}}
-	}
-	root := t.TempDir()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: profiles}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	receipt, err := vault.Put(t.Context(), "/classifiers.txt", strings.NewReader("classifier source"), docbank.PutOptions{MediaType: "text/plain"})
-	require.NoError(t, err)
-	for index, classification := range classifications {
-		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID,
-			ContentVersionID: receipt.Version.ID, Profile: fmt.Sprintf("profile-%d", index)}}
-		plan, err := vault.PlanProcessing(t.Context(), request)
-		require.NoError(t, err)
-		if classification == docbank.EmbeddingFailureTransient {
-			ctx, cancel := context.WithCancel(t.Context())
-			done := make(chan error, 1)
-			go func() {
-				_, startErr := vault.StartProcessing(ctx, docbank.StartProcessingRequest{
-					PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true,
-				})
-				done <- startErr
-			}()
-			joined := false
-			defer func() {
-				cancel()
-				if !joined {
-					<-done
-				}
-			}()
-			var jobID string
-			require.Eventually(t, func() bool {
-				err := db.QueryRowContext(t.Context(), `SELECT job_id FROM embedding_jobs
-					WHERE content_version_id=? AND profile_fingerprint=?`,
-					receipt.Version.ID, plan.ProfileFingerprint).Scan(&jobID)
-				if err != nil {
-					return false
-				}
-				status, err := vault.ProcessingStatus(t.Context(),
-					docbank.ProcessingStatusRequest{JobID: jobID})
-				return err == nil && status.State == "retry_wait" && status.FailureCode == "provider_unavailable"
-			}, 10*time.Second, 10*time.Millisecond)
-			cancel()
-			startErr := <-done
-			joined = true
-			require.ErrorIs(t, startErr, context.Canceled)
-			continue
+	synctest.Test(t, func(t *testing.T) {
+		provider := newSyntheticEmbeddingProvider(t)
+		provider.failure = errors.New("synthetic provider failure")
+		profiles := make(map[string]docbank.ProcessingProfileConfig)
+		classifications := []docbank.EmbeddingFailureClass{docbank.EmbeddingFailurePermanent, docbank.EmbeddingFailureTransient}
+		for index, classification := range classifications {
+			profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			profile.Retrieval.LexicalLimit = index + 1
+			profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(provider.descriptor)}
+			profiles[fmt.Sprintf("profile-%d", index)] = docbank.ProcessingProfileConfig{Profile: profile,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"direct": provider},
+				EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{
+					"direct": func(error) (docbank.EmbeddingFailureClass, time.Duration) { return classification, 0 },
+				}}
 		}
-		job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		root := t.TempDir()
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: profiles}})
 		require.NoError(t, err)
-		status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"),
+			docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
 		require.NoError(t, err)
-		require.Equal(t, "input_rejected", status.FailureCode)
-	}
+		t.Cleanup(func() { require.NoError(t, db.Close()) })
+		receipt, err := vault.Put(t.Context(), "/classifiers.txt", strings.NewReader("classifier source"), docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		for index, classification := range classifications {
+			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+				ContentVersionID: receipt.Version.ID, Profile: fmt.Sprintf("profile-%d", index)}}
+			plan, err := vault.PlanProcessing(t.Context(), request)
+			require.NoError(t, err)
+			if classification == docbank.EmbeddingFailureTransient {
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() {
+					_, startErr := vault.StartProcessing(ctx, docbank.StartProcessingRequest{
+						PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true,
+					})
+					done <- startErr
+				}()
+				joined := false
+				defer func() {
+					cancel()
+					if !joined {
+						<-done
+					}
+				}()
+				var jobID string
+				require.Eventually(t, func() bool {
+					err := db.QueryRowContext(t.Context(), `SELECT job_id FROM embedding_jobs
+						WHERE content_version_id=? AND profile_fingerprint=?`,
+						receipt.Version.ID, plan.ProfileFingerprint).Scan(&jobID)
+					if err != nil {
+						return false
+					}
+					status, err := vault.ProcessingStatus(t.Context(),
+						docbank.ProcessingStatusRequest{JobID: jobID})
+					return err == nil && status.State == "retry_wait" && status.FailureCode == "provider_unavailable"
+				}, 10*time.Second, 10*time.Millisecond)
+				cancel()
+				startErr := <-done
+				joined = true
+				require.ErrorIs(t, startErr, context.Canceled)
+				continue
+			}
+			job, err := vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NoError(t, err)
+			status, err := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: job.ID})
+			require.NoError(t, err)
+			require.Equal(t, "input_rejected", status.FailureCode)
+		}
+	})
 }
 
 func TestEmbeddedProcessingIndexesConcurrentDocuments(t *testing.T) {
@@ -1268,175 +1283,177 @@ func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {
 
 func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRestart(t *testing.T) {
 	t.Parallel()
-	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
-		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-source"),
-		MaxDocumentChars: 1 << 20,
-	})
-	require.NoError(t, err)
-	embedder := newSyntheticEmbeddingProvider(t)
-	embedder.started = make(chan struct{})
-	embedder.failure = errors.New("synthetic transient embedding failure")
-	profile := embeddedProcessingProfile(t, renderer.Descriptor())
-	profile.Rendition.Name = "synthetic-transcript"
-	profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
-	profile.RetentionDisclosure.RetainTypedArtifacts = true
-	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedder.descriptor)}
-	config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
-		Profiles: map[string]docbank.ProcessingProfileConfig{"media-semantic": {
-			Profile: profile, RenditionProvider: renderer,
-			EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedder},
-			Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}},
-			EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{"chunks": func(error) (docbank.EmbeddingFailureClass, time.Duration) {
-				return docbank.EmbeddingFailureTransient, time.Second
+	synctest.Test(t, func(t *testing.T) {
+		renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
+			Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-source"),
+			MaxDocumentChars: 1 << 20,
+		})
+		require.NoError(t, err)
+		embedder := newSyntheticEmbeddingProvider(t)
+		embedder.started = make(chan struct{})
+		embedder.failure = errors.New("synthetic transient embedding failure")
+		profile := embeddedProcessingProfile(t, renderer.Descriptor())
+		profile.Rendition.Name = "synthetic-transcript"
+		profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
+		profile.RetentionDisclosure.RetainTypedArtifacts = true
+		profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedder.descriptor)}
+		config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+			Profiles: map[string]docbank.ProcessingProfileConfig{"media-semantic": {
+				Profile: profile, RenditionProvider: renderer,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedder},
+				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}},
+				EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{"chunks": func(error) (docbank.EmbeddingFailureClass, time.Duration) {
+					return docbank.EmbeddingFailureTransient, time.Second
+				}},
 			}},
-		}},
-	}}
-	vault, err := docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	wav := mediatest.WAV()
-	digest := sha256.Sum256(wav)
-	digestHex := hex.EncodeToString(digest[:])
-	receipt, err := vault.SubmitSuppliedMedia(t.Context(), docbank.SuppliedMediaRequest{
-		OperationID: "00000000-0000-4000-8000-000000000451", Content: bytes.NewReader(wav),
-		Filename: "semantic.wav", MediaType: "audio/wav", SHA256: digestHex,
-		ByteLength: int64(len(wav)), Occurrence: docbank.MediaOccurrenceInput{
-			Ref: "semantic-call", Revision: "1", Filename: "semantic.wav",
-		},
-	})
-	require.NoError(t, err)
-	node, err := vault.Stat(t.Context(), "/media/"+digestHex[:2]+"/"+digestHex+".wav")
-	require.NoError(t, err)
-	selector := docbank.ProcessingSelector{NodeID: node.ID,
-		ContentVersionID: receipt.ContentVersionID, Profile: "media-semantic"}
-	planRequest := docbank.ProcessingPlanRequest{Selector: selector}
-	plan, err := vault.PlanProcessing(t.Context(), planRequest)
-	require.NoError(t, err)
-	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
-		PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
-	})
-	require.NoError(t, err)
-	queued, err := vault.RetryMedia(t.Context(),
-		"00000000-0000-4000-8000-000000000452", receipt.SourceID,
-		docbank.MediaProcessingRequest{Profile: "media-semantic"})
-	require.NoError(t, err)
-	select {
-	case <-embedder.started:
-	case <-time.After(10 * time.Second):
-		t.Fatal("embedding continuation did not reach provider")
-	}
-	_, err = vault.RevokeProcessingPlanConsent(t.Context())
-	require.NoError(t, err)
-	embedder.failure = nil
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.ProcessingStatus(t.Context(),
-			docbank.ProcessingStatusRequest{JobID: queued.JobID})
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "failed", status.State, "%+v", status)
-		require.Equal(collect, "authorization", status.FailureCode, "%+v", status)
-	}, 10*time.Second, 20*time.Millisecond)
-	require.NoError(t, vault.Close())
-	vault, err = docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
-	var unauthorizedEmbeddingState, unauthorizedEmbeddingFailure string
-	require.NoError(t, db.QueryRowContext(t.Context(),
-		"SELECT state,COALESCE(failure_code,'') FROM embedding_jobs LIMIT 1").Scan(
-		&unauthorizedEmbeddingState, &unauthorizedEmbeddingFailure))
-	require.NoError(t, db.Close())
-	require.Equal(t, "failed", unauthorizedEmbeddingState)
-	require.Equal(t, "authorization", unauthorizedEmbeddingFailure)
-	// Restart with an embedding call in flight, not before a worker claims it.
-	embedder.release = make(chan struct{})
-	beforeRestartCalls := embedder.calls.Load()
-	plan, err = vault.PlanProcessing(t.Context(), planRequest)
-	require.NoError(t, err)
-	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
-		PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
-	})
-	require.NoError(t, err)
-	retried, err := vault.RetryMedia(t.Context(),
-		"00000000-0000-4000-8000-000000000453", receipt.SourceID,
-		docbank.MediaProcessingRequest{Profile: "media-semantic"})
-	require.NoError(t, err)
-	require.Eventually(t, func() bool { return embedder.calls.Load() > beforeRestartCalls },
-		10*time.Second, time.Millisecond)
-	require.NoError(t, vault.Close())
-	close(embedder.release)
-	vault, err = docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.ProcessingStatus(t.Context(),
-			docbank.ProcessingStatusRequest{JobID: retried.JobID})
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "completed", status.State, "%+v", status)
-		require.Equal(collect, 1, status.CompletedBindings, "%+v", status)
-	}, 10*time.Second, 20*time.Millisecond)
-	oldStatus, err := vault.ProcessingStatus(t.Context(),
-		docbank.ProcessingStatusRequest{JobID: queued.JobID})
-	require.NoError(t, err)
-	require.Equal(t, "failed", oldStatus.State)
-	require.Equal(t, "authorization", oldStatus.FailureCode)
-	require.Zero(t, oldStatus.CompletedBindings)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.MediaStatus(t.Context(), receipt.SourceID)
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "succeeded", status.OperationState)
-	}, 10*time.Second, 20*time.Millisecond)
-	// Replaying a retry reads its receipt, whose state comes from the bound job.
-	operationState := func(operationID string) string {
-		replayed, replayErr := vault.RetryMedia(t.Context(), operationID, receipt.SourceID,
+		}}
+		vault, err := docbank.New(t.Context(), config)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		wav := mediatest.WAV()
+		digest := sha256.Sum256(wav)
+		digestHex := hex.EncodeToString(digest[:])
+		receipt, err := vault.SubmitSuppliedMedia(t.Context(), docbank.SuppliedMediaRequest{
+			OperationID: "00000000-0000-4000-8000-000000000451", Content: bytes.NewReader(wav),
+			Filename: "semantic.wav", MediaType: "audio/wav", SHA256: digestHex,
+			ByteLength: int64(len(wav)), Occurrence: docbank.MediaOccurrenceInput{
+				Ref: "semantic-call", Revision: "1", Filename: "semantic.wav",
+			},
+		})
+		require.NoError(t, err)
+		node, err := vault.Stat(t.Context(), "/media/"+digestHex[:2]+"/"+digestHex+".wav")
+		require.NoError(t, err)
+		selector := docbank.ProcessingSelector{NodeID: node.ID,
+			ContentVersionID: receipt.ContentVersionID, Profile: "media-semantic"}
+		planRequest := docbank.ProcessingPlanRequest{Selector: selector}
+		plan, err := vault.PlanProcessing(t.Context(), planRequest)
+		require.NoError(t, err)
+		_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
+			PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		queued, err := vault.RetryMedia(t.Context(),
+			"00000000-0000-4000-8000-000000000452", receipt.SourceID,
 			docbank.MediaProcessingRequest{Profile: "media-semantic"})
-		require.NoError(t, replayErr)
-		return replayed.OperationState
-	}
-	require.Equal(t, "succeeded", operationState("00000000-0000-4000-8000-000000000453"))
-	providerCalls := embedder.calls.Load()
-	_, err = vault.RevokeProcessingPlanConsent(t.Context())
-	require.NoError(t, err)
-	plan, err = vault.PlanProcessing(t.Context(), planRequest)
-	require.NoError(t, err)
-	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
-		PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+		require.NoError(t, err)
+		select {
+		case <-embedder.started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("embedding continuation did not reach provider")
+		}
+		_, err = vault.RevokeProcessingPlanConsent(t.Context())
+		require.NoError(t, err)
+		embedder.failure = nil
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.ProcessingStatus(t.Context(),
+				docbank.ProcessingStatusRequest{JobID: queued.JobID})
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "failed", status.State, "%+v", status)
+			require.Equal(collect, "authorization", status.FailureCode, "%+v", status)
+		}, 10*time.Second, 20*time.Millisecond)
+		require.NoError(t, vault.Close())
+		vault, err = docbank.New(t.Context(), config)
+		require.NoError(t, err)
+		db, err := store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
+			docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+		require.NoError(t, err)
+		var unauthorizedEmbeddingState, unauthorizedEmbeddingFailure string
+		require.NoError(t, db.QueryRowContext(t.Context(),
+			"SELECT state,COALESCE(failure_code,'') FROM embedding_jobs LIMIT 1").Scan(
+			&unauthorizedEmbeddingState, &unauthorizedEmbeddingFailure))
+		require.NoError(t, db.Close())
+		require.Equal(t, "failed", unauthorizedEmbeddingState)
+		require.Equal(t, "authorization", unauthorizedEmbeddingFailure)
+		// Restart with an embedding call in flight, not before a worker claims it.
+		embedder.release = make(chan struct{})
+		beforeRestartCalls := embedder.calls.Load()
+		plan, err = vault.PlanProcessing(t.Context(), planRequest)
+		require.NoError(t, err)
+		_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
+			PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		retried, err := vault.RetryMedia(t.Context(),
+			"00000000-0000-4000-8000-000000000453", receipt.SourceID,
+			docbank.MediaProcessingRequest{Profile: "media-semantic"})
+		require.NoError(t, err)
+		require.Eventually(t, func() bool { return embedder.calls.Load() > beforeRestartCalls },
+			10*time.Second, time.Millisecond)
+		require.NoError(t, vault.Close())
+		close(embedder.release)
+		vault, err = docbank.New(t.Context(), config)
+		require.NoError(t, err)
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.ProcessingStatus(t.Context(),
+				docbank.ProcessingStatusRequest{JobID: retried.JobID})
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "completed", status.State, "%+v", status)
+			require.Equal(collect, 1, status.CompletedBindings, "%+v", status)
+		}, 10*time.Second, 20*time.Millisecond)
+		oldStatus, err := vault.ProcessingStatus(t.Context(),
+			docbank.ProcessingStatusRequest{JobID: queued.JobID})
+		require.NoError(t, err)
+		require.Equal(t, "failed", oldStatus.State)
+		require.Equal(t, "authorization", oldStatus.FailureCode)
+		require.Zero(t, oldStatus.CompletedBindings)
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.MediaStatus(t.Context(), receipt.SourceID)
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "succeeded", status.OperationState)
+		}, 10*time.Second, 20*time.Millisecond)
+		// Replaying a retry reads its receipt, whose state comes from the bound job.
+		operationState := func(operationID string) string {
+			replayed, replayErr := vault.RetryMedia(t.Context(), operationID, receipt.SourceID,
+				docbank.MediaProcessingRequest{Profile: "media-semantic"})
+			require.NoError(t, replayErr)
+			return replayed.OperationState
+		}
+		require.Equal(t, "succeeded", operationState("00000000-0000-4000-8000-000000000453"))
+		providerCalls := embedder.calls.Load()
+		_, err = vault.RevokeProcessingPlanConsent(t.Context())
+		require.NoError(t, err)
+		plan, err = vault.PlanProcessing(t.Context(), planRequest)
+		require.NoError(t, err)
+		_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
+			PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		reused, err := vault.RetryMedia(t.Context(),
+			"00000000-0000-4000-8000-000000000454", receipt.SourceID,
+			docbank.MediaProcessingRequest{Profile: "media-semantic"})
+		require.NoError(t, err)
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.ProcessingStatus(t.Context(),
+				docbank.ProcessingStatusRequest{JobID: reused.JobID})
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "completed", status.State, "%+v", status)
+			require.Equal(collect, 1, status.CompletedBindings, "%+v", status)
+		}, 10*time.Second, 20*time.Millisecond)
+		require.Equal(t, providerCalls, embedder.calls.Load(),
+			"fresh authority must reuse the already published vector generation")
+		require.Equal(t, "failed", operationState("00000000-0000-4000-8000-000000000452"))
+		require.Equal(t, "succeeded", operationState("00000000-0000-4000-8000-000000000453"))
+		// The backfill records the outcome after the embedding job and index rebuild finish.
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			replayed, replayErr := vault.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000454",
+				receipt.SourceID, docbank.MediaProcessingRequest{Profile: "media-semantic"})
+			require.NoError(collect, replayErr)
+			require.Equal(collect, "succeeded", replayed.OperationState)
+		}, 10*time.Second, 20*time.Millisecond)
+		require.NoError(t, vault.Close())
+		db, err = store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
+			docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, db.Close()) }()
+		var failedJobs, completedJobs, vectorSets int
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
+			COUNT(*) FILTER (WHERE state='failed'),COUNT(*) FILTER (WHERE state='completed')
+			FROM embedding_jobs`).Scan(&failedJobs, &completedJobs))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_sets`).Scan(&vectorSets))
+		require.Equal(t, 1, failedJobs)
+		require.Equal(t, 2, completedJobs)
+		require.Equal(t, 1, vectorSets, "fresh authority must reuse the immutable vector generation")
 	})
-	require.NoError(t, err)
-	reused, err := vault.RetryMedia(t.Context(),
-		"00000000-0000-4000-8000-000000000454", receipt.SourceID,
-		docbank.MediaProcessingRequest{Profile: "media-semantic"})
-	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.ProcessingStatus(t.Context(),
-			docbank.ProcessingStatusRequest{JobID: reused.JobID})
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "completed", status.State, "%+v", status)
-		require.Equal(collect, 1, status.CompletedBindings, "%+v", status)
-	}, 10*time.Second, 20*time.Millisecond)
-	require.Equal(t, providerCalls, embedder.calls.Load(),
-		"fresh authority must reuse the already published vector generation")
-	require.Equal(t, "failed", operationState("00000000-0000-4000-8000-000000000452"))
-	require.Equal(t, "succeeded", operationState("00000000-0000-4000-8000-000000000453"))
-	// The backfill records the outcome after the embedding job and index rebuild finish.
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		replayed, replayErr := vault.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000454",
-			receipt.SourceID, docbank.MediaProcessingRequest{Profile: "media-semantic"})
-		require.NoError(collect, replayErr)
-		require.Equal(collect, "succeeded", replayed.OperationState)
-	}, 10*time.Second, 20*time.Millisecond)
-	require.NoError(t, vault.Close())
-	db, err = store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
-	var failedJobs, completedJobs, vectorSets int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
-		COUNT(*) FILTER (WHERE state='failed'),COUNT(*) FILTER (WHERE state='completed')
-		FROM embedding_jobs`).Scan(&failedJobs, &completedJobs))
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_sets`).Scan(&vectorSets))
-	require.Equal(t, 1, failedJobs)
-	require.Equal(t, 2, completedJobs)
-	require.Equal(t, 1, vectorSets, "fresh authority must reuse the immutable vector generation")
 }
 
 func TestEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *testing.T) {
@@ -1595,103 +1612,105 @@ func TestEmbeddedProcessingSameFenceConsentRenewalCountsBindingOnce(t *testing.T
 
 func TestEmbeddedMediaEmbeddingContinuationCompletesAcrossRestart(t *testing.T) {
 	t.Parallel()
-	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
-		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-success-source"),
-		MaxDocumentChars: 1 << 20,
-	})
-	require.NoError(t, err)
-	embedder := newSyntheticEmbeddingProvider(t)
-	embedder.started = make(chan struct{})
-	embedder.failure = errors.New("synthetic transient embedding interruption")
-	profile := embeddedProcessingProfile(t, renderer.Descriptor())
-	profile.Rendition.Name = "synthetic-transcript"
-	profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
-	profile.RetentionDisclosure.RetainTypedArtifacts = true
-	profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedder.descriptor)}
-	config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
-		Profiles: map[string]docbank.ProcessingProfileConfig{"media-semantic-success": {
-			Profile: profile, RenditionProvider: renderer,
-			EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedder},
-			Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}},
-			EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{"chunks": func(error) (docbank.EmbeddingFailureClass, time.Duration) {
-				return docbank.EmbeddingFailureTransient, 2 * time.Second
+	synctest.Test(t, func(t *testing.T) {
+		renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
+			Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-success-source"),
+			MaxDocumentChars: 1 << 20,
+		})
+		require.NoError(t, err)
+		embedder := newSyntheticEmbeddingProvider(t)
+		embedder.started = make(chan struct{})
+		embedder.failure = errors.New("synthetic transient embedding interruption")
+		profile := embeddedProcessingProfile(t, renderer.Descriptor())
+		profile.Rendition.Name = "synthetic-transcript"
+		profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
+		profile.RetentionDisclosure.RetainTypedArtifacts = true
+		profile.Embeddings = []document.EmbeddingBindingV1{syntheticChunkEmbeddingBinding(embedder.descriptor)}
+		config := docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+			Profiles: map[string]docbank.ProcessingProfileConfig{"media-semantic-success": {
+				Profile: profile, RenditionProvider: renderer,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunks": embedder},
+				Tokenizers:         map[string]document.Tokenizer{"chunks": syntheticRuneTokenizer{}},
+				EmbeddingClassifiers: map[string]docbank.EmbeddingErrorClassifier{"chunks": func(error) (docbank.EmbeddingFailureClass, time.Duration) {
+					return docbank.EmbeddingFailureTransient, 2 * time.Second
+				}},
 			}},
-		}},
-	}}
-	vault, err := docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	wav := mediatest.WAV()
-	digest := sha256.Sum256(wav)
-	digestHex := hex.EncodeToString(digest[:])
-	receipt, err := vault.SubmitSuppliedMedia(t.Context(), docbank.SuppliedMediaRequest{
-		OperationID: "00000000-0000-4000-8000-000000000461", Content: bytes.NewReader(wav),
-		Filename: "semantic-success.wav", MediaType: "audio/wav", SHA256: digestHex,
-		ByteLength: int64(len(wav)), Occurrence: docbank.MediaOccurrenceInput{
-			Ref: "semantic-success-call", Revision: "1", Filename: "semantic-success.wav",
-		},
+		}}
+		vault, err := docbank.New(t.Context(), config)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		wav := mediatest.WAV()
+		digest := sha256.Sum256(wav)
+		digestHex := hex.EncodeToString(digest[:])
+		receipt, err := vault.SubmitSuppliedMedia(t.Context(), docbank.SuppliedMediaRequest{
+			OperationID: "00000000-0000-4000-8000-000000000461", Content: bytes.NewReader(wav),
+			Filename: "semantic-success.wav", MediaType: "audio/wav", SHA256: digestHex,
+			ByteLength: int64(len(wav)), Occurrence: docbank.MediaOccurrenceInput{
+				Ref: "semantic-success-call", Revision: "1", Filename: "semantic-success.wav",
+			},
+		})
+		require.NoError(t, err)
+		node, err := vault.Stat(t.Context(), "/media/"+digestHex[:2]+"/"+digestHex+".wav")
+		require.NoError(t, err)
+		selector := docbank.ProcessingSelector{NodeID: node.ID,
+			ContentVersionID: receipt.ContentVersionID, Profile: "media-semantic-success"}
+		planRequest := docbank.ProcessingPlanRequest{Selector: selector}
+		plan, err := vault.PlanProcessing(t.Context(), planRequest)
+		require.NoError(t, err)
+		_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
+			PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
+		})
+		require.NoError(t, err)
+		queued, err := vault.RetryMedia(t.Context(),
+			"00000000-0000-4000-8000-000000000462", receipt.SourceID,
+			docbank.MediaProcessingRequest{Profile: "media-semantic-success"})
+		require.NoError(t, err)
+		select {
+		case <-embedder.started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("successful embedding continuation did not reach provider")
+		}
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.ProcessingStatus(t.Context(),
+				docbank.ProcessingStatusRequest{JobID: queued.JobID})
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "retry_wait", status.State, "%+v", status)
+			require.Equal(collect, "embedding", status.Phase, "%+v", status)
+		}, 10*time.Second, 20*time.Millisecond)
+		embedder.failure = nil
+		require.NoError(t, vault.Close())
+		db, err := store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
+			docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `UPDATE embedding_jobs
+			SET available_at='1970-01-01T00:00:00.000000000Z' WHERE state='retry_wait'`)
+		require.NoError(t, err)
+		require.NoError(t, db.Close())
+		vault, err = docbank.New(t.Context(), config)
+		require.NoError(t, err)
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.ProcessingStatus(t.Context(),
+				docbank.ProcessingStatusRequest{JobID: queued.JobID})
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "completed", status.State, "%+v", status)
+			require.Equal(collect, 1, status.CompletedBindings, "%+v", status)
+		}, 15*time.Second, 20*time.Millisecond)
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.MediaStatus(t.Context(), receipt.SourceID)
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "succeeded", status.OperationState, "%+v", status)
+			require.Equal(collect, "transcribed", status.CoverageState, "%+v", status)
+		}, 10*time.Second, 20*time.Millisecond)
+		result, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
+			Query: "needle", Mode: docbank.DocumentSearchSemantic,
+			Profile: "media-semantic-success", BindingID: "chunks", Limit: 10,
+			Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.ContentVersionID}},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Results, 1)
+		require.Equal(t, receipt.ContentVersionID, result.Results[0].ContentVersionID)
+		require.Equal(t, "rendition_chunk", result.Results[0].Evidence[0].InputKind)
 	})
-	require.NoError(t, err)
-	node, err := vault.Stat(t.Context(), "/media/"+digestHex[:2]+"/"+digestHex+".wav")
-	require.NoError(t, err)
-	selector := docbank.ProcessingSelector{NodeID: node.ID,
-		ContentVersionID: receipt.ContentVersionID, Profile: "media-semantic-success"}
-	planRequest := docbank.ProcessingPlanRequest{Selector: selector}
-	plan, err := vault.PlanProcessing(t.Context(), planRequest)
-	require.NoError(t, err)
-	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
-		PlanRequest: planRequest, PlanFingerprint: plan.Fingerprint,
-	})
-	require.NoError(t, err)
-	queued, err := vault.RetryMedia(t.Context(),
-		"00000000-0000-4000-8000-000000000462", receipt.SourceID,
-		docbank.MediaProcessingRequest{Profile: "media-semantic-success"})
-	require.NoError(t, err)
-	select {
-	case <-embedder.started:
-	case <-time.After(10 * time.Second):
-		t.Fatal("successful embedding continuation did not reach provider")
-	}
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.ProcessingStatus(t.Context(),
-			docbank.ProcessingStatusRequest{JobID: queued.JobID})
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "retry_wait", status.State, "%+v", status)
-		require.Equal(collect, "embedding", status.Phase, "%+v", status)
-	}, 10*time.Second, 20*time.Millisecond)
-	embedder.failure = nil
-	require.NoError(t, vault.Close())
-	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE embedding_jobs
-		SET available_at='1970-01-01T00:00:00.000000000Z' WHERE state='retry_wait'`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	vault, err = docbank.New(t.Context(), config)
-	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.ProcessingStatus(t.Context(),
-			docbank.ProcessingStatusRequest{JobID: queued.JobID})
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "completed", status.State, "%+v", status)
-		require.Equal(collect, 1, status.CompletedBindings, "%+v", status)
-	}, 15*time.Second, 20*time.Millisecond)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := vault.MediaStatus(t.Context(), receipt.SourceID)
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "succeeded", status.OperationState, "%+v", status)
-		require.Equal(collect, "transcribed", status.CoverageState, "%+v", status)
-	}, 10*time.Second, 20*time.Millisecond)
-	result, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{
-		Query: "needle", Mode: docbank.DocumentSearchSemantic,
-		Profile: "media-semantic-success", BindingID: "chunks", Limit: 10,
-		Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.ContentVersionID}},
-	})
-	require.NoError(t, err)
-	require.Len(t, result.Results, 1)
-	require.Equal(t, receipt.ContentVersionID, result.Results[0].ContentVersionID)
-	require.Equal(t, "rendition_chunk", result.Results[0].Evidence[0].InputKind)
 }
 
 func TestEmbeddedProcessingSupportsDirectEmbeddingWithoutRenditionProvider(t *testing.T) {
@@ -2231,28 +2250,32 @@ func TestOpenVersionContentRangeUnavailable(t *testing.T) {
 
 func TestOpenVersionContentRangeHoldsVaultLease(t *testing.T) {
 	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	receipt := createRangeFixture(t, vault, "/ranges/lease.bin", []byte("lease bytes"))
-	opened, err := vault.OpenVersionContentRange(
-		t.Context(), receipt.Version.ID,
-		docbank.ContentRangeOptions{Offset: 0, Length: 1},
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, opened.Reader.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		receipt := createRangeFixture(t, vault, "/ranges/lease.bin", []byte("lease bytes"))
+		opened, err := vault.OpenVersionContentRange(
+			t.Context(), receipt.Version.ID,
+			docbank.ContentRangeOptions{Offset: 0, Length: 1},
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, opened.Reader.Close()) })
 
-	closeDone := make(chan error, 1)
-	go func() { closeDone <- vault.Close() }()
-	select {
-	case err := <-closeDone:
-		require.FailNow(t, "vault closed while a range held its lifecycle lease", "error: %v", err)
-	case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open range's lease keeps Close blocked
-	}
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- vault.Close() }()
+		// Wait until Close is blocked; the open range holds its lifecycle lease.
+		synctest.Wait()
+		select {
+		case err := <-closeDone:
+			require.FailNow(t, "vault closed while a range held its lifecycle lease", "error: %v", err)
+		default:
+		}
 
-	require.NoError(t, opened.Reader.Close())
-	// Closing also drains workers and storage. The suite timeout bounds this wait.
-	require.NoError(t, <-closeDone)
+		require.NoError(t, opened.Reader.Close())
+		// Closing also drains workers and storage. The suite timeout bounds this wait.
+		require.NoError(t, <-closeDone)
+	})
 }
 
 func TestOpenVersionContentRangeClosedVault(t *testing.T) {
@@ -2696,81 +2719,84 @@ func TestEmbeddedProcessingWaitsForBackupFreeze(t *testing.T) {
 	t.Parallel()
 	for _, rendition := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rendition=%t", rendition), func(t *testing.T) {
-			embedding := newSyntheticEmbeddingProvider(t)
-			profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
-			config := docbank.ProcessingProfileConfig{Profile: profile}
-			if rendition {
-				plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+			synctest.Test(t, func(t *testing.T) {
+				embedding := newSyntheticEmbeddingProvider(t)
+				profile := embeddedProcessingProfile(t, plaintextDescriptorForProfile(t))
+				config := docbank.ProcessingProfileConfig{Profile: profile}
+				if rendition {
+					plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+					require.NoError(t, err)
+					config.RenditionProvider = plain
+				} else {
+					config.Profile.Rendition = nil
+					config.Profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+					config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(embedding.descriptor)}
+					config.EmbeddingProviders = map[string]document.EmbeddingProvider{"direct": embedding}
+				}
+				root := t.TempDir()
+				vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
 				require.NoError(t, err)
-				config.RenditionProvider = plain
-			} else {
-				config.Profile.Rendition = nil
-				config.Profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-				config.Profile.Embeddings = []document.EmbeddingBindingV1{syntheticEmbeddingBinding(embedding.descriptor)}
-				config.EmbeddingProviders = map[string]document.EmbeddingProvider{"direct": embedding}
-			}
-			root := t.TempDir()
-			vault, err := docbank.New(t.Context(), docbank.Config{Root: root, Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{"test": config}}})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, vault.Close()) })
-			receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic freeze source"), docbank.PutOptions{MediaType: "text/plain"})
-			require.NoError(t, err)
-			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
-			plan, err := vault.PlanProcessing(t.Context(), request)
-			require.NoError(t, err)
-			db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, db.Close()) })
-			repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backup"))
-			require.NoError(t, err)
-			held, releaseCh := make(chan struct{}), make(chan struct{})
-			release := sync.OnceFunc(func() { close(releaseCh) })
-			backupDone := make(chan struct{})
-			var backupErr error
-			go func() {
-				defer close(backupDone)
-				_, backupErr = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{Prepare: func(ctx context.Context) error {
-					close(held)
-					select {
-					case <-releaseCh:
-						return nil
-					case <-ctx.Done():
-						return ctx.Err()
-					}
-				}})
-			}()
-			t.Cleanup(func() { release(); <-backupDone })
-			select {
-			case <-held:
-			case <-backupDone:
-				t.Fatalf("backup returned before freeze: %v", backupErr)
-			}
-			done := make(chan struct{})
-			var runErr error
-			go func() {
-				defer close(done)
-				_, runErr = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
-			}()
-			t.Cleanup(func() { release(); <-done })
-			var grants, jobs int
-			require.Never(t, func() bool {
-				err := db.QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM processing_consent_grants),(SELECT COUNT(*) FROM rendition_jobs)+(SELECT COUNT(*) FROM embedding_jobs)").Scan(&grants, &jobs)
+				t.Cleanup(func() { require.NoError(t, vault.Close()) })
+				receipt, err := vault.Put(t.Context(), "/source.txt", strings.NewReader("synthetic freeze source"), docbank.PutOptions{MediaType: "text/plain"})
 				require.NoError(t, err)
-				return grants > 0 || jobs > 0
-			}, 100*time.Millisecond, 10*time.Millisecond, "processing writes must wait for the backup freeze to end")
-			select {
-			case <-done:
-				t.Fatalf("worker finished while backup freeze held: %v", runErr)
-			default:
-			}
-			release()
-			<-backupDone
-			<-done
-			require.NoError(t, backupErr)
-			require.NoError(t, runErr)
-			if !rendition {
-				require.Equal(t, int32(1), embedding.calls.Load())
-			}
+				request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "test"}}
+				plan, err := vault.PlanProcessing(t.Context(), request)
+				require.NoError(t, err)
+				db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, db.Close()) })
+				repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backup"))
+				require.NoError(t, err)
+				held, releaseCh := make(chan struct{}), make(chan struct{})
+				release := sync.OnceFunc(func() { close(releaseCh) })
+				backupDone := make(chan struct{})
+				var backupErr error
+				go func() {
+					defer close(backupDone)
+					_, backupErr = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{Prepare: func(ctx context.Context) error {
+						close(held)
+						select {
+						case <-releaseCh:
+							return nil
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}})
+				}()
+				t.Cleanup(func() { release(); <-backupDone })
+				select {
+				case <-held:
+				case <-backupDone:
+					t.Fatalf("backup returned before freeze: %v", backupErr)
+				}
+				done := make(chan struct{})
+				var runErr error
+				go func() {
+					defer close(done)
+					_, runErr = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+				}()
+				t.Cleanup(func() { release(); <-done })
+				// Let processing and the workers run on fake time until all wait.
+				time.Sleep(time.Second)
+				synctest.Wait()
+				var grants, jobs int
+				require.NoError(t, db.QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM processing_consent_grants),(SELECT COUNT(*) FROM rendition_jobs)+(SELECT COUNT(*) FROM embedding_jobs)").Scan(&grants, &jobs))
+				require.Zero(t, grants, "processing writes must wait for the backup freeze to end")
+				require.Zero(t, jobs, "processing writes must wait for the backup freeze to end")
+				select {
+				case <-done:
+					t.Fatalf("worker finished while backup freeze held: %v", runErr)
+				default:
+				}
+				release()
+				<-backupDone
+				<-done
+				require.NoError(t, backupErr)
+				require.NoError(t, runErr)
+				if !rendition {
+					require.Equal(t, int32(1), embedding.calls.Load())
+				}
+			})
 		})
 	}
 }
