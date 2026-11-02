@@ -307,7 +307,7 @@ type embeddingReconcileState struct {
 
 // Input failures that can recover without a catalog write need another sweep.
 func (state *embeddingReconcileState) inputError(err error) {
-	if err == nil || errors.Is(err, ErrEmbeddingInputRejected) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || errors.Is(err, ErrEmbeddingInputRejected) {
 		return
 	}
 	if preparation, ok := errors.AsType[*store.ImagePreparationError](err); ok && preparation.Rejected {

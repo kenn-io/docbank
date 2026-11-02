@@ -58,3 +58,26 @@ func TestEmbeddingWriteRevisionIgnoresSearchBookkeeping(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, revision, s.WriteRevision(), "expired reader cleanup keeps discovery settled")
 }
+
+func TestEmbeddingWriteRevisionIgnoresUnavailableCoverageBookkeeping(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	coverage := []VectorIndexUnavailableCoverage{{
+		VectorSpaceID: hashVectorIndexTest("space"), SourceManifestChecksum: hashVectorIndexTest("source"),
+		Missing: []VectorIndexUnavailableSet{{EmbeddingSetID: hashVectorIndexTest("set"),
+			VectorSetID: hashVectorIndexTest("vectors"), PayloadBlobHash: hashVectorIndexTest("blob")}},
+		ExternalReembeddingRequired: true,
+	}}
+	revision := s.WriteRevision()
+	for range 2 {
+		require.NoError(t, s.ReplaceVectorIndexUnavailableCoverage(t.Context(), coverage))
+		require.Equal(t, revision, s.WriteRevision(), "periodic coverage replacement keeps discovery settled")
+	}
+	var missing int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_unavailable_coverage`).Scan(&missing))
+	require.Equal(t, 1, missing)
+	require.NoError(t, s.ReplaceVectorIndexUnavailableCoverage(t.Context(), nil))
+	require.Equal(t, revision, s.WriteRevision(), "clearing coverage keeps discovery settled")
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_unavailable_coverage`).Scan(&missing))
+	require.Zero(t, missing)
+}

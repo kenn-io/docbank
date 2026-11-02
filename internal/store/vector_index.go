@@ -561,7 +561,7 @@ func (s *Store) ReclaimVectorIndexGenerations(ctx context.Context, at time.Time)
 }
 
 func (s *Store) ReplaceVectorIndexUnavailableCoverage(ctx context.Context, coverage []VectorIndexUnavailableCoverage) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vector_index_unavailable_coverage`); err != nil {
 			return err
 		}

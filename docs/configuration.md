@@ -1204,10 +1204,13 @@ encoders, each with `mode` and `template`. Templates use `{{content}}`. Contract
 validation checks the supported roles and formatting rules. `query_instruction`
 is available only to contracts that support it.
 
-Discovery reads in pages and waits one minute between complete passes.
+Discovery reads in pages and checks once a minute whether another complete
+pass is needed. Quiet vaults skip the pass; see [idle embedding discovery](embedding.md#idle-embedding-discovery)
+for the wake triggers.
 Existing queued work is still checked on the normal one-second idle cadence.
 Discovery skips missing or invalid generation bytes so later candidates can
-proceed, and a later pass retries them. Database failures keep their
+proceed. Later passes retry temporary input failures; permanent rejections
+allow discovery to settle. Database failures keep their
 separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.

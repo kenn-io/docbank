@@ -138,3 +138,42 @@ func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T) {
+	t.Parallel()
+	for _, inputErr := range []error{context.DeadlineExceeded, context.Canceled} {
+		t.Run(inputErr.Error(), func(t *testing.T) {
+			t.Parallel()
+			f, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)
+			job, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			now := time.Now().UTC()
+			claim, _, found, err := f.catalog.ClaimEmbeddingWork(t.Context(), job.ID, "abandoned-worker", now, time.Minute, worker.descriptorFingerprints)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.NoError(t, f.catalog.AbandonEmbeddingWork(t.Context(), claim, now))
+			catalog := &countedReconcileCatalog{Store: f.catalog}
+			worker.catalog = catalog
+			worker.clock = func() time.Time { return now }
+			worker.generationBlobs = &embeddingRuntimeTestBlobs{openErr: inputErr}
+			processed, err := worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, t.Context().Err(), "the blob operation failed while its caller stayed active")
+			require.Zero(t, processed)
+			require.Positive(t, catalog.examined)
+			require.Zero(t, catalog.enqueued)
+
+			revision := f.catalog.WriteRevision()
+			worker.generationBlobs = f.blobs
+			now = now.Add(time.Minute)
+			require.Equal(t, revision, f.catalog.WriteRevision(), "blob recovery needs no catalog write")
+			processed, err = worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 1, catalog.enqueued, "retry discovery after the blob operation recovers")
+			require.Equal(t, 1, processed)
+			completed, err := f.catalog.EmbeddingJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "completed", completed.State)
+		})
+	}
+}
