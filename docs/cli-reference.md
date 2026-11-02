@@ -1376,6 +1376,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ```text
 docbank mcp [--transport stdio|http] [--listen <ip:port>] [--allowed-host <host[:port]>]
             [--allow-processing] [--allow-package-writes] [--allow-export-writes]
+            [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1421,6 +1422,36 @@ kind of work.
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities. For read-only
 HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
+
+### docbank mcp config
+
+```text
+docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes]
+```
+
+Prints Claude Code JSON for `.mcp.json` or Codex TOML for
+`~/.codex/config.toml`. Stdio uses Docbank's absolute launch path, preserves
+symlinks, selects the vault through `DOCBANK_HOME`, and carries enabled write
+flags into the server's arguments. Client files remain untouched.
+Keep the project's `.mcp.json` out of version control because it contains
+machine-specific paths.
+
+HTTP requires a nonzero `--listen` address for an existing daemon or standalone
+listener. Wildcard addresses become loopback URLs ending in `/mcp`. The
+selected bearer binding appears as an environment-variable reference; its
+secret stays unresolved. With no selected binding, printing uses the listener's
+conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
+startup command.
+
+Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
+`codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
+support in `config.toml` for either transport. Then launch with plain `codex`.
+Generated Codex stdio configuration also sets
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for Codex, which reads it to pick the
+protocol version and does not pass it to the server.
+After upgrading Docbank, rerun `docbank mcp config` and replace the saved
+configuration so its protocol selection matches the installed server.
+See the [MCP setup guide](usage/mcp.md#start-the-server).
 
 ## docbank trash
 
