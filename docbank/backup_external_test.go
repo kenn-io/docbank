@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -62,6 +63,8 @@ func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 		case <-prepared:
 		case result := <-backupDone:
 			require.FailNow(t, "backup returned before host preparation", "error: %v", result.err)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "backup preparation did not begin")
 		}
 
 		putDone := make(chan error, 1)
@@ -142,8 +145,13 @@ func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {
 			})
 			putDone <- putErr
 		}()
-		// A put left blocked behind the gate deadlocks the bubble and fails the test.
-		require.NoError(t, <-putDone)
+		// The workers keep fake time moving, so the timer bounds a put left behind the gate.
+		select {
+		case putErr := <-putDone:
+			require.NoError(t, putErr)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "content mutation remained blocked after preparation failed")
+		}
 	})
 }
 
@@ -173,8 +181,13 @@ func TestEmbeddedBackupPreparationPanicReleasesMutationGate(t *testing.T) {
 			})
 			putDone <- putErr
 		}()
-		// A put left blocked behind the gate deadlocks the bubble and fails the test.
-		require.NoError(t, <-putDone)
+		// The workers keep fake time moving, so the timer bounds a put left behind the gate.
+		select {
+		case putErr := <-putDone:
+			require.NoError(t, putErr)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "content mutation remained blocked after preparation panicked")
+		}
 	})
 }
 
@@ -306,6 +319,8 @@ func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
 		case <-paused:
 		case err := <-backupDone:
 			require.FailNow(t, "backup returned before its post-freeze capture", "error: %v", err)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "backup did not reach its post-freeze capture")
 		}
 
 		packDone := make(chan error, 1)
@@ -358,6 +373,8 @@ func TestEmbeddedBackupAllowsAppendsAfterFreeze(t *testing.T) {
 		case <-paused:
 		case err := <-backupDone:
 			require.FailNow(t, "backup returned before its post-freeze capture", "error: %v", err)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "backup did not reach its post-freeze capture")
 		}
 
 		putDone := make(chan error, 1)
@@ -367,9 +384,14 @@ func TestEmbeddedBackupAllowsAppendsAfterFreeze(t *testing.T) {
 			})
 			putDone <- err
 		}()
-		// The capture stays paused, so an append still blocked by the freeze
-		// deadlocks the bubble and fails the test.
-		require.NoError(t, <-putDone)
+		// The workers keep fake time moving, so the timer bounds an append left behind the freeze.
+		select {
+		case err := <-putDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			resumeOnce.Do(func() { close(resume) })
+			require.FailNow(t, "append remained blocked after the backup freeze ended")
+		}
 
 		resumeOnce.Do(func() { close(resume) })
 		require.NoError(t, <-backupDone)
