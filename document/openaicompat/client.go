@@ -75,7 +75,12 @@ type SecretResolver interface {
 // contract, immutable deployment identity, and all transport capacity bounds.
 // Exactly one of DeploymentEpoch and ProviderRevisionHeader is required.
 type Profile struct {
-	Origin                 string
+	Origin string
+	// ManagedService binds consent to a stable local service and selection mode.
+	// ResolveOrigin returns its current loopback origin only when a request runs.
+	ManagedService         string
+	SelectionMode          string
+	ResolveOrigin          func(context.Context) (string, error)
 	Descriptor             document.EmbeddingDescriptor
 	ModelInput             document.ModelInputContract
 	DeploymentContract     *DeploymentContract
@@ -120,6 +125,8 @@ func RetryAfter(err error) (time.Duration, bool) {
 type policyIdentity struct {
 	AdapterContract        string                       `json:"adapter_contract"`
 	Origin                 string                       `json:"origin"`
+	ManagedService         string                       `json:"managed_service,omitempty"`
+	SelectionMode          string                       `json:"selection_mode,omitempty"`
 	Route                  string                       `json:"route"`
 	Descriptor             document.EmbeddingDescriptor `json:"descriptor"`
 	ModelInput             document.ModelInputContract  `json:"model_input"`
@@ -209,6 +216,7 @@ func PolicyFingerprint(profile Profile) (string, error) {
 	}
 	identity := policyIdentity{
 		AdapterContract: adapterContract, Origin: normalized.Origin, Route: embeddingsPath,
+		ManagedService: normalized.ManagedService, SelectionMode: normalized.SelectionMode,
 		Descriptor: descriptorIdentity, ModelInput: normalized.ModelInput,
 		DeploymentContract: normalized.DeploymentContract,
 		CredentialBinding:  normalized.SecretBinding, DeploymentEpoch: normalized.DeploymentEpoch,
@@ -217,6 +225,9 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxInputBytes: normalized.MaxInputBytes, MaxRequestBytes: normalized.MaxRequestBytes,
 		MaxResponseBytes: normalized.MaxResponseBytes,
 		Egress:           openAIEgressPolicyIdentity(normalized.EgressPolicy),
+	}
+	if normalized.ManagedService != "" {
+		identity.Origin = ""
 	}
 	encoded, err := json.Marshal(identity, json.Deterministic(true))
 	if err != nil {
@@ -373,6 +384,19 @@ type responsePolicy struct{ client *Client }
 func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, error) {
 	client := policy.client
 	request = request.Clone(request.Context())
+	if client.profile.ManagedService != "" {
+		origin, err := client.profile.ResolveOrigin(request.Context())
+		if err != nil {
+			return nil, fmt.Errorf("%w: resolve managed origin: %w", ErrTransientResponse, err)
+		}
+		origin, err = validateOrigin(origin)
+		if err != nil {
+			return nil, err
+		}
+		endpoint, _ := url.Parse(origin)
+		request.URL.Scheme, request.URL.Host = endpoint.Scheme, endpoint.Host
+		request.Host = endpoint.Host
+	}
 	if request.ContentLength > client.profile.MaxRequestBytes {
 		return nil, fmt.Errorf("%w: embedding request byte limit exceeded", ErrCapacityResponse)
 	}
@@ -458,6 +482,13 @@ func (client *Client) validateRevisionEcho(header http.Header) error {
 }
 
 func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, error) {
+	if profile.ManagedService != "" {
+		if profile.ManagedService != "kit-embed" || (profile.SelectionMode != "auto" && profile.SelectionMode != "local") || profile.ResolveOrigin == nil {
+			return Profile{}, document.EmbeddingDescriptor{}, errors.New("managed embeddings require kit-embed, auto or local mode, and an origin resolver")
+		}
+		// Kit's request encoder needs an origin; the policy transport replaces it.
+		profile.Origin = "http://127.0.0.1"
+	}
 	if profile.DeploymentContract != nil {
 		contract := *profile.DeploymentContract
 		profile.DeploymentContract = &contract

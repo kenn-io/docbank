@@ -19,6 +19,7 @@ var ErrEmbeddingJobFenced = errors.New("embedding job claim is fenced")
 const embeddingJobMaxClaims = 3
 
 type EmbeddingJobRequest struct {
+	RetryUnavailable bool
 	VectorSpaceID    string
 	ContentVersionID string
 	Profile          ProcessingProfileRecord
@@ -202,6 +203,11 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 			WHERE job_id=? AND state='failed' AND failure_code='authorization'`,
 			now, now, jobID); err != nil {
 			return err
+		}
+		if request.RetryUnavailable {
+			if err := s.requeueUnavailableEmbeddingJob(ctx, tx, jobID, now); err != nil {
+				return err
+			}
 		}
 		// Abandonment fences an attempt, not the retained intent. Reopen only
 		// after rechecking current source authority in this transaction. The job
@@ -803,4 +809,17 @@ func embeddingJobID(vaultID, versionID, profileID, bindingID string, inputKind d
 		_, _ = fmt.Fprint(hash, value, "\x00")
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// Requeue retains the cumulative claim budget and fencing epoch. A queued
+// job can take one new claim; another unavailable result ends that claim.
+func (s *Store) requeueUnavailableEmbeddingJob(ctx context.Context, tx *sql.Tx, jobID, now string) error {
+	query := `UPDATE embedding_jobs SET state='queued',claim_owner=NULL,lease_expires_at=NULL,
+	available_at=?,failure_code=NULL,updated_at=? WHERE job_id=? AND state='failed' AND failure_code='provider_unavailable'`
+	if s.postgresSchema != "" {
+		query = `UPDATE embedding_jobs SET state='queued',claim_owner=NULL,lease_expires_at=NULL,
+		available_at=$1,failure_code=NULL,updated_at=$2 WHERE job_id=$3 AND state='failed' AND failure_code='provider_unavailable'`
+	}
+	_, err := tx.ExecContext(ctx, query, now, now, jobID)
+	return err
 }

@@ -35,7 +35,7 @@ func TestImageBridgeDescriptorSupportsTextQuery(t *testing.T) {
 	modelInput, err := cfg.EmbeddingModelInput("semantic")
 	require.NoError(t, err)
 
-	descriptor := configuredEmbeddingDescriptor(profile, modelInput)
+	descriptor := config.EmbeddingDescriptor(profile, modelInput)
 	assert.True(t, descriptor.SupportsTextQuery)
 	assert.Equal(t, []document.EmbeddingInputKind{document.EmbeddingInputImage}, descriptor.InputKinds)
 }

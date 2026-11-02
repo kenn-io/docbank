@@ -582,3 +582,24 @@ func (s *Store) ReplaceVectorIndexUnavailableCoverage(ctx context.Context, cover
 		return nil
 	})
 }
+
+// VectorIndexPublicationPending reports work the recurring publisher can finish.
+// Missing payloads already reported for this exact source require external
+// re-embedding, so they do not keep background work active indefinitely.
+func (s *Store) VectorIndexPublicationPending(ctx context.Context, space string) (bool, error) {
+	source, err := s.CaptureVectorIndexSource(ctx, space)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var pending bool
+	err = s.db.QueryRowContext(ctx, `SELECT NOT EXISTS (
+ SELECT 1 FROM vector_index_heads WHERE vector_space_id=? AND source_manifest_checksum=?
+ ) AND NOT EXISTS (
+ SELECT 1 FROM vector_index_unavailable_coverage
+ WHERE vector_space_id=? AND source_manifest_checksum=? AND external_reembedding_required=1
+ )`, space, source.ManifestChecksum, space, source.ManifestChecksum).Scan(&pending)
+	return pending, err
+}

@@ -191,12 +191,16 @@ func writeProcessingPlan(cmd *cobra.Command, plan api.ProcessingPlan) error {
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing processing plan: %w", err)
 	}
-	if len(plan.Flow) == 0 {
+	return writeProcessingFlow(cmd, plan.Flow)
+}
+
+func writeProcessingFlow(cmd *cobra.Command, hops []api.ProcessingFlowHop) error {
+	if len(hops) == 0 {
 		return nil
 	}
 	flow := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(flow, "CAPABILITY\tPROVIDER\tBOUNDARY\tINPUTS\tFILENAME")
-	for _, hop := range plan.Flow {
+	for _, hop := range hops {
 		_, _ = fmt.Fprintf(flow, "%s\t%s\t%s\t%s\t%s\n", hop.Capability, hop.ProviderID,
 			hop.TrustBoundary, displayList(hop.InputClasses), hop.Filename)
 		runtime := hop.RuntimeDisclosure
@@ -356,7 +360,7 @@ func canonicalSHA256(value string) bool {
 }
 
 func init() {
-	processingCmd.AddCommand(newProcessingProbeCommand(), newProcessingCoverageCommand(), newProcessingVisionFingerprintsCommand())
+	processingCmd.AddCommand(newProcessingLocalCommand(), newProcessingProbeCommand(), newProcessingCoverageCommand(), newProcessingVisionFingerprintsCommand())
 	processingProfilesCmd.Flags().BoolVar(&processingProfilesJSON, "json", false, "print JSON to stdout")
 	processingPlanCmd.Flags().StringVar(&processingPlanProfile, "profile", "", "named executable processing profile")
 	processingPlanCmd.Flags().BoolVar(&processingPlanJSON, "json", false, "print JSON to stdout")

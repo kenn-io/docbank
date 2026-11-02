@@ -141,7 +141,7 @@ func embeddingGemma2Config(t *testing.T, endpoint, variable string) (config.Conf
 	contract, err := cfg.EmbeddingModelInput("semantic")
 	require.NoError(t, err)
 	descriptor, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{
-		Origin: p.Runtime.Endpoint, Descriptor: configuredEmbeddingDescriptor(p, contract), ModelInput: contract,
+		Origin: p.Runtime.Endpoint, Descriptor: config.EmbeddingDescriptor(p, contract), ModelInput: contract,
 		SecretBinding: p.CredentialBinding, DeploymentEpoch: p.Runtime.DeploymentEpoch,
 		RequestTimeout: p.Runtime.RequestTimeout.Std(), MaxBatchItems: p.MaxBatchItems,
 		MaxInputBytes: p.MaxInputBytes, MaxRequestBytes: p.Runtime.MaxRequestBytes,

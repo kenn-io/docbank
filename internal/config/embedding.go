@@ -33,6 +33,13 @@ func (c Config) EmbeddingProfile(name string) (EmbeddingProfileConfig, error) {
 		return profile, fmt.Errorf("embedding profile %q is not defined", name)
 	}
 	if profile.Embedder == nil {
+		if ManagedEmbedding(profile) {
+			managed, err := ManagedEmbeddingProfile(profile, nil)
+			if err != nil {
+				return profile, err
+			}
+			profile.DescriptorFingerprint = managed.Descriptor.Fingerprint
+		}
 		return profile, nil
 	}
 	if err := resolveEmbedder(&profile); err != nil {

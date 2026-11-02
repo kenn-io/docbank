@@ -11974,6 +11974,100 @@ func (c *Client) GetDocumentProcessingJob(ctx context.Context, options *GetDocum
 	return responseParser(ctx, resp)
 }
 
+// PlanLocalText Preview vault-wide text indexing
+func (c *Client) PlanLocalText(ctx context.Context, options *PlanLocalTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanLocalTextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/local/plans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanLocalTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanLocalTextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanLocalTextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PlanLocalTextErrorResponse](resp, "PlanLocalTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ApplyLocalText Approve vault-wide and ongoing text indexing
+func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyLocalTextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/local/setup",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ApplyLocalTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ApplyLocalTextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ApplyLocalTextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ApplyLocalTextErrorResponse](resp, "ApplyLocalTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/setup")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -23773,6 +23867,62 @@ func (o *GetDocumentProcessingJobRequestOptions) GetHeader() (map[string]string,
 	return nil, nil
 }
 
+// PlanLocalTextRequestOptions is the options needed to make a request to PlanLocalText.
+type PlanLocalTextRequestOptions struct {
+	Body *PlanLocalTextBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PlanLocalTextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PlanLocalTextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PlanLocalTextRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PlanLocalTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ApplyLocalTextRequestOptions is the options needed to make a request to ApplyLocalText.
+type ApplyLocalTextRequestOptions struct {
+	Body *ApplyLocalTextBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApplyLocalTextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApplyLocalTextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApplyLocalTextRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApplyLocalTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PlanDocumentProcessingRequestOptions is the options needed to make a request to PlanDocumentProcessing.
 type PlanDocumentProcessingRequestOptions struct {
 	Body *PlanDocumentProcessingBody
@@ -27618,6 +27768,10 @@ type RevokeProcessingConsentBody = ProcessingConsentRevocationRequest
 
 type StartDocumentProcessingBody = StartProcessingRequest
 
+type PlanLocalTextBody = LocalTextPlanRequest
+
+type ApplyLocalTextBody = LocalTextApplyRequest
+
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
@@ -29215,6 +29369,14 @@ type GetDocumentProcessingJobResponse = api.ProcessingStatus
 
 type GetDocumentProcessingJobErrorResponse = Error
 
+type PlanLocalTextResponse = api.LocalTextPlan
+
+type PlanLocalTextErrorResponse = Error
+
+type ApplyLocalTextResponse = api.LocalTextPlan
+
+type ApplyLocalTextErrorResponse = Error
+
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
 type PlanDocumentProcessingErrorResponse = Error
@@ -30265,6 +30427,12 @@ type JobList = api.JobList
 type JobRequest = bundle.JobRequest
 
 type LaneControl = api.LaneControl
+
+type LocalTextApplyRequest = api.LocalTextApplyRequest
+
+type LocalTextPlan = api.LocalTextPlan
+
+type LocalTextPlanRequest = api.LocalTextPlanRequest
 
 type Locator = report.Locator
 
