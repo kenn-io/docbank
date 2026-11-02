@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -685,25 +686,27 @@ func TestWASMBackingSessionLifetime(t *testing.T) {
 }
 
 func TestWASMBackingConcurrentAcquireCancellation(t *testing.T) {
-	manager := newBackingManager(128)
-	first, err := manager.acquire(t.Context(), 128)
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the first lease holds the only backing
-	defer cancel()
-	result := make(chan error, 1)
-	go func() {
-		_, err := manager.acquire(ctx, 128)
-		result <- err
-	}()
-	require.ErrorIs(t, <-result, context.DeadlineExceeded)
-	first.release()
-	second, err := manager.acquire(t.Context(), 128)
-	require.NoError(t, err, "canceled wait must not leak the exclusive reservation")
-	second.release()
-	canceled, stop := context.WithCancel(t.Context())
-	stop()
-	_, err = manager.acquire(canceled, 128)
-	require.ErrorIs(t, err, context.Canceled)
+	synctest.Test(t, func(t *testing.T) {
+		manager := newBackingManager(128)
+		first, err := manager.acquire(t.Context(), 128)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() {
+			_, err := manager.acquire(ctx, 128)
+			result <- err
+		}()
+		require.ErrorIs(t, <-result, context.DeadlineExceeded)
+		first.release()
+		second, err := manager.acquire(t.Context(), 128)
+		require.NoError(t, err, "canceled wait must not leak the exclusive reservation")
+		second.release()
+		canceled, stop := context.WithCancel(t.Context())
+		stop()
+		_, err = manager.acquire(canceled, 128)
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
 
 func TestPDFiumCloseKeepsBackingLeaseUntilScavengeCompletes(t *testing.T) {
@@ -755,26 +758,33 @@ func TestPDFiumCloseKeepsBackingLeaseUntilScavengeCompletes(t *testing.T) {
 }
 
 func TestPDFiumSequentialEnginesReuseBacking(t *testing.T) {
-	first, err := NewPDFium(qualificationRecipe())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, first.Close()) }()
-	e1, ok := first.(*pdfiumEngine)
-	require.True(t, ok)
-	require.NoError(t, e1.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
-	address := &e1.session.memory.buffer[0]
-	second, err := NewPDFium(qualificationRecipe())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, second.Close()) }()
-	e2, ok := second.(*pdfiumEngine)
-	require.True(t, ok)
-	require.Same(t, e1.cache, e2.cache, "concurrent engine acquisition shares only pinned compiled code")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the first engine holds the shared session
-	defer cancel()
-	require.ErrorIs(t, e2.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("concurrent session entered WASM"); return nil }), context.DeadlineExceeded)
-	require.Nil(t, e2.session, "waiting must not allocate a second backing")
-	require.NoError(t, first.Close())
-	require.NoError(t, e2.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
-	require.Same(t, address, &e2.session.memory.buffer[0])
+	synctest.Test(t, func(t *testing.T) {
+		// The second engine waits on the backing token until its deadline, so
+		// the token must belong to this bubble for that wait to use fake time.
+		process := wasmBacking
+		wasmBacking = newBackingManager(process.capacity)
+		t.Cleanup(func() { wasmBacking = process })
+		first, err := NewPDFium(qualificationRecipe())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, first.Close()) }()
+		e1, ok := first.(*pdfiumEngine)
+		require.True(t, ok)
+		require.NoError(t, e1.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
+		address := &e1.session.memory.buffer[0]
+		second, err := NewPDFium(qualificationRecipe())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, second.Close()) }()
+		e2, ok := second.(*pdfiumEngine)
+		require.True(t, ok)
+		require.Same(t, e1.cache, e2.cache, "concurrent engine acquisition shares only pinned compiled code")
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		require.ErrorIs(t, e2.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("concurrent session entered WASM"); return nil }), context.DeadlineExceeded)
+		require.Nil(t, e2.session, "waiting must not allocate a second backing")
+		require.NoError(t, first.Close())
+		require.NoError(t, e2.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
+		require.Same(t, address, &e2.session.memory.buffer[0])
+	})
 }
 
 func TestPDFiumDeniedFilesystemAndCancellation(t *testing.T) {
