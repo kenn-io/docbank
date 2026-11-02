@@ -134,6 +134,8 @@ func registerJobRoutes(api huma.API, d Deps) {
 				for _, watch := range d.Cfg.Watches {
 					if snapshot.Name == "watch:"+watch.Name {
 						job.Processing = watchProcessingStatus(ctx, d, watch.Profile)
+						job.Tags = slices.Clone(watch.Tags)
+						job.TagError = watchTagError(ctx, d, watch.Tags)
 						break
 					}
 				}
