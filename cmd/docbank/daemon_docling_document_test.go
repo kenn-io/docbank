@@ -396,23 +396,25 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 			require.Error(t, err)
 			require.Zero(t, requests.Load(), "no consent must prevent egress")
-			job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+			// StartProcessing returns after the run's terminal status.
+			job, err := daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 			if wantIneligible != "" {
 				require.ErrorContains(t, err, "422 rendition_source_ineligible")
 				require.Zero(t, requests.Load(), "local inspection must reject the document before provider egress")
 				require.Zero(t, redirects.Load(), "a rejected source must not follow provider redirects")
 				return
 			}
-			require.NoError(t, err)
 			wantState := "completed"
 			if test.failure != "" {
 				wantState = "failed"
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
-			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
-				require.NoError(c, statusErr)
-				require.Equal(c, wantState, status.State, "%+v", status)
-			}, 10*time.Second, 20*time.Millisecond)
+			require.NotEmpty(t, job.ID)
+			status, err := daemon.ProcessingStatus(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, wantState, status.State, "%+v", status)
 			require.Zero(t, redirects.Load(), "redirect destination must never receive the upload or key")
 			original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
 			require.NoError(t, err)

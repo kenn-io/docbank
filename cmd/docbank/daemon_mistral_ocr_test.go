@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -92,6 +91,11 @@ func TestMistralOCRRuntimeManifest(t *testing.T) {
 
 func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig) *daemonconn.Connection {
 	t.Helper()
+	// The provider is unreachable, so the client's HTTP retries fail at once;
+	// a nanosecond cap keeps them from waiting between attempts.
+	previousRetryDelay := mistralMaxRetryDelay
+	mistralMaxRetryDelay = time.Nanosecond
+	t.Cleanup(func() { mistralMaxRetryDelay = previousRetryDelay })
 	cfg, _ := mistralOCRProcessingConfig(t)
 	providerRuntime := cfg.RenditionProfiles["documents"].Runtime
 	providerRuntime.AllowedCIDRs = []string{"192.0.2.0/32"}
@@ -137,18 +141,15 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	require.Len(t, plan.Flow, 1)
 	job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
-	// The runtime keeps Mistral's default HTTP retries before recording a failed attempt.
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
-		require.NoError(c, statusErr)
-		require.Equal(c, "retry_wait", status.State, "%+v", status)
-		require.Equal(c, "transient", status.FailureCode)
-	}, 20*time.Second, 20*time.Millisecond)
+	require.Equal(t, node.CurrentVersionID, job.ContentVersionID)
+	// The run started here retries in the background with nothing a test can
+	// wait on, so TestDaemonWatchProfileAdmitsImports checks the recorded
+	// transient failure through the daemon's rendition worker instead.
 }
 
 func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	inbox := t.TempDir()
-	daemon := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(10 * time.Millisecond)}})
+	daemon := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(time.Hour)}})
 	path := filepath.Join(t.TempDir(), "consent.pdf")
 	require.NoError(t, os.WriteFile(path, mistraltest.MinimalPDF("consent source"), 0600))
 	_, err := runCLI(t, "add", path, "--dest", "/documents")
@@ -161,16 +162,31 @@ func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(inbox, "watched.pdf"), mistraltest.MinimalPDF("watched after consent"), 0600))
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/watched.pdf"}})
-		require.NoError(c, err)
-		items, err := daemon.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{
-			{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/inbox/watched.pdf"},
-		}})
-		require.NoError(c, err)
-		require.Len(c, items, 1)
-		require.NotEmpty(c, items[0].LatestProcessingState, "daemon watch callback queues the exact imported version")
-	}, 10*time.Second, 20*time.Millisecond)
+	// Settle asks the watcher for a scan; the interval never elapses.
+	settleDaemon(t)
+	watched, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/watched.pdf"}})
+	require.NoError(t, err)
+	items, err := daemon.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{
+		{NodeID: watched.ID, ContentVersionID: watched.CurrentVersionID, Path: "/inbox/watched.pdf"},
+	}})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	// The daemon watch callback queues the exact imported version. The
+	// provider is unreachable, so after the client's HTTP retries the worker
+	// records a transient failure that waits to retry. The next attempt is
+	// due a second after that failure.
+	require.Equal(t, "retry_wait", items[0].LatestProcessingState)
+	// Starting the same processing joins the queued rendition job, and its
+	// status reports why that job is waiting.
+	watchedSelector := api.ProcessingSelector{NodeID: watched.ID, ContentVersionID: watched.CurrentVersionID, Profile: "documents"}
+	watchedPlan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: watchedSelector}})
+	require.NoError(t, err)
+	joined, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: watchedSelector, PlanFingerprint: watchedPlan.Fingerprint, Consent: true}, watchedPlan.ProfileFingerprint)
+	require.NoError(t, err)
+	status, err := daemon.ProcessingStatus(t.Context(), joined.ID)
+	require.NoError(t, err)
+	require.Equal(t, "retry_wait", status.State, "%+v", status)
+	require.Equal(t, "transient", status.FailureCode)
 }
 
 func TestMistralPasswordFileProcessing(t *testing.T) {
@@ -221,13 +237,15 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	require.Empty(t, plan.RenditionIneligibleReason)
-	completed, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	// The stream's terminal event arrives once the run has finished.
+	stream, err := daemon.StartProcessingStream(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		status, err := daemon.ProcessingStatus(t.Context(), completed.ID)
-		require.NoError(c, err)
-		require.Equal(c, "completed", status.State)
-	}, 10*time.Second, 10*time.Millisecond)
+	_, err = stream.Next()
+	require.NoError(t, err)
+	terminal, err := stream.Next()
+	require.NoError(t, err)
+	require.NotNil(t, terminal.Status)
+	require.Equal(t, "completed", terminal.Status.State)
 	transport.mu.Lock()
 	requests := transport.requests
 	transport.mu.Unlock()

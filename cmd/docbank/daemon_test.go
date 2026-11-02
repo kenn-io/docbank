@@ -347,6 +347,12 @@ func startServeReady(t *testing.T) (stop func(), daemon serveReady) {
 	go func() { done <- serveDaemon(ctx, func(r serveReady) { ready <- r }) }()
 	stop = sync.OnceFunc(func() {
 		testDaemons.Delete(home)
+		// In-process clients share the default transport. An idle connection
+		// that never carried a request counts as active for five seconds during
+		// the daemon's HTTP drain, so close them before stopping.
+		if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
 		cancel()
 		select {
 		case err := <-done:
@@ -365,6 +371,16 @@ func startServeReady(t *testing.T) (stop func(), daemon serveReady) {
 	}
 	testDaemons.Store(home, daemon)
 	return stop, daemon
+}
+
+// wakeDaemon asks the in-process daemon's parked workers to poll now. Use it
+// when the work a test starts blocks on something the test releases later.
+func wakeDaemon(t *testing.T) {
+	t.Helper()
+	value, _ := testDaemons.Load(os.Getenv("DOCBANK_HOME"))
+	daemon, ok := value.(serveReady)
+	require.True(t, ok, "no in-process daemon serves DOCBANK_HOME")
+	daemon.jobs.Wake()
 }
 
 // settleDaemon waits until the in-process daemon serving DOCBANK_HOME has no
