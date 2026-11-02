@@ -168,7 +168,6 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 	opts SearchOptions, source SimilarSource, result *SimilarSearchResolution,
 ) error {
 	filter, args := searchFilterSQL(opts)
-	// Neighbors arrive in descending score order from SearchSimilarRows.
 	seenSets := make(map[string]struct{})
 	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	byNode := make(map[int64]SemanticSearchCandidate)
@@ -233,28 +232,20 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 	result.Truncated = len(result.Candidates) > limit
 	result.Candidates = result.Candidates[:min(limit, len(result.Candidates))]
 	hashes := make([]string, len(result.Candidates))
-	counts := make(map[string]int)
 	for i, candidate := range result.Candidates {
 		hashes[i] = candidate.BlobHash
 	}
-	if len(hashes) > 0 {
-		seenNodes := make(map[int64]struct{})
-		err := scanSemanticRows(ctx, tx, profile, binding, kind, space, filter, args, hashes, false,
-			func(_ semanticEligibilityKey, nodeID int64, hash string) {
-				if nodeID == source.NodeID {
-					return
-				}
-				if _, seen := seenNodes[nodeID]; seen {
-					return
-				}
-				seenNodes[nodeID] = struct{}{}
-				counts[hash]++
-			})
-		if err != nil {
-			return err
-		}
+	copies := make(map[int64]string)
+	err := scanSemanticRows(ctx, tx, profile, binding, kind, space, filter, args, hashes, false,
+		func(_ semanticEligibilityKey, nodeID int64, hash string) { copies[nodeID] = hash })
+	if err != nil {
+		return err
 	}
-	var err error
+	delete(copies, source.NodeID)
+	counts := make(map[string]int)
+	for _, hash := range copies {
+		counts[hash]++
+	}
 	for i := range result.Candidates {
 		result.Candidates[i].DuplicateCount = counts[result.Candidates[i].BlobHash] - 1
 		result.Candidates[i].Path, err = pathOf(ctx, tx, result.Candidates[i].NodeID)

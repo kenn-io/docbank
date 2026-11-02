@@ -820,8 +820,7 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 		return nil, err
 	}
 	slices.SortFunc(annRows, vectorindex.CompareIdentity)
-	annRows = slices.Compact(annRows)
-	return annRows, nil
+	return slices.Compact(annRows), nil
 }
 
 // LiveSearchScopeExists reports whether normalized search filters match a live file.
@@ -932,7 +931,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 			return err
 		}
 		if normalized.CollapsesPhotoDuplicates() {
-			var hashes []string
+			hashes := []string{}
 			for _, entries := range members {
 				for _, entry := range entries {
 					if _, seen := representatives[entry.BlobHash]; !seen {
@@ -941,16 +940,14 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 					}
 				}
 			}
-			if len(hashes) > 0 {
-				err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-					filterSQL, filterArgs, hashes, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
-						if representatives[hash] == 0 {
-							representatives[hash] = nodeID
-						}
-					})
-				if err != nil {
-					return err
-				}
+			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+				filterSQL, filterArgs, hashes, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+					if representatives[hash] == 0 {
+						representatives[hash] = nodeID
+					}
+				})
+			if err != nil {
+				return err
 			}
 		}
 		for key, entries := range members {
@@ -1041,6 +1038,8 @@ func semanticMembershipSQL(driver string) string {
  `
 }
 
+// scanSemanticRows reads the whole space when blobHashes is nil, else only
+// rows whose current content has one of those hashes.
 func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
 	blobHashes []string, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
@@ -1083,9 +1082,6 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, vectorSetIDs []string,
 ) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
-	if len(vectorSetIDs) == 0 {
-		return make(map[semanticEligibilityKey][]SemanticSearchCandidate), nil
-	}
 	encoded, err := json.Marshal(vectorSetIDs)
 	if err != nil {
 		return nil, err
