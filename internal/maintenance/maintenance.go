@@ -101,6 +101,8 @@ type RepackOptions struct {
 	// Catalog overrides the catalog used by scoped Kit rewrites. It supports
 	// focused fault injection without changing the public embedded API.
 	Catalog packstore.Catalog
+	// Now is the time pack ages are measured at. Zero means the current time.
+	Now time.Time
 }
 
 type RepackReport struct {
@@ -864,7 +866,10 @@ func Repack(
 	if minDead == 0 {
 		minDead = defaultRepackDeadBytes
 	}
-	now := time.Now().UTC()
+	now := opts.Now.UTC()
+	if opts.Now.IsZero() {
+		now = time.Now().UTC()
+	}
 	report := RepackReport{}
 	remaining := budget.MaxObjects
 	sparseAfterHash := ""
