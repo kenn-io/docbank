@@ -1176,6 +1176,13 @@ These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
+`[web] base_path` mounts the browser app and its API requests under a configured
+prefix. The daemon removes that prefix before authorization, loopback checks,
+and timeout classification; the endpoint contracts below remain unchanged.
+Root API endpoints stay available to CLI clients. Browser launch URLs include
+the prefix, while `public_origin` continues to contain only the scheme and
+authority. See [proxy subpaths](../usage/web.md#serve-docbank-under-a-path).
+
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
 its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { webURL, webPath } from "./web-path.js";
   import VaultDrawer from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
   import ToolPage from "./ToolPage.svelte";
@@ -397,7 +398,7 @@
     isMapPath(path) ||
     ["/photos", "/photos/hidden", "/photos/albums", "/photos/people"].includes(path) ||
     path.startsWith("/photos/albums/");
-  let photoMode = $state(isPhotoPath(location.pathname));
+  let photoMode = $state(isPhotoPath(webPath()));
   let openedPhotos = false;
   $effect(() => {
     if (photoMode) openedPhotos = true;
@@ -434,7 +435,7 @@
       window.removeEventListener("pageshow", resume);
     };
   });
-  let photoPath = $state(location.pathname);
+  let photoPath = $state(webPath());
   $effect(() => {
     void photoPath;
     void photoMode;
@@ -487,7 +488,7 @@
   const photoNavigation = photoNavigationGuard((url) => {
     const id = new URLSearchParams(url.hash.slice(1)).get("photo") ?? "";
     return (
-      (url.pathname !== photoPath || id !== photoID) &&
+      (webPath(url.pathname) !== photoPath || id !== photoID) &&
       photoMode &&
       !!retainedPhotoEditor() &&
       !retainedPhotoEditor()!.canChangeTarget()
@@ -495,9 +496,9 @@
   });
   onMount(() => photoNavigation.listen());
   function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
-    photoNavigation.push(state, url);
+    photoNavigation.push(state, webURL(url));
     nodeVersionHash = location.hash;
-    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
+    if (!isPhotoPath(webPath())) docsPage = pageAt(webPath());
   }
   function guardPhotoUnload(event: BeforeUnloadEvent) {
     if (!photoMode || !retainedPhotoEditor()?.dirty) return;
@@ -513,7 +514,7 @@
       ? (path.slice(1) as DocsPage)
       : null;
   }
-  let docsPage = $state(pageAt(location.pathname));
+  let docsPage = $state(pageAt(webPath()));
   const docsScreens = {
     searches: "saved_queries",
     productions: "bates",
@@ -529,10 +530,10 @@
   function syncPhotoLocation() {
     if (photoNavigation.blocked()) return;
     nodeVersionHash = location.hash;
-    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
+    if (!isPhotoPath(webPath())) docsPage = pageAt(webPath());
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "",
-      path = location.pathname;
+      path = webPath();
     const showing = photoMode && path === photoPath;
     // Album views are recreated when their path changes, so only the open album can keep a return record.
     const photos =
@@ -1055,7 +1056,7 @@
       return;
     clearPhotoNotice();
     navOpen = false;
-    if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
+    if (photoMode && path === photoPath && path === webPath() && !photoID) return;
     if (!photoMode || path !== photoPath) void invalidateLibrary(false);
     if (path !== photoPath) revalidatedChangeID = null;
     hiddenPhotoActionError = "";

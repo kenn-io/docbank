@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { webURL } from "./web-path.js";
   import IconAction from "./IconAction.svelte";
   import PhotoSearchStatus from "./PhotoSearchStatus.svelte";
   import { reportAction, reportFailure } from "./action-events.js";
@@ -1447,7 +1448,7 @@
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
           {#if albums?.notice}<div class="photo-notice" role="status">
               {albums.notice}{#if albums.noticeID}<a
-                  href={`/photos/albums/${albums.noticeID}`}
+                  href={webURL(`/photos/albums/${albums.noticeID}`)}
                   onclick={(event) => {
                     event.preventDefault();
                     onnavigate(`/photos/albums/${albums!.noticeID}`);

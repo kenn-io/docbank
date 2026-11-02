@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
@@ -85,14 +86,15 @@ func (c *Connection) WebSessionURL(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parsing daemon browser origin: %w", err)
 	}
 	if u.Scheme != "http" || u.Host == "" || u.User != nil ||
-		u.Path != "/" || u.RawQuery != "" || u.Fragment != "" ||
+		!strings.HasSuffix(u.Path, "/") || u.RawPath != "" ||
+		config.ValidateWebBasePath(strings.TrimSuffix(u.Path, "/")) != nil ||
+		u.RawQuery != "" || u.Fragment != "" ||
 		!validBrowserOriginAddress(u.Host) {
 		return "", errors.New("daemon returned an invalid browser origin")
 	}
 	if u.Host == apiURL.Host {
 		return "", errors.New("daemon returned its reusable API origin for the browser")
 	}
-	u.Path = "/"
 	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = url.Values{

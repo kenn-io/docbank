@@ -278,8 +278,8 @@ func NewServer(d Deps) *Server {
 	if s.webSessions.login != nil {
 		webLoginOrigin = s.webSessions.login.origin
 	}
-	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.MapTiles, d.Logger)
-	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions, d.TelemetryCapture, d.Logger)
+	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.BasePath, d.Cfg.Web.MapTiles, d.Logger)
+	registerWebSession(mux, d.Cfg.Web.Enabled, webLaunchURL(d.WebURL, d.Cfg.Web.BasePath), s.webSessions, d.TelemetryCapture, d.Logger)
 	registerWebSignIn(mux, s.webSessions)
 	registerWebSignInOpenAPI(humaAPI)
 	registerPhotoImportCheckpoint(mux, humaAPI, d)
@@ -291,8 +291,9 @@ func NewServer(d Deps) *Server {
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)
-	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = timeoutMiddleware(h)
+	h = webBasePathMiddleware(h, d.Cfg.Web.BasePath)
+	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = recoverMiddleware(h, d.Logger)
 	h = logMiddleware(h, d.Logger)
 	h = trackMiddleware(h, d.Tracker)
