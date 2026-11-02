@@ -230,7 +230,8 @@ cannot start a review. **Fit page** initially shows the whole page; choose
 1. Wait for the original page to render, then choose **Draw rectangle** or **Mask
    whole page**. To draw with the keyboard, focus the PDF, move with
    arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
-   cancels the unfinished rectangle. Page and zoom changes cancel it too.
+   cancels the unfinished rectangle. The reader announces the page and cursor
+   position in inches. Page and zoom changes cancel the unfinished rectangle too.
    Drawing stays on after each rectangle.
 2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
    rectangle cuts through text, review the proposed expansion and explicitly

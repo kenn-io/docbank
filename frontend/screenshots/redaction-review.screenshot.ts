@@ -234,6 +234,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     };
     // Keyboard marks use the same authoritative boxes, and Escape cancels only a draft.
     await drawToggle.click();
+    const cursorStatus = drawer.getByRole("status", { name: "Mask cursor", exact: true });
     await drawer.locator("embedpdf-container").focus();
     for (const key of [
       "Shift+ArrowRight",
@@ -249,6 +250,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     ])
       await page.keyboard.press(key);
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
+    await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.40 inches.");
     const keyboardBox = canvas.locator('svg rect[fill="#00000040"]');
     await expect(keyboardBox).toHaveCount(1);
     for (const [attribute, value] of Object.entries({
@@ -262,8 +264,29 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         .toBeCloseTo(Number(value), 8);
     await page.keyboard.press("Enter");
     await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("Shift+ArrowDown");
+    const previewAction = drawer.getByRole("button", { name: "Preview redaction", exact: true });
+    await expect(previewAction).toBeDisabled();
+    await drawer
+      .getByRole("complementary", { name: "Masks and coverage" })
+      .getByRole("heading")
+      .first()
+      .click();
+    await expect(previewAction).toBeDisabled();
+    await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Escape");
+    await expect(previewAction).toBeEnabled();
     await expect(page.getByRole("dialog", { name: "Discard redaction?" })).toBeHidden();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(previewAction).toBeDisabled();
+    await drawer.getByRole("button", { name: "Back to reading", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "Discard redaction?", exact: true })
+      .getByRole("button", { name: "Keep reviewing", exact: true })
+      .click();
+    await expect(previewAction).toBeEnabled();
     await drawer.getByRole("button", { name: "Remove", exact: true }).click();
     await drawer.getByRole("button", { name: "Toggle Pan Mode", exact: true }).click();
     await expect(drawToggle).not.toBeChecked();
@@ -303,7 +326,15 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     // Metadata edits keep the immutable original and masks in the same reader.
     await run("tag", "create", "review-pending");
     await run("tag", "assign", "review-pending", "/two-pages.pdf");
+    await expect(drawToggle).toBeChecked();
+    await drawer.getByRole("button", { name: "Next Page", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(drawer.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await originalPage(2);
+    await drawer.locator("embedpdf-container").focus();
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("ArrowDown");
+    await expect(cursorStatus).toHaveText("Page 2, cursor 0.10, 0.01 inches.");
     await drawer.getByRole("button", { name: "Mask whole page 2", exact: true }).click();
     await expect(drawer.getByText("Whole page 2", { exact: true })).toBeVisible();
     await originalPage(1);

@@ -78,6 +78,7 @@ export class PDFReviewBridge {
   constructor(
     private host: HTMLElement,
     private changed: (status: ReaderReviewStatus) => void,
+    private announce: (position: string) => void,
   ) {
     host.addEventListener("embedpdf:page-render", this.renderEvent);
     host.addEventListener("embedpdf:page-layer", this.layerEvent);
@@ -154,7 +155,7 @@ export class PDFReviewBridge {
                 ...box,
               });
           }
-          this.review.ondrag(false);
+          this.review.ondrag([...this.layers.values()].some((l) => l.start));
         } finally {
           // Let the library finish its pointer-up and clear its drag rectangle
           // before retiring the transient mark. Docbank owns the committed box.
@@ -201,6 +202,7 @@ export class PDFReviewBridge {
   configure(review?: ReaderReview) {
     const leaving = !review && !!this.review;
     this.review = review;
+    if (!review?.drawing || !review.visible) this.cancelDraft();
     if (leaving) {
       this.bound = undefined;
       this.geometryError = "";
@@ -326,8 +328,9 @@ export class PDFReviewBridge {
       };
       surface.addEventListener("pointerdown", down, true);
       const up = () => {
+        if (!this.pointerActive) return;
         this.pointerActive = false;
-        this.review?.ondrag(false);
+        this.review?.ondrag([...this.layers.values()].some((l) => l.start));
       };
       window.addEventListener("pointerup", up);
       this.layers.set(event.target, {
@@ -384,6 +387,13 @@ export class PDFReviewBridge {
   private paint() {
     const prep = this.bound,
       doc = this.document();
+    const pageNumber = this.scroll()?.getCurrentPage() ?? 1,
+      current = [...this.layers.values()].find((l) => l.event.pageIndex === pageNumber - 1);
+    this.announce(
+      this.review?.drawing && this.review.visible && current && this.isReady(pageNumber - 1)
+        ? `Page ${pageNumber}, cursor ${(current.cursor.x / 10000).toFixed(2)}, ${(current.cursor.y / 10000).toFixed(2)} inches.`
+        : "",
+    );
     for (const layer of this.layers.values()) {
       const { svg, event } = layer;
       svg.replaceChildren();
@@ -444,21 +454,13 @@ export class PDFReviewBridge {
     const review = this.review,
       prep = this.bound;
     if (
+      event.composedPath()[0] !== this.host ||
       !review?.drawing ||
       !review.visible ||
       !prep ||
       event.ctrlKey ||
       event.metaKey ||
       event.altKey
-    )
-      return;
-    if (
-      event
-        .composedPath()
-        .some(
-          (x) =>
-            x instanceof HTMLElement && (x.matches("input,textarea,select") || x.isContentEditable),
-        )
     )
       return;
     const index = (this.scroll()?.getCurrentPage() ?? 1) - 1;
@@ -523,6 +525,7 @@ export class PDFReviewBridge {
   }
   dispose() {
     this.disposed = true;
+    this.announce("");
     cancelAnimationFrame(this.frame);
     this.setDrawingMode(false);
     this.subscriptions.forEach((f) => f());

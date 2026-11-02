@@ -32,6 +32,7 @@
   let reviewTrigger: HTMLElement | undefined;
   const redactionAction = $derived(pdfRedactionAction(source, node, actionsDisabled));
   const redactionDisabled = $derived(redactionAction?.disabledReason ?? "");
+  const pdf = $derived(source.mimeType.split(";")[0]?.trim().toLowerCase() === "application/pdf");
 </script>
 
 <div class="reader-shell" class:reviewing={redacting}>
@@ -46,8 +47,8 @@
       else onclose();
     }}
   >
-    <div class="reader-content">
-      {#if source.mimeType.split(";")[0]?.trim().toLowerCase() === "application/pdf"}
+    <div class="reader-content" class:pdf>
+      {#if pdf}
         <RedactionReview
           bind:this={review}
           active={redacting}
@@ -112,6 +113,9 @@
     flex: 1;
     min-width: 0;
     min-height: 0;
+    overflow: auto;
+  }
+  .reader-content.pdf {
     overflow: hidden;
   }
 </style>

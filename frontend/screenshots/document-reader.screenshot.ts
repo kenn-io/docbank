@@ -71,7 +71,9 @@ const test = base.extend<{ readerURL: string }>({
         ],
         [
           "Notes.md",
-          "# Review notes\n\n- First item\n- Second item\n\n| File | Status |\n| --- | --- |\n| Sample | Reviewed |\n\n<script>window.markdownExecuted = true</script>\n",
+          "# Review notes\n\n- First item\n- Second item\n\n| File | Status |\n| --- | --- |\n| Sample | Reviewed |\n\n<script>window.markdownExecuted = true</script>\n" +
+            "\n\nSupporting notes for the synthetic document review.".repeat(60) +
+            "\n\n## End of notes\n",
         ],
       ]) {
         const file = path.join(workspace, name!);
@@ -216,6 +218,13 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   await expect(markdown.getByRole("cell", { name: "Reviewed" })).toBeVisible();
   await expect(markdown.getByRole("article").locator("script")).toHaveCount(0);
   await page.screenshot({ path: path.join(output!, "markdown-reader.png") });
+  const endOfNotes = markdown.getByRole("heading", { name: "End of notes", exact: true });
+  await expect(endOfNotes).not.toBeInViewport();
+  await markdown.getByRole("article").hover();
+  await page.mouse.wheel(0, 10000);
+  await expect(endOfNotes).toBeInViewport();
+  await expect(markdown.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
+  await page.screenshot({ path: path.join(output!, "markdown-reader-end.png") });
   await page.keyboard.press("Escape");
   await expect(markdownRow).toBeFocused();
   await expect.poll(() => page.workers().length).toBe(0);

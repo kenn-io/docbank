@@ -19,6 +19,7 @@
     onbridge?: (bridge: PDFReviewBridge) => void;
   } = $props();
   let bridge = $state<PDFReviewBridge>();
+  let position = $state("");
   $effect(() => {
     const b = bridge,
       r = review;
@@ -32,7 +33,11 @@
     style="width: 100%; height: 100%;"
     oninit={(container) => {
       container.tabIndex = 0;
-      bridge = new PDFReviewBridge(container, (status) => untrack(() => onstatus?.(status)));
+      bridge = new PDFReviewBridge(
+        container,
+        (status) => untrack(() => onstatus?.(status)),
+        (value) => (position = value),
+      );
       onbridge?.(bridge);
       container.setAttribute("aria-label", `PDF document: ${name}`);
     }}
@@ -66,3 +71,10 @@
     }}
   />
 {/key}
+<span
+  class="kit-sr-only"
+  role="status"
+  aria-label="Mask cursor"
+  aria-live="polite"
+  aria-atomic="true">{position}</span
+>
