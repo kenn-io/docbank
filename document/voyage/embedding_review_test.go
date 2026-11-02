@@ -104,18 +104,17 @@ func TestContextualEmbeddingStrictlyRejectsDocumentedShapeDrift(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				writer.Header().Set("Content-Type", "application/json")
-				_, _ = writer.Write(test.body)
-			}))
-			profile := voyageTextProfile(t, voyage.EmbeddingModeContextual)
-			profile.Endpoint, profile.EgressPolicy = endpoint, egress
-			profile = refingerprintVoyageProfile(t, profile)
-			provider, err := newVoyageEmbeddingTestProvider(t, profile, embeddingSecrets{"credential:voyage": "PRIVATE_SECRET"}, resolver)
-			require.NoError(t, err)
-			_, err = provider.Embed(t.Context(), inputs, voyageAuthorization(profile.Descriptor))
-			require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-			assert.NotContains(t, err.Error(), "PRIVATE")
+			// The malformed-response retry backs off on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				profile := voyageTextProfile(t, voyage.EmbeddingModeContextual)
+				provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "PRIVATE_SECRET"}, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = writer.Write(test.body)
+				}))
+				_, err := provider.Embed(t.Context(), inputs, voyageAuthorization(profile.Descriptor))
+				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+				assert.NotContains(t, err.Error(), "PRIVATE")
+			})
 		})
 	}
 }
@@ -201,36 +200,37 @@ func TestVoyageEmbeddingRetriesMalformedResponseOnce(t *testing.T) {
 			{"recovered", true, 3, 2}, {"malformed_twice", false, 3, 2}, {"attempt_limit", true, 1, 1},
 		} {
 			t.Run(fmt.Sprintf("%s/%s", mode, testCase.name), func(t *testing.T) {
-				var calls atomic.Int32
-				endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					count := calls.Add(1)
-					w.Header().Set("Content-Type", "application/json")
-					if count == 1 || !testCase.recoverResponse {
-						_, _ = w.Write([]byte(`{"data":`))
-						return
-					}
-					if mode == voyage.EmbeddingModeContextual {
-						_, _ = w.Write(contextualOfficialBody(t, []string{"document envelope: passage"}, []int{0}))
+				// The malformed-response retry backs off on fake time.
+				synctest.Test(t, func(t *testing.T) {
+					var calls atomic.Int32
+					handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						count := calls.Add(1)
+						w.Header().Set("Content-Type", "application/json")
+						if count == 1 || !testCase.recoverResponse {
+							_, _ = w.Write([]byte(`{"data":`))
+							return
+						}
+						if mode == voyage.EmbeddingModeContextual {
+							_, _ = w.Write(contextualOfficialBody(t, []string{"document envelope: passage"}, []int{0}))
+						} else {
+							_, _ = w.Write(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))
+						}
+					})
+					profile := voyageTextProfile(t, mode)
+					profile.MaxRetries = testCase.attempts
+					profile = refingerprintVoyageProfile(t, profile)
+					provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, handler)
+					result, err := document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
+					require.Equal(t, testCase.wantRequests, calls.Load())
+					if testCase.recoverResponse && testCase.attempts > 1 {
+						require.NoError(t, err)
+						require.Len(t, result.Vectors, 1)
+						assert.Equal(t, "chunk", result.Vectors[0].Key)
 					} else {
-						_, _ = w.Write(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))
+						require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+						assert.Equal(t, int(testCase.wantRequests)-1, voyage.MetricsFromError(err).Retries)
 					}
-				}))
-				profile := voyageTextProfile(t, mode)
-				profile.Endpoint, profile.EgressPolicy = endpoint, egress
-				profile.MaxRetries, profile.RetryBaseDelay = testCase.attempts, time.Millisecond
-				profile = refingerprintVoyageProfile(t, profile)
-				provider, err := newVoyageEmbeddingTestProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, resolver)
-				require.NoError(t, err)
-				result, err := document.ExecuteEmbedding(t.Context(), provider, []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
-				require.Equal(t, testCase.wantRequests, calls.Load())
-				if testCase.recoverResponse && testCase.attempts > 1 {
-					require.NoError(t, err)
-					require.Len(t, result.Vectors, 1)
-					assert.Equal(t, "chunk", result.Vectors[0].Key)
-				} else {
-					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-					assert.Equal(t, int(testCase.wantRequests)-1, voyage.MetricsFromError(err).Retries)
-				}
+				})
 			})
 		}
 	}
@@ -301,6 +301,17 @@ func newVoyageEmbeddingTestProvider(t *testing.T, profile voyage.EmbeddingProfil
 		voyage.TrustEmbeddingTestCertificate(t, provider, fixture.certificate)
 	}
 	return provider, nil
+}
+
+// newVoyageMemoryProvider builds a provider for the profile's endpoint whose
+// HTTP exchange runs handler in memory (see handlerTransport), so a synctest
+// bubble can advance fake time through its retry backoff.
+func newVoyageMemoryProvider(t *testing.T, profile voyage.EmbeddingProfile, secrets voyage.SecretResolver, handler http.Handler) *voyage.EmbeddingClient {
+	t.Helper()
+	provider, err := voyage.NewEmbeddingProvider(profile, secrets, failingEmbeddingResolver{})
+	require.NoError(t, err)
+	voyage.SetEmbeddingTestTransport(provider, handlerTransport(handler))
+	return provider
 }
 
 func TestVoyageEmbeddingAttemptTimeouts(t *testing.T) {

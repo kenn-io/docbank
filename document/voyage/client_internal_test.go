@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -72,7 +73,7 @@ func TestRequestMetricsSumAttemptLatencyWithoutBackoff(t *testing.T) {
 	require.NoError(t, err)
 	var calls atomic.Int32
 	client := &Client{
-		policy: policy, apiKey: "synthetic-key", maxRetries: 2, retryBaseDelay: time.Nanosecond,
+		policy: policy, apiKey: "synthetic-key", maxRetries: 2, retryBaseDelay: time.Second,
 		http: &http.Client{Transport: internalRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 			status, body := http.StatusInternalServerError, []byte(nil)
 			if calls.Add(1) == 2 {
@@ -90,9 +91,13 @@ func TestRequestMetricsSumAttemptLatencyWithoutBackoff(t *testing.T) {
 	var clockIndex atomic.Int32
 	client.now = func() time.Time { return times[clockIndex.Add(1)-1] }
 
-	_, _, metrics, err := client.embed(t.Context(), []wireInput{{Content: []wireContentPart{{Type: "text", Text: "x"}}}}, inputTypeDocument)
-	require.NoError(t, err)
-	assert.Equal(t, RequestMetrics{Requests: 2, Retries: 1, Latency: 20 * time.Millisecond}, metrics)
+	// The backoff between attempts elapses on fake time; the injected clock
+	// alone determines the reported latency.
+	synctest.Test(t, func(t *testing.T) {
+		_, _, metrics, err := client.embed(t.Context(), []wireInput{{Content: []wireContentPart{{Type: "text", Text: "x"}}}}, inputTypeDocument)
+		require.NoError(t, err)
+		assert.Equal(t, RequestMetrics{Requests: 2, Retries: 1, Latency: 20 * time.Millisecond}, metrics)
+	})
 }
 
 func TestCancellationAfterProviderWorkCarriesMetrics(t *testing.T) {
@@ -120,9 +125,13 @@ func TestCancellationAfterProviderWorkCarriesMetrics(t *testing.T) {
 			var clockIndex atomic.Int32
 			client.now = func() time.Time { return times[clockIndex.Add(1)-1] }
 
-			_, _, _, err := client.embed(ctx, []wireInput{{Content: []wireContentPart{{Type: "text", Text: "x"}}}}, inputTypeDocument)
-			require.ErrorIs(t, err, context.Canceled)
-			assert.Equal(t, RequestMetrics{Requests: 1, Latency: 5 * time.Millisecond}, MetricsFromError(err))
+			// A backoff that ignored cancellation would end on fake time, not
+			// after an hour of real time.
+			synctest.Test(t, func(t *testing.T) {
+				_, _, _, err := client.embed(ctx, []wireInput{{Content: []wireContentPart{{Type: "text", Text: "x"}}}}, inputTypeDocument)
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Equal(t, RequestMetrics{Requests: 1, Latency: 5 * time.Millisecond}, MetricsFromError(err))
+			})
 		})
 	}
 }
