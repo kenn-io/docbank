@@ -242,7 +242,7 @@ func (s *Store) RenditionBuild(ctx context.Context, buildID string) (RenditionBu
 	if err := validateCatalogSHA256(buildID, "rendition build ID"); err != nil {
 		return RenditionBuildRecord{}, fmt.Errorf("rendition build %q: %w", buildID, ErrNotFound)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return RenditionBuildRecord{}, fmt.Errorf("starting rendition build snapshot: %w", err)
 	}
@@ -322,27 +322,27 @@ func stageRenditionBuildTx(
 	}
 	for _, artifact := range normalized.Artifacts {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM rendition_blob_staging WHERE blob_hash=?`, artifact.BlobHash,
+			`DELETE FROM rendition_blob_staging WHERE blob_hash=$1`, artifact.BlobHash,
 		); err != nil {
 			return fmt.Errorf("committing rendition artifact blob %s: %w", artifact.BlobHash, err)
 		}
 	}
 	result, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO rendition_builds(
+			INSERT INTO rendition_builds(
 				build_id,vault_uid,source_sha256,rendition_request_fingerprint,
 				evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
 				captured_artifact_policy_json,authorization_checksum,provider_operation_id,
 				provider_receipt_json,evidence_checksum,rendition_checksum,markdown_checksum,
 				completeness,partial_success,truncated,warnings_json,completed_at,
 				declared_artifact_count,unit_count,lexical_segment_count
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) ON CONFLICT DO NOTHING`,
 		normalized.ID, normalized.VaultID, normalized.SourceSHA256,
 		normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
 		normalized.CapturedArtifactPolicyFingerprint, string(normalized.CapturedArtifactPolicy),
 		normalized.AuthorizationChecksum, normalized.ProviderOperationID,
 		string(normalized.ProviderReceipt), normalized.EvidenceChecksum,
 		normalized.RenditionChecksum, normalized.MarkdownChecksum,
-		normalized.Completeness, normalized.PartialSuccess, normalized.Truncated,
+		normalized.Completeness, boolInt(normalized.PartialSuccess), boolInt(normalized.Truncated),
 		mustCatalogJSON(normalized.Warnings), normalized.CompletedAt,
 		normalized.DeclaredArtifactCount, len(normalized.Units), len(normalized.LexicalSegments),
 	)
@@ -451,7 +451,7 @@ func (s *Store) activeRenditionSnapshot(
 	if err := validateCatalogSHA256(processingProfileFingerprint, "processing profile fingerprint"); err != nil {
 		return RenditionView{}, fmt.Errorf("active rendition profile %q: %w", processingProfileFingerprint, ErrNotFound)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return RenditionView{}, fmt.Errorf("starting active rendition snapshot: %w", err)
 	}
@@ -480,7 +480,7 @@ func activeRenditionView(
 	}}
 	err := tx.QueryRowContext(ctx, `
 		SELECT attachment_id,published_at FROM rendition_heads
-		WHERE content_version_id=? AND profile_fingerprint=?`,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2`,
 		contentVersionID, processingProfileFingerprint,
 	).Scan(&view.Head.AttachmentID, &view.Head.PublishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -512,7 +512,7 @@ func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID st
 	var contentVersionID, profileFingerprint string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT content_version_id,profile_fingerprint FROM rendition_attachments
-		WHERE attachment_id=?`, attachmentID).Scan(&contentVersionID, &profileFingerprint)
+		WHERE attachment_id=$1`, attachmentID).Scan(&contentVersionID, &profileFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionView{}, ErrNotFound
 	}
@@ -532,7 +532,7 @@ func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID st
 // CurrentRenditionByAttachment resolves current/live file and active rendition
 // authority in one read snapshot. An optional content hash fences exact reads.
 func (s *Store) CurrentRenditionByAttachment(ctx context.Context, nodeID int64, versionID, contentHash, attachmentID string) (Node, RenditionView, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return Node{}, RenditionView{}, fmt.Errorf("starting rendition window snapshot: %w", err)
 	}
@@ -547,7 +547,7 @@ func (s *Store) CurrentRenditionByAttachment(ctx context.Context, nodeID int64, 
 	var profileFingerprint string
 	err = tx.QueryRowContext(ctx, `
 		SELECT profile_fingerprint FROM rendition_attachments
-		WHERE attachment_id=? AND content_version_id=?`, attachmentID, versionID).Scan(&profileFingerprint)
+		WHERE attachment_id=$1 AND content_version_id=$2`, attachmentID, versionID).Scan(&profileFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, RenditionView{}, ErrNotFound
 	}
@@ -903,12 +903,12 @@ func validateRenditionHeadRecord(record RenditionHeadRecord) error {
 
 func ensureProcessingProfileTx(ctx context.Context, tx *sql.Tx, record ProcessingProfileRecord) error {
 	result, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO processing_profiles(
+		INSERT INTO processing_profiles(
 			profile_fingerprint,canonical_profile,rendition_request_fingerprint,
 			evidence_lexical_fingerprint,retention_disclosure_fingerprint,
 			attachment_policy_fingerprint,consent_fingerprint,
 			rendition_disclosure_fingerprint,trust_boundary
-		) VALUES(?,?,?,?,?,?,?,?,?)`,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
 		record.Fingerprint, string(record.CanonicalProfile), record.RenditionRequestFingerprint,
 		record.EvidenceLexicalFingerprint, record.RetentionDisclosureFingerprint,
 		record.AttachmentPolicyFingerprint, record.ConsentFingerprint,
@@ -938,7 +938,7 @@ func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record Rend
 	for _, artifact := range record.Artifacts {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum)
-			VALUES(?,?,?,?,?,?)`, record.ID, artifact.ID, artifact.Role, artifact.BlobHash,
+			VALUES($1,$2,$3,$4,$5,$6)`, record.ID, artifact.ID, artifact.Role, artifact.BlobHash,
 			artifact.Size, artifact.Checksum); err != nil {
 			return fmt.Errorf("inserting rendition artifact %s: %w", artifact.ID, err)
 		}
@@ -947,7 +947,7 @@ func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record Rend
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_units(
 				build_id,unit_id,evidence_unit_id,unit_order,checksum,heading_path_json,locator_json
-			) VALUES(?,?,?,?,?,?,?)`, record.ID, unit.ID, unit.EvidenceUnitID, unit.Order,
+			) VALUES($1,$2,$3,$4,$5,$6,$7)`, record.ID, unit.ID, unit.EvidenceUnitID, unit.Order,
 			unit.Checksum, mustCatalogJSON(unit.HeadingPath), mustCatalogJSON(unit.Locator)); err != nil {
 			return fmt.Errorf("inserting rendition unit %s: %w", unit.ID, err)
 		}
@@ -956,7 +956,7 @@ func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record Rend
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_segments(
 				build_id,segment_id,unit_id,segment_order,char_start,char_end,checksum,text
-			) VALUES(?,?,?,?,?,?,?,?)`, record.ID, segment.ID, segment.UnitID, segment.Order,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.ID, segment.ID, segment.UnitID, segment.Order,
 			segment.CharStart, segment.CharEnd, segment.Checksum, segment.Text); err != nil {
 			return fmt.Errorf("inserting rendition lexical segment %s: %w", segment.ID, err)
 		}
@@ -968,7 +968,7 @@ func validateRenditionBuildBlobAuthorityTx(
 	ctx context.Context, tx *sql.Tx, record RenditionBuildRecord,
 ) error {
 	var sourceSize int64
-	if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, record.SourceSHA256).Scan(&sourceSize); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, record.SourceSHA256).Scan(&sourceSize); errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("rendition source blob %s: %w", record.SourceSHA256, ErrNotFound)
 	} else if err != nil {
 		return fmt.Errorf("reading rendition source blob %s: %w", record.SourceSHA256, err)
@@ -978,7 +978,7 @@ func validateRenditionBuildBlobAuthorityTx(
 	}
 	for _, artifact := range record.Artifacts {
 		var size int64
-		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, artifact.BlobHash).Scan(&size); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, artifact.BlobHash).Scan(&size); errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("rendition artifact blob %s: %w", artifact.BlobHash, ErrNotFound)
 		} else if err != nil {
 			return fmt.Errorf("reading rendition artifact blob %s: %w", artifact.BlobHash, err)

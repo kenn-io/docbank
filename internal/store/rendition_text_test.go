@@ -9,17 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveRenditionTextReportsExactFailedAttempts(t *testing.T) {
+func checkResolveRenditionTextReportsExactFailedAttempts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, operator := range []bool{false, true} {
 		t.Run(fmt.Sprintf("operator_required=%t", operator), func(t *testing.T) {
-			s, _, nodes, profile := collectionCoverageFixture(t, 1)
-			node := nodes[0]
+			s := open(t)
+			seedRenditionCatalogVersions(t, s)
+			profile := catalogProcessingProfile(t, false)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "failed-source.pdf", catalogSourceHash, 20, "application/pdf")
+			require.NoError(t, err)
 			collectionCoverageFail(t, s, node, profile, operator)
 			binding := RenditionTextBinding{NodeID: node.ID, NodeRevision: node.Revision,
 				ContentVersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash,
 				SourceSize: node.Size, ProfileFingerprint: profile.Fingerprint}
-			_, err := s.ResolveRenditionText(t.Context(), binding)
+			_, err = s.ResolveRenditionText(t.Context(), binding)
 			require.ErrorIs(t, err, ErrRenditionTextFailed)
 
 			otherProfile := binding
@@ -40,9 +44,11 @@ func TestResolveRenditionTextReportsExactFailedAttempts(t *testing.T) {
 	}
 }
 
-func TestResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t *testing.T) {
+func checkResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))

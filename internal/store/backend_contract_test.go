@@ -22,6 +22,186 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "renditions", postgres: "native operations", scope: "Original-file consent, jobs, leases, staging, publication and exact text readback; excludes derived-photo jobs and search.", scenarios: []backendScenario{
+		{"RenditionRetryErrors", nil, checkRenditionRetryErrorsPostgres},
+		{"RenditionConnectionFailure", nil, checkRenditionConnectionFailurePostgres},
+		{"RenditionArtifactStaging", func(t *testing.T) { t.Helper(); checkRenditionArtifactStaging(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionArtifactStaging(t, newPostgresQueryStore) }},
+		{"RenditionReplacementEmbeddings", nil, checkRenditionReplacementEmbeddingsPostgres},
+		{"RenditionSnapshots", nil, checkRenditionSnapshotsPostgres},
+		{"RenditionPublicationRollback", nil, checkRenditionPublicationRollbackPostgres},
+		{"RenditionWorkerResume", func(t *testing.T) { t.Helper(); checkRenditionWorkerResume(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionWorkerResume(t, newPostgresQueryStore) }},
+
+		{"ProcessingConsentAuthorizesOnlyExactCurrentGrant", func(t *testing.T) { t.Helper(); checkProcessingConsentAuthorizesOnlyExactCurrentGrant(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentAuthorizesOnlyExactCurrentGrant(t, newPostgresQueryStore)
+		}},
+		{"ProcessingConsentSetAuthorizesItsExactSiblingGrant", func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentSetAuthorizesItsExactSiblingGrant(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentSetAuthorizesItsExactSiblingGrant(t, newPostgresQueryStore)
+		}},
+		{"ProcessingConsentRejectsExpiredAndDriftedOperations", func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentRejectsExpiredAndDriftedOperations(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentRejectsExpiredAndDriftedOperations(t, newPostgresQueryStore)
+		}},
+		{"ProcessingConsentRevocationFencesSubmissionAndPublication", func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentRevocationFencesSubmissionAndPublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentRevocationFencesSubmissionAndPublication(t, newPostgresQueryStore)
+		}},
+		{"ProcessingConsentRevocationIsCheckedInPublicationTransaction", func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentRevocationIsCheckedInPublicationTransaction(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkProcessingConsentRevocationIsCheckedInPublicationTransaction(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft", func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobWaiterCannotAdoptReplacementConsent", func(t *testing.T) { t.Helper(); checkRenditionJobWaiterCannotAdoptReplacementConsent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobWaiterCannotAdoptReplacementConsent(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobsSeparateDifferentExecutionIdentities", func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsSeparateDifferentExecutionIdentities(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsSeparateDifferentExecutionIdentities(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobsUseCapturedPolicyToSeparateRetentionOutputs", func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsUseCapturedPolicyToSeparateRetentionOutputs(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsUseCapturedPolicyToSeparateRetentionOutputs(t, newPostgresQueryStore)
+		}},
+		{"EnqueueRenditionJobRejectsFilenameDisclosureIdentityDrift", func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobRejectsFilenameDisclosureIdentityDrift(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobRejectsFilenameDisclosureIdentityDrift(t, newPostgresQueryStore)
+		}},
+		{"EnqueueRenditionJobReusesAndRootsExistingSharedBuild", func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t, newPostgresQueryStore)
+		}},
+		{"EnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress", func(t *testing.T) {
+			t.Helper()
+			checkEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress(t, newPostgresQueryStore)
+		}},
+		{"PurgeDerivativesCancelsQueuedRenditionJobAndSuppressesReenqueue", func(t *testing.T) {
+			t.Helper()
+			checkPurgeDerivativesCancelsQueuedRenditionJobAndSuppressesReenqueue(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPurgeDerivativesCancelsQueuedRenditionJobAndSuppressesReenqueue(t, newPostgresQueryStore)
+		}},
+		{"EnqueueRenditionJobRejectsNewWaiterForTerminalBuild", func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t, newPostgresQueryStore)
+		}},
+		{"EnqueueRenditionJobRejectsUnauthorizedWaiter", func(t *testing.T) { t.Helper(); checkEnqueueRenditionJobRejectsUnauthorizedWaiter(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEnqueueRenditionJobRejectsUnauthorizedWaiter(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobWorkChoosesAnAuthorizedWaiter", func(t *testing.T) { t.Helper(); checkRenditionJobWorkChoosesAnAuthorizedWaiter(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobWorkChoosesAnAuthorizedWaiter(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle", func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobNoHandleRetryKeepsAdmissionAuthority", func(t *testing.T) { t.Helper(); checkRenditionJobNoHandleRetryKeepsAdmissionAuthority(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobNoHandleRetryKeepsAdmissionAuthority(t, newPostgresQueryStore)
+		}},
+		{"ReopenableStagedFailureRetainsBuildAcrossDerivativeSweep", func(t *testing.T) {
+			t.Helper()
+			checkReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobStagingIsIdempotentWithinOneClaim", func(t *testing.T) { t.Helper(); checkRenditionJobStagingIsIdempotentWithinOneClaim(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobStagingIsIdempotentWithinOneClaim(t, newPostgresQueryStore)
+		}},
+		{"PublishRenditionJobAtomicallyActivatesAuthorizedWaiters", func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newPostgresQueryStore)
+		}},
+		{"PublishRenditionJobFencesLeaseTheft", func(t *testing.T) { t.Helper(); checkPublishRenditionJobFencesLeaseTheft(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPublishRenditionJobFencesLeaseTheft(t, newPostgresQueryStore) }},
+		{"RenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress", func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t, newPostgresQueryStore)
+		}},
+		{"PublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead", func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t, newPostgresQueryStore)
+		}},
+		{"PublishRenditionJobAllowsDegradedActivationForRevokedWaiter", func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t, newPostgresQueryStore)
+		}},
+		{"RenditionJobFencesDisclosedFilenameAfterRename", func(t *testing.T) { t.Helper(); checkRenditionJobFencesDisclosedFilenameAfterRename(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobFencesDisclosedFilenameAfterRename(t, newPostgresQueryStore)
+		}},
+		{"PublishRenditionJobPersistsRejectionsOnFailure", func(t *testing.T) { t.Helper(); checkPublishRenditionJobPersistsRejectionsOnFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPublishRenditionJobPersistsRejectionsOnFailure(t, newPostgresQueryStore)
+		}},
+		{"ResolveRenditionTextReportsExactFailedAttempts", func(t *testing.T) { t.Helper(); checkResolveRenditionTextReportsExactFailedAttempts(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkResolveRenditionTextReportsExactFailedAttempts(t, newPostgresQueryStore)
+		}},
+		{"ResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration", func(t *testing.T) {
+			t.Helper()
+			checkResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkResolveRenditionTextBindsLiveNodeSourceHeadAndGeneration(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "schema", postgres: "installed catalog comparison", scope: "Logical columns, keys and indexes; explicit engine differences.", scenarios: []backendScenario{{"Schema", nil, checkBackendSchemaPostgres}}},
 	{name: "tree", postgres: "native operations", scope: "Node projections, directory pages, paths, names and snapshots.", scenarios: []backendScenario{
 		{"NodeQueries", checkNodeQueriesSQLite, checkNodeQueriesPostgres},

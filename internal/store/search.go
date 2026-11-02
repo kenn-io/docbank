@@ -1122,7 +1122,7 @@ type LexicalGenerationLease struct {
 
 // lexicalGenerationReaders tracks live reader leases per store. The mutex
 // guards only the map and is held briefly, never while waiting on SQLite.
-// Ordering against collection comes from SQLite itself: a standalone lease
+// Ordering against collection comes from the store transaction: a standalone lease
 // is pinned inside a write transaction, so it serializes with the
 // publication or purge that snapshots pins and deletes generations, and a
 // read-bound lease is pinned inside the read snapshot it serves.
@@ -1143,7 +1143,7 @@ func (s *Store) RecordRenditionBlob(
 		}
 		if physical.Created {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_blob_staging(blob_hash)
-				VALUES(?) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
+				VALUES($1) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
 				return fmt.Errorf("marking rendition blob %s as uncommitted staging: %w", hash, err)
 			}
 		}
@@ -1151,7 +1151,7 @@ func (s *Store) RecordRenditionBlob(
 	})
 }
 
-// StageLexicalGeneration builds a complete unreachable FTS projection over
+// StageLexicalGeneration builds a complete unreachable lexical projection over
 // every immutable rendition build currently staged in this vault.
 func (s *Store) StageLexicalGeneration(
 	ctx context.Context, generationID string,
@@ -1394,14 +1394,14 @@ func (s *Store) publishLexicalHeadTx(ctx context.Context, tx *sql.Tx, generation
 		return fmt.Errorf("reading current lexical head: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
+		INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,$1)
 		ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
 		generationID); err != nil {
 		return fmt.Errorf("publishing lexical head: %w", err)
 	}
 	if previous != "" && previous != generationID {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_superseded(generation_id)
-			VALUES(?) ON CONFLICT(generation_id) DO NOTHING`, previous); err != nil {
+			VALUES($1) ON CONFLICT(generation_id) DO NOTHING`, previous); err != nil {
 			return fmt.Errorf("recording superseded lexical generation %s: %w", previous, err)
 		}
 	}
@@ -1422,7 +1422,7 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 		                  WHERE h.generation_id=g.generation_id)
 		  AND NOT EXISTS (SELECT 1 FROM current_rendition_roots r
 		                  WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
-		                    AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?))
+		                    AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$1))
 		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j
 		                  WHERE j.lexical_generation_id=g.generation_id)
 		ORDER BY g.generation_id`, nowRFC3339())
@@ -1436,8 +1436,8 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 			continue
 		}
 		for _, statement := range []string{
-			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`,
-			`DELETE FROM rendition_lexical_generations WHERE generation_id=?`,
+			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`,
+			`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`,
 		} {
 			if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
 				return removed, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
@@ -1961,7 +1961,7 @@ func validateRenditionPublicationTx(
 	}
 	var sourceSHA256 string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
+		`SELECT blob_hash FROM content_versions WHERE version_id=$1`, normalized.ContentVersionID,
 	).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
 		return build, fmt.Errorf("content version %s: %w", normalized.ContentVersionID, ErrNotFound)
 	} else if err != nil {
@@ -1985,7 +1985,7 @@ func validateRenditionPublicationTx(
 	var containsBuild bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM rendition_lexical_generation_builds
-		WHERE generation_id=? AND build_id=?
+		WHERE generation_id=$1 AND build_id=$2
 	)`, generationID, build.ID).Scan(&containsBuild); err != nil {
 		return build, fmt.Errorf("checking lexical generation %s build membership: %w", generationID, err)
 	}
@@ -2045,11 +2045,11 @@ func insertRenditionAttachmentAndHeadTx(
 	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord,
 ) error {
 	result, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO rendition_attachments(
+			INSERT INTO rendition_attachments(
 				attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
 				retention_disclosure_fingerprint,attachment_policy_fingerprint,
 				consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
 		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
 		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
 		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
@@ -2081,7 +2081,7 @@ func insertRenditionAttachmentAndHeadTx(
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-		VALUES(?,?,?,?)
+		VALUES($1,$2,$3,$4)
 		ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
 			attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
 		head.ContentVersionID, head.ProcessingProfileFingerprint,
@@ -2089,17 +2089,17 @@ func insertRenditionAttachmentAndHeadTx(
 		return fmt.Errorf("publishing rendition head: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
-		WHERE content_version_id=? AND profile_fingerprint=? AND EXISTS (
+		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND EXISTS (
 			SELECT 1 FROM embedding_sets s
 			JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
 			WHERE s.embedding_set_id=embedding_heads.embedding_set_id
-			  AND g.attachment_id IS NOT NULL AND g.attachment_id<>?
+			  AND g.attachment_id IS NOT NULL AND g.attachment_id<>$3
 		)`, head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
 		return fmt.Errorf("revoking stale chunk embedding heads: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
-		WHERE content_version_id=? AND profile_fingerprint=?
-		  AND attachment_id<>'' AND attachment_id<>?`,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2
+		  AND attachment_id<>'' AND attachment_id<>$3`,
 		head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
 		return fmt.Errorf("clearing stale chunk embedding failures: %w", err)
 	}
