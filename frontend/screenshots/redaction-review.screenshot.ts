@@ -259,9 +259,12 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.40 inches.");
     const cursor = canvas.locator('svg [stroke="#0076d6"]').last();
-    const cursorSize = (await cursor.boundingBox())!;
-    expect(cursorSize.width).toBeGreaterThanOrEqual(12);
-    expect(cursorSize.height).toBeGreaterThanOrEqual(12);
+    await expect
+      .poll(async () => {
+        const bounds = await cursor.boundingBox();
+        return bounds ? Math.min(bounds.width, bounds.height) : 0;
+      })
+      .toBeGreaterThanOrEqual(12);
     await page.screenshot({
       path: path.join(captures!, "redaction-keyboard.png"),
       animations: "disabled",
@@ -865,9 +868,12 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await page.setViewportSize({ width: 1440, height: 960 });
     await open("two-pages.pdf", false, true);
     await drawer.getByRole("button", { name: "Back to reading", exact: true }).click();
+    const readingZoom = reader.getByRole("textbox", { name: "Set zoom" });
+    const previousZoom = await readingZoom.inputValue();
     await reader.getByRole("button", { name: "Zoom Menu", exact: true }).click();
     await reader.getByRole("menuitem", { name: "Fit to Width", exact: true }).click();
-    const widthZoom = Number(await reader.getByRole("textbox", { name: "Set zoom" }).inputValue());
+    await expect(readingZoom).not.toHaveValue(previousZoom);
+    const widthZoom = Number(await readingZoom.inputValue());
     await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled();
     await drawer.getByRole("button", { name: "Back to reading", exact: true }).click();
