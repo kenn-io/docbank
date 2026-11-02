@@ -1904,6 +1904,53 @@ func TestEmbeddingJobExpiredClaimsExhaustBudget(t *testing.T) {
 	require.False(t, found, "enqueue must not reopen exhausted work")
 }
 
+func TestEmbeddingJobUnavailableReopensOnlyOnRequest(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []EmbeddingFailureCode{EmbeddingFailureProviderUnavailable, EmbeddingFailureInputRejected} {
+		t.Run(string(failure), func(t *testing.T) {
+			s, version, profile, _ := newEmbeddingCatalogFixture(t)
+			request := embeddingJobTestRequest(t, s, version, profile, "local-retry")
+			job, err := s.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			at := time.Now().UTC()
+			claims := 1
+			if failure == EmbeddingFailureProviderUnavailable {
+				claims = 3
+			}
+			for range claims {
+				claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "retry-test", at, time.Minute, []string{request.Descriptor.Fingerprint})
+				require.NoError(t, err)
+				require.True(t, found)
+				require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, failure, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+				at = at.Add(2 * time.Minute)
+			}
+			_, err = s.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			status, err := s.EmbeddingJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", status.State)
+			request.RetryUnavailable = true
+			_, err = s.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			status, err = s.EmbeddingJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			if failure == EmbeddingFailureInputRejected {
+				require.Equal(t, "failed", status.State)
+				return
+			}
+			require.Equal(t, "queued", status.State)
+			claim, work, found, err := s.ClaimEmbeddingWork(t.Context(), job.ID, "retry-test", at, time.Minute, []string{request.Descriptor.Fingerprint})
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, int64(4), claim.Epoch)
+			require.NoError(t, s.FailEmbeddingWork(t.Context(), claim, work, failure, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+			status, err = s.EmbeddingJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", status.State, "reopening allows one bounded claim without resetting its budget")
+		})
+	}
+}
+
 type imageEmbeddingCatalogFixture struct {
 	s       *Store
 	node    Node
@@ -2017,6 +2064,39 @@ func TestEnqueueEmbeddingJobRejectsInvalidImageGeneration(t *testing.T) {
 			require.ErrorContains(t, err, tc.message)
 		})
 	}
+}
+
+func TestEmbeddingJobUnavailableRequeuePostgres(t *testing.T) {
+	t.Parallel()
+	source, version, profile, _ := newEmbeddingCatalogFixture(t)
+	request := embeddingJobTestRequest(t, source, version, profile, "postgres-retry")
+	job, err := source.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	at := time.Now().UTC()
+	for range 3 {
+		claim, work, found, err := source.ClaimEmbeddingWork(t.Context(), job.ID, "retry-test", at, time.Minute, []string{request.Descriptor.Fingerprint})
+		require.NoError(t, err)
+		require.True(t, found)
+		require.NoError(t, source.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureProviderUnavailable, EmbeddingAttemptReceipt{AttemptID: job.ID}, at))
+		at = at.Add(2 * time.Minute)
+	}
+	target, setup := copyRetentionStore(t, source)
+	var role string
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT current_user`).Scan(&role))
+	_, err = setup.ExecContext(t.Context(), `GRANT UPDATE(state,claim_owner,lease_expires_at,available_at,failure_code,updated_at) ON documents.embedding_jobs TO "`+role+`"`)
+	require.NoError(t, err)
+	now := at.Format(timestampLayout)
+	require.NoError(t, target.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return target.requeueUnavailableEmbeddingJob(t.Context(), tx, job.ID, now)
+	}))
+	var state string
+	var count, epoch int
+	var owner, lease, code sql.NullString
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT state,claim_count,claim_epoch,claim_owner,lease_expires_at,failure_code FROM embedding_jobs WHERE job_id=$1`, job.ID).Scan(&state, &count, &epoch, &owner, &lease, &code))
+	require.Equal(t, 3, count)
+	require.Equal(t, 3, epoch)
+	require.Equal(t, "queued", state)
+	require.False(t, owner.Valid || lease.Valid || code.Valid)
 }
 
 func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {

@@ -184,3 +184,50 @@ func loadEmbeddingPurgeSuppressionTx(
 	return loadDerivativePurgeSuppressionTx(ctx, tx, source, derivativeBuildSuppressionProfile,
 		embeddingPurgeScope(key, profileFingerprint))
 }
+
+// EmbeddingPurgeSuppressedVersions checks a page against the durable binding
+// scopes. Rebuild authorization deactivates the same suppression records.
+func (s *Store) EmbeddingPurgeSuppressedVersions(ctx context.Context, profile string, keys []EmbeddingHeadKey) (map[string]bool, error) {
+	result := make(map[string]bool)
+	if len(keys) == 0 {
+		return result, nil
+	}
+	if err := validateCatalogSHA256(profile, "embedding suppression profile"); err != nil {
+		return nil, err
+	}
+	type scope struct {
+		Version string `json:"version"`
+		Build   string `json:"build"`
+	}
+	scopes := make([]scope, 0, len(keys))
+	for _, key := range keys {
+		if err := validateEmbeddingHeadKey(key); err != nil {
+			return nil, err
+		}
+		scopes = append(scopes, scope{Version: key.ContentVersionID, Build: embeddingPurgeScope(key, profile)})
+	}
+	data, err := json.Marshal(scopes)
+	if err != nil {
+		return nil, err
+	}
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	rows, err := s.db.QueryContext(ctx, `WITH requested AS (
+ SELECT `+d.text("value", "version")+` AS version_id,`+d.text("value", "build")+` AS build_id
+ FROM `+d.arrayValues("$1")+`)
+ SELECT DISTINCT r.version_id FROM requested r
+ JOIN content_versions v ON v.version_id=r.version_id
+ JOIN derivative_purge_suppressions p ON p.source_sha256=v.blob_hash AND p.build_id=r.build_id
+ WHERE p.profile_fingerprint=$2 AND p.active=1`, string(data), derivativeBuildSuppressionProfile)
+	if err != nil {
+		return nil, fmt.Errorf("listing embedding purge suppressions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		result[version] = true
+	}
+	return result, rows.Err()
+}

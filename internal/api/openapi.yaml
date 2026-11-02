@@ -8311,6 +8311,112 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    LocalTextApplyRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LocalTextApplyRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        consent:
+          type: boolean
+        plan_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        server:
+          enum:
+            - auto
+            - local
+          type: string
+      required:
+        - server
+        - plan_fingerprint
+        - consent
+      type: object
+      x-go-type: api.LocalTextApplyRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    LocalTextPlan:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LocalTextPlan.json
+          format: uri
+          readOnly: true
+          type: string
+        fingerprint:
+          type: string
+        flow:
+          items:
+            $ref: "#/components/schemas/ProcessingFlowHop"
+          type: array
+        managed:
+          type: boolean
+        models:
+          items:
+            type: string
+          type: array
+        profile:
+          type: string
+        profile_fingerprint:
+          type: string
+        retained_classes:
+          items:
+            type: string
+          type: array
+        scope:
+          type: string
+        server:
+          type: string
+        vault_uid:
+          type: string
+        vector_effect:
+          type: string
+      required:
+        - fingerprint
+        - vault_uid
+        - profile
+        - server
+        - profile_fingerprint
+        - models
+        - vector_effect
+        - managed
+        - flow
+        - retained_classes
+        - scope
+      type: object
+      x-go-type: api.LocalTextPlan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    LocalTextPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LocalTextPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        server:
+          enum:
+            - auto
+            - local
+          type: string
+      required:
+        - server
+      type: object
+      x-go-type: api.LocalTextPlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Locator:
       additionalProperties: false
       properties:
@@ -29977,6 +30083,52 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read aggregate document-processing status
+  /api/v1/processing/local/plans:
+    post:
+      operationId: planLocalText
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocalTextPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalTextPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview vault-wide text indexing
+  /api/v1/processing/local/setup:
+    post:
+      operationId: applyLocalText
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocalTextApplyRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalTextPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Approve vault-wide and ongoing text indexing
   /api/v1/processing/plans:
     post:
       operationId: planDocumentProcessing

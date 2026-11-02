@@ -3750,6 +3750,96 @@ export interface JobRequest {
   plan_id: string;
 }
 
+export type LocalTextApplyRequestServer = typeof LocalTextApplyRequestServer[keyof typeof LocalTextApplyRequestServer];
+
+
+export const LocalTextApplyRequestServer = {
+  auto: 'auto',
+  local: 'local',
+} as const;
+
+export interface LocalTextApplyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consent: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  plan_fingerprint: string;
+  server: LocalTextApplyRequestServer;
+}
+
+export interface ProcessingRuntimeDisclosure {
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  deployment: string;
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  endpoint: string;
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  immediate_processor: string;
+  /** @maxItems 64 */
+  metadata_classes: string[];
+  /** @maxLength 1024 */
+  model?: string;
+  /** @maxLength 1024 */
+  model_revision?: string;
+  /** @maxItems 64 */
+  retained_artifact_roles: string[];
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  ultimate_processor: string;
+  /** @maxLength 1024 */
+  vector_space?: string;
+}
+
+export interface ProcessingFlowHop {
+  capability: string;
+  disclose_filename: boolean;
+  filename?: string;
+  input_classes: string[];
+  provider_id: string;
+  runtime_disclosure: ProcessingRuntimeDisclosure;
+  trust_boundary: string;
+}
+
+export interface LocalTextPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fingerprint: string;
+  flow: ProcessingFlowHop[];
+  managed: boolean;
+  models: string[];
+  profile: string;
+  profile_fingerprint: string;
+  retained_classes: string[];
+  scope: string;
+  server: string;
+  vault_uid: string;
+  vector_effect: string;
+}
+
+export type LocalTextPlanRequestServer = typeof LocalTextPlanRequestServer[keyof typeof LocalTextPlanRequestServer];
+
+
+export const LocalTextPlanRequestServer = {
+  auto: 'auto',
+  local: 'local',
+} as const;
+
+export interface LocalTextPlanRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  server: LocalTextPlanRequestServer;
+}
+
 export interface LookupPhotoFlagsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7250,49 +7340,6 @@ export interface ProcessingEstimate {
   source_bytes: number;
   /** @minimum 0 */
   vector_spaces: number;
-}
-
-export interface ProcessingRuntimeDisclosure {
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  deployment: string;
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  endpoint: string;
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  immediate_processor: string;
-  /** @maxItems 64 */
-  metadata_classes: string[];
-  /** @maxLength 1024 */
-  model?: string;
-  /** @maxLength 1024 */
-  model_revision?: string;
-  /** @maxItems 64 */
-  retained_artifact_roles: string[];
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  ultimate_processor: string;
-  /** @maxLength 1024 */
-  vector_space?: string;
-}
-
-export interface ProcessingFlowHop {
-  capability: string;
-  disclose_filename: boolean;
-  filename?: string;
-  input_classes: string[];
-  provider_id: string;
-  runtime_disclosure: ProcessingRuntimeDisclosure;
-  trust_boundary: string;
 }
 
 export interface ProcessingJob {
@@ -18921,6 +18968,82 @@ export const getDocumentProcessingJob = async (id: string, options?: Parameters<
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getPlanLocalTextUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/plans`
+}
+
+/**
+ * @summary Preview vault-wide text indexing
+ */
+export const planLocalText = async (localTextPlanRequest: NonReadonly<LocalTextPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LocalTextPlan>(getPlanLocalTextUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localTextPlanRequest)
+  }
+);}
+
+
+
+export const getApplyLocalTextUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/setup`
+}
+
+/**
+ * @summary Approve vault-wide and ongoing text indexing
+ */
+export const applyLocalText = async (localTextApplyRequest: NonReadonly<LocalTextApplyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LocalTextPlan>(getApplyLocalTextUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localTextApplyRequest)
   }
 );}
 

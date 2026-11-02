@@ -222,7 +222,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	var runErr error
 	finished := make(chan struct{})
 	go func() {
-		jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil)
+		jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, processingRunOptions{})
 		close(finished)
 	}()
 	t.Cleanup(func() { cancel(); <-finished })
@@ -246,7 +246,7 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 	require.Equal(t, []string{pendingID}, jobs)
 	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
 	clockOffset.Store(int64(2 * time.Minute))
-	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil)
+	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, processingRunOptions{})
 	require.NoError(t, err)
 	require.Equal(t, jobs, retried)
 	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
@@ -283,6 +283,10 @@ func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
 	require.Equal(t, 1, status.CompletedBindings)
+	space := service.profiles["direct"].vectorSpaces[original.BindingID]
+	generation, err := fixture.catalog.ActiveVectorIndexGeneration(t.Context(), space)
+	require.NoError(t, err)
+	require.Positive(t, generation.RowCount, "interactive processing publishes before returning")
 }
 
 func TestProcessingServiceAnnouncesFirstEmbeddingBeforeLaterEnqueues(t *testing.T) {

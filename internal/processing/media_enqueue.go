@@ -305,7 +305,7 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 		if len(profile.portable.Embeddings) != 0 {
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
-				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil); runErr != nil {
+				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil, processingRunOptions{}); runErr != nil {
 				// Consent denial is a job outcome; other errors during shutdown are not.
 				if ctx.Err() != nil && !isEmbeddingConsentFailure(runErr) {
 					return runErr
