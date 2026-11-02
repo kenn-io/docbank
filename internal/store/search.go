@@ -732,12 +732,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 			return SemanticSearchAuthority{}, err
 		}
 	}
-	var space EmbeddingVectorSpaceRecord
-	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var loadErr error
-		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
-		return loadErr
-	})
+	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
