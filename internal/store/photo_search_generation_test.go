@@ -29,10 +29,11 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 
 	// Reserve the consuming transaction's connection. Compilation used to run
 	// before this wait, allowing publication to collect its selected generation.
-	conn, err := s.writeDB.Conn(t.Context())
+	s.db.SetMaxOpenConns(1)
+	conn, err := s.db.Conn(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
-	waits := s.writeDB.Stats().WaitCount
+	waits := s.db.Stats().WaitCount
 	scope := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}
 	lexical := snapshotTestQuery(t, `{"text":"mercury"}`)
 	candidates := []SearchCandidateIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Kind: "node_name", NodeName: node.Name}}}}
@@ -48,13 +49,13 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 		}{result, err}
 	}()
 	deadline := time.Now().Add(5 * time.Second)
-	for s.writeDB.Stats().WaitCount == waits && time.Now().Before(deadline) {
+	for s.db.Stats().WaitCount == waits && time.Now().Before(deadline) {
 		runtime.Gosched()
 	}
-	require.Greater(t, s.writeDB.Stats().WaitCount, waits)
+	require.Greater(t, s.db.Stats().WaitCount, waits)
 	require.NoError(t, publisher.PublishRenditionAndLexicalHeads(t.Context(), attachment, head, second.ID))
 	var remaining int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?`, first.ID).Scan(&remaining))
+	require.NoError(t, publisher.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?`, first.ID).Scan(&remaining))
 	require.Zero(t, remaining)
 	require.NoError(t, conn.Close())
 	got := <-done

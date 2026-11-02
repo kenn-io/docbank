@@ -969,9 +969,12 @@ func embeddingHeadSetIDForTest(
 	return setID
 }
 
-func newEmbeddingCatalogFixture(t *testing.T) (*Store, string, ProcessingProfileRecord, string) {
-	t.Helper()
-	return seedEmbeddingCatalog(t, newTestStore(t))
+func newEmbeddingCatalogFixture(tb testing.TB) (*Store, string, ProcessingProfileRecord, string) {
+	tb.Helper()
+	s, err := Open(tb.Context(), filepath.Join(tb.TempDir(), "docbank.db"))
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, s.Close()) })
+	return seedEmbeddingCatalog(tb, s)
 }
 
 func seedEmbeddingCatalog(tb testing.TB, s *Store) (*Store, string, ProcessingProfileRecord, string) {

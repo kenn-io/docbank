@@ -2295,10 +2295,10 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
-// withSearchOptionsTx binds photo predicates to the transaction consuming them.
+// withSearchOptionsTx binds photo predicates to the read snapshot consuming them.
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) (retErr error) {
+	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
 		if opts.PhotoScope != nil {
 			lease, err := s.acquireLexicalGeneration(ctx, tx)
 			if err != nil && !errors.Is(err, ErrNotFound) {

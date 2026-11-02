@@ -301,6 +301,15 @@ var (
 // WriteRevision changes after committed storage writes. All users of this Store
 // and its writer observe the same revision. A reopened Store starts unsettled.
 func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
+// withReadTx runs a consistent snapshot without reserving the writer.
+func (s *Store) withReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("starting read snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return fn(tx)
+}
 
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
