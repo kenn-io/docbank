@@ -55,13 +55,15 @@ func TestFolderWatchSettlesExcludesAndReobservesAfterRestart(t *testing.T) {
 func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name          string
-		changeModTime bool
-		noChangeTime  bool
-		retry         bool
+		name                     string
+		changeModTime            bool
+		noChangeTime             bool
+		changeTimeFollowsModTime bool
+		retry                    bool
 	}{
 		{name: "content edit"},
 		{name: "no change time", noChangeTime: true},
+		{name: "change time follows mtime", changeTimeFollowsModTime: true},
 		{name: "metadata edit", changeModTime: true},
 		{name: "retryable failure", retry: true},
 	} {
@@ -91,6 +93,14 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 					return source.observe(false)
 				}
 			}
+			if test.changeTimeFollowsModTime {
+				// Linux FAT/exFAT and rclone mounts report change time as mtime.
+				scanner.watcher.observeFile = func(source watchSource, withChange bool) (watchFileState, error) {
+					state, err := source.observe(withChange)
+					state.fingerprint.change = state.fingerprint.modTime
+					return state, err
+				}
+			}
 			now := time.Now()
 			scanner.watcher.now = func() time.Time { return now }
 			root, err := scanner.openRoot()
@@ -102,6 +112,16 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 			require.Len(t, digests, 1)
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1, "unchanged bytes do not repeat processing")
+			if test.changeTimeFollowsModTime {
+				rewriteSourceWithRestoredMtime(t, file, []byte("other"))
+				for range 12 {
+					now = now.Add(time.Second)
+					require.NoError(t, scanner.watcher.scan(t.Context(), root))
+					require.Len(t, digests, 1, "matching nonzero change time keeps periodic scans quiet")
+					require.True(t, scanner.watcher.observations["notes.txt"].processed, "periodic scans must preserve the accepted observation")
+				}
+				return
+			}
 			modTime := before.ModTime()
 			if test.changeModTime {
 				modTime = modTime.Add(time.Minute)
