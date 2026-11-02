@@ -1168,12 +1168,12 @@ func embeddingCatalogDescriptor() document.EmbeddingDescriptor {
 	return descriptor
 }
 
-func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
-	t.Helper()
+func embeddingCatalogProfile(tb testing.TB) ProcessingProfileRecord {
+	tb.Helper()
 	descriptor := embeddingCatalogDescriptor()
-	base := catalogProcessingProfile(t, false)
+	base := catalogProcessingProfile(tb, false)
 	var profile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(base.CanonicalProfile, &profile))
+	require.NoError(tb, json.Unmarshal(base.CanonicalProfile, &profile))
 	makeBinding := func(name string, activation document.EmbeddingActivation, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{
 			Activation: activation, AuthorizationFingerprint: fakeHash("d1"), CompatibilityID: descriptor.CompatibilityID,
@@ -1198,7 +1198,7 @@ func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
 	}
 	profile.Embeddings[3].Chunk.MaxTokens = 64
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return ProcessingProfileRecord{
 		Fingerprint: fingerprints.Profile, CanonicalProfile: canonical,
 		RenditionRequestFingerprint: fingerprints.RenditionRequest, EvidenceLexicalFingerprint: fingerprints.EvidenceLexical,
