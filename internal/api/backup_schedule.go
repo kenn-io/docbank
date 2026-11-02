@@ -40,7 +40,7 @@ func startBackupSchedule(d Deps) error {
 	if d.Jobs == nil {
 		return nil
 	}
-	err := d.Jobs.Start("backup:scheduled", func(ctx context.Context) error {
+	err := d.Jobs.StartWorker("backup:scheduled", func(ctx context.Context) error {
 		return RunBackupSchedule(ctx, d)
 	})
 	if errors.Is(err, jobs.ErrDuplicate) || errors.Is(err, jobs.ErrClosed) {
@@ -192,6 +192,9 @@ func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time
 }
 
 func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+	// A capture reports busy, so Settle learns about it without a found flag.
+	settle, resume := jobs.Park(ctx, false)
+	defer resume()
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -200,6 +203,8 @@ func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan st
 	case <-wake:
 		return nil
 	case <-timer.C:
+		return nil
+	case <-settle:
 		return nil
 	}
 }
