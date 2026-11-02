@@ -1,0 +1,12 @@
+package aliases
+
+import (
+ "testing"
+ assert "github.com/stretchr/testify/assert" // want "testify import must be named assert"
+ require "github.com/stretchr/testify/require" // want "testify import must be named require"
+)
+
+func TestAliases(t *testing.T) {
+ assert.True(t, true)
+ require.NoError(t, nil)
+}

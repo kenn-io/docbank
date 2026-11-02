@@ -1,0 +1,80 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+
+  // Routine updates open once a week, early Monday New York time.
+  extends: ['config:recommended', 'schedule:weekly'],
+  timezone: 'America/New_York',
+  dependencyDashboard: true,
+
+  // A human reviews and merges every Renovate PR.
+  automerge: false,
+
+  // Let a release age before adopting it, so a compromised fresh publish is
+  // less likely to land. Security fixes skip the wait. The age comes from the
+  // registry's timestamp. GitHub Actions tags use the tagged commit's date,
+  // which the publisher sets, so for Actions the PR review is the check.
+  minimumReleaseAge: '7 days',
+  minimumReleaseAgeBehaviour: 'timestamp-required',
+  // strict keeps Renovate from creating a branch until the wait has passed.
+  // CI runs only on pull requests, so the PR must open right away to get
+  // checks.
+  prCreation: 'immediate',
+  internalChecksFilter: 'strict',
+  // Renovate regenerates .github/workflows/actions.lock with this
+  // gh-actions-lock release when it bumps an action.
+  constraints: {
+    ghActionsLock: 'v0.3.0',
+  },
+  osvVulnerabilityAlerts: true,
+  // Security fixes share one PR. They skip the wait, so they cannot ride in
+  // the routine ecosystem PRs below.
+  vulnerabilityAlerts: {
+    minimumReleaseAge: null,
+    prCreation: 'immediate',
+    schedule: ['at any time'],
+    groupName: 'security fixes',
+    groupSlug: 'security-fixes',
+  },
+
+  // Routine updates arrive as one PR per ecosystem, majors included.
+  separateMajorMinor: false,
+
+  packageRules: [
+    {
+      matchManagers: ['github-actions'],
+      groupName: 'github actions',
+    },
+    {
+      // The golangci-lint pin in .custom-gcl.yml comes from the go datasource,
+      // so it joins the Go PR.
+      matchDatasources: ['go', 'golang-version'],
+      groupName: 'go modules',
+      postUpdateOptions: ['gomodTidy'],
+    },
+    {
+      matchManagers: ['npm'],
+      groupName: 'npm packages',
+    },
+    {
+      // kenn-io releases open right away: no release-age wait and no
+      // weekly window.
+      matchPackageNames: ['kenn-io/**', 'github.com/kenn-io/**', 'go.kenn.io/**', '@kenn-io/**'],
+      groupName: 'kenn-io dependencies',
+      groupSlug: 'kenn-io-dependencies',
+      minimumReleaseAge: null,
+      schedule: ['at any time'],
+    },
+  ],
+
+  // The Makefile reads the golangci-lint version from .custom-gcl.yml, so
+  // this one pin sets the version for local and CI lint runs.
+  customManagers: [
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.custom-gcl\\.yml$/'],
+      matchStrings: ['(?:^|\\n)version: (?<currentValue>\\S+)'],
+      depNameTemplate: 'github.com/golangci/golangci-lint/v2',
+      datasourceTemplate: 'go',
+    },
+  ],
+}

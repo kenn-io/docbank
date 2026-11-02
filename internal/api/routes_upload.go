@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/kit/packstore"
@@ -148,20 +149,29 @@ func receiveUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate, payl
 		writeError(w, NewError(http.StatusUnprocessableEntity, "validation", mimeErr.Error()))
 		return false
 	}
+	dbgGateStart := time.Now()
 	opErr := g.mutate(r.Context(), func() error {
+		packstore.DebugTime("api.gate_wait", dbgGateStart)
+		dbgLeaseStart := time.Now()
 		return d.Blobs.WithMutation(r.Context(), func() error {
+			packstore.DebugTime("api.lease_wait", dbgLeaseStart)
 			limited := &io.LimitedReader{R: part, N: payload.expectedSize + 1}
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
+			dbgPrepareStart := time.Now()
 			prepared, prepareErr := payload.prepare(ing, mimeType, limited)
+			packstore.DebugTime("api.prepare_blob", dbgPrepareStart)
 			if prepareErr != nil {
 				return prepareErr
 			}
 			if err := requireUploadEnvelopeEnd(multipartReader); err != nil {
 				return errors.Join(err, prepared.Discard(r.Context()))
 			}
+			dbgCommitStart := time.Now()
+			defer packstore.DebugTime("api.commit_metadata", dbgCommitStart)
 			return payload.commit(prepared)
 		})
 	})
+	packstore.DebugTime("api.upload_total", dbgGateStart)
 	if opErr != nil {
 		writeError(w, uploadError(opErr))
 		return false

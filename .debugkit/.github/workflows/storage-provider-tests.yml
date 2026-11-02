@@ -1,0 +1,62 @@
+name: Storage provider tests
+
+# Live S3 and GCS conformance for objectstore. The cloud identities trust only
+# this workflow on main, in the storage-tests environment, so it runs on
+# demand and daily rather than on pull requests.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-provider-tests
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live S3 and GCS conformance
+    runs-on: namespace-profile-linux-4cpu
+    environment: storage-tests
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Sign in to Google Cloud
+        uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.STORAGE_TESTS_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.STORAGE_TESTS_GCP_SERVICE_ACCOUNT }}
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.STORAGE_TESTS_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.STORAGE_TESTS_AWS_REGION }}
+
+      - name: Run live conformance
+        env:
+          KIT_S3_LIVE_URL: s3://${{ vars.STORAGE_TESTS_S3_BUCKET }}/kit
+          KIT_S3_LIVE_REGION: ${{ vars.STORAGE_TESTS_AWS_REGION }}
+          KIT_GCS_LIVE_URL: gs://${{ vars.STORAGE_TESTS_GCS_BUCKET }}/kit
+        # A skipped test means the provider was never reached, so it fails.
+        run: |
+          set -o pipefail
+          go test -race -shuffle=on -v -run 'LiveConformance$' ./objectstore/s3 ./objectstore/gcs | tee live.log
+          for test in TestS3LiveConformance TestGCSLiveConformance; do
+            grep -q -- "--- PASS: ${test} " live.log || { echo "${test} did not run and pass" >&2; exit 1; }
+          done

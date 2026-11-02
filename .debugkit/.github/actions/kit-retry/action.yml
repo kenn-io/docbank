@@ -1,0 +1,9 @@
+name: Kit retry
+description: Retry download commands with a linear delay
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KIT_RETRY_PATH: ${{ github.action_path }}
+      run: echo "$KIT_RETRY_PATH" >> "$GITHUB_PATH"

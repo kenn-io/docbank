@@ -1,0 +1,24 @@
+name: kennembed release bundles
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/kennembed-pr.yml'
+      - '.github/workflows/kennembed.yml'
+      - '.github/workflows/ci.yml'
+      - '.github/scripts/stage-onnx.py'
+      - 'cmd/kennembed/**'
+      - 'embedserver/**'
+      - 'embedlocal/**'
+      - 'embedclient/**'
+      - 'internal/embedassets/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+permissions:
+  contents: read
+jobs:
+  bundle:
+    permissions:
+      contents: write
+    cache-mode: read
+    uses: ./.github/workflows/kennembed.yml

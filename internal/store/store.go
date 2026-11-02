@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"go.kenn.io/kit/packstore"
 	"sync"
 	"time"
 
@@ -301,7 +302,9 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(ctx.Err(), retErr)
 		}
 	}()
+	dbgConnStart := time.Now()
 	conn, err := s.writeDB.Conn(ctx)
+	packstore.DebugTime("sql.writer_wait", dbgConnStart)
 	if err != nil {
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
@@ -324,7 +327,9 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	// Cancellation racing a successful BEGIN may let database/sql roll back
 	// first. Our Rollback then returns ErrTxDone without the driver's rollback
 	// error; the deferred Conn.Close still waits for that rollback to finish.
+	dbgBeginStart := time.Now()
 	tx, err := conn.BeginTx(beginCtx, opts)
+	packstore.DebugTime("sql.begin", dbgBeginStart)
 	if !stopBeginCancel() {
 		<-beginCancelled
 	}
@@ -369,7 +374,10 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	} else if s.photoEvents.installed.Load() {
 		dropped = s.photoEvents.dropPhotoCapture(ctx, tx)
 	}
-	if err := fn(tx); err != nil {
+	dbgFnStart := time.Now()
+	fnErr := fn(tx)
+	packstore.DebugTime("sql.tx_body", dbgFnStart)
+	if err := fnErr; err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
 		}
@@ -379,7 +387,10 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return errors.Join(err, tx.Rollback())
 	}
 	changed := capture && photoChanged(ctx, tx)
-	if err := tx.Commit(); err != nil {
+	dbgCommitStart := time.Now()
+	commitErr := tx.Commit()
+	packstore.DebugTime("sql.commit", dbgCommitStart)
+	if err := commitErr; err != nil {
 		return fmt.Errorf("%w: %w", errCommitTx, err)
 	}
 	if dropped {

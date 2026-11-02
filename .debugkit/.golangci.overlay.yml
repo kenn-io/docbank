@@ -1,0 +1,30 @@
+# Repository additions merged into the canonical kit config by `kennlint config`.
+linters:
+  enable:
+    - kennnolint
+  settings:
+    importas:
+      alias:
+        - pkg: go.kenn.io/kit/git/cmd
+          alias: gitcmd
+        - pkg: go.kenn.io/kit/git/env
+          alias: gitenv
+        - pkg: go.kenn.io/kit/git/lock
+          alias: gitlock
+        - pkg: go.kenn.io/kit/git/remote
+          alias: gitremote
+        - pkg: go.kenn.io/kit/git/repo
+          alias: gitrepo
+        - pkg: go.kenn.io/kit/git/test
+          alias: gittest
+        - pkg: go.kenn.io/kit/git/worktree
+          alias: gitworktree
+  exclusions:
+    rules:
+      - linters:
+          - modernize
+        text: "omitzero:"
+      - linters:
+          - staticcheck
+        path: ^(agenthook/|git/managed/untrusted_tree\.go$)
+        text: "ST1005:"

@@ -1,0 +1,12 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    cache-mode: read
+    uses: ./.github/workflows/ci.yml

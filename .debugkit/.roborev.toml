@@ -1,0 +1,111 @@
+review_guidelines = """
+## Compilation, imports, and build errors
+
+Reviewer agents are not in the business of checking whether this repository
+compiles. That is the compiler's job, and local validation runs `go test`,
+`go vet`, `golangci-lint`, and Windows compile checks where relevant.
+
+Do not flag suspected compile errors, missing imports, undeclared identifiers,
+type mismatches, wrong function signatures, or other build-level issues. Review
+agents often see only a diff and can easily miss package-level declarations,
+pinned dependency APIs, build tags, or generated/platform-specific code. If the
+code actually does not compile, the toolchain will fail before the PR can land.
+
+Focus reviews on logic, architecture, behavior, security boundaries, and test
+coverage for behavior. Trust the build for compilability.
+
+## External CLI argument grammars
+
+Do not guess how an external command parses options, option values,
+subcommands, prompts, session selectors, or argument ordering. In particular,
+do not report an agent CLI argument-shape finding from naming conventions,
+another CLI's behavior, general POSIX conventions, or synthetic test fixtures.
+
+Such a finding requires authoritative, version-matched evidence for the exact
+command under review. Acceptable evidence is the installed command's relevant
+`--help` output captured for the review, official documentation for the pinned
+version, or source from that version's argument parser. If the review cannot
+obtain that evidence, omit the finding. Do not ask for speculative validation,
+reordering, compatibility handling, or a regression test based on an assumed
+grammar.
+
+Do not assume every positional prompt needs a double-dash separator. Require
+evidence that the exact CLI continues option parsing at that position and that
+the package's selected prompt transport leaves the prompt exposed to it.
+
+Do not invent a shared safety-policy lattice across configured options and
+request fields. Different CLIs define precedence and interaction differently.
+Report a conflict only when authoritative evidence shows that the exact
+combination changes or defeats behavior the caller requested. A stricter,
+redundant, or differently expressed option is not by itself a defect. Do not
+request extra rejection logic as general hardening.
+
+Do not assume JSON Schema requires a separate JSON output-format flag. Some
+CLIs use the schema option itself to select or validate structured output.
+Report an invalid schema invocation only when authoritative evidence for that
+CLI and mode shows the constructed command cannot produce the requested
+schema-conforming result.
+
+The `agentcli` package intentionally owns the supported Codex, Claude Code,
+Gemini, GitHub Copilot, OpenCode, Cursor Agent, Kiro, Kilo, Factory Droid, and
+Pi command shapes. Review its internal consistency and its behavior against
+supplied authoritative evidence. Do not infer that a listed option or arity is
+wrong only because roborev-ci did not execute the external CLI.
+
+## Managed Git trust boundary
+
+`git/managed` trusts the existing local repository, its remotes and
+configuration, provider metadata, configured lifecycle scripts, and same-user
+filesystem state. Ordinary named-worktree operations also trust their tree.
+Configured remote push URLs and push refspecs are part of that trusted state;
+preserving HTTPS-fetch/SSH-push and other intentional routing is required.
+
+Merge-request import has one narrower boundary: the fetched commit and tree are
+untrusted. Before materializing them, Kit verifies an expected head when the
+caller supplies one, requires a checkout-safe Git version, creates the worktree
+without checkout-time hooks, neutralizes configured filter, fsmonitor, diff,
+and merge programs the tree can select, disables implicit submodule recursion,
+and persists those settings in worktree-scoped configuration.
+
+Review that narrow boundary, correctness, accidental data loss, noninteractive
+cancellation, and unexpected disclosure introduced by Kit itself. Do not
+expand it into a general hostile-repository framework: Kit does not defend
+against malicious local configuration or remotes, malicious same-user
+replacement races, resource exhaustion, zero-days in Git or content parsers,
+or a trusted lifecycle script choosing to execute imported content. Callers
+that need those boundaries must provide an OS or container sandbox.
+
+The default hook runner is intentionally limited to trusted native
+executables. Applications that need process-tree supervision or Windows script
+dispatch supply `RunHook`. Worktree base permissions follow the caller's path
+and host umask; owner-only directory and platform ACL policy also belongs to the
+application. Do not request those layers in Kit.
+
+The lifecycle matches Middleman's production ownership boundary around
+`git worktree add`: once Git reports success, later setup failures roll back
+the created worktree and branch. If `git worktree add` itself reports failure,
+Kit returns that error and does not claim or auto-delete ambiguous partial
+artifacts. Do not request a pre-snapshot ownership or recovery protocol for
+failed adds in this extraction; that would be a separate API and product
+decision rather than production-code reuse.
+
+## gitcmd safe.directory forwarding
+
+`gitcmd.Runner`'s isolation flags (`StripEnv`, `NullGlobalConfig`,
+`NoSystemConfig`) are reproducibility tools, not a security boundary against
+the host's own admin-controlled config. Forwarding the user's system and
+global `safe.directory` entries into the sanitized environment is intentional
+even when `NoSystemConfig` is set: without it, isolated commands fail with
+"detected dubious ownership" on repositories plain `git` accepts for the same
+user, and forwarding never trusts more than the user's own `git` does. The
+entries are deliberately read using the runner's pre-strip base environment
+(`GIT_CONFIG_GLOBAL` and friends select the config the user's own git honors;
+anyone who controls the process environment already controls git itself). Do
+not flag the forwarding as a bypass of the isolation flags, suggest skipping
+the system scope when `NoSystemConfig` is set, or suggest sanitizing the
+environment the entries are read from.
+
+## Local embeddings endpoint trust
+
+Local embeddings discovery trusts Ollama's standard unauthenticated API on 127.0.0.1:11434. Ollama can run under another service account. Listener authentication and isolation from other local accounts belong to deployment policy.
+"""

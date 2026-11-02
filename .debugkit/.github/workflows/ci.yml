@@ -1,0 +1,354 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# PR runs are keyed by PR number (repo-assigned, so a fork branch named "main"
+# cannot collide with and cancel trusted runs on this repo's main). Push and
+# workflow_dispatch runs share a group per ref_name so a dispatched run is
+# cancelled when a push supersedes it, and vice versa.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
+  GOPROXY: https://proxy.golang.org|direct
+  # Module-relative source paths let every checkout share Go build cache entries.
+  GOFLAGS: -trimpath
+
+jobs:
+  hygiene:
+    name: Go hygiene
+    runs-on: namespace-profile-linux-4cpu
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: $/.github/actions/kit-retry
+
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+
+      - name: Check go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Run golangci-lint
+        run: make lint
+
+      - name: Run golangci-lint for Windows
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
+
+  test:
+    name: Go tests (${{ matrix.os }}${{ matrix.shard == 'managed' && format(', git/managed {0}/{1}', matrix.part, matrix.parts) || '' }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.shard == 'managed' && 30 || matrix.os == 'windows-latest' && 31 || 14 }}
+    env:
+      MANAGED_PACKAGE: go.kenn.io/kit/git/managed
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runner: namespace-profile-linux-8cpu
+            shard: regular
+          - os: macos-latest
+            runner: namespace-profile-mac-6cpu
+            shard: regular
+          - os: windows-latest
+            runner: windows-latest
+            shard: regular
+          - os: windows-latest
+            runner: windows-latest
+            shard: managed
+            part: 1
+            parts: 3
+          - os: windows-latest
+            runner: windows-latest
+            shard: managed
+            part: 2
+            parts: 3
+          - os: windows-latest
+            runner: windows-latest
+            shard: managed
+            part: 3
+            parts: 3
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: $/.github/actions/kit-retry
+
+      - name: Download modules
+        shell: bash
+        run: kit-retry 3 5 go mod download
+
+      - name: Build
+        if: matrix.shard == 'regular'
+        run: go build ./...
+
+      - name: Run tests
+        if: matrix.os != 'windows-latest'
+        run: go tool gotestsum --format pkgname-and-test-fails --jsonfile=test-output-${{ matrix.os }}.json -- ./...
+
+      - name: Run Windows tests (${{ matrix.shard }})
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          TEST_SHARD: ${{ matrix.shard }}
+          TEST_PART: ${{ matrix.part }}
+          TEST_PARTS: ${{ matrix.parts }}
+        run: |
+          if ($env:TEST_SHARD -eq 'managed') {
+            $listed = @(go test -list '^(Test|Example|Fuzz)' $env:MANAGED_PACKAGE)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            [string[]]$names = @($listed | Where-Object { $_ -match '^(Test|Example|Fuzz)\S*$' })
+            [Array]::Sort($names, [StringComparer]::Ordinal)
+            $selected = @(for ($i = 0; $i -lt $names.Count; $i++) {
+              if ($i % [int]$env:TEST_PARTS -eq [int]$env:TEST_PART - 1) { $names[$i] }
+            })
+            if ($selected.Count -eq 0) { throw "Managed test part $env:TEST_PART has no tests" }
+            Write-Host "Managed test part $env:TEST_PART/$env:TEST_PARTS selected $($selected.Count) of $($names.Count) tests"
+            $pattern = '^(' + (($selected | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')$'
+            $testArgs = @('-timeout=20m', '-run', $pattern, $env:MANAGED_PACKAGE)
+          } else {
+            $allPackages = @(go list ./...)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $testArgs = @($allPackages | Where-Object { $_ -ne $env:MANAGED_PACKAGE })
+          }
+          go tool gotestsum --format pkgname-and-test-fails --jsonfile="test-output-windows-$env:TEST_SHARD.json" -- @testArgs
+          exit $LASTEXITCODE
+
+      - name: Run go vet
+        if: matrix.shard == 'regular'
+        run: go vet ./...
+
+  streaming-gates:
+    name: Streaming race and portability gates
+    runs-on: namespace-profile-linux-8cpu
+    timeout-minutes: 14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run storage and PostHog race tests
+        run: go test -race ./pack ./packstore ./backup ./telemetry/posthog/...
+
+      - name: Compile streaming packages for Linux 386
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: "386"
+        run: |
+          go test -c -o "${RUNNER_TEMP}/kit-pack-linux386.test" ./pack
+          go test -c -o "${RUNNER_TEMP}/kit-packstore-linux386.test" ./packstore
+          go test -c -o "${RUNNER_TEMP}/kit-backup-linux386.test" ./backup
+
+      - name: Run spill tests on Linux 386
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: "386"
+        run: go test ./spill
+
+      - name: Compile fail-closed storage packages for Plan 9
+        env:
+          CGO_ENABLED: "0"
+          GOOS: plan9
+          GOARCH: amd64
+        run: |
+          go test -c -o "${RUNNER_TEMP}/kit-pack-plan9.test" ./pack
+          go test -c -o "${RUNNER_TEMP}/kit-packstore-plan9.test" ./packstore
+
+      - name: Verify current streamed packs with the v0.7.0 reader
+        run: |
+          go run ./tools/packstreamfixture -out "${RUNNER_TEMP}/current-stream.pack"
+          mkdir "${RUNNER_TEMP}/v070-reader"
+          cp tools/packv1reader/main.go "${RUNNER_TEMP}/v070-reader/main.go"
+          cd "${RUNNER_TEMP}/v070-reader"
+          go mod init compatibility-reader
+          go mod edit -require go.kenn.io/kit@v0.7.0
+          go mod tidy
+          go run . -pack "${RUNNER_TEMP}/current-stream.pack"
+
+  s3-conformance:
+    name: S3-compatible backend conformance
+    runs-on: namespace-profile-linux-4cpu
+    timeout-minutes: 14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start S3-compatible service
+        # MinIO no longer publishes images, so conformance runs against
+        # RustFS 1.0.0, pinned by digest. Docker picks a free host port.
+        run: |
+          docker run --detach --rm \
+            --name kit-s3-conformance \
+            --publish 127.0.0.1::9000 \
+            --env RUSTFS_ACCESS_KEY=kit-test \
+            --env RUSTFS_SECRET_KEY=kit-test-secret \
+            docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+          endpoint="http://$(docker port kit-s3-conformance 9000/tcp)"
+          echo "KIT_S3_TEST_ENDPOINT=${endpoint}" >> "${GITHUB_ENV}"
+          for attempt in $(seq 1 30); do
+            # workflowretry: allow local container readiness already retries
+            if curl --fail --silent --show-error \
+              "${endpoint}/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs kit-s3-conformance
+          exit 1
+
+      - name: Run real-service conformance
+        env:
+          KIT_S3_TEST_ACCESS_KEY: kit-test
+          KIT_S3_TEST_SECRET_KEY: kit-test-secret
+          KIT_S3_TEST_BUCKET: kit-conformance
+        run: go test -race -shuffle=on ./objectstore/s3 ./packstore/s3store
+
+  search-backends:
+    name: Search backend conformance
+    runs-on: namespace-profile-linux-4cpu
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start PostgreSQL and ClickHouse
+        run: |
+          docker run --detach --rm \
+            --name kit-postgres-conformance \
+            --publish 127.0.0.1:5432:5432 \
+            --env POSTGRES_PASSWORD=postgres \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_DB=kit \
+            pgvector/pgvector:pg17
+          docker run --detach --rm \
+            --name kit-clickhouse-conformance \
+            --publish 127.0.0.1:9000:9000 \
+            --env CLICKHOUSE_SKIP_USER_SETUP=1 \
+            clickhouse/clickhouse-server:26.2
+          for attempt in $(seq 1 60); do
+            pg=$(docker exec kit-postgres-conformance pg_isready -U postgres || true)
+            ch=$(docker exec kit-clickhouse-conformance clickhouse-client --query 'SELECT 1' || true)
+            if echo "$pg" | grep -q "accepting" && [ "$ch" = "1" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs kit-postgres-conformance
+          docker logs kit-clickhouse-conformance
+          exit 1
+
+      - name: Run backend conformance
+        env:
+          KIT_POSTGRES_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/kit?sslmode=disable
+          KIT_CLICKHOUSE_TEST_ADDR: 127.0.0.1:9000
+        run: go test -count=1 ./search/postgres ./search/clickhouse
+
+  embedserver:
+    name: Local embedding parity (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: namespace-profile-linux-4cpu
+          - os: macos
+            runner: namespace-profile-mac-6cpu
+          - os: windows
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cache verified model and runtime
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ runner.temp }}/embedserver
+          key: embedserver-${{ runner.os }}-${{ runner.arch }}-ort-1.23.2-nomic-cf5b5a86-d241a60d
+      - name: Stage ONNX Runtime 1.23.2
+        shell: python
+        run: |
+          import os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'embedserver' / 'bundle'
+          library = subprocess.check_output(['python', '.github/scripts/stage-onnx.py', '--output', str(root)], text=True).strip()
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('KIT_EMBED_TEST_DIR=' + str(root.parent / 'model') + '\n')
+              env.write('KIT_EMBED_TEST_LIBRARY=' + library + '\n')
+      - name: Run focused tests and native parity
+        run: make test-embedserver
+      - name: Compile six targets without CGo
+        if: matrix.os == 'linux'
+        shell: python
+        run: |
+          import os, pathlib, subprocess
+          output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'kennembed-build'
+          for target in ('linux', 'darwin', 'windows'):
+              for arch in ('amd64', 'arm64'):
+                  env = dict(os.environ, GOOS=target, GOARCH=arch, CGO_ENABLED='0')
+                  subprocess.run(['go', 'build', '-o', str(output), './cmd/kennembed'], env=env, check=True)

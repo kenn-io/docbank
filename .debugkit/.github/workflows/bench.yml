@@ -1,0 +1,74 @@
+name: Benchmark Gate
+
+on:
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/bench.yml"
+
+cache-mode: read
+
+concurrency:
+  group: benchmark-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BENCH_PACKAGES: ./pack ./packstore ./backup
+  BENCH_PATTERN: ^(BenchmarkPrepareAndAppendStream|BenchmarkStorePackedReads|BenchmarkStorePackedReadsRaw|BenchmarkMaintenancePackUnpack|BenchmarkBackupCaptureStream|BenchmarkRepoStreamingReads)$
+  BENCH_COUNT: "6"
+  BENCH_TIME: 5x
+  # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
+  GOPROXY: https://proxy.golang.org|direct
+  # Module-relative source paths let every checkout share Go build cache entries.
+  GOFLAGS: -trimpath
+
+jobs:
+  benchmark:
+    name: Streaming benchmark regression gate
+    runs-on: namespace-profile-linux-8cpu
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Disk latency on shared runners comes in bursts. Alternating single
+      # candidate and merge-base runs spreads a burst over both sides, so it
+      # cannot look like a regression in one of them.
+      - name: Run interleaved candidate and merge-base benchmarks
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          base=$(git merge-base HEAD "origin/${BASE_REF}")
+          git worktree add "${RUNNER_TEMP}/bench-base" "${base}"
+          read -r -a packages <<< "${BENCH_PACKAGES}"
+          bench() {
+            (cd "$1" && go test -run '^$' -bench "${BENCH_PATTERN}" -benchmem \
+              -count 1 -benchtime "${BENCH_TIME}" "${packages[@]}")
+          }
+          for i in $(seq "${BENCH_COUNT}"); do
+            if (( i % 2 )); then
+              bench . | tee -a "${RUNNER_TEMP}/bench-new.txt"
+              bench "${RUNNER_TEMP}/bench-base" >> "${RUNNER_TEMP}/bench-old.txt"
+            else
+              bench "${RUNNER_TEMP}/bench-base" >> "${RUNNER_TEMP}/bench-old.txt"
+              bench . | tee -a "${RUNNER_TEMP}/bench-new.txt"
+            fi
+          done
+
+      - name: Compare with merge base
+        run: go run ./tools/benchgate -old "${RUNNER_TEMP}/bench-old.txt" -new "${RUNNER_TEMP}/bench-new.txt"

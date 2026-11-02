@@ -1,0 +1,90 @@
+name: kennembed release bundles
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to receive kennembed bundles
+        required: true
+permissions:
+  contents: read
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: namespace-profile-linux-4cpu
+          - os: darwin
+            runner: namespace-profile-mac-6cpu
+          - os: windows
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 13
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      TARGET_OS: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build both architectures and package runtime dependencies
+        shell: python
+        run: |
+          import os, pathlib, platform, re, shutil, subprocess
+          tag = os.environ['RELEASE_TAG'] or re.search(r'const BundleTag = "([^"]+)"', pathlib.Path('internal/embedassets/bundle.go').read_text()).group(1)
+          version = tag.removeprefix('v')
+          target = os.environ['TARGET_OS']
+          subprocess.run(['git', 'fetch', '--depth=1', 'origin', 'tag', tag], check=True)
+          subprocess.run(['git', 'worktree', 'add', '--detach', 'release-source', tag], check=True)
+          revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd='release-source', text=True).strip()
+          native_arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'amd64'
+          output = pathlib.Path('dist')
+          output.mkdir()
+          for arch in ('amd64', 'arm64'):
+              bundle = pathlib.Path(os.environ['RUNNER_TEMP']) / ('kennembed-' + arch) / 'bundle'
+              subprocess.run(['python', '.github/scripts/stage-onnx.py', '--os', target, '--arch', arch, '--output', str(bundle)], check=True)
+              executable = bundle / ('kennembed.exe' if target == 'windows' else 'kennembed')
+              subprocess.run(['go', 'build', '-trimpath', '-buildvcs=true', '-o', str(executable), './cmd/kennembed'], env=dict(os.environ, GOOS=target, GOARCH=arch, CGO_ENABLED='0'), cwd='release-source', check=True)
+              metadata = subprocess.check_output(['go', 'version', '-m', str(executable)], text=True)
+              if 'vcs.revision=' + revision not in metadata or 'vcs.modified=false' not in metadata:
+                  raise RuntimeError('bundle source does not match the selected tag')
+              if arch == native_arch:
+                  with open(os.environ['GITHUB_ENV'], 'a') as env:
+                      env.write('KIT_EMBED_TEST_EXECUTABLE=' + str(executable) + '\n')
+                      env.write('KIT_EMBED_TEST_DIR=' + str(bundle.parent / 'model') + '\n')
+              # selfupdate.ExtractTarGz and ExtractZip require these archive formats.
+              name = output / ('kennembed_' + version + '_' + target + '_' + arch)
+              shutil.make_archive(str(name), 'zip' if target == 'windows' else 'gztar', bundle)
+      - name: Exercise the pinned native server and model
+        run: make test-embedserver
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kennembed-${{ matrix.os }}
+          path: dist/*
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    needs: bundle
+    runs-on: namespace-profile-linux-4cpu
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: kennembed-*
+          merge-multiple: true
+          path: dist
+      - name: Attach verified bundles to the existing release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          sha256sum kennembed_* > SHA256SUMS
+          gh release upload "$RELEASE_TAG" kennembed_* SHA256SUMS

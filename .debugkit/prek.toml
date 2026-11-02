@@ -1,0 +1,102 @@
+minimum_prek_version = "0.5.7"
+default_install_hook_types = ["pre-commit", "pre-push"]
+default_stages = ["pre-commit"]
+
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "check-case-conflict"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+args = ["--assume-in-merge"]
+
+[[repos.hooks]]
+id = "detect-private-key"
+
+[[repos.hooks]]
+id = "no-commit-to-branch"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+args = ["--maxkb=1024"]
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+args = ["--markdown-linebreak-ext=md"]
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+
+[[repos.hooks]]
+id = "check-json"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-yaml"
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "gofmt"
+name = "gofmt"
+language = "system"
+entry = "gofmt -w"
+files = "\\.go$"
+priority = 0
+
+[[repos.hooks]]
+id = "golangci-lint"
+name = "golangci-lint"
+language = "system"
+entry = "make lint-golangci"
+stages = ["pre-push"]
+files = "^(go\\.mod|go\\.sum|.*\\.go)$"
+pass_filenames = false
+require_serial = true
+priority = 10
+
+[[repos.hooks]]
+id = "kennlint-config"
+name = "kennlint config drift"
+language = "system"
+entry = "make lint-config-check"
+files = "^(\\.golangci\\.yml|\\.golangci\\.overlay\\.yml|lint/config/.*)$"
+pass_filenames = false
+require_serial = true
+priority = 5
+
+[[repos.hooks]]
+id = "nilaway"
+name = "nilaway"
+language = "system"
+entry = "make nilaway"
+stages = ["pre-push"]
+files = "^(go\\.mod|go\\.sum|.*\\.go)$"
+pass_filenames = false
+require_serial = true
+priority = 20
+
+[[repos.hooks]]
+id = "go-test"
+name = "go test"
+language = "system"
+entry = "go tool gotestsum --format pkgname-and-test-fails -- ./..."
+stages = ["pre-push"]
+files = "^(go\\.mod|go\\.sum|.*\\.go)$"
+pass_filenames = false
+require_serial = true
+priority = 25
+
+[[repos]]
+repo = "meta"
+
+[[repos.hooks]]
+id = "check-hooks-apply"
+
+[[repos.hooks]]
+id = "check-useless-excludes"
