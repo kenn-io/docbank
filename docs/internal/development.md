@@ -1417,6 +1417,16 @@ disk and mounts it as D:. A setup failure logs a warning and keeps both Go cache
 paths unchanged. Changing cache paths creates a new cache version, so the first
 restore at the new location misses until a `main` push saves it.
 
+Windows jobs also set `TEMP` and `TMP` to `D:\a\_temp\tmp`, so `t.TempDir`
+and every test vault use the local disk. The default `TEMP` is on C:, the
+runner's network-attached OS disk. While other test packages write, its flushes
+average tens of milliseconds and sometimes stall for several seconds. Durable
+vault writes flush on every upload and commit, so those stalls add up and fail
+tests on timeouts. Setup grants that directory only the user, SYSTEM and
+Administrators, as the default `TEMP` does, because private-file checks reject
+files that inherit D:'s broader access. Without D:, the job logs a warning and
+keeps the default.
+
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:
 

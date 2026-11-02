@@ -500,6 +500,26 @@ jobs:
         with:
           group: windows-${{ matrix.goarch }}
 
+      # t.TempDir holds every test vault. TEMP defaults to C:, the runner's
+      # network-attached OS disk, whose flushes stall for seconds while other
+      # test packages write. D: is a local disk. Private-file checks accept
+      # only the user, SYSTEM and Administrators, so the directory gets the
+      # same access as the default per-user TEMP instead of D:'s broader ACL.
+      - name: Put temporary files on D
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'D:\') {
+            $path = 'D:\a\_temp\tmp'
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            icacls $path /inheritance:r /grant:r "*${user}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            "TEMP=$path", "TMP=$path" >> $env:GITHUB_ENV
+          } else {
+            Write-Warning 'D: is missing; keeping TEMP on the OS disk'
+          }
+
       - name: Check PowerShell installer
         if: matrix.goarch == 'amd64'
         shell: pwsh
