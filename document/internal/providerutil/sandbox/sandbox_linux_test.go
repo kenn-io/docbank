@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -120,27 +121,88 @@ func TestAuthenticatedLaunchChecksTokenSealFstatAndExecutableBinding(t *testing.
 }
 
 func TestLauncherRejectsOutOfBandStatus(t *testing.T) {
-	assert.False(t, launcherStatusRead(bytes.NewReader([]byte{launcherFailureStatus})).ready)
-	assert.True(t, launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus})).ready)
+	assert.False(t, launcherStatusRead(bytes.NewReader([]byte{launcherFailureStatus}), nil).ready)
+	assert.True(t, launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus}), nil).ready)
 }
 
 func TestLauncherStatusProtocolIsModeSpecific(t *testing.T) {
-	status := launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus}))
+	status := launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus}), nil)
 	assert.True(t, status.ready)
 	assert.Zero(t, status.detail)
 	assert.Zero(t, status.restarts)
 
-	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherRestartStatusBase + 1}))
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherRestartStatusBase + 1}), nil)
 	assert.True(t, status.ready)
 	assert.Equal(t, 1, status.restarts)
 
-	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherFailureStatus}))
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherFailureStatus}), nil)
 	assert.True(t, status.ready)
 	assert.Equal(t, launcherFailureStatus, status.detail)
-	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherChildFailureStatus}))
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherChildFailureStatus}), nil)
 	assert.Equal(t, launcherChildFailureStatus, status.detail)
-	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherOutputFailureStatus}))
+	status = launcherStatusRead(bytes.NewReader([]byte{launcherReadyStatus, launcherOutputFailureStatus}), nil)
 	assert.Equal(t, launcherOutputFailureStatus, status.detail)
+}
+
+func TestLauncherStatusAcceptsChildStartedNotice(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		data     []byte
+		started  bool
+		ready    bool
+		detail   byte
+		restarts int
+	}{
+		{name: "started only", data: []byte{launcherReadyStatus, launcherChildStartedStatus},
+			started: true, ready: true},
+		{name: "started then restart count", data: []byte{launcherReadyStatus, launcherChildStartedStatus, launcherRestartStatusBase + 1},
+			started: true, ready: true, restarts: 1},
+		{name: "started then child failure", data: []byte{launcherReadyStatus, launcherChildStartedStatus, launcherChildFailureStatus},
+			started: true, ready: true, detail: launcherChildFailureStatus},
+		{name: "started then output failure", data: []byte{launcherReadyStatus, launcherChildStartedStatus, launcherOutputFailureStatus},
+			started: true, ready: true, detail: launcherOutputFailureStatus},
+		{name: "failure before start", data: []byte{launcherReadyStatus, launcherFailureStatus},
+			ready: true, detail: launcherFailureStatus},
+		{name: "restart count without notice", data: []byte{launcherReadyStatus, launcherRestartStatusBase},
+			ready: true},
+		{name: "notice without ready", data: []byte{launcherChildStartedStatus},
+			detail: launcherChildStartedStatus},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			status := launcherStatusRead(bytes.NewReader(test.data), func() { calls++ })
+			assert.Equal(t, test.ready, status.ready)
+			assert.Equal(t, test.detail, status.detail)
+			assert.Equal(t, test.restarts, status.restarts)
+			if test.started {
+				assert.Equal(t, 1, calls)
+			} else {
+				assert.Zero(t, calls)
+			}
+		})
+	}
+}
+
+func TestLauncherStatusReportsChildStartBeforeFinalStatus(t *testing.T) {
+	reader, writer := io.Pipe()
+	started := make(chan struct{})
+	result := make(chan launcherRunStatus, 1)
+	go func() { result <- launcherStatusRead(reader, func() { close(started) }) }()
+
+	_, err := writer.Write([]byte{launcherReadyStatus, launcherChildStartedStatus})
+	require.NoError(t, err)
+	<-started
+	select {
+	case status := <-result:
+		require.FailNow(t, "status reader finished before the final status", "%+v", status)
+	default:
+	}
+	_, err = writer.Write([]byte{launcherRestartStatusBase + 1})
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	status := <-result
+	assert.True(t, status.ready)
+	assert.Equal(t, 1, status.restarts)
 }
 
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {

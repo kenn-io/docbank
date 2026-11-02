@@ -89,6 +89,10 @@ type Request struct {
 	Policy            Policy `json:"policy"`
 	Stdin             []byte `json:"-"`
 	StdinSHA256       string `json:"stdin_sha256"`
+	// ChildStarted is called once the LibreOffice-mode launcher reports that
+	// the caller's supervised child started. Warm-up launches do not call
+	// it. Tests use it to act while the child runs; production leaves it nil.
+	ChildStarted func() `json:"-"`
 }
 
 // Attestation records the controls applied to a completed run.
