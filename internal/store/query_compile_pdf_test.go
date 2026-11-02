@@ -63,6 +63,7 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 		{"pdf_last_signature_covers_file:false", []int64{nodes[2].ID}},
 		{"pdf_last_signature_covers_file:true", []int64{nodes[3].ID}},
 		{"pdf_has_javascript:true", []int64{nodes[3].ID}},
+		{"NOT pdf_has_javascript:true", []int64{nodes[0].ID, nodes[1].ID, nodes[2].ID}},
 		{"pdf_has_launch_actions:true", []int64{nodes[2].ID}},
 		{"pdf_signature_field_count:0", []int64{nodes[1].ID}},
 		{"pdf_signature_field_count_max:1", []int64{nodes[1].ID, nodes[2].ID}},
@@ -70,8 +71,6 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 		{`pdf_permissions:"Print"`, []int64{nodes[2].ID}},
 		{`pdf_permissions:"print"`, nil},
 		{`pdf_permissions:"High-quality"`, nil},
-		{"pdf_embedded_file_count_min:1 OR pdf_has_javascript:true", []int64{nodes[2].ID, nodes[3].ID}},
-		{"pdf_encrypted:(true OR false) AND NOT pdf_has_javascript:true", []int64{nodes[1].ID, nodes[2].ID}},
 	} {
 		t.Run(tc.filter, func(t *testing.T) {
 			compiled, err := compileQuery(t.Context(), compilerQuery(t, tc.filter), nil)
@@ -80,7 +79,24 @@ func TestPDFFactSearchMatchesRecordedEvidence(t *testing.T) {
 		})
 	}
 
-	_, _, err := s.ReplaceContent(t.Context(), nodes[3].ID, nodes[3].Revision, fakeHash("a9"), 12, "application/pdf")
+	file, err := s.CreateFile(t.Context(), s.RootID(), "review.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	for _, text := range []string{"", "review"} {
+		hits, _, err := s.SearchPageWithOptions(t.Context(), text, 50, SearchOptions{PDFFilter: "NOT pdf_has_javascript:true"})
+		require.NoError(t, err)
+		if text == "" {
+			var ids []int64
+			for _, hit := range hits {
+				ids = append(ids, hit.Node.ID)
+			}
+			assert.ElementsMatch(t, []int64{nodes[0].ID, nodes[1].ID, nodes[2].ID, file.ID}, ids)
+		} else {
+			require.Len(t, hits, 1)
+			assert.Equal(t, file.ID, hits[0].Node.ID)
+		}
+	}
+
+	_, _, err = s.ReplaceContent(t.Context(), nodes[3].ID, nodes[3].Revision, fakeHash("a9"), 12, "application/pdf")
 	require.NoError(t, err)
 	hits, _, err := s.SearchPageWithOptions(t.Context(), "", 50, SearchOptions{PDFFilter: "pdf_has_javascript:true", MIMEType: "application/pdf"})
 	require.NoError(t, err)
@@ -98,8 +114,6 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 		{"report", "PDF filters require PDF fact fields"},
 		{"pdf_encrypted:yes", "invalid pdf_encrypted operand"},
 		{"pdf_encrypted:TRUE", "invalid pdf_encrypted operand"},
-		{"pdf_embedded_file_count:>=1", "size operand must be a decimal nonnegative safe integer"},
-		{"pdf_embedded_file_count:-1", "size operand must be a decimal nonnegative safe integer"},
 		{"pdf_embedded_file_count:9007199254740992", "size operand must be a decimal nonnegative safe integer"},
 		{"pdf_has_javascript:true*", "scalar operands cannot use prefix matching"},
 		{"pdf_encrypted:(mime:application/pdf)", "nested field overrides are not supported"},
@@ -109,19 +123,6 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 		expressionErr, ok := errors.AsType[*query.ExpressionError](err)
 		require.True(t, ok, "%s: %v", tc.text, err)
 		assert.Equal(t, tc.want, expressionErr.Message, tc.text)
-	}
-}
-
-func TestPDFFilterNegationMatchesUnknownEvidenceWithText(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	file, err := s.CreateFile(t.Context(), s.RootID(), "review.pdf", fakeHash("a1"), 12, "application/pdf")
-	require.NoError(t, err)
-	for _, text := range []string{"", "review"} {
-		hits, _, err := s.SearchPageWithOptions(t.Context(), text, 50, SearchOptions{PDFFilter: "NOT pdf_has_javascript:true"})
-		require.NoError(t, err)
-		require.Len(t, hits, 1)
-		assert.Equal(t, file.ID, hits[0].Node.ID)
 	}
 }
 

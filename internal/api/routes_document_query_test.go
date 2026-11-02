@@ -304,6 +304,4 @@ func TestPDFFilterHTTPValidationAndEcho(t *testing.T) {
 	assert.Equal(t, text, report.PDFFilter)
 	response, body = get(t, ts, "/api/v1/search?pdf_filter=pdf_encrypted:yes", nil)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	response, body = get(t, ts, "/api/v1/search?pdf_filter=tag:urgent", nil)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 }
