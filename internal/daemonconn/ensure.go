@@ -514,14 +514,14 @@ func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.R
 		rec := kitdaemon.RuntimeRecord{PID: child.Pid}
 		// Reap the child even when ctx ended the startup wait.
 		cleanupCtx := context.WithoutCancel(ctx)
-		if dead, _ := waitDead(cleanupCtx, rec, daemon.GracefulExitTimeout); dead {
+		if dead, _ := waitProcessExit(cleanupCtx, rec, daemon.GracefulExitTimeout); dead {
 			return
 		}
 		if err := child.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			retErr = errors.Join(retErr, fmt.Errorf("terminating unready daemon: %w", err))
 			return
 		}
-		if dead, _ := waitDead(cleanupCtx, rec, daemon.ForcedExitTimeout); !dead {
+		if dead, _ := waitProcessExit(cleanupCtx, rec, daemon.ForcedExitTimeout); !dead {
 			retErr = errors.Join(retErr, fmt.Errorf("daemon pid %d did not exit after failed startup", child.Pid))
 		}
 	}()
@@ -722,7 +722,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		if _, rejected := ResponseStatus(shutdownErr); rejected {
 			return signalStopRecord(ctx, rec)
 		}
-		dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)
+		dead, err := waitProcessExit(ctx, rec, daemon.GracefulExitTimeout)
 		if err != nil {
 			return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
 		}
@@ -745,7 +745,7 @@ func signalStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := requestProcessStop(rec.PID); err != nil {
 		return fmt.Errorf("requesting daemon pid %d stop: %w", rec.PID, err)
 	}
-	dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)
+	dead, err := waitProcessExit(ctx, rec, daemon.GracefulExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for signaled daemon shutdown: %w", err)
 	}
@@ -762,7 +762,7 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := forceTerminateProcess(rec.PID); err != nil {
 		return fmt.Errorf("forcibly terminating daemon pid %d: %w", rec.PID, err)
 	}
-	dead, err := waitDead(ctx, rec, daemon.ForcedExitTimeout)
+	dead, err := waitProcessExit(ctx, rec, daemon.ForcedExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for daemon after forced termination: %w", err)
 	}
@@ -809,6 +809,11 @@ func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
 	}
 	return kitdaemon.RuntimeRecord{}, false, nil
 }
+
+// waitProcessExit waits up to timeout for a stopping daemon process to exit.
+// Tests replace it to check the stop sequence without waiting out the real
+// grace windows.
+var waitProcessExit = waitDead
 
 func waitDead(
 	ctx context.Context, rec kitdaemon.RuntimeRecord, timeout time.Duration,
