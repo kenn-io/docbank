@@ -1,7 +1,13 @@
 package store
 
 import (
-	"runtime"
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,13 +33,20 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, publisher.Close()) })
 
-	// Reserve the consuming transaction's connection. Compilation used to run
-	// before this wait, allowing publication to collect its selected generation.
-	s.db.SetMaxOpenConns(1)
-	conn, err := s.db.Conn(t.Context())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-	waits := s.db.Stats().WaitCount
+	// Gate only BEGIN. Ordinary reads must remain available so compilation
+	// outside the transaction would select the generation publication collects.
+	started, release := make(chan struct{}), make(chan struct{})
+	resume := sync.OnceFunc(func() { close(release) })
+	defer resume()
+	readDB := s.db
+	s.db = sql.OpenDB(photoSearchBeginConnector{
+		driver:  readDB.Driver(),
+		uri:     (&url.URL{Scheme: "file", Path: "/" + strings.TrimPrefix(filepath.ToSlash(s.path), "/"), RawQuery: "mode=rw"}).String(),
+		started: started, release: release,
+	})
+	t.Cleanup(func() { require.NoError(t, readDB.Close()) })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 	scope := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}
 	lexical := snapshotTestQuery(t, `{"text":"mercury"}`)
 	candidates := []SearchCandidateIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Kind: "node_name", NodeName: node.Name}}}}
@@ -41,25 +54,63 @@ func TestPhotoSearchRevalidationCompilesAfterPublication(t *testing.T) {
 		result SearchCandidateRevalidation
 		err    error
 	}, 1)
+	finished := make(chan struct{})
 	go func() {
-		result, err := s.RevalidateSearchCandidates(t.Context(), candidates, SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexical}, "", "")
+		defer close(finished)
+		result, err := s.RevalidateSearchCandidates(ctx, candidates, SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexical}, "", "")
 		done <- struct {
 			result SearchCandidateRevalidation
 			err    error
 		}{result, err}
 	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for s.db.Stats().WaitCount == waits && time.Now().Before(deadline) {
-		runtime.Gosched()
+	defer func() {
+		cancel()
+		resume()
+		<-finished
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("revalidation did not reach BEGIN:", ctx.Err())
 	}
-	require.Greater(t, s.db.Stats().WaitCount, waits)
 	require.NoError(t, publisher.PublishRenditionAndLexicalHeads(t.Context(), attachment, head, second.ID))
 	var remaining int
 	require.NoError(t, publisher.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?`, first.ID).Scan(&remaining))
 	require.Zero(t, remaining)
-	require.NoError(t, conn.Close())
+	resume()
 	got := <-done
 	require.NoError(t, got.err)
 	require.Len(t, got.result.Candidates, 1)
 	require.Equal(t, node.ID, got.result.Candidates[0].NodeID)
+}
+
+type photoSearchBeginConnector struct {
+	driver           driver.Driver
+	uri              string
+	started, release chan struct{}
+}
+
+func (c photoSearchBeginConnector) Driver() driver.Driver { return c.driver }
+
+func (c photoSearchBeginConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := c.driver.Open(c.uri)
+	if err != nil {
+		return nil, err
+	}
+	return photoSearchBeginConn{Conn: conn, started: c.started, release: c.release}, nil
+}
+
+type photoSearchBeginConn struct {
+	driver.Conn
+	started, release chan struct{}
+}
+
+func (c photoSearchBeginConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	close(c.started)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.release:
+		return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+	}
 }
