@@ -2884,7 +2884,7 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 	require.NoError(t, err)
 	opts := SearchOptions{ContentVersionIDs: []string{version.ID}}
 	neighbor := vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}
-	for _, name := range []string{"fence", "resolve", "revalidate", "similar"} {
+	for _, name := range []string{"fence", "resolve", "revalidate", "similar", "similar-authority-invalid-source"} {
 		t.Run(name, func(t *testing.T) {
 			tx, err := s.writeDB.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
@@ -2913,6 +2913,9 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 				require.NoError(t, err)
 				require.Empty(t, got.Candidates)
 				require.Equal(t, 1, got.CompleteDocuments)
+			case "similar-authority-invalid-source":
+				_, err := s.AcquireSimilarSearchAuthority(ctx, record.ProcessingProfileFingerprint, record.BindingID, "reader", now, time.Minute, SearchOptions{}, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+				require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
 			}
 		})
 	}

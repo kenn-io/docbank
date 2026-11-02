@@ -84,7 +84,11 @@ func BenchmarkSemanticSearchIngestLatency(b *testing.B) {
 				require.NoError(b, err)
 				i++
 			}
-			b.ReportMetric(float64(searches.Load()-before)/b.Elapsed().Seconds(), "searches/s")
+			completed := searches.Load() - before
+			if completed == 0 {
+				b.Fatal("no search completed while ingestion was timed")
+			}
+			b.ReportMetric(float64(completed)/b.Elapsed().Seconds(), "searches/s")
 		})
 	}
 }

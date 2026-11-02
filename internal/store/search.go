@@ -725,7 +725,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		vectorSpaceID = normalized.VectorSpaceID
 	}
 	if similar != nil {
-		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 		})
 		if err != nil {
@@ -733,7 +733,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		}
 	}
 	var space EmbeddingVectorSpaceRecord
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var loadErr error
 		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
 		return loadErr

@@ -73,7 +73,7 @@ func (s *Store) AcquireSimilarSearchAuthority(ctx context.Context, profile, bind
 	if err != nil {
 		return SimilarSearchAuthority{}, err
 	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		if err := validateSimilarSource(ctx, tx, source, opts); err != nil {
 			return err
 		}
