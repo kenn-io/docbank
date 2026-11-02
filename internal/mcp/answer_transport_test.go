@@ -81,7 +81,7 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 		TrustBoundary: string(descriptor.TrustBoundary), MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
 	}}
 	profile.EmbeddingProviders = map[string]document.EmbeddingProvider{"query": questionOutageProvider{descriptor}}
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
 		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{name: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
@@ -135,7 +135,7 @@ func TestAnswerQuestionRerankRevokedConsent(t *testing.T) {
 	}
 	profile.RerankingDeadline = time.Second
 	profile.RerankingFailurePolicy = retrieval.ProviderFailureDegrade
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
 		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
