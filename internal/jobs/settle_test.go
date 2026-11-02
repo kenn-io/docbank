@@ -288,3 +288,30 @@ func TestSettleNamesWorkersWaitingForARetry(t *testing.T) {
 		assert.Empty(t, s.PendingRetries(), "a stopped worker holds no retry")
 	})
 }
+
+func TestWakeStartsAPollWithoutWaitingForIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := New(t.Context(), discardLogger())
+		var polls atomic.Int64
+		release := make(chan struct{})
+		require.NoError(t, s.StartWorker("blocked", func(ctx context.Context) error {
+			for {
+				if polls.Add(1) == 2 {
+					// The second poll blocks until the test releases it.
+					<-release
+				}
+				if err := Idle(ctx, time.Hour, false); err != nil {
+					return err
+				}
+			}
+		}))
+		synctest.Wait()
+		start := time.Now()
+		s.Wake()
+		synctest.Wait()
+		assert.Equal(t, int64(2), polls.Load(), "Wake starts a poll before the interval")
+		assert.Zero(t, time.Since(start))
+		close(release)
+		require.NoError(t, s.Shutdown(t.Context()))
+	})
+}

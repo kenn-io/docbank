@@ -274,6 +274,20 @@ func (s *Supervisor) notifyLocked() {
 	s.changed = make(chan struct{})
 }
 
+// Wake asks every parked worker started with StartWorker to poll now, without
+// waiting for the result. A test uses it when the work it starts blocks on
+// something the test still has to release, so Settle could not return yet.
+func (s *Supervisor) Wake() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, job := range s.jobs {
+		if job.worker && job.wake != nil {
+			close(job.wake)
+			job.wake = nil
+		}
+	}
+}
+
 // PendingRetries names the running workers that last reported work waiting
 // for a retry time. Settle returns without that work, so a caller can check it.
 func (s *Supervisor) PendingRetries() []string {
