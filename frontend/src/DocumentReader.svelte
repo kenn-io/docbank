@@ -39,6 +39,7 @@
     width="calc(100vw - 32px)"
     maxWidth="none"
     maxHeight="calc(100svh - 32px)"
+    closable
     onclose={() => {
       if (redacting) review?.requestClose();
       else onclose();
