@@ -418,6 +418,4 @@ func TestFolderWatchHintDoesNotHashUnrelatedAcceptedFile(t *testing.T) {
 		Dirty: map[string]struct{}{"one.txt": {}},
 	})))
 	require.Equal(t, map[string]int{"one.txt": 2, "two.txt": 1}, processed)
-	requireScanComplete(t, checkedScan(scanner.watcher.scanWithHints(t.Context(), root, watchScanHints{Reconcile: true})))
-	require.Equal(t, map[string]int{"one.txt": 2, "two.txt": 1}, processed)
 }

@@ -53,7 +53,7 @@ func BenchmarkFolderWatchIdleTick(b *testing.B) {
 				complete, err := scanner.watcher.scanWithHints(b.Context(), root, watchScanHints{Reconcile: true})
 				require.NoError(b, err)
 				require.True(b, complete)
-				require.Equal(b, 64, processed, "idle ticks must not repeat processing")
+				require.Equal(b, 64, processed)
 			}
 		})
 	}
