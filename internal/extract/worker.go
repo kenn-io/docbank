@@ -95,11 +95,16 @@ func (w *Worker) Run(ctx context.Context) error {
 		if processed == batchSize {
 			continue
 		}
-		if jobs.Idle(ctx, w.interval, found) != nil {
+		if !w.idle(ctx, found) {
 			return nil
 		}
 		found = false
 	}
+}
+
+// idle waits for the next scan and reports false once ctx ends.
+func (w *Worker) idle(ctx context.Context, found bool) bool {
+	return jobs.Idle(ctx, w.interval, found) == nil
 }
 
 // ScanOnce processes one bounded batch and returns the number attempted.
