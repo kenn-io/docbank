@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -1634,25 +1633,19 @@ func TestStoragePlacementPreviewRunAndDurableReceipt(t *testing.T) {
 
 func waitForStorageOperation(t *testing.T, id string) error {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		out, err := runCLI(t, "jobs", "show", id, "--json")
-		if err != nil {
-			return err
-		}
-		var operation api.StorageOperation
-		if err := json.Unmarshal([]byte(out), &operation); err != nil {
-			return err
-		}
-		switch operation.State {
-		case "completed":
-			return nil
-		case "failed", "cancelled":
-			return fmt.Errorf("storage operation ended %s: %s", operation.State, operation.Error)
-		}
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // sleeptest: polls the in-process daemon through the CLI over real loopback HTTP, which synctest can't host
+	settleDaemon(t)
+	out, err := runCLI(t, "jobs", "show", id, "--json")
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("storage operation %s did not finish", id)
+	var operation api.StorageOperation
+	if err := json.Unmarshal([]byte(out), &operation); err != nil {
+		return err
+	}
+	if operation.State != "completed" {
+		return fmt.Errorf("storage operation ended %s: %s", operation.State, operation.Error)
+	}
+	return nil
 }
 
 func TestInfoHumanAndJSON(t *testing.T) {

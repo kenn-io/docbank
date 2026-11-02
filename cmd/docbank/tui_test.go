@@ -56,13 +56,18 @@ func TestTUIQuitReturnsBeforeSessionReportCompletes(t *testing.T) {
 	t.Cleanup(func() {
 		close(release)
 		// Wait for the detached exit report to release its lock before TempDir cleanup.
+		// Lock blocks until the report releases the file lock.
 		lock := flock.New(filepath.Join(os.Getenv("DOCBANK_HOME"), "telemetry-tui-state.json.lock"))
-		defer func() { require.NoError(t, lock.Close()) }()
-		require.Eventually(t, func() bool {
-			locked, err := lock.TryLock()
+		locked := make(chan error, 1)
+		go func() { locked <- lock.Lock() }()
+		select {
+		case err := <-locked:
 			require.NoError(t, err)
-			return locked
-		}, 2*time.Second, time.Millisecond)
+		case <-time.After(30 * time.Second):
+			// A safety net for a report that never releases its lock.
+			require.FailNow(t, "the detached exit report kept its telemetry lock")
+		}
+		require.NoError(t, lock.Close())
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -61,12 +60,10 @@ func TestRecipientPackageLabelBoundary(t *testing.T) {
 			require.NoError(t, err, out)
 			var job api.PackageImportJob
 			require.NoError(t, json.Unmarshal([]byte(out), &job))
-			require.Eventually(t, func() bool {
-				out, err = runCLI(t, "package", "import", "status", job.OperationID, "--json")
-				require.NoError(t, err, out)
-				require.NoError(t, json.Unmarshal([]byte(out), &job))
-				return job.State == "complete" || job.State == "partial" || job.State == "failed"
-			}, time.Minute, 50*time.Millisecond)
+			settleDaemon(t)
+			out, err = runCLI(t, "package", "import", "status", job.OperationID, "--json")
+			require.NoError(t, err, out)
+			require.NoError(t, json.Unmarshal([]byte(out), &job))
 			require.Equal(t, "complete", job.State, out)
 			for _, set := range []string{"received", document.NamespaceID} {
 				out, err = runCLI(t, "labels", "lookup", label, "--package", job.PackageID, "--label-set", set, "--json")

@@ -1,15 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,24 +140,14 @@ func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
 	assert.Equal(t, "initial text", out)
 	t.Setenv("DOCBANK_EDIT_TEST_FAIL", "")
 
-	marker := t.TempDir() + string(os.PathSeparator) + "started"
-	release := t.TempDir() + string(os.PathSeparator) + "release"
 	setEditHelper(t, "stale editor output")
-	t.Setenv("DOCBANK_EDIT_TEST_MARKER", marker)
-	t.Setenv("DOCBANK_EDIT_TEST_RELEASE", release)
-	type result struct {
-		out string
-		err error
-	}
-	done := make(chan result, 1)
+	editor := holdEditHelper(t)
+	done := make(chan editResult, 1)
 	go func() {
 		got, runErr := runCLI(t, "edit", "/inbox/notes.txt", "--progress", "plain")
-		done <- result{got, runErr}
+		done <- editResult{got, runErr}
 	}()
-	require.Eventually(t, func() bool {
-		_, statErr := os.Stat(marker)
-		return statErr == nil
-	}, 10*time.Second, 20*time.Millisecond)
+	release := editor.started(t, done)
 
 	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
@@ -167,7 +159,7 @@ func TestEditFailureAndConcurrentReplacementDoNotOverwrite(t *testing.T) {
 	_, err = c.ReplaceContent(t.Context(), node.ID, node.Revision, node.MimeType,
 		hex.EncodeToString(sum[:]), int64(len(concurrent)), bytes.NewReader(concurrent))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(release, []byte("continue"), 0o600))
+	release()
 
 	finished := <-done
 	require.ErrorContains(t, finished.err, "revision mismatch", finished.out)
@@ -182,24 +174,14 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 	_, err := runCLI(t, "add", initial, "--dest", "/inbox")
 	require.NoError(t, err)
 
-	marker := t.TempDir() + string(os.PathSeparator) + "started"
-	release := t.TempDir() + string(os.PathSeparator) + "release"
 	setEditHelper(t, "initial text")
-	t.Setenv("DOCBANK_EDIT_TEST_MARKER", marker)
-	t.Setenv("DOCBANK_EDIT_TEST_RELEASE", release)
-	type result struct {
-		out string
-		err error
-	}
-	done := make(chan result, 1)
+	editor := holdEditHelper(t)
+	done := make(chan editResult, 1)
 	go func() {
 		got, runErr := runCLI(t, "edit", "/inbox/notes.txt", "--progress", "plain")
-		done <- result{got, runErr}
+		done <- editResult{got, runErr}
 	}()
-	require.Eventually(t, func() bool {
-		_, statErr := os.Stat(marker)
-		return statErr == nil
-	}, 10*time.Second, 20*time.Millisecond)
+	release := editor.started(t, done)
 
 	c, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
@@ -211,7 +193,7 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 	_, err = c.ReplaceContent(t.Context(), node.ID, node.Revision, node.MimeType,
 		hex.EncodeToString(sum[:]), int64(len(concurrent)), bytes.NewReader(concurrent))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(release, []byte("continue"), 0o600))
+	release()
 
 	finished := <-done
 	require.ErrorContains(t, finished.err, "revision mismatch", finished.out)
@@ -239,21 +221,17 @@ func TestMain(m *testing.M) {
 
 func runEditHelper() int {
 	path := os.Args[len(os.Args)-1]
-	if marker := os.Getenv("DOCBANK_EDIT_TEST_MARKER"); marker != "" {
-		if err := os.WriteFile(marker, []byte("started"), 0o600); err != nil {
+	if address := os.Getenv("DOCBANK_EDIT_TEST_CONTROL"); address != "" {
+		// Connecting tells the test the editor is open. The editor then waits
+		// until the test writes a line or closes the connection.
+		connection, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", address)
+		if err != nil {
 			return 21
 		}
-	}
-	if release := os.Getenv("DOCBANK_EDIT_TEST_RELEASE"); release != "" {
-		deadline := time.Now().Add(10 * time.Second)
-		for {
-			if _, err := os.Stat(release); err == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				return 22
-			}
-			time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: runs in the editor helper subprocess, polling for a file the test writes
+		_, err = bufio.NewReader(connection).ReadString('\n')
+		_ = connection.Close()
+		if err != nil {
+			return 22
 		}
 	}
 	if os.Getenv("DOCBANK_EDIT_TEST_FAIL") == "1" {
@@ -270,8 +248,52 @@ func setEditHelper(t *testing.T, content string) {
 	t.Setenv("DOCBANK_EDIT_TEST_HELPER", "1")
 	t.Setenv("DOCBANK_EDIT_TEST_CONTENT", content)
 	t.Setenv("DOCBANK_EDIT_TEST_FAIL", "")
-	t.Setenv("DOCBANK_EDIT_TEST_MARKER", "")
-	t.Setenv("DOCBANK_EDIT_TEST_RELEASE", "")
+	t.Setenv("DOCBANK_EDIT_TEST_CONTROL", "")
 	t.Setenv("VISUAL", `"`+os.Args[0]+`"`)
 	t.Setenv("EDITOR", "")
+}
+
+// editHelperControl holds the editor helper open until the test releases it.
+type editHelperControl struct {
+	connections chan net.Conn
+}
+
+// holdEditHelper makes the next editor helper connect to the test and wait.
+func holdEditHelper(t *testing.T) editHelperControl {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	t.Setenv("DOCBANK_EDIT_TEST_CONTROL", listener.Addr().String())
+	control := editHelperControl{connections: make(chan net.Conn, 1)}
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			control.connections <- connection
+		}
+	}()
+	return control
+}
+
+// started waits until the editor helper is open and returns a function that
+// lets it finish. done reports an edit that ended before the editor opened.
+func (control editHelperControl) started(t *testing.T, done <-chan editResult) func() {
+	t.Helper()
+	select {
+	case connection := <-control.connections:
+		t.Cleanup(func() { _ = connection.Close() })
+		return func() {
+			_, err := connection.Write([]byte("continue\n"))
+			require.NoError(t, err)
+			require.NoError(t, connection.Close())
+		}
+	case finished := <-done:
+		require.FailNow(t, "edit ended before the editor opened", "%v: %s", finished.err, finished.out)
+		return nil
+	}
+}
+
+type editResult struct {
+	out string
+	err error
 }

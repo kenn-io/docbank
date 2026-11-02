@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -122,10 +121,10 @@ func reportRecoveryArgs(t *testing.T, revise bool) ([]string, string) {
 	source := writeSourceFile(t, "dated.txt", text)
 	_, err := runCLI(t, "add", source, "--dest", "/")
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		out, searchErr := runCLI(t, "search", "alpha")
-		return searchErr == nil && strings.Contains(out, "/dated.txt")
-	}, 15*time.Second, 25*time.Millisecond, "synthetic text was not searchable")
+	settleDaemon(t)
+	out, err := runCLI(t, "search", "alpha")
+	require.NoError(t, err)
+	require.Contains(t, out, "/dated.txt", "synthetic text was not searchable")
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC",
 		CoverageMode: "available_only", Terms: []report.Term{{Number: 1, Expression: "alpha",
 			Syntax: "simple", Dates: report.DateRange{Start: "2024-01-01", End: "2024-12-31"}}}}

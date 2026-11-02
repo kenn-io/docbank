@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,10 +56,10 @@ func TestDaemonProcessesEmailWithoutExternalRenditionProvider(t *testing.T) {
 	source := writeSourceFile(t, "message.eml", "Content-Type: text/plain; charset=utf-8\r\n\r\ndaemonemailmarker")
 	_, err := runCLI(t, "add", source, "--dest", "/mail")
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		out, searchErr := runCLI(t, "search", "daemonemailmarker")
-		return searchErr == nil && strings.Contains(out, "/mail/message.eml")
-	}, 15*time.Second, 25*time.Millisecond)
+	settleDaemon(t)
+	out, err := runCLI(t, "search", "daemonemailmarker")
+	require.NoError(t, err)
+	require.Contains(t, out, "/mail/message.eml")
 }
 
 func TestServeRecoversAbandonedProcessingSpoolBeforeBlobCleanup(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -56,14 +55,10 @@ func TestPackagePreflightCLIUsesDaemonAndReturnsTypedResult(t *testing.T) {
 	var status api.PackageImportJob
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	assert.Equal(t, job.JobID, status.JobID)
-	deadline := time.Now().Add(10 * time.Second)
-	for status.State != "complete" && status.State != "partial" && status.State != "failed" {
-		require.True(t, time.Now().Before(deadline), "package import stayed in %q", status.State)
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls the in-process daemon's package import through the CLI over real loopback HTTP, which synctest can't host
-		out, err = runCLI(t, "package", "import", "status", operation, "--json")
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal([]byte(out), &status))
-	}
+	settleDaemon(t)
+	out, err = runCLI(t, "package", "import", "status", operation, "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	require.Equal(t, "complete", status.State)
 
 	out, err = runCLI(t, "package", "list", "--limit", "50", "--json")
