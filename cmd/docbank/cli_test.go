@@ -102,6 +102,11 @@ func resetFlags(c *cobra.Command) {
 
 func setupVaultHome(t *testing.T) string {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
 	startTestDaemon(t, dir)
