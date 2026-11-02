@@ -286,7 +286,7 @@ func (s *Store) applyBatchTagsTx(
 	states []batchTagTargetState, recordedAt string,
 ) ([]BatchTagNodeResultV1, error) {
 	results := make([]BatchTagNodeResultV1, len(states))
-	changedIDs := make([]any, 0, len(states))
+	changedIDs := make([]int64, 0, len(states))
 	for i, state := range states {
 		node := state.node
 		changed := state.assigned != request.Assign
@@ -316,18 +316,18 @@ func (s *Store) applyBatchTagsTx(
 	if request.Assign {
 		assignmentSQL = `INSERT INTO node_tags(node_id,tag_id) SELECT id,$1 FROM nodes WHERE id IN (` + placeholders + `)`
 	}
-	if _, err := tx.ExecContext(ctx, assignmentSQL, append([]any{tag.ID}, changedIDs...)...); err != nil {
+	if _, err := tx.ExecContext(ctx, assignmentSQL, append([]any{tag.ID}, anyArgs(changedIDs)...)...); err != nil {
 		return nil, fmt.Errorf("changing batch tag assignments: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=$1
-		WHERE id IN (`+placeholders+`)`, append([]any{recordedAt}, changedIDs...)...); err != nil {
+		WHERE id IN (`+placeholders+`)`, append([]any{recordedAt}, anyArgs(changedIDs)...)...); err != nil {
 		return nil, fmt.Errorf("advancing batch tag nodes: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+$1 WHERE id=$2`, len(changedIDs), tag.ID); err != nil {
 		return nil, fmt.Errorf("advancing batch tag: %w", err)
 	}
 	if s.postgresSchema != "" {
-		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (`+numberedPlaceholders(len(changedIDs))+`)`, changedIDs...); err != nil {
+		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (`+numberedPlaceholders(len(changedIDs))+`)`, anyArgs(changedIDs)...); err != nil {
 			return nil, err
 		}
 	}
@@ -344,6 +344,9 @@ func (s *Store) applyBatchTagsTx(
 				return nil, err
 			}
 		}
+	}
+	if err := recordVaultChangesTx(ctx, tx, "tagged", changedIDs...); err != nil {
+		return nil, err
 	}
 	return results, nil
 }

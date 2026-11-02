@@ -151,12 +151,13 @@ runnable leaves and parents that perform work 1–4 synthetic example commands.
 Add working parents to `workParents` in `cmd/docbank/help_lint_test.go`.
 Prerequisite examples may invoke siblings; every line must parse and at least
 one must invoke the owning command. The lint clones flag values and checks
-syntax and arity without executing examples.
+syntax and arity without executing examples. Indented command lines in Long
+text, root workflow steps, and quoted recovery commands are checked too.
 
 Use a command group at the root, source each ID, and mark required flags.
 Keep descriptions short: at most 12 Long lines for leaves and 20 for parents;
 root help and the TUI key table have explicit exceptions. Root help is limited
-to 3,600 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
+to 6,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
 so command examples can improve without maintaining hundreds of snapshots.
 After an intentional root change, review and regenerate it from the repository
 root:
@@ -166,7 +167,22 @@ go test -tags fts5 ./cmd/docbank -run TestRootHelpGolden -update
 ```
 
 Keep the CLI reference and guide examples in sync. Error next-step hints belong
-at the CLI process boundary; preserve error prefixes and daemon problem text.
+at the CLI process boundary. Keep underlying error identity and daemon problem
+text intact; strip only generated transport wrappers from CLI presentation.
+Initialize Cobra's default help and completion commands before configuring
+group argument checks. Diagnostic writers preserve terminal file descriptors
+so automatic progress and action reporting still recognize stderr terminals.
+Failed output-mode assignments preserve the last successfully parsed value.
+Missing repository configuration gets a narrow internal typed cause when the
+client decodes its exact problem code/detail pair. Do not classify every
+`backup_repository` problem as invalid usage: that code also covers I/O failures.
+
+The CLI property tests use Hegel alongside deterministic regressions. Keep its
+Go module current with `go get hegel.dev/go/hegel@latest`. Hegel currently ships
+engines for Linux and Windows amd64/arm64 and macOS arm64; the property file
+excludes macOS amd64 until an engine is available. Deterministic CLI tests keep
+running on every supported platform. Remove that exception when Hegel supports
+the remaining architecture.
 
 Register file/tree commands under `document`, vault identity and maintenance
 under `vault`, and email operations under `email`. `report` owns search-count
@@ -177,8 +193,9 @@ hidden root definition for at least one release, with separate Cobra state and
 shared handler flag values. Deprecation notices go to stderr at the process
 boundary before argument parsing, including errors and help; Cobra's built-in
 `Deprecated` field writes to stdout and breaks JSON and raw byte output.
-Keep nested compatibility definitions covered by
-`command_groups_test.go` and update the CLI reference mapping.
+Recovery hints use the canonical path from the compatibility annotation,
+including argument and flag errors. Keep nested compatibility definitions
+covered by `command_groups_test.go` and update the CLI reference mapping.
 Report text chooses its next-step command from the invoked spelling so the
 canonical path stays discoverable and legacy successful stdout stays compatible.
 
@@ -326,11 +343,16 @@ also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved quer
 definition management use the native Store operations on both databases.
 Extracted source metadata, typed photo facts, and document-event evidence,
 publication, terminal attempts and rebuild receipts also use shared operations.
+Original-file rendition jobs include consent, resumable claims, artifact staging
+and atomic head publication through the same Store. Document embedding jobs
+include reconciliation, consent-bound claims, immutable vector staging, atomic
+publication and coverage reads.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-provider/rendition, embedding, page and media workers, search, transfer, backup recovery, multi-store placement
-and storage-operation jobs remain unqualified.
+photo-derived processing, extraction, image embedding preparation, page and media workers, search,
+transfer, backup recovery, multi-store placement and storage-operation jobs
+remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -405,6 +427,7 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
     ON documents.audit_authority TO docbank_runtime;
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
+GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
@@ -477,6 +500,25 @@ GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnost
     ON documents.document_event_attempts TO docbank_runtime;
 GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
     ON documents.document_event_builds TO docbank_runtime;
+GRANT INSERT ON documents.processing_consent_grants, documents.processing_consent_revocations,
+    documents.processing_profiles, documents.rendition_builds, documents.rendition_artifacts,
+    documents.rendition_units, documents.rendition_lexical_segments,
+    documents.rendition_attachments, documents.rendition_jobs, documents.rendition_job_waiters,
+    documents.rendition_lexical_heads, documents.rendition_lexical_superseded TO docbank_runtime;
+GRANT INSERT ON documents.rendition_blob_staging TO docbank_runtime;
+GRANT INSERT, UPDATE(attachment_id, published_at) ON documents.rendition_heads TO docbank_runtime;
+GRANT UPDATE(provider_attempts) ON documents.rendition_jobs TO docbank_runtime;
+GRANT UPDATE(attachment_id) ON documents.rendition_job_waiters TO docbank_runtime;
+GRANT INSERT ON documents.embedding_vector_spaces, documents.embedding_input_generations,
+    documents.embedding_generation_inputs, documents.embedding_vector_sets,
+    documents.embedding_vector_rows, documents.embedding_sets TO docbank_runtime;
+GRANT INSERT, UPDATE(embedding_set_id, vector_space_id, profile_fingerprint,
+    published_at, fencing_token) ON documents.embedding_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(failure_code, failed_at, fencing_token, attachment_id)
+    ON documents.embedding_failures TO docbank_runtime;
+GRANT INSERT, UPDATE(state, claim_owner, claim_epoch, claim_count, lease_expires_at,
+    available_at, failure_code, receipt_json, updated_at)
+    ON documents.embedding_jobs TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -749,6 +791,79 @@ corruption. Rebuild requests atomically advance the input epoch and record an
 idempotent receipt; refresh counts only current terminal attempts, and completed
 receipts remain immutable.
 
+#### Rendition jobs and publication
+
+Original-file rendition jobs run through the same Store operations on both
+backends. Consent grants bind the exact profile, disclosure, input classes and
+retained artifacts to the current processing incarnation. Revocations append a
+new fence. A new grant cannot replace the authorization used by an earlier
+provider call; publication rechecks that authorization inside its writer
+transaction. Runtime can insert grants and revocations but cannot update or
+delete their history. Incarnation replacement during restore remains unqualified.
+
+Jobs share a build only when source bytes, execution identity and captured output
+policy agree. Each version/profile waiter keeps its own consent. Claims,
+renewals, scheduled retries and resumable provider handles keep the existing
+lease and fencing rules. An expired provider call without a durable handle
+requires operator resolution. Worker error classification recognizes PostgreSQL
+serialization failures, deadlocks and lock unavailability. It also retries
+pgx-confirmed safe connection failures before commit, so a disconnected claim
+can resume on a fresh connection. A lost commit response remains fatal unless
+PostgreSQL explicitly reports an aborted transaction. Reusing a staged
+build or restoring a superseded head does not repeat provider work.
+
+Builds, artifacts, evidence units and text segments are immutable records. The
+runtime role may insert them; cleanup may delete them, but no update grant
+permits rewriting evidence. Job staging creates retention roots in the same
+transaction. Publication validates the source, retained policy, consent and
+complete lexical manifest, then moves rendition and lexical heads together.
+A failed replacement leaves the old heads and waiting job intact. Successful
+replacement removes stale chunk-embedding heads and failures, and collects
+superseded lexical generations only when no root or reader still needs them.
+
+Build reads, active rendition views and exact text resolution use repeatable-read
+snapshots. A purge committed during a read affects the next request. PostgreSQL
+stores the relational lexical projection and manifests; SQLite additionally
+maintains FTS through its existing triggers. PostgreSQL ranked search is not
+qualified by publication tests.
+
+The `renditions` backend suite covers this native lifecycle, including provider
+resume, revocation, lease theft, staged-build reuse, failed publication and
+concurrent purge. It does not qualify photo-description or face-detection jobs,
+email/media producers, extraction workers, or public
+PostgreSQL vault opening.
+
+#### Document embedding jobs and publication
+
+Original-file and rendition-chunk embeddings use the same Store operations on
+both backends. Jobs retain their exact consent grant, processing incarnation and
+revocation fence. Replacement consent creates a successor job; it cannot adopt
+an earlier job or its provider calls. Claims exclude live leases, renew under
+the same epoch, and preserve retry counts when another worker resumes them.
+Reconciliation checks current source and rendition authority, purge suppression,
+executable providers and current consent before scheduling retained inputs.
+
+Vector spaces, input generations, vector sets and their ordered row manifests
+are immutable. Vector values and rendered inputs stay in blob artifacts; the
+database retains their checksums, references and bounded projections. Runtime
+credentials may insert those records but cannot update them. Exact duplicates
+reuse the existing authority; a conflicting record fails the transaction.
+Publication advances the serving head and completes the job in one writer
+transaction. Failed staging retains no partial set, and failed completion
+leaves the previous serving state and live claim unchanged. Purge and source
+replacement fence older attempts, including failures arriving after publication.
+
+Processing coverage uses one repeatable-read snapshot for source visibility,
+rendition and embedding heads, and pending replacements. It shares current-head
+eligibility with semantic retrieval. A replacement can be rebuilding while its
+previous complete generation remains available. These metadata counts do not
+establish that a vector search index is built or that its payloads are readable.
+
+The `embeddings` backend suite covers native document jobs, artifact publication,
+consent, leases, reconciliation, cleanup and coverage. Image preparation, vector
+index construction, ranked retrieval and public PostgreSQL vault opening remain
+unqualified.
+
 #### Recoverable deletion
 
 Native document and folder trash, photo-group trash, trash browsing and restore
@@ -806,7 +921,7 @@ JSON values alone do not preserve indexed lookup plans.
 Both destructive operations retain the existing refusal while audit authority
 is active. Dry runs can inspect candidates but do not authorize deletion.
 Physical reclamation uses the separate catalog operations described below;
-processing workers remain unqualified.
+other processing producers remain unqualified.
 
 #### Derivative cleanup
 
@@ -911,7 +1026,8 @@ correcting evidence invalidates derived events and people, schedules event
 recomputation, and advances the publication epochs for removed projections.
 SQLite retains its released trigger ownership, including the event epoch's
 per-head increment. Canonical event tables support this invalidation and its
-cascades; event publication and derivation workers remain unqualified.
+cascades; [event publication](#source-metadata-and-document-events) uses the
+shared Store. People publication remains unqualified.
 
 Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
@@ -1304,6 +1420,16 @@ missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`
 disk and mounts it as D:. A setup failure logs a warning and keeps both Go cache
 paths unchanged. Changing cache paths creates a new cache version, so the first
 restore at the new location misses until a `main` push saves it.
+
+Windows jobs also set `TEMP` and `TMP` to `D:\a\_temp\tmp`, so `t.TempDir`
+and every test vault use the local disk. The default `TEMP` is on C:, the
+runner's network-attached OS disk. While other test packages write, its flushes
+average tens of milliseconds and sometimes stall for several seconds. Durable
+vault writes flush on every upload and commit, so those stalls add up and fail
+tests on timeouts. Setup grants that directory only the user, SYSTEM and
+Administrators, as the default `TEMP` does, because private-file checks reject
+files that inherit D:'s broader access. Without D:, the job logs a warning and
+keeps the default.
 
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:

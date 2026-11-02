@@ -65,7 +65,7 @@ func (s *Store) ResolveRenditionText(
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return RenditionTextView{}, fmt.Errorf("starting rendition text snapshot: %w", err)
 	}
@@ -79,7 +79,7 @@ func (s *Store) ResolveRenditionText(
 		return RenditionTextView{}, ErrNotFound
 	}
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE node_id=? AND version_id=?`,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE node_id=$1 AND version_id=$2`,
 		binding.NodeID, binding.ContentVersionID))
 	if err != nil {
 		return RenditionTextView{}, err
@@ -94,15 +94,16 @@ func (s *Store) ResolveRenditionText(
 		ProcessingProfileFingerprint: binding.ProfileFingerprint,
 	}}
 	err = tx.QueryRowContext(ctx, `SELECT attachment_id,published_at FROM rendition_heads
-		WHERE content_version_id=? AND profile_fingerprint=?`,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2`,
 		binding.ContentVersionID, binding.ProfileFingerprint,
 	).Scan(&rendition.Head.AttachmentID, &rendition.Head.PublishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		var failed bool
+		dialect := metadataJSONDialect{s.postgresSchema != ""}
 		err = tx.QueryRowContext(ctx, `SELECT w.state='rejected' OR j.state IN ('failed','operator_required')
 			FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
-			WHERE w.content_version_id=? AND w.profile_fingerprint=? AND `+originalFileWaiterSQL+`
-			ORDER BY MAX(w.updated_at,j.updated_at) DESC,w.updated_at DESC,j.updated_at DESC,
+			WHERE w.content_version_id=$1 AND w.profile_fingerprint=$2 AND NOT EXISTS(SELECT 1 FROM `+dialect.arrayValues("w.input_classes_json")+` WHERE value='derived_upload')
+			ORDER BY `+dialect.maximum()+`(w.updated_at,j.updated_at) DESC,w.updated_at DESC,j.updated_at DESC,
 			 w.waiter_id DESC,j.job_id DESC LIMIT 1`,
 			binding.ContentVersionID, binding.ProfileFingerprint).Scan(&failed)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -134,7 +135,7 @@ func (s *Store) ResolveRenditionText(
 	if binding.GenerationID != "" {
 		var contained bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_lexical_generation_builds WHERE generation_id=? AND build_id=?
+			SELECT 1 FROM rendition_lexical_generation_builds WHERE generation_id=$1 AND build_id=$2
 		)`, binding.GenerationID, rendition.Build.ID).Scan(&contained); err != nil {
 			return RenditionTextView{}, fmt.Errorf("checking rendition text generation: %w", err)
 		}

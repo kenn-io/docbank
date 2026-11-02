@@ -17,6 +17,7 @@ const (
 	packageIDField            = "package_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
+	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
 	schemaOffsetField         = "offset"
@@ -677,7 +678,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
-		"vault_id":             uuidSchema(),
+		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
 		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
 		"observed_scope_count": integerSchema(0, 0),
@@ -685,8 +686,8 @@ func searchDocumentsSchemas() (schema, schema) {
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{
 			"binding_required":   booleanSchema(),
-			"scoped_documents":   integerSchema(0, 4096),
-			"complete_documents": integerSchema(0, 4096),
+			"scoped_documents":   integerSchema(0, 0),
+			"complete_documents": integerSchema(0, 0),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
 		"reranking": objectSchema(schema{
@@ -697,8 +698,18 @@ func searchDocumentsSchemas() (schema, schema) {
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
+	}), cacheRequired("requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
+	output["if"] = schema{kataRequiredField: []string{"fence"}}
+	output["then"] = schema{
+		kataRequiredField: []string{schemaVaultIDField, "fence_fingerprint", "observed_scope_count"},
+		"properties": schema{
+			"coverage": schema{"properties": schema{
+				"scoped_documents":   integerSchema(0, 4096),
+				"complete_documents": integerSchema(0, 4096),
+			}},
+		},
+	}
 	return input, output
 }
 

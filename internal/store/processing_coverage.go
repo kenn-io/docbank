@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -65,7 +66,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		}
 		seen[binding.BindingID] = struct{}{}
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, fmt.Errorf("starting processing coverage snapshot: %w", err)
 	}
@@ -75,18 +76,26 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		return ProcessingCoverageSnapshot{}, profileErr
 	}
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	originalWaiter := originalFileWaiterSQL
+	if d.postgres {
+		originalWaiter = `NOT EXISTS(SELECT 1 FROM ` + d.arrayValues("w.input_classes_json") + ` WHERE value='derived_upload')`
+	}
+	versionsJSON, err := json.Marshal(opts.ContentVersionIDs)
+	if err != nil {
+		return ProcessingCoverageSnapshot{}, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
-			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND w.state='waiting'
-			AND `+originalFileWaiterSQL+` AND j.state IN ('queued','running','retry_wait'))
+			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=$1 AND w.state='waiting'
+			AND `+originalWaiter+` AND j.state IN ('queued','running','retry_wait'))
 		FROM `+nodeFrom+`
-		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=?
+		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=$1
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...)...)
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)`,
+		scope.ProcessingProfileFingerprint, string(versionsJSON))
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
@@ -144,20 +153,20 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			if requested.VectorSpaceID != "" {
 				vectorSpace = requested.VectorSpaceID
 			}
-			_, complete, err := semanticSearchCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint,
-				binding.Name, binding.InputKind, vectorSpace, opts)
+			complete, err := s.processingEmbeddingCompleteTx(ctx, tx, scope.ProcessingProfileFingerprint,
+				binding.Name, binding.InputKind, vectorSpace, opts.ContentVersionIDs)
 			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}
 			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT cv.version_id FROM `+nodeFrom+`
 				JOIN embedding_jobs j ON j.content_version_id=cv.version_id
 				JOIN embedding_input_generations g ON g.generation_id=j.generation_id
-				WHERE n.kind='file' AND n.trashed_at IS NULL AND j.profile_fingerprint=? AND j.binding_id=?
-				AND j.input_kind=? AND j.vector_space_id=? AND j.state IN ('queued','running','retry_wait')
+				WHERE n.kind='file' AND n.trashed_at IS NULL AND j.profile_fingerprint=$1 AND j.binding_id=$2
+				AND j.input_kind=$3 AND j.vector_space_id=$4 AND j.state IN ('queued','running','retry_wait')
 				AND (j.input_kind='original_file' OR (j.input_kind='image' AND `+currentImageEmbeddingSQL("j.content_version_id", "g.evidence_fingerprint")+`) OR (j.input_kind='rendition_chunk' AND EXISTS (
 					SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
-					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id))) `+filterSQL,
-				append([]any{scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace}, filterArgs...)...)
+					AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id))) AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$5")+`)`,
+				scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, vectorSpace, string(versionsJSON))
 			if err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}
@@ -175,8 +184,8 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			}
 			item.Rebuilding = len(rebuildingIDs)
 			if item.Rebuilding > 0 {
-				_, item.PreviousGenerationServing, err = semanticSearchCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint,
-					binding.Name, binding.InputKind, vectorSpace, SearchOptions{ContentVersionIDs: rebuildingIDs})
+				item.PreviousGenerationServing, err = s.processingEmbeddingCompleteTx(ctx, tx, scope.ProcessingProfileFingerprint,
+					binding.Name, binding.InputKind, vectorSpace, rebuildingIDs)
 				if err != nil {
 					return ProcessingCoverageSnapshot{}, err
 				}
@@ -238,4 +247,21 @@ func processingCoverageClassState(item ProcessingClassCoverage) string {
 	default:
 		return "unavailable"
 	}
+}
+
+// processingEmbeddingCompleteTx counts the exact version fence without applying
+// the general search filters, which this API does not accept.
+func (s *Store) processingEmbeddingCompleteTx(ctx context.Context, tx *sql.Tx, profile, binding string,
+	kind document.EmbeddingInputKind, space string, versions []string,
+) (int, error) {
+	encoded, err := json.Marshal(versions)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
+ AND eh.profile_fingerprint=$1 AND eh.binding_id=$2 AND eh.input_kind=$3 AND eh.vector_space_id=$4
+ AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$5")+`)`, profile, binding, kind, space, string(encoded)).Scan(&count)
+	return count, err
 }

@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
+func checkProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := testProviderAuthorizationRequest()
 
 	_, err := s.AuthorizeProviderOperation(t.Context(), request)
@@ -41,9 +42,10 @@ func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
 	assert.Equal(t, grant.RevocationFence, authorization.RevocationFence)
 }
 
-func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
+func checkProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	rendition := testProviderAuthorizationRequest()
 	embedding := rendition
 	embedding.DisclosureFingerprint = testConsentFingerprint("embedding-disclosure")
@@ -68,7 +70,8 @@ func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
 	require.ErrorIs(t, err, ErrProcessingConsentRequired)
 }
 
-func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
+func checkProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	tests := map[string]func(ProviderOperationAuthorizationRequest) ProviderOperationAuthorizationRequest{
 		"profile drift including endpoint or deployment epoch": func(r ProviderOperationAuthorizationRequest) ProviderOperationAuthorizationRequest {
@@ -90,7 +93,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			request := testProviderAuthorizationRequest()
 			_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 			require.NoError(t, err)
@@ -101,7 +104,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	}
 
 	t.Run("expired grant", func(t *testing.T) {
-		s := newTestStore(t)
+		s := open(t)
 		request := testProviderAuthorizationRequest()
 		expired := time.Now().Add(-time.Minute)
 		_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, &expired))
@@ -112,7 +115,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	})
 
 	t.Run("expired current-fence grant takes precedence over revoked history", func(t *testing.T) {
-		s := newTestStore(t)
+		s := open(t)
 		request := testProviderAuthorizationRequest()
 		_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 		require.NoError(t, err)
@@ -129,9 +132,10 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	})
 }
 
-func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T) {
+func checkProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := testProviderAuthorizationRequest()
 	first, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 	require.NoError(t, err)
@@ -161,9 +165,11 @@ func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T)
 	require.ErrorContains(t, err, "only be checked during atomic publication")
 }
 
-func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T) {
+func checkProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	operation := document.RenditionAuthorization{
 		RenditionRequestFingerprint: profile.RenditionRequestFingerprint,

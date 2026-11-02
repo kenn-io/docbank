@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-01
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -22,6 +22,14 @@ starting point.
 | When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
 | Which credentials does a request need? | [Authentication](#auth) |
 | How do I handle a failed request? | [Error mapping](#error-mapping) |
+
+## Vault change feed
+
+`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`. Each change record is `{"type":"change","change":{"cursor":"…","kind":"created","node_id":2,"revision":1}}`. A finite drain ends with `{"type":"result","cursor":"…"}`; EOF before that record means the drain was interrupted. The result cursor marks the final snapshot head, including an empty drain. Both parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown. Cancellation interrupts blocked writes; ordinary slow readers have no write timeout.
+
+The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
+
+A `processed` event announces completed publication for a current live document. Timeline and attribution first publications and changed checksums or states emit; identical results and freshness-only refreshes stay silent. Invalidation and explicit derivative purge stay silent; a later successful republication emits when its prior head is absent. Email inventory head changes and new terminal body results each emit an event. A body changing from pending to unavailable counts. Source-metadata publication compares evidence checksums; an extractor fingerprint change with identical facts stays silent. Dismissed or fully filtered photo descriptions and unchanged or fully protected face results stay silent.
 
 ## Mailbox imports and explicit EML transfers
 
@@ -792,6 +800,21 @@ versions the request is authorized to read. Use the actual vault UUID and
 1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
 foreign vault or invalid source fence is rejected. `/api/v1/search` request
 bodies are bounded to 16 MiB.
+
+Search accepts exactly one of `fence` or `scope`. Send
+`"scope": {"kind": "all_live", "filters": {...}}` to search all live files
+without listing versions. Optional filters are `source_present`, `tag_id`,
+`mime_type`, `under_node_id`, `modified_since`, and `modified_before`, with
+the same semantics as source-fence resolution. Semantic and hybrid coverage
+reports `scoped_documents` and `complete_documents` over that population.
+A scope cannot be combined with `media_sources`. Explicit fences retain the
+4,096-version limit.
+A scope with no live files returns an empty report with complete 0/0 coverage
+for semantic and hybrid modes, or unknown coverage for lexical and auto modes.
+
+The CLI's automatic search, web app, TUI, and MCP filter searches send a scope.
+The Go library and MCP version lists send fences.
+
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
@@ -1221,7 +1244,7 @@ such as `app_opened` or `session_ended`, from a browser session or the API key. 
 `session_ended` accepts optional `surface` and `duration_bucket` properties; missing or invalid duration values are omitted from capture.
 `screen_viewed` requires a fixed `screen` name and `surface` of `web` or `tui`, and answers 400 for any other value. A daily duplicate returns the accepted receipt without capture. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
 Core actions `document_added`, `search_run`, and `document_opened` require `surface` of `web`, `tui`, or `cli`. `search_run` also requires `search_type` of `text`, `semantic`, or `hybrid`. Missing or unsupported required properties return 400, including when reporting is disabled. The daemon forwards each valid report without counting state; PostHog queries count installs per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs. CLI and TUI actions omit runs under `CLAUDECODE` or `CODEX_THREAD_ID`.
-`search_empty` is sent when a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, except a valid submitted search that ends on an empty source fence, which sends only `search_empty`, with the requested mode as `search_type`. The CLI falls back to text search and sends both. `error_shown` requires `surface` of `web`, `tui`, or `cli` and a string `kind`; `search`, `add`, and `open` are sent as given and any other string is sent as `other`. A missing or non-string `kind` returns 400. Interfaces send it from the code that runs a search, add, or open the person started, once per failed run. Rejected input counts as a failed search or add like any other failure. Sign-in prompts, cancels, passive loads, refreshes, other drawers and dialogs, and CLI usage errors before connecting stay silent. A Photos open whose detail load fails counts as a failed `open`. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
+`search_empty` is sent when a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, including when the search scope is empty. `error_shown` requires `surface` of `web`, `tui`, or `cli` and a string `kind`; `search`, `add`, and `open` are sent as given and any other string is sent as `other`. A missing or non-string `kind` returns 400. Interfaces send it from the code that runs a search, add, or open the person started, once per failed run. Rejected input counts as a failed search or add like any other failure. Sign-in prompts, cancels, passive loads, refreshes, other drawers and dialogs, and CLI usage errors before connecting stay silent. A Photos open whose detail load fails counts as a failed `open`. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
 Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 
@@ -2068,8 +2091,7 @@ authority instead of silently dropping it.
 ## Addendum: `POST /uploads`
 
 `POST /uploads?parent_id=<id>&name=<filename>` accepts exactly one
-`multipart/form-data` file field named `file`. The query uses a stable
-destination directory ID rather than a mutable path. The multipart filename
+`multipart/form-data` file field named `file`. Supply exactly one destination selector: stable `parent_id` or absolute `parent_path`. Missing path directories publish in the document's content transaction after the complete upload is verified. A rejected upload leaves no destination directories or ingest record. The multipart filename
 must equal the normalized `name` query value, preventing the envelope and
 requested tree entry from describing different files.
 
@@ -2089,6 +2111,8 @@ version. Repeating the same name, hash, and parent converges to that stable
 node with `200` and `status: "skipped"`. The receipt always includes the
 server's `computed_hash`, `computed_size`, and the node's ID and revision.
 Clients compare the values themselves.
+
+URL imports may supply `X-Docbank-URL-Fetch`, a version-1 JSON descriptor containing `version`, `requested_url`, `final_url`, and UTC `fetched_at`; optional `etag` and `last_modified` carry base64-encoded header bytes. Unsupported versions, unknown fields, and invalid descriptors are rejected before content preparation. The daemon consumes the supplied bytes and evidence; it does not fetch the URL. Content, missing directories, the ingest run, and its URL origin publish together after envelope verification. URL retries match the exact requested URL and equal current bytes within the destination, including after a rename. Distinct requested URLs retain separate documents even when their bytes match. A skip adds no ingest record or provenance. Readers expose supported evidence as `url_fetch` on provenance and collections, while retaining the raw source description for metadata export and unsupported stored formats.
 
 Uploads are file-granular. A caller sending many files issues independent
 requests (concurrently when useful), so one failure never makes the success of

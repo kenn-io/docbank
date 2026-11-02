@@ -288,9 +288,10 @@ func TestEmbeddingPurgeRejectsStalePublication(t *testing.T) {
 	}
 }
 
-func TestEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T) {
+func checkEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	direct := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	for _, record := range []EmbeddingSetRecord{chunk, direct} {
@@ -308,7 +309,8 @@ func TestEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t *testing.T) {
 	assert.Equal(t, direct.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, direct.BindingID, direct.InputKind))
 }
 
-func TestEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T) {
+func checkEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, all := range []bool{false, true} {
 		name := "version"
@@ -316,7 +318,7 @@ func TestEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T) {
 			name = "all"
 		}
 		t.Run(name, func(t *testing.T) {
-			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			request := PurgeRequest{ContentVersionIDs: []string{versionID}}
 			if all {
@@ -329,13 +331,14 @@ func TestEmbeddingPurgeFencesWorkBeforeStaging(t *testing.T) {
 	}
 }
 
-func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
+func checkEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, selector := range []string{"attachment", "build"} {
 		t.Run(selector, func(t *testing.T) {
-			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 			var buildID string
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=$1`, attachmentID).Scan(&buildID))
 			request := PurgeRequest{AttachmentIDs: []string{attachmentID}}
 			if selector == "build" {
 				request = PurgeRequest{BuildIDs: []string{buildID}}
@@ -353,13 +356,14 @@ func TestEmbeddingPurgeFencesUnstagedChunkBindings(t *testing.T) {
 	}
 }
 
-func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) {
+func checkEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, selector := range []string{"attachment", "build"} {
 		t.Run(selector, func(t *testing.T) {
-			s, versionID, profile, oldAttachmentID := newEmbeddingCatalogFixture(t)
+			s, versionID, profile, oldAttachmentID := seedEmbeddingCatalog(t, open(t))
 			var oldBuildID string
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, oldAttachmentID).Scan(&oldBuildID))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=$1`, oldAttachmentID).Scan(&oldBuildID))
 			build := catalogRenditionBuild(s, profile)
 			build.ID = testSHA256([]byte("replacement-embedding-build"))
 			build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
@@ -393,10 +397,10 @@ func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) 
 			_, err := s.PurgeDerivatives(t.Context(), request)
 			require.NoError(t, err)
 			var oldAttachments, failures int
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments WHERE attachment_id=?`, oldAttachmentID).Scan(&oldAttachments))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments WHERE attachment_id=$1`, oldAttachmentID).Scan(&oldAttachments))
 			assert.Zero(t, oldAttachments, "the selected historical rendition is purged")
 			assert.Equal(t, set.ID, embeddingHeadSetIDForTest(t, s, versionID, profile.Fingerprint, set.BindingID, set.InputKind))
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_failures WHERE attachment_id=?`, replacement.ID).Scan(&failures))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_failures WHERE attachment_id=$1`, replacement.ID).Scan(&failures))
 			assert.Equal(t, 1, failures, "purging history must preserve current failure status")
 			require.NoError(t, s.RecordEmbeddingFailure(t.Context(), failure))
 			require.NoError(t, s.StageEmbeddingSet(t.Context(), set))
@@ -406,14 +410,15 @@ func TestEmbeddingHistoricalRenditionPurgePreservesCurrentBinding(t *testing.T) 
 	}
 }
 
-func TestEmbeddingHistoricalPurgeRemovesPendingChunkJobs(t *testing.T) {
+func checkEmbeddingHistoricalPurgeRemovesPendingChunkJobs(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, selector := range []string{"attachment", "build"} {
 		for _, state := range []string{"queued", "running"} {
 			t.Run(selector+"/"+state, func(t *testing.T) {
-				s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+				s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 				var buildID string
-				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=$1`, attachmentID).Scan(&buildID))
 				record, err := normalizeEmbeddingSetRecord(embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 					document.EmbeddingInputRenditionChunk, "chunk", attachmentID))
 				require.NoError(t, err)
@@ -479,8 +484,8 @@ func TestEmbeddingHistoricalPurgeRemovesPendingChunkJobs(t *testing.T) {
 				require.ErrorIs(t, err, ErrNotFound)
 				var generations, roots int
 				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
-					(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),
-					(SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?)`,
+					(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=$1),
+					(SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=$2)`,
 					record.InputGeneration.ID, job.ID).Scan(&generations, &roots))
 				assert.Zero(t, generations)
 				assert.Zero(t, roots)

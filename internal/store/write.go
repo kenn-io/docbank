@@ -191,6 +191,9 @@ func (s *Store) insertNodeTx(ctx context.Context, tx *sql.Tx, parentID int64, na
 	}
 	var id int64
 	err := tx.QueryRowContext(ctx, query, parentID, name, kind, versionID, recordedAt).Scan(&id)
+	if err == nil {
+		err = recordVaultChangesTx(ctx, tx, "created", id)
+	}
 	return id, err
 }
 
@@ -739,6 +742,9 @@ func (s *Store) moveAtTx(
 	}
 	updated, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
+		return Node{}, err
+	}
+	if err := recordVaultChangesTx(ctx, tx, "moved", id); err != nil {
 		return Node{}, err
 	}
 	return updated, s.refreshNodePhotoWorkTx(ctx, tx, updated, &n)

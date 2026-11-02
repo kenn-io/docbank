@@ -23,8 +23,8 @@ const (
 	operationTimeout = 10 * time.Second
 	maxRequestBytes  = 1 << 20
 	maxResponseBytes = 2 << 20
-	// maxSupportedSchemaMinor is verified against Kata v0.19.0.
-	maxSupportedSchemaMinor = 28
+	// maxSupportedSchemaMinor is verified against Kata v0.20.0.
+	maxSupportedSchemaMinor = 31
 )
 
 type Issue struct {

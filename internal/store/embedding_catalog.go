@@ -211,10 +211,10 @@ func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRec
 	if err := insertVectorSetTx(ctx, tx, record.VectorSet); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_sets(
+	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_sets(
 		embedding_set_id,vault_uid,binding_id,input_kind,content_version_id,
 		profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,vector_set_id,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.VaultID, record.BindingID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`, record.ID, record.VaultID, record.BindingID,
 		record.InputKind, record.ContentVersionID, record.ProcessingProfileFingerprint,
 		record.EmbeddingInputFingerprint, record.VectorSpace.ID, record.InputGeneration.ID, record.VectorSet.ID, record.CreatedAt)
 	if err != nil {
@@ -508,8 +508,8 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 	}
 	var newerFailure bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_failures
-		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?
-		AND fencing_token>=?)`, record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4
+		AND fencing_token>=$5)`, record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
 		record.Key.BindingID, record.Key.InputKind, record.FencingToken).Scan(&newerFailure); err != nil {
 		return fmt.Errorf("checking embedding failure fence: %w", err)
 	}
@@ -519,7 +519,7 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
 		content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
 		profile_fingerprint,published_at,fencing_token
-	) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
 	DO UPDATE SET embedding_set_id=excluded.embedding_set_id,
 	vector_space_id=excluded.vector_space_id,profile_fingerprint=excluded.profile_fingerprint,
 	published_at=excluded.published_at,fencing_token=excluded.fencing_token
@@ -541,7 +541,7 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM embedding_failures
-		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
 		record.Key.ContentVersionID, record.ProcessingProfileFingerprint,
 		record.Key.BindingID, record.Key.InputKind)
 	return err
@@ -563,7 +563,7 @@ func recordEmbeddingFailureTx(ctx context.Context, tx *sql.Tx, record EmbeddingF
 	}
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
-		JOIN processing_profiles p ON p.profile_fingerprint=? WHERE v.version_id=?`,
+		JOIN processing_profiles p ON p.profile_fingerprint=$1 WHERE v.version_id=$2`,
 		record.ProcessingProfileFingerprint, record.ContentVersionID).Scan(&count); err != nil {
 		return err
 	}
@@ -584,7 +584,7 @@ func recordEmbeddingFailureTx(ctx context.Context, tx *sql.Tx, record EmbeddingF
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_failures(
 		content_version_id,profile_fingerprint,binding_id,input_kind,failure_code,failed_at,fencing_token,attachment_id
-	) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(content_version_id,profile_fingerprint,binding_id,input_kind)
 	DO UPDATE SET failure_code=excluded.failure_code,failed_at=excluded.failed_at,
 	fencing_token=excluded.fencing_token,attachment_id=excluded.attachment_id
 	WHERE excluded.fencing_token>embedding_failures.fencing_token OR (
@@ -901,7 +901,7 @@ func validateEmbeddingGenerationEvidence(record EmbeddingInputGenerationRecord, 
 
 func requireEmbeddingPhysicalAuthorityTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
 	var source string
-	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`,
+	if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`,
 		record.ContentVersionID).Scan(&source); err != nil {
 		return fmt.Errorf("reading embedding source blob: %w", err)
 	}
@@ -948,9 +948,9 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 	}
 	var versionCount, blobCount, blobSize int64
 	if err := tx.QueryRowContext(ctx, `SELECT
-		(SELECT COUNT(*) FROM content_versions WHERE version_id=?),
-		(SELECT COUNT(*) FROM blobs WHERE hash=?),
-		COALESCE((SELECT size FROM blobs WHERE hash=?),-1)`, record.ContentVersionID,
+		(SELECT COUNT(*) FROM content_versions WHERE version_id=$1),
+		(SELECT COUNT(*) FROM blobs WHERE hash=$2),
+		COALESCE((SELECT size FROM blobs WHERE hash=$3),-1)`, record.ContentVersionID,
 		record.VectorSet.PayloadBlobHash, record.VectorSet.PayloadBlobHash).Scan(&versionCount, &blobCount, &blobSize); err != nil {
 		return err
 	}
@@ -959,7 +959,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 	}
 	if record.InputKind == document.EmbeddingInputRenditionChunk {
 		var generationBlobCount, generationBlobSize int64
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(size),-1) FROM blobs WHERE hash=?`,
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(size),-1) FROM blobs WHERE hash=$1`,
 			record.InputGeneration.GenerationBlobHash).Scan(&generationBlobCount, &generationBlobSize); err != nil {
 			return err
 		}
@@ -971,7 +971,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 			return err
 		}
 		var evidenceSize int64
-		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`,
+		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`,
 			record.InputGeneration.EvidenceFingerprint).Scan(&evidenceSize); err != nil {
 			return fmt.Errorf("reading embedding evidence blob: %w", err)
 		}
@@ -994,7 +994,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 			return errors.New("original-file input authority cannot claim rendition attachment or E2 generation")
 		}
 		var sourceHash string
-		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, record.ContentVersionID).Scan(&sourceHash); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`, record.ContentVersionID).Scan(&sourceHash); err != nil {
 			return err
 		}
 		if record.InputGeneration.GenerationChecksum != sourceHash ||
@@ -1004,7 +1004,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 	} else if record.InputGeneration.AttachmentID != "" {
 		var count int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_attachments
-			WHERE attachment_id=? AND content_version_id=? AND profile_fingerprint=?`,
+			WHERE attachment_id=$1 AND content_version_id=$2 AND profile_fingerprint=$3`,
 			record.InputGeneration.AttachmentID, record.ContentVersionID,
 			record.ProcessingProfileFingerprint).Scan(&count); err != nil {
 			return err
@@ -1015,7 +1015,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 		var evidenceChecksum, sourceHash string
 		if err := tx.QueryRowContext(ctx, `SELECT b.evidence_checksum,b.source_sha256
 			FROM rendition_attachments a JOIN rendition_builds b ON b.build_id=a.build_id
-			WHERE a.attachment_id=?`, record.InputGeneration.AttachmentID).Scan(&evidenceChecksum, &sourceHash); err != nil {
+			WHERE a.attachment_id=$1`, record.InputGeneration.AttachmentID).Scan(&evidenceChecksum, &sourceHash); err != nil {
 			return err
 		}
 		var generation document.EmbeddingInputGeneration
@@ -1026,7 +1026,7 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 			return errors.New("E2 generation evidence checksum does not match attachment authority")
 		}
 		var contentHash string
-		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, record.ContentVersionID).Scan(&contentHash); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`, record.ContentVersionID).Scan(&contentHash); err != nil {
 			return err
 		}
 		if contentHash != sourceHash {
@@ -1089,12 +1089,12 @@ func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVector
 	if err != nil {
 		return fmt.Errorf("encoding E1 descriptor: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_vector_spaces(
+	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_spaces(
 		vector_space_id,contract_version,descriptor_json,
 		provider_descriptor,provider_revision,
 		descriptor_fingerprint,compatibility_id,dimensions,metric,normalization,
 		scalar_encoding,document_formatter,query_formatter,model_input_fingerprint
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, record.ContractVersion, descriptorJSON,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`, record.ID, record.ContractVersion, descriptorJSON,
 		record.ProviderDescriptor, record.ProviderRevision, record.DescriptorFingerprint,
 		record.CompatibilityID, record.Dimensions, record.Metric, record.Normalization,
 		record.ScalarEncoding, record.DocumentFormatter, record.QueryFormatter,
@@ -1118,12 +1118,12 @@ func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingIn
 	if record.AttachmentID != "" {
 		attachment = record.AttachmentID
 	}
-	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_input_generations(
+	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_input_generations(
 		generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,
 		evidence_fingerprint,tokenizer_fingerprint,chunk_policy_fingerprint,
 		formatter_fingerprint,attachment_context_fingerprint,attachment_id,
 		input_count,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.ID, nullableCatalogString(record.GenerationBlobHash), record.GenerationEncodedSize, record.GenerationChecksum,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`, record.ID, nullableCatalogString(record.GenerationBlobHash), record.GenerationEncodedSize, record.GenerationChecksum,
 		record.SourceVersionID, record.ProcessingProfileFingerprint, record.EvidenceFingerprint,
 		record.TokenizerFingerprint, record.ChunkPolicyFingerprint, record.FormatterFingerprint,
 		record.AttachmentContextFingerprint, attachment,
@@ -1141,7 +1141,7 @@ func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingIn
 	}
 	for order, input := range record.Inputs {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_generation_inputs(
-			generation_id,input_id,input_order,rendered_checksum) VALUES(?,?,?,?)`,
+			generation_id,input_id,input_order,rendered_checksum) VALUES($1,$2,$3,$4)`,
 			record.ID, input.ID, order, input.RenderedChecksum); err != nil {
 			return fmt.Errorf("inserting embedding input: %w", err)
 		}
@@ -1150,9 +1150,9 @@ func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingIn
 }
 
 func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSetRecord) error {
-	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO embedding_vector_sets(
+	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_sets(
 		vector_set_id,contract_version,vector_space_id,payload_blob_hash,payload_size,payload_checksum,
-		manifest_checksum,row_count,dimensions) VALUES(?,?,?,?,?,?,?,?,?)`, record.ID,
+		manifest_checksum,row_count,dimensions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, record.ID,
 		record.ContractVersion, record.VectorSpaceID, record.PayloadBlobHash, record.PayloadSize, record.PayloadChecksum,
 		record.ManifestChecksum, record.RowCount, record.Dimensions)
 	if err != nil {
@@ -1168,7 +1168,7 @@ func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSe
 	}
 	for order, row := range record.rows {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_rows(
-			vector_set_id,row_id,row_order,input_id,dimensions,checksum) VALUES(?,?,?,?,?,?)`,
+			vector_set_id,row_id,row_order,input_id,dimensions,checksum) VALUES($1,$2,$3,$4,$5,$6)`,
 			record.ID, row.RowID, order, row.InputID, row.Dimensions, row.Checksum); err != nil {
 			return fmt.Errorf("inserting embedding vector row: %w", err)
 		}
@@ -1354,7 +1354,7 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 	var live int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-		WHERE v.version_id=?`, set.ContentVersionID).Scan(&live); err != nil {
+		WHERE v.version_id=$1`, set.ContentVersionID).Scan(&live); err != nil {
 		return false, err
 	}
 	if live != 1 {
@@ -1495,7 +1495,7 @@ func validateEmbeddingCatalogSchema(ctx context.Context, query rowsQuerier) erro
 func embeddingCatalogSchemaColumns(
 	ctx context.Context, query rowsQuerier, table string,
 ) (_ []string, retErr error) {
-	rows, err := query.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
+	rows, err := query.QueryContext(ctx, `SELECT name FROM pragma_table_info($1) ORDER BY cid`, table)
 	if err != nil {
 		return nil, err
 	}
@@ -1544,7 +1544,7 @@ func (s *Store) StageEmbeddingSetWithLease(ctx context.Context, record Embedding
 		// creation time remains authoritative; every other immutable field is
 		// still compared by stageEmbeddingSetTx.
 		var createdAt string
-		err := tx.QueryRowContext(ctx, `SELECT created_at FROM embedding_sets WHERE embedding_set_id=?`, record.ID).Scan(&createdAt)
+		err := tx.QueryRowContext(ctx, `SELECT created_at FROM embedding_sets WHERE embedding_set_id=$1`, record.ID).Scan(&createdAt)
 		if err == nil {
 			record.CreatedAt = createdAt
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -1609,8 +1609,8 @@ func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID strin
 	}
 	var expiresAt string
 	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM current_rendition_roots
-		WHERE root_id=? AND root_kind=? AND target_kind=? AND target_id=?
-		  AND fencing_token=? AND active=1`, rootID, RenditionRootWorkerLease,
+		WHERE root_id=$1 AND root_kind=$2 AND target_kind=$3 AND target_id=$4
+		  AND fencing_token=$5 AND active=1`, rootID, RenditionRootWorkerLease,
 		RenditionRootEmbeddingGeneration, generationID, fencingToken).Scan(&expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrCurrentRenditionRootFenced
@@ -1672,7 +1672,7 @@ func (s *Store) FindReusableEmbeddingSet(ctx context.Context, work EmbeddingJobW
 			return err
 		}
 		ids, err := stringColumnTx(ctx, tx, "reusable embedding sets", `SELECT embedding_set_id
-			FROM embedding_sets WHERE content_version_id=? AND binding_id=? AND input_kind=? AND embedding_set_id>?
+			FROM embedding_sets WHERE content_version_id=$1 AND binding_id=$2 AND input_kind=$3 AND embedding_set_id>$4
 			ORDER BY embedding_set_id`, work.ContentVersionID, work.Binding.Name, work.Binding.InputKind, after)
 		if err != nil {
 			return err

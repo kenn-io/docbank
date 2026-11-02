@@ -98,7 +98,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			SELECT g.generation_id FROM embedding_input_generations g
 			JOIN content_versions v ON v.version_id=g.source_version_id
 			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-			WHERE g.generation_id>? ORDER BY g.generation_id LIMIT ?`, request.After, request.Limit+1)
+			WHERE g.generation_id>$1 ORDER BY g.generation_id LIMIT $2`, request.After, request.Limit+1)
 		return err
 	})
 	if err != nil {
@@ -210,7 +210,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				var state string
 				var failure sql.NullString
 				err = tx.QueryRowContext(ctx, `SELECT state,failure_code
-					FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&state, &failure)
+					FROM embedding_jobs WHERE job_id=$1`, jobID).Scan(&state, &failure)
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
@@ -279,7 +279,7 @@ func embeddingGenerationCurrentTx(ctx context.Context, tx *sql.Tx, generation Em
 	}
 	var current string
 	err := tx.QueryRowContext(ctx, `SELECT h.attachment_id FROM rendition_heads h
-		WHERE h.content_version_id=? AND h.profile_fingerprint=?`, generation.SourceVersionID, profile).Scan(&current)
+		WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2`, generation.SourceVersionID, profile).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -292,8 +292,8 @@ func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, prof
 	var exists bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads h
 		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
-		WHERE h.content_version_id=? AND h.binding_id=? AND h.input_kind=?
-		AND s.profile_fingerprint=? AND s.input_generation_id=? AND s.vector_space_id=?)`,
+		WHERE h.content_version_id=$1 AND h.binding_id=$2 AND h.input_kind=$3
+		AND s.profile_fingerprint=$4 AND s.input_generation_id=$5 AND s.vector_space_id=$6)`,
 		versionID, binding.Name, binding.InputKind, profile, generationID, spaceID).Scan(&exists)
 	return exists, err
 }
@@ -305,15 +305,16 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 	retained, _ := json.Marshal([]string{"embedding_vector_set"})
 	rows, err := tx.QueryContext(ctx, `SELECT g.principal,g.scope FROM processing_consent_grants g
 		JOIN current_processing_incarnation c ON c.incarnation_id=g.incarnation_id
-		WHERE g.vault_uid=? AND g.profile_fingerprint=? AND g.disclosure_fingerprint=?
-		AND g.input_classes_json=? AND g.retained_classes_json=?
-		AND (g.expires_at IS NULL OR g.expires_at>?)
+		WHERE g.vault_uid=$1 AND g.profile_fingerprint=$2 AND g.disclosure_fingerprint=$3
+		AND g.input_classes_json=$4 AND g.retained_classes_json=$5
+		AND (g.expires_at IS NULL OR g.expires_at>$6)
 		ORDER BY g.issued_at DESC,g.grant_id DESC`, vaultID, profile, disclosure,
 		string(inputs), string(retained), at.Format(timestampLayout))
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, false, err
 	}
 	defer func() { _ = rows.Close() }()
+	var candidates []ProviderOperationAuthorizationRequest
 	for rows.Next() {
 		var principal, scope string
 		if err := rows.Scan(&principal, &scope); err != nil {
@@ -322,6 +323,12 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 		candidate := ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile, DisclosureFingerprint: disclosure,
 			InputClasses: []string{string(inputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+		candidates = append(candidates, candidate)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return ProviderOperationAuthorizationRequest{}, false, err
+	}
+	for _, candidate := range candidates {
 		if authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at); err == nil {
 			candidate.PriorAuthorization = &authorization
 			return candidate, true, nil
@@ -329,7 +336,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 			return ProviderOperationAuthorizationRequest{}, false, err
 		}
 	}
-	return ProviderOperationAuthorizationRequest{}, false, rows.Err()
+	return ProviderOperationAuthorizationRequest{}, false, nil
 }
 
 func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest, executable map[string]struct{}) (ImageReconcilePosition, error) {
@@ -371,7 +378,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			if name == request.ImageAfter.ProfileFingerprint {
 				after = request.ImageAfter.ContentVersionID
 			}
-			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>? AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+` ORDER BY v.version_id LIMIT ?`, after, request.Limit+1-len(pairs))
+			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+` ORDER BY v.version_id LIMIT $2`, after, request.Limit+1-len(pairs))
 			if err != nil {
 				return err
 			}
@@ -464,9 +471,9 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 // lacks a head or job for the binding and no derivative purge suppresses it.
 func imageEmbeddingMissingTx(ctx context.Context, tx *sql.Tx, version, profile string, binding document.EmbeddingBindingV1, recipe string) (bool, error) {
 	var missing bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations vp WHERE vp.content_version_id=? AND vp.recipe_fingerprint=? AND vp.state='ready'
-                  AND NOT EXISTS(SELECT 1 FROM embedding_heads eh JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id WHERE eh.content_version_id=vp.content_version_id AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind='image' AND eig.evidence_fingerprint=vp.checksum)
-                  AND NOT EXISTS(SELECT 1 FROM embedding_jobs j JOIN embedding_input_generations eig ON eig.generation_id=j.generation_id WHERE j.content_version_id=vp.content_version_id AND j.profile_fingerprint=? AND j.binding_id=? AND j.input_kind='image' AND eig.evidence_fingerprint=vp.checksum))`, version, recipe, profile, binding.Name, profile, binding.Name).Scan(&missing); err != nil || !missing {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations vp WHERE vp.content_version_id=$1 AND vp.recipe_fingerprint=$2 AND vp.state='ready'
+                  AND NOT EXISTS(SELECT 1 FROM embedding_heads eh JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id WHERE eh.content_version_id=vp.content_version_id AND eh.profile_fingerprint=$3 AND eh.binding_id=$4 AND eh.input_kind='image' AND eig.evidence_fingerprint=vp.checksum)
+                  AND NOT EXISTS(SELECT 1 FROM embedding_jobs j JOIN embedding_input_generations eig ON eig.generation_id=j.generation_id WHERE j.content_version_id=vp.content_version_id AND j.profile_fingerprint=$5 AND j.binding_id=$6 AND j.input_kind='image' AND eig.evidence_fingerprint=vp.checksum))`, version, recipe, profile, binding.Name, profile, binding.Name).Scan(&missing); err != nil || !missing {
 		return false, err
 	}
 	suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx, EmbeddingHeadKey{version, binding.Name, binding.InputKind}, profile)

@@ -17,7 +17,7 @@ import (
 func init() { rootCmd.AddCommand(newRedactionCommand()) }
 
 func newRedactionCommand() *cobra.Command {
-	command := &cobra.Command{Use: "redaction", Short: "Review and redact retained PDFs",
+	command := &cobra.Command{Example: `  docbank redaction prepare /inbox/source.pdf --json`, Use: "redaction", Short: "Review and redact retained PDFs",
 		GroupID: groupProductions,
 		Long: "Prepare an exact retained native PDF, resolve explicit masks, then render\n" +
 			"the reviewed result as one verified ZIP. Check a saved ZIP offline with verify."}

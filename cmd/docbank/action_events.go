@@ -20,7 +20,7 @@ func agentRun() bool {
 func reportAction(cmd *cobra.Command, c *daemonconn.Connection, event, searchType, kind string, agent bool) {
 	terminal := false
 	for _, stream := range []any{cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()} {
-		if file, ok := stream.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		if file, ok := stream.(fileDescriptor); ok && term.IsTerminal(int(file.Fd())) {
 			terminal = true
 			break
 		}

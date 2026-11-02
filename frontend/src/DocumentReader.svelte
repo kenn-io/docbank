@@ -43,6 +43,7 @@
     maxWidth="none"
     maxHeight="calc(100svh - 32px)"
     footer={redacting ? undefined : readingActions}
+    closable
     onclose={() => {
       if (redacting) review?.requestClose(true);
       else onclose();

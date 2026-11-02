@@ -25,18 +25,43 @@ docbank mcp
 # equivalent to: docbank mcp --transport stdio
 ```
 
-An MCP client configuration can launch the same command:
+Print configuration for your client:
 
-```json
-{
-  "mcpServers": {
-    "docbank": {
-      "command": "docbank",
-      "args": ["mcp", "--transport", "stdio"]
-    }
-  }
-}
+```bash
+docbank mcp config --client claude-code
+docbank mcp config --client codex
+# Include the write tools you need:
+docbank mcp config --client codex --allow-processing
 ```
+
+Paste Claude Code's JSON into your project's `.mcp.json`, or merge the
+`docbank` entry into its existing `mcpServers` object. Keep this project's
+`.mcp.json` out of version control because it contains machine-specific paths.
+Paste Codex's TOML into `~/.codex/config.toml`, replacing any existing
+`[mcp_servers.docbank]` entry.
+See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) and
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+The snippet uses Docbank's absolute launch path, preserving package-manager
+symlinks, and the selected vault's canonical `DOCBANK_HOME`.
+All six `--allow-*` flags carry through to
+stdio arguments. Printing creates no vault, starts no daemon, and leaves
+client files untouched. Your client must support MCP `2026-07-28` and
+`server/discover`; configuration alone cannot add protocol support.
+
+Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
+For Codex, run this once to persist the client's MCP protocol support in
+`config.toml` for either transport:
+
+```bash
+codex features enable mcp_2026_07_28
+```
+
+Then launch with plain `codex`. The generated stdio configuration also sets
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for Codex, which reads it to pick the
+protocol version and does not pass it to the server.
+After upgrading Docbank, rerun `docbank mcp config` and replace the saved
+configuration so its protocol selection matches the installed server.
 
 Stdio carries one complete JSON-RPC message per line. Docbank accepts LF or
 CRLF terminators, rejects embedded newlines, and limits the JSON payload before
@@ -62,9 +87,27 @@ machine's secret or process manager, then start the listener:
 docbank mcp --transport http --listen 127.0.0.1:7341
 ```
 
-Configure the client for `http://127.0.0.1:7341/mcp` and
-`Authorization: Bearer <token>`. `--listen` accepts an explicit IPv4 or IPv6 address and port, including
-wildcards. Hostnames and IPv6 zone identifiers are rejected.
+Print the client configuration for that listener:
+
+```bash
+docbank mcp config --client claude-code --transport http --listen 127.0.0.1:7341
+docbank mcp config --client codex --transport http --listen 127.0.0.1:7341
+```
+
+The URL ends in `/mcp`. Claude Code receives an `Authorization` header with
+`Bearer ${DOCBANK_MCP_HTTP_TOKEN}`; Codex receives
+`bearer_token_env_var = "DOCBANK_MCP_HTTP_TOKEN"`. The command reads the
+selected credential binding's variable name and leaves its value unresolved.
+If this shell has no binding, it prints `DOCBANK_MCP_HTTP_TOKEN`, the
+listener's conventional variable. The listener still requires its token.
+Make that variable available to the client too. If the listener reads
+`DOCBANK_MCP_HTTP_TOKEN_FILE`, the client still needs `DOCBANK_MCP_HTTP_TOKEN`
+containing the token itself. A custom binding uses its own variable name.
+
+`--listen` accepts an explicit IPv4 or IPv6 address and port, including
+wildcards. Hostnames and IPv6 zone identifiers are rejected. Printed URLs
+replace wildcard addresses with loopback, and require a nonzero port. HTTP
+write flags belong on the standalone listener's startup command.
 
 The HTTP credential is resolved from its environment binding when the listener
 starts and remains fixed for the hosting process. Restart that process to
@@ -93,6 +136,12 @@ out. With hosting enabled explicitly, invalid credentials or a failed bind stop
 daemon startup. Restart
 the daemon to rotate its bearer. See the [configuration reference](../configuration.md#mcp-http-credential)
 and [container example](containers.md#run-mcp-in-the-same-container).
+
+To connect to the daemon-hosted endpoint, pass its pinned `[server] api_port`
+or separate `[mcp.http] port` as `--listen` when printing configuration. For
+example, `--listen 127.0.0.1:7341` targets the daemon when its API port is
+7341. Start the daemon with the same bearer binding available in its
+environment. Printing configuration leaves the listener's startup to you.
 
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
@@ -198,7 +247,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -261,19 +310,20 @@ restarting at page one.
 `list_documents.source_present` and `search_documents.filters.source_present`
 optionally exclude documents whose watched source is known to be gone.
 Both default to false. Push-owned documents remain included. The filter is
-applied before pagination and source-fence limits.
+applied before pagination and retrieval.
 
-Before searching, `search_documents` resolves its selector to a source fence:
-the exact set of current, live versions it will search. Filters may select a
-tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,
-and RFC 3339 `modified_since` or `modified_before` bounds of at most 64
-characters each. A scope above 4,096 versions returns `scope_too_large` with
-the observed count and is never truncated or broadened. The result reports the
-fence and its fingerprint, requested and actual mode, coverage, skipped
-reasons, and truncation state. It returns at most 100 hits. Each excerpt is
-capped at 512 characters and each hit has at most 64 evidence identities of at
-most 1,024 characters each. A result contains at most 64 skipped-reason codes
-of at most 64 characters each.
+`search_documents` with filters searches every matching live file without a
+4,096-file cap. Filters may select a tag UUID, a MIME type of at most 255
+characters, a positive ancestor node ID, and RFC 3339 `modified_since` or
+`modified_before` bounds of at most 64 characters each. Explicit version lists
+resolve to an exact source fence of up to 4,096 current, live versions.
+Only version-list searches return `fence`, `fence_fingerprint`, and
+`observed_scope_count`. Version-list searches always return `vault_id`; filter
+searches return it only with hits. Every search returns requested and actual
+mode, coverage, skipped reasons, and truncation state. It returns at most 100
+hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
+identities of at most 1,024 characters each. A result contains at most 64
+skipped-reason codes of at most 64 characters each.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing

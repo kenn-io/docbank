@@ -56,7 +56,8 @@ const testWebURL = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43
 // or wrong-key path set X-Api-Key explicitly (even to "") to opt out.
 func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
 	tb.Helper()
-	dir := tb.TempDir()
+	dir, err := filepath.EvalSymlinks(tb.TempDir())
+	require.NoError(tb, err)
 	dbPath := filepath.Join(dir, "docbank.db")
 	s, err := store.Open(tb.Context(), dbPath)
 	require.NoError(tb, err)

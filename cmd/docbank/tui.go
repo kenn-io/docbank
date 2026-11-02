@@ -333,14 +333,6 @@ func (b *tuiDaemonBackend) ProcessingProfiles(
 	})
 }
 
-func (b *tuiDaemonBackend) ResolveDocumentSourceFence(
-	ctx context.Context, request api.DocumentSourceFenceResolveRequest,
-) (api.DocumentSourceFenceResolution, error) {
-	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.DocumentSourceFenceResolution, error) {
-		return c.ResolveDocumentSourceFence(ctx, request)
-	})
-}
-
 func (b *tuiDaemonBackend) PlanProcessing(
 	ctx context.Context, request api.ProcessingPlanRequest,
 ) (api.ProcessingPlan, error) {

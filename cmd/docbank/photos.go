@@ -22,6 +22,7 @@ var (
 )
 
 var photosCmd = &cobra.Command{
+	Example: `  docbank photos assets inspect id:12`,
 	Long: `Assets group camera files (RAW, JPEG, sidecar). import groups a local folder;
 albums organize assets. <asset-id> comes from
 photos assets inspect <path-or-id>.

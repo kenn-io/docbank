@@ -177,6 +177,13 @@ func (s *Store) bootstrapTx(ctx context.Context, incarnation *metadataProcessing
 		if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
+		epoch, err := newUUIDv4()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vault_change_head(singleton,epoch) VALUES(1,$1) ON CONFLICT(singleton) DO NOTHING`, epoch); err != nil {
+			return err
+		}
 		if err := initializeDocumentPeopleState(ctx, tx); err != nil {
 			return fmt.Errorf("initializing document people state: %w", err)
 		}
@@ -284,7 +291,10 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 	return nil
 }
 
-var errBeginTx = errors.New("beginning transaction")
+var (
+	errBeginTx  = errors.New("beginning transaction")
+	errCommitTx = errors.New("committing transaction")
+)
 
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
@@ -377,7 +387,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	}
 	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing transaction: %w", err)
+		return fmt.Errorf("%w: %w", errCommitTx, err)
 	}
 	if dropped {
 		s.photoEvents.installed.Store(false)

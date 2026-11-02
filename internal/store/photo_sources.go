@@ -34,7 +34,7 @@ func (s *Store) photoSourcesTx(ctx context.Context, tx metadataQuerier, assets s
 	if s.postgresSchema != "" {
 		assetsQuery = "SELECT value FROM json_array_elements_text(NULLIF($2,'')::json)"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),COALESCE(p.original_path,n.name),
+	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),CASE WHEN i.source_kind='url' THEN n.name ELSE COALESCE(p.original_path,n.name) END,
  COALESCE(f.sidecar_of_file_id,''),EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=f.asset_id AND a.hidden_at IS NULL AND a.excluded_at IS NULL) AND n.trashed_at IS NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND (($1 AND p.identity=f.source_provenance_identity) OR (NOT $1

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-02
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -9,8 +9,8 @@ description: Every docbank command, with its flags, output formats, and error be
 Use this page to look up command syntax, flags, output, and failure behavior.
 For a first import, follow [Quickstart](quickstart.md).
 
-Run `docbank --help` for commands grouped by outcome, start-here examples,
-selectors, search scope, and exit codes. Follow with `docbank <command> --help`
+Run `docbank --help` for commands grouped by outcome, a numbered agent workflow,
+selectors, output modes, environment settings, and exit codes. Follow with `docbank <command> --help`
 for its workflow and flags. Runnable commands include examples; prerequisite
 examples show where version, job, and snapshot IDs come from.
 
@@ -48,15 +48,32 @@ Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
 See [Configuration](configuration.md). Virtual paths are absolute,
 `/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
 exit code. Parsing errors (unknown commands or flags, wrong argument counts,
-missing required flags) include usage or a help command. Missing paths, trashed
-nodes, missing tags, a locked backup repository, and busy vault maintenance
-include a next-step hint. Hints stay on stderr.
+missing required flags) include usage or a help command. An unknown child of a
+command group, such as `docbank tag bogus`, fails with exit `2`; the bare
+`docbank tag` still shows help and succeeds. Errors include a next-step hint,
+or a command suggestion when Cobra can identify a likely typo. Hints name canonical CLI
+commands and flags, including when an older spelling was invoked. They stay
+on stderr.
+
+Within `document`, `rename` aliases `move`, `delete` aliases `remove`, and
+`show` aliases `cat`. These aliases have the same output and behavior.
+`document show` prints original file bytes; `document delete` moves to trash.
 
 Data commands send HTTP requests to the daemon and start it in the background
 if needed. `docbank push` selects an explicit keyed daemon with `--to` and
 does not start a local daemon. Commands never open the vault directly. `docbank daemon status` and
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
+
+## docbank changes
+
+```text
+docbank changes [--after CURSOR] [--follow] [--json]
+```
+
+Read committed vault changes in cursor order. The default output has four tab-separated columns: cursor, kind, node ID, and revision. `--json` prints one JSON event per line. `--after` resumes after a saved cursor; omitting it starts at the oldest retained event. `--follow` waits for new events after draining the backlog. Ctrl-C stops following cleanly. A successful finite drain prints `cursor: CURSOR` on stderr, including when it has no events.
+
+An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`, including when expiry happens during streaming. An interrupted drain or a later read failure also produces a nonzero exit. The command prints only change events; HTTP completion and error records stay out of stdout. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
 
 ## docbank kata
 
@@ -356,7 +373,37 @@ object used by the HTTP API.
 ## Process exit codes
 
 CLI process codes are stable so shell automation can branch without parsing
-stderr. Human error text remains explanatory and may change.
+stderr. Human error text remains explanatory and may change. Invocation and
+request-validation errors both use `2`; operational and internal failures use
+`1`. Missing backup repository configuration uses `2` and explains `--repo`
+and `backup init`; repository I/O failures still use `1`.
+
+Human errors print `error: MESSAGE` followed by `hint: NEXT STEP`. Search with
+`--agent` uses `Hint:` for its recovery line; its successful hit rows keep their
+existing format. Other commands support `--json` only where their help lists it.
+If that command has already parsed `--json` as true, its final error record on
+stderr is compact JSON with a trailing newline:
+
+```json
+{"error":{"message":"...","code":"not_found","exit":3,"hint":"list paths with \"docbank document tree\" or find by name with \"docbank search <name>\""}}
+```
+
+The CLI `error.code` values are `error`, `usage`, `not_found`, `stale`, `busy`,
+`integrity`, and `claim_required`, corresponding to exits `1` through `7`.
+`error.hint` is omitted when a command suggestion already provides recovery.
+These are process categories; HTTP problem codes retain their richer meanings.
+
+Previews and progress can precede this final stderr record. For example,
+`backup claim --json` still prints its repository preview before requesting
+confirmation. Parse the final record separately from those diagnostics.
+`--json=false` keeps human errors. Flag parsing can fail before `--json` is
+read; those failures also stay human. A malformed repeated output flag keeps
+the last successfully parsed value. When search parses both `--agent` and
+`--json` as true, their mutual-exclusion error uses JSON.
+
+Success output stays on stdout. Commands may return a report or partial bytes
+before failing; always check the exit code. Recovery hints recommend inspection
+before retrying a write whose outcome is uncertain.
 
 | Code | Meaning | Typical action |
 |------|---------|----------------|
@@ -380,6 +427,7 @@ than translating process exits back into HTTP status.
 ```
 docbank document add <path>... [--dest <virtual-dir>] [--include <pattern>]... [--exclude <pattern>]... [--replace] [--progress auto|bar|plain] [--json]
 docbank document add <path>... --preflight [--include <pattern>]... [--exclude <pattern>]... [--json]
+docbank document add <https-url> [--dest <virtual-dir>] [--allow-http] [--max-bytes <bytes>] [--progress auto|bar|plain] [--json]
 ```
 
 Imports files or directory trees into the vault. Sources are copied,
@@ -394,6 +442,10 @@ never modified or deleted.
 | `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
 | `--json` | false | Emit only the terminal preflight or ingest report as JSON; suppress progress |
 | `--progress` | `auto` | Human ingest progress: `auto`, `bar`, or durable `plain` lines |
+| `--allow-http` | false | Permit HTTP for a URL download and its redirects |
+| `--max-bytes` | `100000000` | URL download byte cap; positive and at most the ingest limit |
+
+URL imports accept one HTTP(S) URL, with HTTPS required unless `--allow-http` is set. The same rule applies to every redirect, with a ten-redirect ceiling. Downloads have no total timeout and honor cancellation. Responses must be HTTP 200 and fit within the cap before import. Filters, `--preflight`, and `--replace` are local-only. See [URL imports](usage/importing.md#import-from-a-url) for naming, skips, and fetch provenance.
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.
@@ -1011,7 +1063,7 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--fuzzy] [--limit <n>] [--agent | --json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--pdf-filter <expression>] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
 Query words are joined. When a processing profile has a query embedding
@@ -1052,8 +1104,12 @@ inclusive and the upper bound is exclusive. Either may be used alone. When
 both are present, the lower bound must be earlier. Inputs are normalized to
 canonical UTC before the request.
 
+Use `--pdf-filter` for a Boolean expression over recorded PDF facts, such as
+`pdf_embedded_file_count_min:1 OR pdf_has_javascript:true`. See
+[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations. MIME filters narrow the result type; add `--mime-type application/pdf` to select only files labeled as PDFs. Background extraction may still be recording facts after an import or upgrade.
+
 The query can be omitted for a bounded filter page when `--tag`,
-`--modified-since`, or `--modified-before` is supplied. These results are
+`--modified-since`, `--modified-before`, or `--pdf-filter` is supplied. These results are
 ordered newest-first by current modification time and show `filter` in the
 `MATCH` column. `--mime-type` and `--under` narrow a query or an anchored
 filter page, but neither is an anchor by itself, so a blank search with only
@@ -1376,6 +1432,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ```text
 docbank mcp [--transport stdio|http] [--listen <ip:port>] [--allowed-host <host[:port]>]
             [--allow-processing] [--allow-package-writes] [--allow-export-writes]
+            [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1421,6 +1478,36 @@ kind of work.
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities. For read-only
 HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
+
+### docbank mcp config
+
+```text
+docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes]
+```
+
+Prints Claude Code JSON for `.mcp.json` or Codex TOML for
+`~/.codex/config.toml`. Stdio uses Docbank's absolute launch path, preserves
+symlinks, selects the vault through `DOCBANK_HOME`, and carries enabled write
+flags into the server's arguments. Client files remain untouched.
+Keep the project's `.mcp.json` out of version control because it contains
+machine-specific paths.
+
+HTTP requires a nonzero `--listen` address for an existing daemon or standalone
+listener. Wildcard addresses become loopback URLs ending in `/mcp`. The
+selected bearer binding appears as an environment-variable reference; its
+secret stays unresolved. With no selected binding, printing uses the listener's
+conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
+startup command.
+
+Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
+`codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
+support in `config.toml` for either transport. Then launch with plain `codex`.
+Generated Codex stdio configuration also sets
+`CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for Codex, which reads it to pick the
+protocol version and does not pass it to the server.
+After upgrading Docbank, rerun `docbank mcp config` and replace the saved
+configuration so its protocol selection matches the installed server.
+See the [MCP setup guide](usage/mcp.md#start-the-server).
 
 ## docbank trash
 

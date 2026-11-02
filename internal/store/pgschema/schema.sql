@@ -2180,6 +2180,17 @@ CREATE INDEX derivative_purge_suppressions_active_source
     ON {{schema}}.derivative_purge_suppressions(source_sha256, profile_fingerprint)
     WHERE active = 1;
 
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_change_head (
+    singleton BIGINT PRIMARY KEY,
+    epoch TEXT COLLATE "C" NOT NULL
+);
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_changes (
+    seq BIGINT PRIMARY KEY,
+    kind TEXT COLLATE "C" NOT NULL,
+    node_id BIGINT NOT NULL,
+    node_revision BIGINT NOT NULL
+);
+
 -- Derived event catalogs invalidated by provenance changes.
 CREATE TABLE {{schema}}.document_event_state (
     singleton BIGINT PRIMARY KEY, contract_version TEXT COLLATE "C" NOT NULL,
@@ -2258,6 +2269,28 @@ CREATE INDEX rendition_job_waiters_job ON {{schema}}.rendition_job_waiters(job_i
 CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_waiters(content_version_id, job_id);
 CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
 CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
+
+CREATE INDEX embedding_jobs_ready
+    ON {{schema}}.embedding_jobs(state,available_at,job_id);
+
+CREATE INDEX embedding_jobs_generation
+    ON {{schema}}.embedding_jobs(generation_id);
+
+CREATE INDEX embedding_jobs_vector_space
+    ON {{schema}}.embedding_jobs(vector_space_id);
+
+CREATE INDEX embedding_vector_sets_payload
+    ON {{schema}}.embedding_vector_sets(payload_blob_hash, vector_set_id);
+
+CREATE INDEX embedding_sets_input_generation
+    ON {{schema}}.embedding_sets(input_generation_id, embedding_set_id);
+
+CREATE INDEX embedding_sets_vector_set
+    ON {{schema}}.embedding_sets(vector_set_id, embedding_set_id);
+
+CREATE INDEX embedding_sets_vector_space
+    ON {{schema}}.embedding_sets(vector_space_id, embedding_set_id);
+
 CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
 CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
 CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
@@ -2305,3 +2338,34 @@ CREATE TABLE {{schema}}.document_event_attempts (
     input_epoch bigint NOT NULL, input_revision bigint NOT NULL, inputs_sha256 text COLLATE "C" NOT NULL,
     state text COLLATE "C" NOT NULL, diagnostic_json bytea NOT NULL, attempted_at text COLLATE "C" NOT NULL
 );
+
+CREATE INDEX processing_consent_grants_authority
+    ON {{schema}}.processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    );
+
+CREATE INDEX processing_consent_grants_set
+    ON {{schema}}.processing_consent_grants(consent_set_id, grant_id);
+
+CREATE INDEX processing_consent_revocations_scope
+    ON {{schema}}.processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    );
+
+CREATE INDEX rendition_builds_source
+    ON {{schema}}.rendition_builds(source_sha256, build_id);
+
+CREATE INDEX rendition_artifacts_blob
+    ON {{schema}}.rendition_artifacts(blob_hash, build_id);
+
+CREATE INDEX rendition_jobs_claimable
+    ON {{schema}}.rendition_jobs(state, available_at, lease_expires_at, job_id);
+
+CREATE INDEX current_rendition_roots_target
+    ON {{schema}}.current_rendition_roots(target_kind, target_id, root_kind);
+
+CREATE INDEX current_rendition_roots_expiry
+    ON {{schema}}.current_rendition_roots(expires_at)
+    WHERE expires_at IS NOT NULL;

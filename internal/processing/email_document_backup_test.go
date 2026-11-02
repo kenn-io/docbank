@@ -20,7 +20,8 @@ import (
 
 func TestEmailDocumentsRealBackupRestoreAndRetry(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })

@@ -48,7 +48,8 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT ON "+schema+".audit_records TO "+quotedRole+
 		"; GRANT UPDATE(operation_sequence_high_water,allocation_entry_count,allocation_head) ON "+schema+".audit_authority TO "+quotedRole+
 		"; GRANT UPDATE(entry_count,chain_head) ON "+schema+".audit_scopes TO "+quotedRole+
-		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole)
+		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole+
+		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
 	require.NoError(t, err)
 
 	_, err = setup.ExecContext(ctx, "GRANT SELECT,INSERT ON "+schema+".photo_xmp_unsettled TO "+quotedRole+
@@ -105,6 +106,18 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(input_epoch,input_revision,inputs_sha256,state,diagnostic_json,attempted_at) ON "+schema+".document_event_attempts TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(state,scanned,published,failed,unavailable,updated_at,finished_at) ON "+schema+".document_event_builds TO "+quotedRole)
 	require.NoError(t, err)
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".rendition_blob_staging,"+schema+".processing_consent_grants,"+schema+".processing_consent_revocations,"+schema+".processing_profiles,"+schema+".rendition_builds,"+schema+".rendition_artifacts,"+schema+".rendition_units,"+schema+".rendition_lexical_segments,"+schema+".rendition_attachments,"+schema+".rendition_jobs,"+schema+".rendition_job_waiters,"+schema+".rendition_lexical_heads,"+schema+".rendition_lexical_superseded TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(attachment_id,published_at) ON "+schema+".rendition_heads TO "+quotedRole+
+		"; GRANT UPDATE(provider_attempts) ON "+schema+".rendition_jobs TO "+quotedRole+
+		"; GRANT UPDATE(attachment_id) ON "+schema+".rendition_job_waiters TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".embedding_vector_spaces,"+schema+".embedding_input_generations,"+schema+".embedding_generation_inputs,"+schema+".embedding_vector_sets,"+schema+".embedding_vector_rows,"+schema+".embedding_sets TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(embedding_set_id,vector_space_id,profile_fingerprint,published_at,fencing_token) ON "+schema+".embedding_heads TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(failure_code,failed_at,fencing_token,attachment_id) ON "+schema+".embedding_failures TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(state,claim_owner,claim_epoch,claim_count,lease_expires_at,available_at,failure_code,receipt_json,updated_at) ON "+schema+".embedding_jobs TO "+quotedRole)
+	require.NoError(t, err)
+
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

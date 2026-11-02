@@ -185,7 +185,7 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 			generation_id,vector_space_id,principal,scope,authorization_grant_id,
 			authorization_incarnation_id,authorization_revocation_fence,
 			state,available_at,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO NOTHING`,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(job_id) DO NOTHING`,
 			jobID, s.vaultID, request.ContentVersionID, profile.Fingerprint, binding.Name,
 			binding.InputKind, request.InputGeneration.ID, space.ID, authority.principal,
 			authority.scope, authorization.GrantID, authorization.ProcessingIncarnationID,
@@ -198,8 +198,8 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		// authorization check above. Revoked authority selects a different job
 		// identity and cannot reopen this row.
 		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued',
-			claim_owner=NULL,lease_expires_at=NULL,available_at=?,failure_code=NULL,updated_at=?
-			WHERE job_id=? AND state='failed' AND failure_code='authorization'`,
+			claim_owner=NULL,lease_expires_at=NULL,available_at=$1,failure_code=NULL,updated_at=$2
+			WHERE job_id=$3 AND state='failed' AND failure_code='authorization'`,
 			now, now, jobID); err != nil {
 			return err
 		}
@@ -209,15 +209,15 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		// validated above. Keep claim epochs and retry counts so old workers stay
 		// fenced and retry budgets stay bounded.
 		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued',
-			failure_code=NULL,updated_at=? WHERE job_id=? AND state='abandoned'
+			failure_code=NULL,updated_at=$1 WHERE job_id=$2 AND state='abandoned'
 			AND EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id
-			  AND n.current_version_id=v.version_id AND n.trashed_at IS NULL WHERE v.version_id=?)`,
+			  AND n.current_version_id=v.version_id AND n.trashed_at IS NULL WHERE v.version_id=$3)`,
 			now, jobID, request.ContentVersionID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE embedding_jobs SET claim_epoch=max(claim_epoch,
-			COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots WHERE root_id=?),0))
-			WHERE job_id=?`, jobID, jobID)
+		_, err = tx.ExecContext(ctx, `UPDATE embedding_jobs SET claim_epoch=`+metadataJSONDialect{s.postgresSchema != ""}.maximum()+`(claim_epoch,
+			COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots WHERE root_id=$1),0))
+			WHERE job_id=$2`, jobID, jobID)
 		return err
 	})
 	return EmbeddingJob{ID: jobID}, err
@@ -231,7 +231,7 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 	var failure sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code,
 		authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence
-		FROM embedding_jobs WHERE job_id=?`, id).Scan(&status.ID, &status.ContentVersionID,
+		FROM embedding_jobs WHERE job_id=$1`, id).Scan(&status.ID, &status.ContentVersionID,
 		&status.ProfileFingerprint, &status.BindingID, &status.State, &failure,
 		&status.AuthorizationGrantID,
 		&status.AuthorizationIncarnationID, &status.AuthorizationRevocationFence)
@@ -293,7 +293,7 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 	query := `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code,
 		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence
 		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
-		WHERE j.content_version_id=? AND j.profile_fingerprint=?
+		WHERE j.content_version_id=$1 AND j.profile_fingerprint=$2
 		AND (j.input_kind IN ('original_file','image') OR EXISTS (
 			SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
 			AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id
@@ -304,7 +304,7 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 			SELECT 1 FROM processing_consent_grants anchor
 			JOIN processing_consent_grants member
 			  ON member.consent_set_id=anchor.consent_set_id
-			WHERE anchor.grant_id=? AND member.grant_id=j.authorization_grant_id
+			WHERE anchor.grant_id=$3 AND member.grant_id=j.authorization_grant_id
 		)`
 		args = append(args, admittedGrantID)
 	}
@@ -358,6 +358,11 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 	if !validRenditionWorkerOwner(owner) || at.IsZero() || lease <= 0 || len(fingerprints) == 0 {
 		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, errors.New("embedding claim is invalid")
 	}
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	bindings := "json_each(CAST(p.canonical_profile AS TEXT),'$.embeddings') b"
+	if d.postgres {
+		bindings = "jsonb_array_elements(p.canonical_profile::jsonb -> 'embeddings') AS b(value)"
+	}
 	executable, err := json.Marshal(fingerprints)
 	if err != nil {
 		return EmbeddingJobClaim{}, EmbeddingJobWork{}, false, err
@@ -373,20 +378,20 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			var count int
 			var expiredEpoch int64
 			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch FROM embedding_jobs j
-			WHERE (?='' OR j.job_id=?)
-			AND j.state IN ('queued','retry_wait','running') AND j.available_at<=?
-			AND (j.state<>'running' OR j.lease_expires_at<=?)
+			WHERE ($1='' OR j.job_id=$2)
+			AND j.state IN ('queued','retry_wait','running') AND j.available_at<=$3
+			AND (j.state<>'running' OR j.lease_expires_at<=$4)
 			  AND NOT EXISTS(SELECT 1 FROM embedding_heads h
 			    JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
 			    WHERE h.content_version_id=j.content_version_id AND h.binding_id=j.binding_id
 			      AND h.input_kind=j.input_kind AND s.profile_fingerprint=j.profile_fingerprint
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
-			    AND r.active=1 AND r.expires_at>?)
-			AND EXISTS(SELECT 1 FROM processing_profiles p, json_each(CAST(p.canonical_profile AS TEXT),'$.embeddings') b
+			    AND r.active=1 AND r.expires_at>$5)
+			AND EXISTS(SELECT 1 FROM processing_profiles p, `+bindings+`
 			  WHERE p.profile_fingerprint=j.profile_fingerprint
-			    AND json_extract(b.value,'$.name')=j.binding_id AND json_extract(b.value,'$.input_kind')=j.input_kind
-			    AND json_extract(b.value,'$.descriptor.fingerprint') IN (SELECT value FROM json_each(?)))
+			    AND `+d.text("b.value", "name")+`=j.binding_id AND `+d.text("b.value", "input_kind")+`=j.input_kind
+			    AND `+d.text("b.value", "descriptor.fingerprint")+` IN (SELECT value FROM `+d.arrayValues("$6")+`))
 			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
@@ -401,27 +406,27 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			// disposable job; an expired lease cannot publish catalog failure
 			// authority or fabricate a receipt for an interrupted provider call.
 			if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
-				SET state='failed',failure_code=?,claim_owner=NULL,lease_expires_at=NULL,updated_at=?
-				WHERE job_id=? AND state='running' AND claim_epoch=?`,
+				SET state='failed',failure_code=$1,claim_owner=NULL,lease_expires_at=NULL,updated_at=$2
+				WHERE job_id=$3 AND state='running' AND claim_epoch=$4`,
 				EmbeddingFailureProviderUnavailable, at.UTC().Format(timestampLayout), claimedID, expiredEpoch); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
-				WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), claimedID, expiredEpoch); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=$1
+				WHERE root_id=$2 AND fencing_token=$3 AND active=1`, at.UTC().Format(timestampLayout), claimedID, expiredEpoch); err != nil {
 				return err
 			}
 		}
 
 		var epoch int64
-		if err := tx.QueryRowContext(ctx, `SELECT 1+max(j.claim_epoch,
+		if err := tx.QueryRowContext(ctx, `SELECT 1+`+metadataJSONDialect{s.postgresSchema != ""}.maximum()+`(j.claim_epoch,
             COALESCE((SELECT max(claim_epoch) FROM embedding_jobs WHERE content_version_id=j.content_version_id AND profile_fingerprint=j.profile_fingerprint AND binding_id=j.binding_id AND input_kind=j.input_kind),0),
             COALESCE((SELECT fencing_token FROM embedding_heads WHERE content_version_id=j.content_version_id AND profile_fingerprint=j.profile_fingerprint AND binding_id=j.binding_id AND input_kind=j.input_kind),0),
             COALESCE((SELECT fencing_token FROM embedding_failures WHERE content_version_id=j.content_version_id AND profile_fingerprint=j.profile_fingerprint AND binding_id=j.binding_id AND input_kind=j.input_kind),0))
-            FROM embedding_jobs j WHERE job_id=?`, claimedID).Scan(&epoch); err != nil {
+            FROM embedding_jobs j WHERE job_id=$1`, claimedID).Scan(&epoch); err != nil {
 			return err
 		}
 		expires := at.UTC().Add(lease)
-		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='running',claim_count=claim_count+1,claim_owner=?,claim_epoch=?,lease_expires_at=?,updated_at=? WHERE job_id=?`,
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state='running',claim_count=claim_count+1,claim_owner=$1,claim_epoch=$2,lease_expires_at=$3,updated_at=$4 WHERE job_id=$5`,
 			owner, epoch, expires.Format(timestampLayout), at.UTC().Format(timestampLayout), claimedID); err != nil {
 			return err
 		}
@@ -446,8 +451,8 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 func (s *Store) RenewEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time, lease time.Duration) (EmbeddingJobClaim, error) {
 	expires := at.UTC().Add(lease)
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET lease_expires_at=?,updated_at=?
-			WHERE job_id=? AND state='running' AND claim_owner=? AND claim_epoch=? AND lease_expires_at>?`, expires.Format(timestampLayout),
+		result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET lease_expires_at=$1,updated_at=$2
+			WHERE job_id=$3 AND state='running' AND claim_owner=$4 AND claim_epoch=$5 AND lease_expires_at>$6`, expires.Format(timestampLayout),
 			at.UTC().Format(timestampLayout), claim.AttemptID, claim.Owner, claim.Epoch, at.UTC().Format(timestampLayout))
 		if err != nil {
 			return err
@@ -456,8 +461,8 @@ func (s *Store) RenewEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim,
 		if count != 1 {
 			return ErrEmbeddingJobFenced
 		}
-		result, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET expires_at=?,recorded_at=?
-			WHERE root_id=? AND root_kind=? AND fencing_token=? AND active=1 AND expires_at>?`, expires.Format(timestampLayout),
+		result, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET expires_at=$1,recorded_at=$2
+			WHERE root_id=$3 AND root_kind=$4 AND fencing_token=$5 AND active=1 AND expires_at>$6`, expires.Format(timestampLayout),
 			at.UTC().Format(timestampLayout), claim.AttemptID, RenditionRootWorkerLease, claim.Epoch,
 			at.UTC().Format(timestampLayout))
 		if err != nil {
@@ -509,7 +514,7 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	var eligible bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-		WHERE v.version_id=?)`, work.ContentVersionID).Scan(&eligible); err != nil {
+		WHERE v.version_id=$1)`, work.ContentVersionID).Scan(&eligible); err != nil {
 		return err
 	}
 	if !eligible {
@@ -558,8 +563,8 @@ func (s *Store) BeginEmbeddingProviderEgress(ctx context.Context, claim Embeddin
 func (s *Store) ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
-			SET state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=?,updated_at=?
-			WHERE job_id=? AND state='running' AND claim_owner=? AND claim_epoch=? AND lease_expires_at>?`,
+			SET state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,updated_at=$2
+			WHERE job_id=$3 AND state='running' AND claim_owner=$4 AND claim_epoch=$5 AND lease_expires_at>$6`,
 			at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout),
 			claim.AttemptID, claim.Owner, claim.Epoch, at.UTC().Format(timestampLayout))
 		if err != nil {
@@ -569,8 +574,8 @@ func (s *Store) ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 		if err != nil || changed == 0 {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
-			WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
+		_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=$1
+			WHERE root_id=$2 AND fencing_token=$3 AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
 		return err
 	})
 }
@@ -581,8 +586,8 @@ func (s *Store) ReleaseEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 func (s *Store) AbandonEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
-			SET state='abandoned',claim_owner=NULL,lease_expires_at=NULL,updated_at=?
-			WHERE job_id=? AND state='running' AND claim_owner=? AND claim_epoch=? AND lease_expires_at>?`,
+			SET state='abandoned',claim_owner=NULL,lease_expires_at=NULL,updated_at=$1
+			WHERE job_id=$2 AND state='running' AND claim_owner=$3 AND claim_epoch=$4 AND lease_expires_at>$5`,
 			at.UTC().Format(timestampLayout), claim.AttemptID, claim.Owner, claim.Epoch, at.UTC().Format(timestampLayout))
 		if err != nil {
 			return err
@@ -591,8 +596,8 @@ func (s *Store) AbandonEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 		if err != nil || changed == 0 {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
-			WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
+		_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=$1
+			WHERE root_id=$2 AND fencing_token=$3 AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
 		return err
 	})
 }
@@ -600,7 +605,7 @@ func (s *Store) AbandonEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 func (s *Store) FailEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork, code EmbeddingFailureCode, receipt EmbeddingAttemptReceipt, at time.Time) error {
 	state, available := "failed", at.UTC()
 	var claims int
-	if err := s.db.QueryRowContext(ctx, `SELECT claim_count FROM embedding_jobs WHERE job_id=?`, claim.AttemptID).Scan(&claims); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT claim_count FROM embedding_jobs WHERE job_id=$1`, claim.AttemptID).Scan(&claims); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEmbeddingJobFenced
 		}
@@ -662,9 +667,9 @@ func finishEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, clai
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state=?,claim_owner=NULL,lease_expires_at=NULL,
-			available_at=?,failure_code=NULLIF(?,''),receipt_json=?,updated_at=?
-			WHERE job_id=? AND state='running' AND claim_owner=? AND claim_epoch=? AND lease_expires_at>?`, state,
+	result, err := tx.ExecContext(ctx, `UPDATE embedding_jobs SET state=$1,claim_owner=NULL,lease_expires_at=NULL,
+			available_at=$2,failure_code=NULLIF($3,''),receipt_json=$4,updated_at=$5
+			WHERE job_id=$6 AND state='running' AND claim_owner=$7 AND claim_epoch=$8 AND lease_expires_at>$9`, state,
 		available.UTC().Format(timestampLayout), code, string(encoded), at.UTC().Format(timestampLayout),
 		claim.AttemptID, claim.Owner, claim.Epoch, at.UTC().Format(timestampLayout))
 	if err != nil {
@@ -686,8 +691,8 @@ func finishEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, clai
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=?
-			WHERE root_id=? AND fencing_token=? AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
+	_, err = tx.ExecContext(ctx, `UPDATE current_rendition_roots SET active=0,released_at=$1
+			WHERE root_id=$2 AND fencing_token=$3 AND active=1`, at.UTC().Format(timestampLayout), claim.AttemptID, claim.Epoch)
 	return err
 }
 
@@ -697,7 +702,7 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 	var revocationFence int64
 	err := tx.QueryRowContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,generation_id,
 		vector_space_id,principal,scope,authorization_grant_id,authorization_incarnation_id,
-		authorization_revocation_fence FROM embedding_jobs WHERE job_id=?`, jobID).Scan(
+		authorization_revocation_fence FROM embedding_jobs WHERE job_id=$1`, jobID).Scan(
 		&versionID, &profileID, &bindingID, &generationID, &spaceID, &principal, &scope,
 		&grantID, &incarnationID, &revocationFence)
 	if err != nil {
@@ -722,7 +727,7 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 	var sourceHash, filename, mediaType string
 	var sourceBytes int64
 	if err := tx.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.name,COALESCE(v.mime_type,'')
-		FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=?`, versionID).
+		FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=$1`, versionID).
 		Scan(&sourceHash, &sourceBytes, &filename, &mediaType); err != nil {
 		return EmbeddingJobWork{}, err
 	}
@@ -764,7 +769,7 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 	var sourceHash string
 	if err := tx.QueryRowContext(ctx, `SELECT v.blob_hash FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-		WHERE v.version_id=?`, generation.SourceVersionID).Scan(&sourceHash); err != nil {
+		WHERE v.version_id=$1`, generation.SourceVersionID).Scan(&sourceHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEmbeddingJobFenced
 		}
@@ -787,7 +792,7 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_attachments a
 		JOIN rendition_heads h ON h.content_version_id=a.content_version_id
 		 AND h.profile_fingerprint=a.profile_fingerprint AND h.attachment_id=a.attachment_id
-		WHERE a.attachment_id=? AND a.content_version_id=? AND a.profile_fingerprint=?`,
+		WHERE a.attachment_id=$1 AND a.content_version_id=$2 AND a.profile_fingerprint=$3`,
 		generation.AttachmentID, generation.SourceVersionID, generation.ProcessingProfileFingerprint).Scan(&count); err != nil || count != 1 {
 		return errors.New("chunk embedding generation attachment is stale")
 	}

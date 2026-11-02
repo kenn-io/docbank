@@ -46,9 +46,11 @@ func TestEmailPDFMetadataDoesNotReadPDFBytes(t *testing.T) {
 	require.NoError(t, pdf.Output(&output))
 	var runtime *processing.EmailPDFRuntime
 	gate := api.NewOperationGate()
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		runtime = &processing.EmailPDFRuntime{
-			Catalog: d.Store, Blobs: d.Blobs, Renderer: emailPDFTestRenderer(output.Bytes()), Spool: t.TempDir(),
+			Catalog: d.Store, Blobs: d.Blobs, Renderer: emailPDFTestRenderer(output.Bytes()), Spool: spool,
 			Recipe: document.EmailPDFRecipeV1{
 				Contract: document.EmailPDFContract, RendererVersion: "synthetic",
 				RendererSHA256: strings.Repeat("a", 64), WorkerSHA256: strings.Repeat("b", 64),

@@ -56,7 +56,6 @@ type fakeBackend struct {
 	backupCalls               int
 	profiles                  []api.ProcessingProfileSummary
 	profileCalls              int
-	sourceFence               api.DocumentSourceFenceResolution
 	plan                      api.ProcessingPlan
 	plans                     map[string]api.ProcessingPlan
 	planCalls                 int
@@ -204,16 +203,6 @@ func newFakeBackend() *fakeBackend {
 			Name: "private", Fingerprint: strings.Repeat("a", 64), Rendition: true,
 			EmbeddingBindings: []string{"semantic"}, QueryEmbeddingBindings: []string{"semantic"},
 		}},
-		sourceFence: api.DocumentSourceFenceResolution{
-			Fence: api.ResolvedDocumentSourceFence{
-				VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-				ContentVersionIDs: []string{
-					"11111111-1111-4111-8111-111111111111",
-					"22222222-2222-4222-8222-222222222222",
-				},
-			},
-			ObservedScopeCount: 2,
-		},
 		plan: api.ProcessingPlan{
 			Fingerprint: strings.Repeat("b", 64), VaultUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 			Selector:           api.ProcessingSelector{NodeID: readme.ID, ContentVersionID: readme.CurrentVersionID, Profile: "private"},
@@ -354,15 +343,6 @@ func (f *fakeBackend) ProcessingProfiles(_ context.Context) ([]api.ProcessingPro
 		return nil, f.err
 	}
 	return append([]api.ProcessingProfileSummary(nil), f.profiles...), nil
-}
-
-func (f *fakeBackend) ResolveDocumentSourceFence(
-	_ context.Context, _ api.DocumentSourceFenceResolveRequest,
-) (api.DocumentSourceFenceResolution, error) {
-	if f.err != nil {
-		return api.DocumentSourceFenceResolution{}, f.err
-	}
-	return f.sourceFence, nil
 }
 
 func (f *fakeBackend) PlanProcessing(_ context.Context, request api.ProcessingPlanRequest) (api.ProcessingPlan, error) {

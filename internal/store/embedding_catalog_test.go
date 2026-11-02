@@ -19,9 +19,10 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 )
 
-func TestEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *testing.T) {
+func checkEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -36,8 +37,8 @@ func TestEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t *test
 	assert.Equal(t, 1, vectorSets)
 
 	var secondVersion, buildID string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? ORDER BY version_id LIMIT 1`, versionID, catalogSourceHash).Scan(&secondVersion))
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>$1 AND blob_hash=$2 ORDER BY version_id LIMIT 1`, versionID, catalogSourceHash).Scan(&secondVersion))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=$1`, attachmentID).Scan(&buildID))
 	secondAttachment := testSHA256([]byte("second-embedding-attachment"))
 	secondAttachmentRecord := RenditionAttachmentRecord{
 		ID: secondAttachment, VaultID: s.VaultID(), ContentVersionID: secondVersion,
@@ -79,9 +80,10 @@ func TestHydrateEmbeddingInputGenerationRequiresExactCanonicalArtifact(t *testin
 	require.ErrorContains(t, err, "exact artifact")
 }
 
-func TestEmbeddingCatalogLeasedStageAndPublishAreAtomicallyFenced(t *testing.T) {
+func checkEmbeddingCatalogLeasedStageAndPublishAreAtomicallyFenced(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -208,9 +210,10 @@ func TestEmbeddingJobCatalogClaimsRetriesAndResumesDurably(t *testing.T) {
 	assert.False(t, found, "the unexpired resumed lease must survive daemon restart")
 }
 
-func TestEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T) {
+func checkEmbeddingJobCatalogClaimsExactRequestedJob(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	firstRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-first")
 	secondRequest := embeddingJobTestRequest(t, s, versionID, profile, "target-second")
 	first, err := s.EnqueueEmbeddingJob(t.Context(), firstRequest)
@@ -287,13 +290,14 @@ func TestEmbeddingJobsRebuildFromPortableAuthorityAfterMetadataRestore(t *testin
 		"restore rebuilds both the operational job and its vault-local lease sequence")
 }
 
-func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *testing.T) {
+func checkEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "reconcile")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs WHERE job_id=?`, job.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs WHERE job_id=$1`, job.ID)
 	require.NoError(t, err)
 
 	result, err := s.ReconcileEmbeddingJobs(t.Context(), EmbeddingReconcileRequest{Mutate: embeddingTestMutation,
@@ -318,9 +322,10 @@ func TestEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *te
 	assert.Zero(t, result.Enqueued)
 }
 
-func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T) {
+func checkEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	var err error
@@ -378,9 +383,10 @@ func TestEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T)
 	require.Zero(t, result.Enqueued)
 }
 
-func TestEmbeddingJobLeaseCannotRenewAfterExpiry(t *testing.T) {
+func checkEmbeddingJobLeaseCannotRenewAfterExpiry(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "lease-expiry")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -400,9 +406,10 @@ func TestEmbeddingJobLeaseCannotRenewAfterExpiry(t *testing.T) {
 	assert.Greater(t, resumed.Epoch, claim.Epoch)
 }
 
-func TestEmbeddingJobProviderUnavailableRetryBudgetIsDurable(t *testing.T) {
+func checkEmbeddingJobProviderUnavailableRetryBudgetIsDurable(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "durable-retry-budget")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -429,9 +436,10 @@ func TestEmbeddingJobProviderUnavailableRetryBudgetIsDurable(t *testing.T) {
 	assert.Equal(t, "failed", state)
 }
 
-func TestEmbeddingJobExistingStaleHeadDoesNotSuppressReplacement(t *testing.T) {
+func checkEmbeddingJobExistingStaleHeadDoesNotSuppressReplacement(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
@@ -956,14 +964,19 @@ func embeddingHeadSetIDForTest(
 	t.Helper()
 	var setID string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT embedding_set_id FROM embedding_heads
-		WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
 		versionID, profileFingerprint, bindingID, kind).Scan(&setID))
 	return setID
 }
 
 func newEmbeddingCatalogFixture(t *testing.T) (*Store, string, ProcessingProfileRecord, string) {
 	t.Helper()
-	s, versions := newRenditionCatalogFixture(t)
+	return seedEmbeddingCatalog(t, newTestStore(t))
+}
+
+func seedEmbeddingCatalog(t *testing.T, s *Store) (*Store, string, ProcessingProfileRecord, string) {
+	t.Helper()
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := embeddingCatalogProfile(t)
 	build := catalogRenditionBuild(s, profile)
 	build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
@@ -984,7 +997,7 @@ func embeddingSetFixture(
 ) EmbeddingSetRecord {
 	seed := bindingID + string(kind) + versionID + attachmentID
 	var canonicalProfile string
-	if err := s.db.QueryRowContext(ctx, `SELECT canonical_profile FROM processing_profiles WHERE profile_fingerprint=?`, profileFingerprint).Scan(&canonicalProfile); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT canonical_profile FROM processing_profiles WHERE profile_fingerprint=$1`, profileFingerprint).Scan(&canonicalProfile); err != nil {
 		panic(err)
 	}
 	var profile document.ProcessingProfileV1
@@ -992,7 +1005,7 @@ func embeddingSetFixture(
 		panic(err)
 	}
 	var sourceChecksum string
-	if err := s.db.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=?`, versionID).Scan(&sourceChecksum); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT blob_hash FROM content_versions WHERE version_id=$1`, versionID).Scan(&sourceChecksum); err != nil {
 		panic(err)
 	}
 	_, fingerprints, err := document.CanonicalProfile(profile)
@@ -1252,9 +1265,10 @@ func cloneEmbeddingSetRecord(value EmbeddingSetRecord) EmbeddingSetRecord {
 	return clone
 }
 
-func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
+func checkEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "queued-retention")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1267,9 +1281,9 @@ func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
 	require.NoError(t, err)
 	var remaining int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
-  (SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?) +
-  (SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?) +
-  (SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?)`, job.ID, claim.AttemptID, request.InputGeneration.ID).Scan(&remaining))
+  (SELECT COUNT(*) FROM embedding_jobs WHERE job_id=$1) +
+  (SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=$2) +
+  (SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=$3)`, job.ID, claim.AttemptID, request.InputGeneration.ID).Scan(&remaining))
 	require.Zero(t, remaining)
 	require.ErrorIs(t, s.FailEmbeddingWork(t.Context(), claim, work, EmbeddingFailureProviderUnavailable,
 		EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, time.Now().UTC()), ErrEmbeddingJobFenced)
@@ -1278,9 +1292,10 @@ func TestEmbeddingJobsRetainQueuedInputsUntilExplicitPurge(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmbeddingJobFenced, "purged intent must not be resubmitted to a provider")
 }
 
-func TestEmbeddingJobReleasePreservesSuccessorClaim(t *testing.T) {
+func checkEmbeddingJobReleasePreservesSuccessorClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "release")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1305,9 +1320,10 @@ func TestEmbeddingJobReleasePreservesSuccessorClaim(t *testing.T) {
 	require.Equal(t, "abandoned", job.State, "late cleanup must not reopen terminal work")
 }
 
-func TestEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T) {
+func checkEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "abandonment")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1325,16 +1341,17 @@ func TestEmbeddingJobAbandonmentPreservesSuccessorClaim(t *testing.T) {
 	require.NoError(t, s.AbandonEmbeddingWork(t.Context(), successor, at))
 	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), successor, work, at), ErrEmbeddingJobFenced)
 	var state string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state FROM embedding_jobs WHERE job_id=?`, successor.AttemptID).Scan(&state))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state FROM embedding_jobs WHERE job_id=$1`, successor.AttemptID).Scan(&state))
 	require.Equal(t, "abandoned", state)
 	var failures int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_failures`).Scan(&failures))
 	require.Zero(t, failures)
 }
 
-func TestEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T) {
+func checkEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "egress-consent")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1367,11 +1384,12 @@ func TestEmbeddingEgressKeepsOriginalConsentAcrossBatches(t *testing.T) {
 	require.Nil(t, fence)
 }
 
-func TestEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T) {
+func checkEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{"queued", "running", "retry_wait", "authorization_failed", "exhausted"} {
 		t.Run(state, func(t *testing.T) {
-			s, version, profile, _ := newEmbeddingCatalogFixture(t)
+			s, version, profile, _ := seedEmbeddingCatalog(t, open(t))
 			request := embeddingJobTestRequest(t, s, version, profile, "replacement-consent")
 			job, err := s.EnqueueEmbeddingJob(t.Context(), request)
 			require.NoError(t, err)
@@ -1414,7 +1432,7 @@ func TestEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEqual(t, job.ID, successor.ID)
 			var claims int
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT claim_count FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&claims))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT claim_count FROM embedding_jobs WHERE job_id=$1`, job.ID).Scan(&claims))
 			require.Equal(t, count, claims)
 			if state == "running" {
 				require.NoError(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at))
@@ -1456,9 +1474,10 @@ func TestEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T) {
 	}
 }
 
-func TestEmbeddingJobReconciliationCreatesSuccessorForFreshGrant(t *testing.T) {
+func checkEmbeddingJobReconciliationCreatesSuccessorForFreshGrant(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	s, version, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, version, profile, "fresh-grant")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1521,13 +1540,14 @@ func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
+func checkEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{"completed", "failed", "abandoned", "queued", "retry_wait", "running", "failed_without_set", "abandoned_without_set"} {
 		t.Run(state, func(t *testing.T) {
 			hasSet := !strings.HasSuffix(state, "_without_set")
 			state = strings.TrimSuffix(state, "_without_set")
-			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+			s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 			normalized, normalizeErr := normalizeEmbeddingSetRecord(record)
 			require.NoError(t, normalizeErr)
@@ -1567,7 +1587,7 @@ func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
 				_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{})
 				require.NoError(t, err)
 				var retained int
-				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&retained))
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_jobs WHERE job_id=$1`, job.ID).Scan(&retained))
 				require.Equal(t, 1, retained, "current source must retain its terminal work")
 			}
 			build := catalogRenditionBuild(s, profile)
@@ -1586,7 +1606,7 @@ func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
 				require.Equal(t, 1, report.RemovedEmbeddingSets)
 			}
 			var jobs, generations, spaces int
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM embedding_jobs WHERE job_id=?),(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?),(SELECT COUNT(*) FROM embedding_vector_spaces WHERE vector_space_id=?)`, job.ID, record.InputGeneration.ID, record.VectorSpace.ID).Scan(&jobs, &generations, &spaces))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM embedding_jobs WHERE job_id=$1),(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=$2),(SELECT COUNT(*) FROM embedding_vector_spaces WHERE vector_space_id=$3)`, job.ID, record.InputGeneration.ID, record.VectorSpace.ID).Scan(&jobs, &generations, &spaces))
 			if state == "queued" || state == "retry_wait" || state == "running" {
 				require.Equal(t, 1, jobs)
 				require.Equal(t, 1, generations)
@@ -1600,14 +1620,15 @@ func TestEmbeddingGCReleasesTerminalJobArtifacts(t *testing.T) {
 	}
 }
 
-func TestEmbeddingJobEnqueueRejectsStaleSource(t *testing.T) {
+func checkEmbeddingJobEnqueueRejectsStaleSource(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, mutation := range []string{"replace", "trash"} {
 		t.Run(mutation, func(t *testing.T) {
-			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 			request := embeddingJobTestRequest(t, s, versionID, profile, "stale-enqueue")
 			var nodeID, revision int64
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=$1`, versionID).Scan(&nodeID, &revision))
 			var err error
 			if mutation == "trash" {
 				_, _, err = s.Trash(t.Context(), nodeID, revision)
@@ -1618,15 +1639,16 @@ func TestEmbeddingJobEnqueueRejectsStaleSource(t *testing.T) {
 			_, err = s.EnqueueEmbeddingJob(t.Context(), request)
 			require.ErrorIs(t, err, ErrEmbeddingJobFenced)
 			var count int
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=?`, versionID).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=$1`, versionID).Scan(&count))
 			require.Zero(t, count)
 		})
 	}
 }
 
-func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
+func checkEmbeddingJobsResumeAfterSourceRestoration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "restore-abandoned")
 	original, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1635,7 +1657,7 @@ func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	var nodeID, revision int64
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=$1`, versionID).Scan(&nodeID, &revision))
 	trashed, _, err := s.Trash(t.Context(), nodeID, revision)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, at), ErrEmbeddingJobFenced)
@@ -1686,9 +1708,10 @@ func TestEmbeddingJobsResumeAfterSourceRestoration(t *testing.T) {
 	require.ErrorIs(t, s.ValidateEmbeddingWork(t.Context(), claim, work, time.Now().UTC()), ErrEmbeddingJobFenced)
 }
 
-func TestEmbeddingReconciliationSkipsSuppressedRetainedGeneration(t *testing.T) {
+func checkEmbeddingReconciliationSkipsSuppressedRetainedGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, versionID, profile, "suppressed-retained")
 	_, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1697,7 +1720,7 @@ func TestEmbeddingReconciliationSkipsSuppressedRetainedGeneration(t *testing.T) 
 		TargetID: request.InputGeneration.ID, FencingToken: 1, RecordedAt: embeddingCatalogTime,
 	}))
 	var siblingVersion string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>? LIMIT 1`, versionID).Scan(&siblingVersion))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>$1 LIMIT 1`, versionID).Scan(&siblingVersion))
 	sibling := embeddingJobTestRequest(t, s, siblingVersion, profile, "other-source")
 	_, err = s.EnqueueEmbeddingJob(t.Context(), sibling)
 	require.NoError(t, err)
@@ -1757,9 +1780,10 @@ func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
 
 func embeddingTestMutation(_ context.Context, fn func() error) error { return fn() }
 
-func TestEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T) {
+func checkEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	var err error
@@ -1801,9 +1825,10 @@ func TestEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T) {
 	}
 }
 
-func TestEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T) {
+func checkEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, attachmentID := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	var err error
@@ -1864,9 +1889,10 @@ func TestEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestEmbeddingJobExpiredClaimsExhaustBudget(t *testing.T) {
+func checkEmbeddingJobExpiredClaimsExhaustBudget(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	s, version, profile, _ := seedEmbeddingCatalog(t, open(t))
 	request := embeddingJobTestRequest(t, s, version, profile, "expired-budget")
 	job, err := s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
@@ -1888,12 +1914,12 @@ func TestEmbeddingJobExpiredClaimsExhaustBudget(t *testing.T) {
 	require.False(t, found, "expired running jobs must not get a fourth claim")
 	var state, code string
 	var count int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state,failure_code,claim_count FROM embedding_jobs WHERE job_id=?`, job.ID).Scan(&state, &code, &count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state,failure_code,claim_count FROM embedding_jobs WHERE job_id=$1`, job.ID).Scan(&state, &code, &count))
 	require.Equal(t, "failed", state)
 	require.Equal(t, string(EmbeddingFailureProviderUnavailable), code)
 	require.Equal(t, 3, count)
 	var active bool
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT active FROM current_rendition_roots WHERE root_id=? AND fencing_token=?`, job.ID, last.Epoch).Scan(&active))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT active FROM current_rendition_roots WHERE root_id=$1 AND fencing_token=$2`, job.ID, last.Epoch).Scan(&active))
 	require.False(t, active)
 	_, err = s.RenewEmbeddingWork(t.Context(), last, at, time.Minute)
 	require.ErrorIs(t, err, ErrEmbeddingJobFenced)

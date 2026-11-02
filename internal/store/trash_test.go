@@ -277,7 +277,7 @@ func TestTrashEmpty(t *testing.T) {
 
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
 	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
+	child, err := s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, a.ID, -1)
 	require.NoError(t, err)
@@ -286,6 +286,8 @@ func TestTrashEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, roots, 1)
 
+	_, before, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
 	// Nothing older than an hour.
 	rep, err := s.TrashEmpty(ctx, time.Hour, false)
 	require.NoError(t, err)
@@ -308,6 +310,11 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, int64(1), rep.Deleted)
 	assert.True(t, rep.Run)
 
+	changes, _, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	require.Equal(t, []string{"removed", "removed"}, []string{changes[0].Kind, changes[1].Kind})
+	require.ElementsMatch(t, []int64{a.ID, child.ID}, []int64{changes[0].NodeID, changes[1].NodeID})
 	// Subtree rows are gone (cascade), blob row remains (GC's job).
 	var nodeCount, blobCount int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))

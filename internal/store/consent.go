@@ -126,11 +126,11 @@ func ensureProcessingIncarnationTx(ctx context.Context, tx *sql.Tx, source *meta
 		}
 		id, createdAt = source.ID, source.CreatedAt
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES($1,$2)`,
 		id, createdAt); err != nil {
 		return fmt.Errorf("creating processing incarnation: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO current_processing_incarnation(singleton,incarnation_id) VALUES(1,?)`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO current_processing_incarnation(singleton,incarnation_id) VALUES(1,$1)`, id); err != nil {
 		return fmt.Errorf("activating processing incarnation: %w", err)
 	}
 	return nil
@@ -249,9 +249,9 @@ func (s *Store) grantConsentTx(
 	// Clock ties or regressions must not let a random UUID select an older grant.
 	var latest sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(issued_at) FROM processing_consent_grants
-		WHERE vault_uid=? AND incarnation_id=? AND principal=? AND scope=?
-		AND profile_fingerprint=? AND disclosure_fingerprint=?
-		AND input_classes_json=? AND retained_classes_json=?`, s.vaultID, incarnationID,
+		WHERE vault_uid=$1 AND incarnation_id=$2 AND principal=$3 AND scope=$4
+		AND profile_fingerprint=$5 AND disclosure_fingerprint=$6
+		AND input_classes_json=$7 AND retained_classes_json=$8`, s.vaultID, incarnationID,
 		authority.principal, authority.scope, authority.profile, authority.disclosure,
 		authority.inputsJSON, authority.retainedJSON).Scan(&latest); err != nil {
 		return fmt.Errorf("reading latest processing consent timestamp: %w", err)
@@ -269,7 +269,7 @@ func (s *Store) grantConsentTx(
 			grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
 			disclosure_fingerprint,input_classes_json,retained_classes_json,
 			revocation_fence,issued_at,expires_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, grant.ID, grant.ConsentSetID, grant.VaultID,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, grant.ID, grant.ConsentSetID, grant.VaultID,
 		grant.ProcessingIncarnationID, grant.Principal, grant.Scope,
 		grant.ProfileFingerprint, grant.DisclosureFingerprint, authority.inputsJSON,
 		authority.retainedJSON, grant.RevocationFence, issuedRaw, expiresRaw)
@@ -325,7 +325,7 @@ func (s *Store) revokeConsentTx(
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO processing_consent_revocations(
 			revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
-		) VALUES(?,?,?,?,?,?,?)`, result.ID, result.VaultID,
+		) VALUES($1,$2,$3,$4,$5,$6,$7)`, result.ID, result.VaultID,
 		result.ProcessingIncarnationID, principal, scope, result.Fence,
 		result.RevokedAt.Format(timestampLayout))
 	return err
@@ -352,7 +352,7 @@ func (s *Store) AuthorizeProviderOperation(
 			"prior processing authorization can only be checked during atomic publication",
 		)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
 	}
@@ -381,7 +381,7 @@ func (s *Store) AuthorizeProviderOperationFromConsentSet(ctx context.Context,
 	if err := validateUUIDv4(admittedGrantID); err != nil {
 		return ProviderOperationAuthorization{}, ErrProcessingConsentRequired
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: %w", err)
 	}

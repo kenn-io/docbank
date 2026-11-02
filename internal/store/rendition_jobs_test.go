@@ -16,9 +16,11 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
+func checkRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	embeddingProfile := catalogProcessingProfile(t, true)
 	request := renditionJobTestRequest(versions[0], profile)
@@ -55,9 +57,11 @@ func TestRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T) {
 	)
 }
 
-func TestRenditionJobWaiterCannotAdoptReplacementConsent(t *testing.T) {
+func checkRenditionJobWaiterCannotAdoptReplacementConsent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, request)
@@ -121,9 +125,11 @@ func TestRenditionJobWaiterRejectedRestoresFromBackup(t *testing.T) {
 	require.Equal(t, RenditionFailureConsent, rejected.FailureCode)
 }
 
-func TestRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T) {
+func checkRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	baseRequest := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, baseRequest)
@@ -155,9 +161,11 @@ func TestRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T) {
 	}
 }
 
-func TestRenditionJobsUseCapturedPolicyToSeparateRetentionOutputs(t *testing.T) {
+func checkRenditionJobsUseCapturedPolicyToSeparateRetentionOutputs(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	firstProfile := catalogProcessingProfile(t, false)
 	firstRequest := renditionJobTestRequest(versions[0], firstProfile)
 	grantRenditionJobConsent(t, s, firstRequest)
@@ -180,9 +188,11 @@ func TestRenditionJobsUseCapturedPolicyToSeparateRetentionOutputs(t *testing.T) 
 	assert.NotEqual(t, first.ID, second.ID)
 }
 
-func TestEnqueueRenditionJobRejectsFilenameDisclosureIdentityDrift(t *testing.T) {
+func checkEnqueueRenditionJobRejectsFilenameDisclosureIdentityDrift(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	request.ExecutionIdentity.Authorization.DiscloseFilename = true
@@ -308,9 +318,11 @@ func TestEnqueueRenditionJobRejectsCapturedPolicyProfileConflicts(t *testing.T) 
 	}
 }
 
-func TestEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T) {
+func checkEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	_, executionFingerprint, err := document.CanonicalRenditionExecutionIdentityV1(request.ExecutionIdentity)
@@ -333,7 +345,8 @@ func TestEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T) {
 	assert.Empty(t, plan.Builds, "a queued build-reuse job must root its immutable input")
 }
 
-func TestEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress(t *testing.T) {
+func checkEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name      string
@@ -343,7 +356,8 @@ func TestEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress
 		{name: "new principal", principal: "operator:new-principal"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s, versions := newRenditionCatalogFixture(t)
+			s := open(t)
+			versions := seedRenditionCatalogVersions(t, s)
 			profile := catalogProcessingProfile(t, false)
 			request := renditionJobTestRequest(versions[0], profile)
 			grantRenditionJobConsent(t, s, request)
@@ -408,7 +422,7 @@ func TestEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress
 			assert.Equal(t, job.ID, active.Build.ID)
 			var providerStarted bool
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
-				`SELECT provider_started FROM rendition_jobs WHERE job_id=?`, job.ID,
+				`SELECT provider_started FROM rendition_jobs WHERE job_id=$1`, job.ID,
 			).Scan(&providerStarted))
 			assert.False(t, providerStarted,
 				"head reconciliation of an immutable completed build must not repeat provider egress")
@@ -416,9 +430,11 @@ func TestEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress
 	}
 }
 
-func TestPurgeDerivativesCancelsQueuedRenditionJobAndSuppressesReenqueue(t *testing.T) {
+func checkPurgeDerivativesCancelsQueuedRenditionJobAndSuppressesReenqueue(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, request)
@@ -455,7 +471,8 @@ func TestEnqueueRenditionJobRequiresOriginalSourceConsent(t *testing.T) {
 	require.ErrorContains(t, err, "input classes")
 }
 
-func TestEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T) {
+func checkEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name      string
@@ -479,7 +496,8 @@ func TestEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s, versions := newRenditionCatalogFixture(t)
+			s := open(t)
+			versions := seedRenditionCatalogVersions(t, s)
 			profile := catalogProcessingProfile(t, false)
 			request := renditionJobTestRequest(versions[0], profile)
 			grantRenditionJobConsent(t, s, request)
@@ -504,18 +522,22 @@ func TestEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T) {
 	}
 }
 
-func TestEnqueueRenditionJobRejectsUnauthorizedWaiter(t *testing.T) {
+func checkEnqueueRenditionJobRejectsUnauthorizedWaiter(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
 
 	_, _, err := s.EnqueueRenditionJob(t.Context(), request)
 	require.ErrorIs(t, err, ErrProcessingConsentRequired)
 }
 
-func TestRenditionJobWorkChoosesAnAuthorizedWaiter(t *testing.T) {
+func checkRenditionJobWorkChoosesAnAuthorizedWaiter(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	firstRequest := renditionJobTestRequest(versions[0], profile)
 	firstRequest.Authorization.Principal = "operator:first-candidate"
@@ -573,11 +595,13 @@ func TestRenditionJobWorkRejectsNonOriginalWaiterAuthority(t *testing.T) {
 	require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
 }
 
-func TestRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t *testing.T) {
+func checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, checkpoint := range []bool{false, true} {
 		t.Run(map[bool]string{false: "missing handle", true: "durable handle"}[checkpoint], func(t *testing.T) {
-			s, versions := newRenditionCatalogFixture(t)
+			s := open(t)
+			versions := seedRenditionCatalogVersions(t, s)
 			profile := catalogProcessingProfile(t, false)
 			request := renditionJobTestRequest(versions[0], profile)
 			grantRenditionJobConsent(t, s, request)
@@ -989,9 +1013,11 @@ func TestRenditionJobMetadataRoundTripPreservesSealedDurableResumeAuthority(t *t
 		"fresh consent may authorize only the known durable handle; no new snapshot is accepted")
 }
 
-func TestRenditionJobNoHandleRetryKeepsAdmissionAuthority(t *testing.T) {
+func checkRenditionJobNoHandleRetryKeepsAdmissionAuthority(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, request)
@@ -1016,7 +1042,7 @@ func TestRenditionJobNoHandleRetryKeepsAdmissionAuthority(t *testing.T) {
 	var fence sql.NullInt64
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence,execution_snapshot_json
-		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
+		FROM rendition_jobs WHERE job_id=$1`, job.ID).Scan(
 		&selected, &grant, &incarnation, &fence, &snapshot))
 	assert.False(t, selected.Valid)
 	assert.False(t, grant.Valid)
@@ -1184,9 +1210,11 @@ func TestRenditionJobMetadataRestoreRejectsMissingOrMisdirectedJobRoots(t *testi
 	}
 }
 
-func TestReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t *testing.T) {
+func checkReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
@@ -1210,8 +1238,7 @@ func TestReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t *testing.T) 
 	assert.Zero(t, report.RemovedBuilds)
 	_, err = loadRenditionBuild(ctx, s.db, job.ID)
 	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	checkRetentionMetadata(t, s)
 
 	reopened, _, err := s.EnqueueRenditionJob(ctx, request)
 	require.NoError(t, err)
@@ -1222,7 +1249,8 @@ func TestReopenableStagedFailureRetainsBuildAcrossDerivativeSweep(t *testing.T) 
 func TestRenditionJobStagedBuildRootSurvivesLeaseExpiryUntilTerminalState(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		s, versions := newRenditionCatalogFixture(t)
+		s := newTestStore(t)
+		versions := seedRenditionCatalogVersions(t, s)
 		profile := catalogProcessingProfile(t, false)
 		request := renditionJobTestRequest(versions[0], profile)
 		grantRenditionJobConsent(t, s, request)
@@ -1253,9 +1281,11 @@ func TestRenditionJobStagedBuildRootSurvivesLeaseExpiryUntilTerminalState(t *tes
 	})
 }
 
-func TestRenditionJobStagingIsIdempotentWithinOneClaim(t *testing.T) {
+func checkRenditionJobStagingIsIdempotentWithinOneClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, request)
@@ -1426,9 +1456,11 @@ func grantRenditionJobConsent(t *testing.T, s *Store, request RenditionJobReques
 	require.NoError(t, err)
 }
 
-func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
+func checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	baseProfile := catalogProcessingProfile(t, false)
 	embeddingProfile := catalogProcessingProfile(t, true)
 	firstRequest := renditionJobTestRequest(versions[0], baseProfile)
@@ -1474,7 +1506,7 @@ func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
 	var revocationFence sql.NullInt64
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence
-		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
+		FROM rendition_jobs WHERE job_id=$1`, job.ID).Scan(
 		&selected, &grant, &incarnation, &revocationFence))
 	assert.False(t, selected.Valid)
 	assert.False(t, grant.Valid)
@@ -1482,9 +1514,11 @@ func TestPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T) {
 	assert.False(t, revocationFence.Valid)
 }
 
-func TestPublishRenditionJobFencesLeaseTheft(t *testing.T) {
+func checkPublishRenditionJobFencesLeaseTheft(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, request)
@@ -1519,9 +1553,11 @@ func TestPublishRenditionJobFencesLeaseTheft(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t *testing.T) {
+func checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	firstRequest := renditionJobTestRequest(versions[0], profile)
 	secondRequest := renditionJobTestRequest(versions[1], profile)
@@ -1579,7 +1615,7 @@ func TestRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t
 		now.Add(6*time.Second), now.Add(7*time.Second)))
 	var providerStarted bool
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
-		`SELECT provider_started FROM rendition_jobs WHERE job_id=?`, firstJob.ID,
+		`SELECT provider_started FROM rendition_jobs WHERE job_id=$1`, firstJob.ID,
 	).Scan(&providerStarted))
 	assert.True(t, providerStarted, "lexical-only retry must retain original egress authority")
 
@@ -1597,9 +1633,11 @@ func TestRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t
 	assert.Equal(t, firstJob.ID, active.Build.ID)
 }
 
-func TestPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t *testing.T) {
+func checkPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	oldBuild := catalogRenditionBuild(s, profile)
 	oldAttachment := RenditionAttachmentRecord{
@@ -1681,9 +1719,11 @@ func TestPublishRenditionJobRejectsWaiterRetainedPolicyDrift(t *testing.T) {
 	require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
 }
 
-func TestPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t *testing.T) {
+func checkPublishRenditionJobAllowsDegradedActivationForRevokedWaiter(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	firstRequest := renditionJobTestRequest(versions[0], profile)
 	secondRequest := renditionJobTestRequest(versions[1], profile)
@@ -1784,11 +1824,13 @@ func TestPublishRenditionJobAllowsDegradedActivationForStaleWaiter(t *testing.T)
 	assert.Equal(t, RenditionFailureStaleAuthority, rejectedWaiter.FailureCode)
 }
 
-func TestRenditionJobFencesDisclosedFilenameAfterRename(t *testing.T) {
+func checkRenditionJobFencesDisclosedFilenameAfterRename(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, disclose := range []bool{false, true} {
 		t.Run(map[bool]string{false: "hidden", true: "disclosed"}[disclose], func(t *testing.T) {
-			s, versions := newRenditionCatalogFixture(t)
+			s := open(t)
+			versions := seedRenditionCatalogVersions(t, s)
 			profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) { p.Rendition.DiscloseFilename = disclose })
 			version, err := s.ContentVersionByID(t.Context(), versions[0])
 			require.NoError(t, err)
@@ -1824,12 +1866,14 @@ func TestRenditionJobFencesDisclosedFilenameAfterRename(t *testing.T) {
 	}
 }
 
-func TestPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T) {
+func checkPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, mutation := range []string{"selected-trash", "selected-consent", "selected-regrant", "all-reopened"} {
 		t.Run(mutation, func(t *testing.T) {
 			ctx := t.Context()
-			s, versions := newRenditionCatalogFixture(t)
+			s := open(t)
+			versions := seedRenditionCatalogVersions(t, s)
 			profile := catalogProcessingProfile(t, false)
 			first := renditionJobTestRequest(versions[0], profile)
 			second := renditionJobTestRequest(versions[1], profile)
