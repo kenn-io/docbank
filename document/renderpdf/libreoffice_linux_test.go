@@ -165,22 +165,18 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 }
 
 func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
-	policy := realLibreOfficePolicy(t, nil)
+	started := make(chan struct{})
+	var once sync.Once
+	policy := realLibreOfficePolicy(t, nativeRunner{childStarted: func() { once.Do(func() { close(started) }) }})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	source := testSource(t, realDOCX(false, "", ""), docxMediaType)
-	outcome := make(chan struct {
-		result *Result
-		err    error
-	}, 1)
+	outcome := make(chan conversionOutcome, 1)
 	go func() {
 		result, err := Convert(ctx, source, "docx", policy)
-		outcome <- struct {
-			result *Result
-			err    error
-		}{result: result, err: err}
+		outcome <- conversionOutcome{result: result, err: err}
 	}()
-	pids := waitForLibreOfficeStart(t, policy.renderer.Executable)
+	pids := waitForLibreOfficeStart(t, started, outcome, policy.renderer.Executable)
 	t.Logf("owner cancellation observed LibreOffice pids=%v", pids)
 	cancel()
 	finished := <-outcome
@@ -191,6 +187,11 @@ func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
 	// The launcher is the sandbox's PID namespace init. The kernel kills and
 	// reaps every process in the namespace before Convert sees it exit.
 	assert.Empty(t, matchingLibreOfficePIDs(policy.renderer.Executable))
+}
+
+type conversionOutcome struct {
+	result *Result
+	err    error
 }
 
 // pendingConnection reports, without blocking, whether a client connection is
@@ -220,18 +221,21 @@ func pendingConnection(t *testing.T, listener net.Listener) bool {
 	return pending
 }
 
-func waitForLibreOfficeStart(t *testing.T, executable string) map[int]struct{} {
+// waitForLibreOfficeStart blocks until the sandbox reports that the caller's
+// LibreOffice child started, and returns the LibreOffice processes it sees.
+// It fails the test if the conversion ends first.
+func waitForLibreOfficeStart(t *testing.T, started <-chan struct{}, outcome <-chan conversionOutcome, executable string) map[int]struct{} {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		pids := matchingLibreOfficePIDs(executable)
-		if len(pids) != 0 {
-			return pids
-		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls /proc for a real LibreOffice process
+	select {
+	case <-started:
+	case finished := <-outcome:
+		t.Fatalf("conversion ended before LibreOffice started: %v", finished.err)
 	}
-	t.Fatalf("LibreOffice did not start: executable=%s", executable)
-	return nil
+	// The child has already executed, so /proc must show it. This also
+	// proves the final no-process check can see LibreOffice at all.
+	pids := matchingLibreOfficePIDs(executable)
+	require.NotEmpty(t, pids, "LibreOffice process is not visible: executable=%s", executable)
+	return pids
 }
 
 func matchingLibreOfficePIDs(executable string) map[int]struct{} {
@@ -259,7 +263,6 @@ func matchingLibreOfficePIDs(executable string) map[int]struct{} {
 	return result
 }
 
-//nolint:unparam // the wrapper permits injected runners for owner variants.
 func realLibreOfficePolicy(t *testing.T, runner Runner) Policy {
 	t.Helper()
 	executable := os.Getenv("DOCBANK_TEST_LIBREOFFICE_EXECUTABLE")

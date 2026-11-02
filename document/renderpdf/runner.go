@@ -60,7 +60,11 @@ type StageResult struct {
 	Attestation Attestation
 }
 
-type nativeRunner struct{}
+type nativeRunner struct {
+	// childStarted is called when the sandbox reports that a stage's
+	// LibreOffice child started. Tests use it; production leaves it nil.
+	childStarted func()
+}
 
 func (runner nativeRunner) Identity() string { return sandbox.NativeRunnerIdentity }
 
@@ -85,6 +89,7 @@ func (runner nativeRunner) Run(ctx context.Context, request Request) (StageResul
 	sandboxResult, err := sandbox.Run(ctx, sandbox.Request{
 		PolicyFingerprint: request.PolicyFingerprint, Policy: policy,
 		Stdin: request.Input, StdinSHA256: request.InputSHA256,
+		ChildStarted: runner.childStarted,
 	})
 	result := StageResult{
 		Output: sandboxResult.Stdout,

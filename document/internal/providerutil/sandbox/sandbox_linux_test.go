@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -358,13 +357,14 @@ func TestPrivateRootAllowsOnlyUnixSockets(t *testing.T) {
 func TestSupervisedRunnerReapsAdoptedDescendantAfterDirectExit(t *testing.T) {
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
-	started := time.Now()
 	result, err := runner.Run(t.Context(), privateTestRequest(t,
 		buildSandboxHelper(t, "file-descendant-exit", "", "result.bin")))
 	requireNativeNoError(t, err)
 	t.Log("descendant readiness handshake completed before direct parent exit; Run returned after reaping")
 	assert.Equal(t, []byte("supervised output"), result.Stdout)
-	assert.Less(t, time.Since(started), 2*time.Second)
+	// The descendant runs until it is killed, so it is gone only if the
+	// sandbox reaped it before Run returned.
+	assert.Empty(t, sandboxDescendantPIDs(t))
 }
 
 func TestSupervisedRunnerTrustedWarmupCleansStateAndRunsCallerOnce(t *testing.T) {
@@ -574,8 +574,30 @@ func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
 		require.FailNow(t, "isolated runner exited before cancellation", "%v", err)
 	case <-descendantReady.seen:
 	}
+	require.NotEmpty(t, sandboxDescendantPIDs(t), "the running descendant must be visible")
 	cancel()
 	require.ErrorIs(t, <-finished, context.Canceled)
+	assert.Empty(t, sandboxDescendantPIDs(t), "cancellation must reap the descendant before Run returns")
+}
+
+// sandboxDescendantPIDs lists the helper descendants that are still alive.
+// Each one runs until it is killed.
+func sandboxDescendantPIDs(t *testing.T) []int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	require.NoError(t, err)
+	var pids []int
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		commandLine, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err == nil && string(commandLine) == "/proc/self/exe\x00--descendant\x00" {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 // outputSignal closes seen once the bytes written to it contain marker.
@@ -607,12 +629,12 @@ func (signal *outputSignal) Write(value []byte) (int, error) {
 func TestNativeRunnerTerminatesPromptlyOnStdoutOverflow(t *testing.T) {
 	runner, err := NewNativeRunner()
 	requireNativeNoError(t, err)
-	started := time.Now()
+	// The helper writes until it is killed, so Run returns only if the
+	// overflow stopped it.
 	result, err := runner.Run(t.Context(), sandboxTestRequest(t,
 		buildSandboxHelper(t, "overflow", "", ""), []byte("probe"), 1024))
 	skipUnavailable(t, err)
 	require.ErrorIs(t, err, ErrOutputTooLarge)
-	assert.Less(t, time.Since(started), 2*time.Second)
 	assert.LessOrEqual(t, int64(len(result.Stdout)), int64(1024))
 }
 
