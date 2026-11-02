@@ -159,3 +159,45 @@ func TestSettleReportsWorkersStillPolling(t *testing.T) {
 		require.NoError(t, s.Shutdown(t.Context()))
 	})
 }
+
+func TestSettleWakesAWorkerParkedInItsOwnSelect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := New(t.Context(), discardLogger())
+		var queued, handled atomic.Int64
+		other := make(chan struct{})
+		require.NoError(t, s.StartWorker("custom", func(ctx context.Context) error {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			found := false
+			for {
+				settle, resume := Park(ctx, found)
+				select {
+				case <-ctx.Done():
+					resume()
+					return ctx.Err()
+				case <-other:
+					// Not a poll: park again without resuming.
+					continue
+				case <-ticker.C:
+				case <-settle:
+				}
+				resume()
+				pending := queued.Load() - handled.Load()
+				handled.Add(pending)
+				found = pending > 0
+			}
+		}))
+		synctest.Wait()
+		queued.Add(1)
+		other <- struct{}{}
+		require.NoError(t, s.Settle(t.Context()))
+		assert.Equal(t, int64(1), handled.Load())
+		require.NoError(t, s.Shutdown(t.Context()))
+	})
+}
+
+func TestParkOutsideAWorkerNeverWakes(t *testing.T) {
+	settle, resume := Park(t.Context(), true)
+	assert.Nil(t, settle)
+	resume()
+}

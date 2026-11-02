@@ -58,17 +58,13 @@ type reportBusyKey struct{}
 type idleKey struct{}
 
 // Idle waits delay before a polling worker polls again, or until ctx ends.
-// found reports whether the poll that just finished did any work. Inside a job
-// started with StartWorker, Supervisor.Settle can end the wait early. Idle
-// waits only on a timer and channels, so it runs on fake time in a synctest
-// bubble.
+// found reports whether the polls since the worker last waited did any work.
+// Inside a job started with StartWorker, Supervisor.Settle can end the wait
+// early. Idle waits only on a timer and channels, so it runs on fake time in a
+// synctest bubble.
 func Idle(ctx context.Context, delay time.Duration, found bool) error {
-	var wake <-chan struct{}
-	if park, ok := ctx.Value(idleKey{}).(func(bool) (<-chan struct{}, func())); ok {
-		var unpark func()
-		wake, unpark = park(found)
-		defer unpark()
-	}
+	settle, resume := Park(ctx, found)
+	defer resume()
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -76,9 +72,21 @@ func Idle(ctx context.Context, delay time.Duration, found bool) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
-	case <-wake:
+	case <-settle:
 		return nil
 	}
+}
+
+// Park lets a worker that waits in its own select take part in Settle, as
+// Idle does. found has the same meaning as for Idle. The worker adds the
+// returned channel to its select; Settle closes it to ask for another poll.
+// The worker calls resume when it starts its next poll. Outside a job started
+// with StartWorker, the channel is nil and resume does nothing.
+func Park(ctx context.Context, found bool) (settle <-chan struct{}, resume func()) {
+	if park, ok := ctx.Value(idleKey{}).(func(bool) (<-chan struct{}, func())); ok {
+		return park(found)
+	}
+	return nil, func() {}
 }
 
 // ReportBusy distinguishes processing an item from waiting for work. Long-lived
