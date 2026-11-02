@@ -40,7 +40,7 @@ require (
 	go.kenn.io/kata v0.19.0
 	go.kenn.io/kit v0.47.4
 	golang.org/x/crypto v0.58.0
-	golang.org/x/image v0.44.0
+	golang.org/x/image v0.45.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
