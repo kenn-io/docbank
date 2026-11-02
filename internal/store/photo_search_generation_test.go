@@ -96,7 +96,7 @@ func (c photoSearchBeginConnector) Connect(ctx context.Context) (driver.Conn, er
 	if err != nil {
 		return nil, err
 	}
-	ready := make(chan driver.Conn)
+	ready := make(chan photoSearchDriverConn)
 	rawErr := make(chan error, 1)
 	released, finished := make(chan struct{}), make(chan struct{})
 	// Keep Raw active until the wrapping pool returns the connection. The
@@ -104,12 +104,16 @@ func (c photoSearchBeginConnector) Connect(ctx context.Context) (driver.Conn, er
 	go func() {
 		defer close(finished)
 		rawErr <- conn.Raw(func(raw any) error {
-			ready <- raw.(driver.Conn)
+			conn, ok := raw.(photoSearchDriverConn)
+			if !ok {
+				return errors.New("photo search connection lacks required driver interfaces")
+			}
+			ready <- conn
 			<-released
 			return nil
 		})
 	}()
-	var raw driver.Conn
+	var raw photoSearchDriverConn
 	select {
 	case raw = <-ready:
 	case err := <-rawErr:
@@ -117,7 +121,7 @@ func (c photoSearchBeginConnector) Connect(ctx context.Context) (driver.Conn, er
 		return nil, errors.Join(err, conn.Close())
 	}
 	return photoSearchBeginConn{
-		photoSearchDriverConn: raw.(photoSearchDriverConn), start: c.start, release: c.release,
+		photoSearchDriverConn: raw, start: c.start, release: c.release,
 		close: func() error {
 			close(released)
 			<-finished
@@ -137,6 +141,7 @@ type photoSearchDriverConn interface {
 
 type photoSearchBeginConn struct {
 	photoSearchDriverConn
+
 	start   func()
 	release chan struct{}
 	close   func() error
