@@ -94,10 +94,14 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 				}
 			}
 			if test.changeTimeFollowsModTime {
-				// Linux FAT/exFAT and rclone mounts report change time as mtime.
+				// Model FAT/exFAT and rclone, where restoring mtime also restores change time.
+				var initialChangeTime int64
 				scanner.watcher.observeFile = func(source watchSource, withChange bool) (watchFileState, error) {
 					state, err := source.observe(withChange)
-					state.fingerprint.change = state.fingerprint.modTime
+					if initialChangeTime == 0 {
+						initialChangeTime = state.fingerprint.change
+					}
+					state.fingerprint.change = initialChangeTime
 					return state, err
 				}
 			}
