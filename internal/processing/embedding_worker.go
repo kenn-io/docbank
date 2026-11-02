@@ -410,68 +410,68 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		var work EmbeddingWork
 		found := false
 
+		if !reconciled && !worker.clock().Before(worker.reconcileAt) && worker.reconcile.settled &&
+			worker.catalog.WriteRevision() == worker.reconcile.revision && (worker.reconcile.expiry.IsZero() || worker.clock().Before(worker.reconcile.expiry)) {
+			worker.reconcileAt = worker.clock().Add(time.Minute)
+		}
 		if !reconciled && !worker.clock().Before(worker.reconcileAt) {
-			if !worker.reconcile.sweeping && worker.reconcile.settled && worker.catalog.WriteRevision() == worker.reconcile.revision && (worker.reconcile.expiry.IsZero() || worker.clock().Before(worker.reconcile.expiry)) {
+			if !worker.reconcile.sweeping {
+				worker.reconcile = embeddingReconcileState{sweeping: true, revision: worker.catalog.WriteRevision()}
+			}
+			var spaces map[string]store.EmbeddingVectorSpaceRecord
+			if runtime, ok := worker.runtime.(interface {
+				VectorSpaces() map[string]store.EmbeddingVectorSpaceRecord
+			}); ok {
+				spaces = runtime.VectorSpaces()
+			}
+			var imageProfiles []store.ProcessingProfileRecord
+			if registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry); ok {
+				registry.mu.RLock()
+				for _, profile := range registry.profiles {
+					imageProfiles = append(imageProfiles, profile)
+				}
+				registry.mu.RUnlock()
+			}
+			var prepareImage func(context.Context, store.ProcessingProfileRecord, document.EmbeddingBindingV1, string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
+			if runtime, ok := worker.runtime.(interface {
+				ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
+			}); ok {
+				prepareImage = func(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+					generation, descriptor, err := runtime.ImageGeneration(ctx, profile, binding, versionID)
+					worker.reconcile.inputError(err)
+					return generation, descriptor, err
+				}
+			}
+			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
+				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
+				After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
+				SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
+				ImageRejections:        worker.imageRejections,
+				DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
+				HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
+					hydrated, err := hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
+					worker.reconcile.inputError(err)
+					return hydrated, err
+				},
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return processed, ctx.Err()
+				}
+				return processed, ErrEmbeddingPersistence
+			}
+			if !result.ConsentExpiresAt.IsZero() && (worker.reconcile.expiry.IsZero() || result.ConsentExpiresAt.Before(worker.reconcile.expiry)) {
+				worker.reconcile.expiry = result.ConsentExpiresAt
+			}
+			worker.reconcileAfter = result.Next
+			worker.imageAfter = result.ImageNext
+			worker.reconcileTextDone = result.Next == ""
+			worker.reconcileImageDone = result.ImageNext == (store.ImageReconcilePosition{})
+			if worker.reconcileTextDone && worker.reconcileImageDone {
+				worker.reconcileTextDone, worker.reconcileImageDone = false, false
 				worker.reconcileAt = worker.clock().Add(time.Minute)
-			} else {
-				if !worker.reconcile.sweeping {
-					worker.reconcile = embeddingReconcileState{sweeping: true, revision: worker.catalog.WriteRevision()}
-				}
-				var spaces map[string]store.EmbeddingVectorSpaceRecord
-				if runtime, ok := worker.runtime.(interface {
-					VectorSpaces() map[string]store.EmbeddingVectorSpaceRecord
-				}); ok {
-					spaces = runtime.VectorSpaces()
-				}
-				var imageProfiles []store.ProcessingProfileRecord
-				if registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry); ok {
-					registry.mu.RLock()
-					for _, profile := range registry.profiles {
-						imageProfiles = append(imageProfiles, profile)
-					}
-					registry.mu.RUnlock()
-				}
-				var prepareImage func(context.Context, store.ProcessingProfileRecord, document.EmbeddingBindingV1, string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
-				if runtime, ok := worker.runtime.(interface {
-					ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
-				}); ok {
-					prepareImage = func(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
-						generation, descriptor, err := runtime.ImageGeneration(ctx, profile, binding, versionID)
-						worker.reconcile.inputError(err)
-						return generation, descriptor, err
-					}
-				}
-				result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-					Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
-					After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
-					SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
-					ImageRejections:        worker.imageRejections,
-					DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
-					HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
-						hydrated, err := hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
-						worker.reconcile.inputError(err)
-						return hydrated, err
-					},
-				})
-				if err != nil {
-					if ctx.Err() != nil {
-						return processed, ctx.Err()
-					}
-					return processed, ErrEmbeddingPersistence
-				}
-				if !result.ConsentExpiresAt.IsZero() && (worker.reconcile.expiry.IsZero() || result.ConsentExpiresAt.Before(worker.reconcile.expiry)) {
-					worker.reconcile.expiry = result.ConsentExpiresAt
-				}
-				worker.reconcileAfter = result.Next
-				worker.imageAfter = result.ImageNext
-				worker.reconcileTextDone = result.Next == ""
-				worker.reconcileImageDone = result.ImageNext == (store.ImageReconcilePosition{})
-				if worker.reconcileTextDone && worker.reconcileImageDone {
-					worker.reconcileTextDone, worker.reconcileImageDone = false, false
-					worker.reconcileAt = worker.clock().Add(time.Minute)
-					worker.reconcile.sweeping = false
-					worker.reconcile.settled = !worker.reconcile.retry
-				}
+				worker.reconcile.sweeping = false
+				worker.reconcile.settled = !worker.reconcile.retry
 			}
 			reconciled = true
 		}

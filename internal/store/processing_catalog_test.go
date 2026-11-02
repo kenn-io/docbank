@@ -779,12 +779,12 @@ func newRenditionCatalogFixture(t *testing.T) (*Store, []string) {
 }
 
 func publishRenditionForTest(
-	tb testing.TB, s *Store, attachment RenditionAttachmentRecord, publishedAt, generationID string,
+	t *testing.T, s *Store, attachment RenditionAttachmentRecord, publishedAt, generationID string,
 ) error {
-	tb.Helper()
-	generation, err := s.StageLexicalGeneration(tb.Context(), generationID)
-	require.NoError(tb, err)
-	return s.PublishRenditionAndLexicalHeads(tb.Context(), attachment, RenditionHeadRecord{
+	t.Helper()
+	generation, err := s.StageLexicalGeneration(t.Context(), generationID)
+	require.NoError(t, err)
+	return s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
 		ContentVersionID:             attachment.ContentVersionID,
 		ProcessingProfileFingerprint: attachment.Profile.Fingerprint,
 		AttachmentID:                 attachment.ID,
@@ -819,17 +819,17 @@ func lexicalReplacementGenerationIDForTest(t *testing.T, s *Store) string {
 	return generationID
 }
 
-func seedRenditionCatalogVersions(tb testing.TB, s *Store) []string {
-	tb.Helper()
-	first, err := s.CreateFile(tb.Context(), s.RootID(), "synthetic-source-a.pdf", catalogSourceHash, 20, "application/pdf")
-	require.NoError(tb, err)
-	second, err := s.CreateFile(tb.Context(), s.RootID(), "synthetic-source-b.pdf", catalogSourceHash, 20, "application/pdf")
-	require.NoError(tb, err)
-	require.NoError(tb, s.withStorageTx(tb.Context(), func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tb.Context(), tx, catalogEvidenceBlobHash, int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
+func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {
+	t.Helper()
+	first, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-source-a.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	second, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-source-b.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		if err := s.EnsureBlobTx(t.Context(), tx, catalogEvidenceBlobHash, int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
 			return err
 		}
-		return s.EnsureBlobTx(tb.Context(), tx, catalogMarkdownBlobHash, int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
+		return s.EnsureBlobTx(t.Context(), tx, catalogMarkdownBlobHash, int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
 	}))
 	return []string{first.CurrentVersionID, second.CurrentVersionID}
 }

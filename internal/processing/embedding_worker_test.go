@@ -721,7 +721,7 @@ func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(_ context.Context, r
 			return store.EmbeddingReconcileResult{}, err
 		}
 	}
-	return store.EmbeddingReconcileResult{Revision: c.revision}, nil
+	return store.EmbeddingReconcileResult{}, nil
 }
 func (c *embeddingWorkerFakeCatalog) ClaimNextEmbeddingWork(_ context.Context, owner string, now time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error) {
 	c.mu.Lock()
@@ -1107,17 +1107,17 @@ func headKeyParts(version, binding string, kind document.EmbeddingInputKind) str
 func workerHash(value string) string { return workerHashBytes([]byte(value)) }
 func workerHex(value string) string  { return workerHash(value) }
 
-func embeddingWorkerDescriptor(t testing.TB) document.EmbeddingDescriptor {
-	t.Helper()
+func embeddingWorkerDescriptor(tb testing.TB) document.EmbeddingDescriptor {
+	tb.Helper()
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-space", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"}})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: workerHash("policy"), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "synthetic", ModelRevision: "v1", Dimension: 2, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone, ScalarEncoding: "float32", DocumentFormatter: "document/v1", QueryFormatter: "query/v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk}, CompatibilityID: "synthetic-space", SupportsTextQuery: true, ModelInput: contract, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return descriptor
 }
 
-func embeddingWorkerProfile(t testing.TB, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
-	t.Helper()
+func embeddingWorkerProfile(tb testing.TB, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
+	tb.Helper()
 	makeBinding := func(name string, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{Activation: document.EmbeddingOptional, AuthorizationFingerprint: workerHash("auth"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: workerHash("disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: kind, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, ModelInput: descriptor.ModelInput, Model: descriptor.Model, Name: name, Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}
 		if kind == document.EmbeddingInputRenditionChunk {
@@ -1135,7 +1135,7 @@ func embeddingWorkerProfile(t testing.TB, descriptor document.EmbeddingDescripto
 			TrustBoundary: "local_process", UploadOptionsFingerprint: workerHash("upload-options")},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{MaxDocumentChars: 10000, CompletenessFingerprint: workerHash("complete"), LexicalSegmenterFingerprint: workerHash("lexical"), MaxSegmentRunes: 1000, MaxUnitRunes: 1000, NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, NormalizerFingerprint: workerHash("normalizer"), RenditionContract: document.RenditionContractV1, SanitizerFingerprint: workerHash("sanitizer"), SourceEvidenceContract: document.SourceEvidenceContractV1}, RetentionDisclosure: document.RetentionDisclosurePolicyV1{AttachmentPolicyFingerprint: workerHash("attachment"), ConsentFingerprint: workerHash("consent"), TrustBoundary: string(document.EmbeddingTrustLocalProcess)}, Retrieval: document.RetrievalPolicyV1{LexicalLimit: 10, VectorLimit: 10}, Embeddings: []document.EmbeddingBindingV1{makeBinding("chunk", document.EmbeddingInputRenditionChunk), makeBinding("direct", document.EmbeddingInputOriginalFile)}}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return store.ProcessingProfileRecord{Fingerprint: fingerprints.Profile, CanonicalProfile: canonical, EvidenceLexicalFingerprint: fingerprints.EvidenceLexical, RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure, AttachmentPolicyFingerprint: profile.RetentionDisclosure.AttachmentPolicyFingerprint, ConsentFingerprint: profile.RetentionDisclosure.ConsentFingerprint, TrustBoundary: profile.RetentionDisclosure.TrustBoundary}
 }
 
@@ -1217,25 +1217,25 @@ func (embeddingIntegrationTokenizer) Tokenize(text string, limit int) ([]documen
 	return result, nil
 }
 
-func newRealEmbeddingWorker(t testing.TB, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
-	t.Helper()
-	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(t, kind, nil, additionalBindings...)
+func newRealEmbeddingWorker(tb testing.TB, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
+	tb.Helper()
+	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(tb, kind, nil, additionalBindings...)
 	return fixture, fake, worker, request
 }
 
-func newRealEmbeddingWorkerWithDescriptor(t testing.TB, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
-	t.Helper()
-	fixture := newPublicationFixture(t)
-	fake := newEmbeddingWorkerFixture(t)
+func newRealEmbeddingWorkerWithDescriptor(tb testing.TB, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
+	tb.Helper()
+	fixture := newPublicationFixture(tb)
+	fake := newEmbeddingWorkerFixture(tb)
 	if descriptor != nil {
 		fake.descriptor = *descriptor
-		fake.profile = embeddingWorkerProfile(t, *descriptor)
+		fake.profile = embeddingWorkerProfile(tb, *descriptor)
 	}
 	var portable, embeddingProfile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(fixture.profile.CanonicalProfile, &portable))
-	require.NoError(t, json.Unmarshal(fake.profile.CanonicalProfile, &embeddingProfile))
+	require.NoError(tb, json.Unmarshal(fixture.profile.CanonicalProfile, &portable))
+	require.NoError(tb, json.Unmarshal(fake.profile.CanonicalProfile, &embeddingProfile))
 	if descriptor != nil {
-		rendition := newWorkerProvider(t).Descriptor()
+		rendition := newWorkerProvider(tb).Descriptor()
 		portable.Rendition.TrustBoundary = string(rendition.TrustBoundary)
 		portable.Rendition.Descriptor = document.ProviderDescriptorV1{ID: rendition.ID, Fingerprint: rendition.Fingerprint}
 	}
@@ -1253,7 +1253,7 @@ func newRealEmbeddingWorkerWithDescriptor(t testing.TB, kind document.EmbeddingI
 		portable.Embeddings = append(portable.Embeddings, additional)
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(portable)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	fixture.profile.CanonicalProfile, fixture.profile.Fingerprint = canonical, fingerprints.Profile
 	fixture.profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
 	fixture.profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
@@ -1265,38 +1265,38 @@ func newRealEmbeddingWorkerWithDescriptor(t testing.TB, kind document.EmbeddingI
 	}
 	if kind == document.EmbeddingInputOriginalFile {
 		data := mediatest.PNG(2, 2, color.White)
-		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
-		require.NoError(t, err)
-		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "synthetic.png", receipt.Hash, receipt.Size,
-			"image/png", processingBlobPhysical(t, receipt))
-		require.NoError(t, err)
+		receipt, err := fixture.blobs.WriteDetailedContext(tb.Context(), bytes.NewReader(data))
+		require.NoError(tb, err)
+		node, err := fixture.catalog.CreateFile(tb.Context(), fixture.catalog.RootID(), "synthetic.png", receipt.Hash, receipt.Size,
+			"image/png", processingBlobPhysical(tb, receipt))
+		require.NoError(tb, err)
 		generation.SourceVersionID = node.CurrentVersionID
 		generation.GenerationChecksum = receipt.Hash
 		generation.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
 	} else {
-		staged := fixture.stage(t, publicationIDs{"b8", "58", "98"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
+		staged := fixture.stage(tb, publicationIDs{"b8", "58", "98"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
-		require.NoError(t, err)
-		_, err = publisher.PublishRendition(t.Context(), staged)
-		require.NoError(t, err)
+		require.NoError(tb, err)
+		_, err = publisher.PublishRendition(tb.Context(), staged)
+		require.NoError(tb, err)
 		artifact := staged.Build.Artifacts[0]
-		evidenceJSON, err := readExactEmbeddingBlob(t.Context(), fixture.blobs, artifact.BlobHash, artifact.Size)
-		require.NoError(t, err)
+		evidenceJSON, err := readExactEmbeddingBlob(tb.Context(), fixture.blobs, artifact.BlobHash, artifact.Size)
+		require.NoError(tb, err)
 		var evidence document.NormalizedEvidenceV1
-		require.NoError(t, json.Unmarshal(evidenceJSON, &evidence))
+		require.NoError(tb, json.Unmarshal(evidenceJSON, &evidence))
 		evidence.Checksum = artifact.BlobHash
 		policy, err := document.NewInputPolicy(binding, embeddingIntegrationTokenizer{}, fingerprints.EvidenceLexical, nil)
-		require.NoError(t, err)
+		require.NoError(tb, err)
 		generated, err := document.BuildEmbeddingInputs(evidence, policy, document.GenerationLimits{
 			MaxInputs: 100, MaxTotalContentTokens: 10000, MaxTotalRenderedTokens: 10000,
 			MaxTotalContentBytes: 1 << 20, MaxTotalRenderedBytes: 1 << 20, MaxFittingWorkTokens: 100000, MaxFittingWorkBytes: 1 << 20,
 		})
-		require.NoError(t, err)
+		require.NoError(tb, err)
 		generation.GenerationJSON, err = document.MarshalEmbeddingInputGeneration(generated)
-		require.NoError(t, err)
-		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(generation.GenerationJSON))
-		require.NoError(t, err)
-		require.NoError(t, fixture.catalog.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(t, receipt)))
+		require.NoError(tb, err)
+		receipt, err := fixture.blobs.WriteDetailedContext(tb.Context(), bytes.NewReader(generation.GenerationJSON))
+		require.NoError(tb, err)
+		require.NoError(tb, fixture.catalog.RecordRenditionBlob(tb.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(tb, receipt)))
 		generation.SourceVersionID, generation.AttachmentID = fixture.versionID, staged.Attachment.ID
 		generation.ID = workerHash("embedding-generation-attachment/v1\x00" + generated.Checksum + "\x00" + generation.AttachmentID)
 		generation.GenerationBlobHash, generation.GenerationEncodedSize = receipt.Hash, receipt.Size
@@ -1315,27 +1315,27 @@ func newRealEmbeddingWorkerWithDescriptor(t testing.TB, kind document.EmbeddingI
 	// Enqueue installs the profile before checking consent. Register it through
 	// the existing source-authority path for direct input, which has no rendition.
 	if kind == document.EmbeddingInputOriginalFile {
-		staged := fixture.stage(t, publicationIDs{"b9", "59", "99"}, "synthetic evidence", "Example")
+		staged := fixture.stage(tb, publicationIDs{"b9", "59", "99"}, "synthetic evidence", "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
-		require.NoError(t, err)
-		_, err = publisher.PublishRendition(t.Context(), staged)
-		require.NoError(t, err)
+		require.NoError(tb, err)
+		_, err = publisher.PublishRendition(tb.Context(), staged)
+		require.NoError(tb, err)
 	}
-	_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+	_, err = fixture.catalog.GrantConsent(tb.Context(), store.ProcessingConsentGrantRequest{
 		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
 		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	request := store.EmbeddingJobRequest{
 		ContentVersionID: generation.SourceVersionID, Profile: fixture.profile, BindingID: binding.Name,
 		Descriptor: fake.descriptor, InputGeneration: generation, Authorization: consent,
 	}
 	if descriptor == nil {
-		_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
-		require.NoError(t, err)
+		_, err = fixture.catalog.EnqueueEmbeddingJob(tb.Context(), request)
+		require.NoError(tb, err)
 	}
-	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), fake.runtime.Classify)
-	require.NoError(t, err)
+	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}, fixture.blobs, tb.TempDir(), fake.runtime.Classify)
+	require.NoError(tb, err)
 	config := EmbeddingWorkerConfig{Catalog: fixture.catalog, Authority: fixture.catalog,
 		Blobs: fixture.blobs, GenerationBlobs: fixture.blobs, Runtime: runtime, Gate: newTestOperationGate(), Owner: "integration-worker",
 		LeaseDuration: 3 * time.Second, IdleDelay: time.Millisecond, RetryLimit: 3, MaxRetryDelay: time.Second,
@@ -1343,7 +1343,7 @@ func newRealEmbeddingWorkerWithDescriptor(t testing.TB, kind document.EmbeddingI
 		DescriptorFingerprints: []string{fake.descriptor.Fingerprint},
 	}
 	worker, err := NewEmbeddingWorker(config)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return fixture, fake, worker, request, config
 }
 
@@ -2576,10 +2576,6 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 				require.LessOrEqual(t, len(x.worker.imageRejections), limit)
 			}
 			require.Greater(t, x.calls, limit, "scans reach every rejected preview")
-			// Finish the active sweep before checking the idle gate.
-			for range 3 {
-				x.scan(t)
-			}
 			settled := x.calls
 			x.scan(t)
 			require.Equal(t, settled, x.calls, "permanent rejections permit settling even after eviction")

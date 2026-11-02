@@ -60,12 +60,12 @@ type EmbeddingReconcileRequest struct {
 // EmbeddingReconcileResult reports work materialized from existing portable
 // authority. Next is empty when the scan reached the end.
 type EmbeddingReconcileResult struct {
-	Revision         uint64
 	ConsentExpiresAt time.Time
 	ImageNext        ImageReconcilePosition
 	Next             string
 	Examined         int
 	Enqueued         int
+	Skipped          int
 }
 
 type embeddingReconcileCandidate struct {
@@ -89,7 +89,6 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 		}
 		executable[fingerprint] = struct{}{}
 	}
-	result := EmbeddingReconcileResult{Revision: s.WriteRevision()}
 	var generationIDs []string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if request.SkipGenerations {
@@ -106,9 +105,10 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	if err != nil {
 		return EmbeddingReconcileResult{}, err
 	}
+	result := EmbeddingReconcileResult{}
 	if !request.SkipImages && request.PrepareImageGeneration != nil {
 		var err error
-		result.ImageNext, err = s.discoverImageEmbeddingJobs(ctx, request, executable, &result)
+		result.ImageNext, err = s.discoverImageEmbeddingJobs(ctx, request, executable, &result.ConsentExpiresAt)
 		if err != nil {
 			return result, err
 		}
@@ -253,7 +253,8 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					return EmbeddingReconcileResult{}, ctx.Err()
 				}
 				// A damaged or temporarily unreadable candidate must not block
-				// later generations. The caller tracks retryable hydration failures.
+				// later generations. Revisit it on a subsequent discovery pass.
+				result.Skipped++
 				continue
 			}
 			candidate.request.InputGeneration = hydrated
@@ -359,7 +360,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 	return ProviderOperationAuthorizationRequest{}, false, nil
 }
 
-func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest, executable map[string]struct{}, result *EmbeddingReconcileResult) (ImageReconcilePosition, error) {
+func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest, executable map[string]struct{}, consentExpiry *time.Time) (ImageReconcilePosition, error) {
 	type target struct {
 		version  string
 		profile  ProcessingProfileRecord
@@ -440,7 +441,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				if _, rejected := request.ImageRejections[key]; rejected {
 					continue
 				}
-				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, &result.ConsentExpiresAt)
+				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, consentExpiry)
 				if err != nil {
 					return err
 				}

@@ -1194,4 +1194,4 @@ into a daemon-owned vault. External agents should continue to use the
 
 ## Idle embedding discovery
 
-A quiet vault skips embedding discovery after a complete sweep. Any committed catalog write other than search reader bookkeeping, or a daemon restart, brings back one full pass. Consent expiry also wakes discovery because an older valid grant can authorize new work. Temporary input failures keep discovery active; permanently rejected inputs let the vault settle.
+A quiet vault skips embedding discovery. Any committed write other than search bookkeeping, or a daemon restart, brings back one full pass.
