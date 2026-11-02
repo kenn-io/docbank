@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -122,49 +123,57 @@ func TestProcessorCancellationDoesNotWaitForSpoolReservation(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
 	policy := testPolicy(t, 1024, 10)
-	requestStarted := make(chan struct{})
-	client, err := NewClient(policy, ClientConfig{
-		APIKey: "synthetic-key",
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			close(requestStarted)
-			<-request.Context().Done()
-			return nil, request.Context().Err()
-		})},
-	})
-	require.NoError(t, err)
-	processor, err := NewProcessor(ProcessorConfig{
-		Client: client, Policy: policy, CapabilityManifest: syntheticManifest(t, policy, true),
-		SpoolDirectory: directory, MaxSpoolBytes: 1024, MinFreeBytes: 1,
-	})
-	require.NoError(t, err)
-	source, err := ocr.NewSource(
-		io.NopCloser(bytes.NewReader(content)), mediaTypePDF, int64(len(content)), hex.EncodeToString(digest[:]),
-	)
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, processErr := processor.Process(ctx, source)
-		done <- processErr
-	}()
-	<-requestStarted
-	releaseLock, err := acquireSpoolReservationLock(t.Context(), directory)
-	require.NoError(t, err)
-	cancel()
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Move the fake clock to the real time that the manifest observation
+		// date and the spool file times are checked against.
+		time.Sleep(time.Until(now))
+		requestStarted := make(chan struct{})
+		client, err := NewClient(policy, ClientConfig{
+			APIKey: "synthetic-key",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				close(requestStarted)
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			})},
+		})
+		require.NoError(t, err)
+		processor, err := NewProcessor(ProcessorConfig{
+			Client: client, Policy: policy, CapabilityManifest: syntheticManifest(t, policy, true),
+			SpoolDirectory: directory, MaxSpoolBytes: 1024, MinFreeBytes: 1,
+		})
+		require.NoError(t, err)
+		source, err := ocr.NewSource(
+			io.NopCloser(bytes.NewReader(content)), mediaTypePDF, int64(len(content)), hex.EncodeToString(digest[:]),
+		)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			_, processErr := processor.Process(ctx, source)
+			done <- processErr
+		}()
+		<-requestStarted
+		releaseLock, err := acquireSpoolReservationLock(t.Context(), directory)
+		require.NoError(t, err)
+		cancel()
 
-	var processErr error
-	select {
-	case processErr = <-done:
-	case <-time.After(5 * time.Second):
+		// Process must finish without retrying the held reservation lock.
+		synctest.Wait()
+		var processErr error
+		select {
+		case processErr = <-done:
+		default:
+			releaseLock()
+			<-done
+			t.Fatal("Process waited for the spool reservation after cancellation")
+		}
 		releaseLock()
-		<-done
-		t.Fatal("Process waited for the spool reservation after cancellation")
-	}
-	releaseLock()
-	require.ErrorIs(t, processErr, context.Canceled)
-	removed, err := ScavengeSpoolDirectory(directory, time.Now().Add(time.Second))
-	require.NoError(t, err)
-	assert.Equal(t, 1, removed)
+		require.ErrorIs(t, processErr, context.Canceled)
+		removed, err := ScavengeSpoolDirectory(directory, time.Now().Add(time.Second))
+		require.NoError(t, err)
+		assert.Equal(t, 1, removed)
+	})
 }
 
 func TestProcessorDOCXRoute(t *testing.T) {

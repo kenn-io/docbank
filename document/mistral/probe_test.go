@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -111,24 +112,30 @@ func TestRunCapabilityProbeRecordsUnverifiedProviderBoundWithoutAuthority(t *tes
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			policy := testPolicy(t, 1<<20, 10)
-			transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true, BoundMode: test.boundMode}
-			client, err := NewClient(policy, ClientConfig{
-				APIKey: "synthetic-key", MaxRetryDelay: time.Millisecond,
-				HTTPClient: &http.Client{Transport: transport},
+			now := time.Now()
+			// A failed bound request waits out the fallback retry backoff on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				// The probe rejects observation dates after the fake clock.
+				time.Sleep(time.Until(now))
+				policy := testPolicy(t, 1<<20, 10)
+				transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true, BoundMode: test.boundMode}
+				client, err := NewClient(policy, ClientConfig{
+					APIKey:     "synthetic-key",
+					HTTPClient: &http.Client{Transport: transport},
+				})
+				require.NoError(t, err)
+				manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{
+					Fixtures:   generatedProbeFixtureConfig(t),
+					ObservedAt: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
+				})
+				require.NoError(t, err)
+				pdf := findManifestResult(t, manifest, "pdf")
+				assert.Equal(t, ProbeStatusPassed, pdf.Status)
+				assert.Equal(t, UnitBoundNone, pdf.UnitBoundMethod)
+				assert.Equal(t, test.wantReason, pdf.ReasonCode)
+				_, err = policy.Authorize(manifest, "pdf")
+				require.ErrorContains(t, err, "no enforceable unit bound")
 			})
-			require.NoError(t, err)
-			manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{
-				Fixtures:   generatedProbeFixtureConfig(t),
-				ObservedAt: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
-			})
-			require.NoError(t, err)
-			pdf := findManifestResult(t, manifest, "pdf")
-			assert.Equal(t, ProbeStatusPassed, pdf.Status)
-			assert.Equal(t, UnitBoundNone, pdf.UnitBoundMethod)
-			assert.Equal(t, test.wantReason, pdf.ReasonCode)
-			_, err = policy.Authorize(manifest, "pdf")
-			require.ErrorContains(t, err, "no enforceable unit bound")
 		})
 	}
 }
@@ -160,20 +167,26 @@ func TestRunCapabilityProbeClassifiesSanitizedFailures(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			policy := testPolicy(t, 1<<20, 10)
-			transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true, FailureMode: test.mode}
-			client, err := NewClient(policy, ClientConfig{
-				APIKey: "synthetic-key", MaxRetryDelay: time.Millisecond,
-				HTTPClient: &http.Client{Transport: transport},
+			now := time.Now()
+			// Transient failures wait out the fallback retry backoff on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				// The probe rejects observation dates after the fake clock.
+				time.Sleep(time.Until(now))
+				policy := testPolicy(t, 1<<20, 10)
+				transport := &testfixture.ProbeTransport{T: t, Model: defaultModel, ExtractHeader: true, ExtractFooter: true, FailureMode: test.mode}
+				client, err := NewClient(policy, ClientConfig{
+					APIKey:     "synthetic-key",
+					HTTPClient: &http.Client{Transport: transport},
+				})
+				require.NoError(t, err)
+				manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{
+					Fixtures: generatedProbeFixtureConfig(t), ObservedAt: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
+				})
+				require.NoError(t, err)
+				pdf := findManifestResult(t, manifest, "pdf")
+				assert.Equal(t, test.wantStatus, pdf.Status)
+				assert.Equal(t, test.wantReason, pdf.ReasonCode)
 			})
-			require.NoError(t, err)
-			manifest, err := RunCapabilityProbe(t.Context(), client, ProbeConfig{
-				Fixtures: generatedProbeFixtureConfig(t), ObservedAt: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
-			})
-			require.NoError(t, err)
-			pdf := findManifestResult(t, manifest, "pdf")
-			assert.Equal(t, test.wantStatus, pdf.Status)
-			assert.Equal(t, test.wantReason, pdf.ReasonCode)
 		})
 	}
 }
