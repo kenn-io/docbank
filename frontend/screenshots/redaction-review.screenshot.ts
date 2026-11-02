@@ -869,10 +869,10 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await open("two-pages.pdf", false, true);
     await drawer.getByRole("button", { name: "Back to reading", exact: true }).click();
     const readingZoom = reader.getByRole("textbox", { name: "Set zoom" });
-    const previousZoom = await readingZoom.inputValue();
+    await expect(readingZoom).toHaveValue("125");
     await reader.getByRole("button", { name: "Zoom Menu", exact: true }).click();
     await reader.getByRole("menuitem", { name: "Fit to Width", exact: true }).click();
-    await expect(readingZoom).not.toHaveValue(previousZoom);
+    await expect(readingZoom).not.toHaveValue("125");
     const widthZoom = Number(await readingZoom.inputValue());
     await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled();
