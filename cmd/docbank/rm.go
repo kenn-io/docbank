@@ -14,6 +14,7 @@ import (
 var rmJSON bool
 
 var rmCmd = &cobra.Command{
+	Aliases: []string{"delete"},
 	Example: `  docbank document remove id:12
   docbank trash list
   docbank document restore id:12`,

@@ -15,6 +15,8 @@ import (
 )
 
 var auditCmd = &cobra.Command{
+	Example: `  docbank audit status /cases/acme --json
+  docbank audit enable /cases/acme`,
 	Long: `Enable permanent, irreversible retention for a folder. enable previews the
 scope; enable --run --token T --acknowledge-permanent-retention commits it.
 Exit 4 means the preview went stale: review a new preview before retrying.
