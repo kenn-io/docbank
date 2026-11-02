@@ -12,10 +12,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	docmcp "go.kenn.io/docbank/internal/mcp"
@@ -230,254 +232,255 @@ func TestDaemonMCPHTTPDisablesBackgroundIdleTimeout(t *testing.T) {
 	assertDaemonMCPCleanedUp(t, root, record.Address)
 }
 
+// The drain tests serve over in-memory listeners inside synctest bubbles, so
+// the drain deadlines run on fake time.
+
 func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
-	apiListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })}
-	mcpListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	started, release := make(chan struct{}), make(chan struct{})
-	releaseRead := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(releaseRead)
-	mcpHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-release
-		request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://"+apiListener.Addr().String(), nil)
-		if requestErr != nil {
-			http.Error(w, "request failed", http.StatusInternalServerError)
-			return
-		}
-		response, requestErr := http.DefaultClient.Do(request)
-		if requestErr != nil {
-			http.Error(w, "API unavailable", http.StatusInternalServerError)
-			return
-		}
-		defer func() { _ = response.Body.Close() }()
-		_, _ = io.Copy(w, response.Body)
-	})}
-	stop, done := make(chan struct{}), make(chan error, 1)
-	go func() {
-		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{
-			{name: "API", server: apiHTTP, listener: apiListener},
-			{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true},
-		}, drainHTTPServer(mcpHTTP), func() {}, func(context.Context) error { return nil })
-	}()
-	t.Cleanup(func() { _ = mcpHTTP.Close(); _ = apiHTTP.Close() })
-	result := make(chan string, 1)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+mcpListener.Addr().String(), nil)
-	require.NoError(t, err)
-	go func() {
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			result <- err.Error()
-			return
-		}
-		defer func() { _ = response.Body.Close() }()
-		data, _ := io.ReadAll(response.Body)
-		result <- string(data)
-	}()
-	<-started
-	close(stop)
-	// Once Shutdown closes the MCP listener, the pending read can use the API.
-	require.Eventually(t, func() bool {
-		connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", mcpListener.Addr().String())
-		if err != nil {
-			return true
-		}
-		_ = connection.Close()
-		return false
-	}, time.Second*5, time.Millisecond*10)
-	releaseRead()
-	assert.Equal(t, "synthetic-vault", <-result)
-	require.NoError(t, <-done)
+	synctest.Test(t, func(t *testing.T) {
+		apiListener, mcpListener := newMemListener(), newMemListener()
+		apiClient, mcpClient := apiListener.client(), mcpListener.client()
+		apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })}
+		started, release := make(chan struct{}), make(chan struct{})
+		releaseRead := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseRead)
+		mcpHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(started)
+			<-release
+			request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://api/", nil)
+			if requestErr != nil {
+				http.Error(w, "request failed", http.StatusInternalServerError)
+				return
+			}
+			response, requestErr := apiClient.Do(request)
+			if requestErr != nil {
+				http.Error(w, "API unavailable", http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			_, _ = io.Copy(w, response.Body)
+		})}
+		stop, done := make(chan struct{}), make(chan error, 1)
+		go func() {
+			done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{
+				{name: "API", server: apiHTTP, listener: apiListener},
+				{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true},
+			}, drainHTTPServer(mcpHTTP), func() {}, func(context.Context) error { return nil })
+		}()
+		t.Cleanup(func() {
+			_ = mcpHTTP.Close()
+			_ = apiHTTP.Close()
+			apiClient.CloseIdleConnections()
+			mcpClient.CloseIdleConnections()
+		})
+		result := make(chan string, 1)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://mcp/", nil)
+		require.NoError(t, err)
+		go func() {
+			response, err := mcpClient.Do(request)
+			if err != nil {
+				result <- err.Error()
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			data, _ := io.ReadAll(response.Body)
+			result <- string(data)
+		}()
+		<-started
+		close(stop)
+		// The drain blocks on the pending read, after Shutdown closed the MCP
+		// listener.
+		synctest.Wait()
+		require.True(t, mcpListener.isClosed(), "the MCP drain must close its listener first")
+		require.False(t, apiListener.isClosed(), "the API stays open while MCP drains")
+		releaseRead()
+		assert.Equal(t, "synthetic-vault", <-result)
+		require.NoError(t, <-done)
+	})
 }
 
 func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	base := "http://" + listener.Addr().String()
-	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })
-	started, release := make(chan struct{}), make(chan struct{})
-	releaseRead := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(releaseRead)
-	var once sync.Once
-	gate := docmcp.NewRequestGate()
-	mcp := gate.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fixture := false
-		once.Do(func() { fixture = true; close(started) })
-		if !fixture {
-			// A probe admitted before the drain started returns at once.
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		<-release
-		request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api", nil)
-		if requestErr != nil {
-			http.Error(w, "request failed", http.StatusInternalServerError)
-			return
-		}
-		response, requestErr := http.DefaultClient.Do(request)
-		if requestErr != nil {
-			http.Error(w, "API unavailable", http.StatusInternalServerError)
-			return
-		}
-		defer func() { _ = response.Body.Close() }()
-		_, _ = io.Copy(w, response.Body)
-	}))
-	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: withMCPRoute(api, mcp)}
-	t.Cleanup(func() { _ = server.Close() })
-	stop, done := make(chan struct{}), make(chan error, 1)
-	go func() {
-		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
-			gate.Shutdown, func() {}, func(context.Context) error { return nil })
-	}()
-	result := make(chan string, 1)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/mcp", strings.NewReader("{}"))
-	require.NoError(t, err)
-	request.Header.Set("Content-Type", "application/json")
-	go func() {
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			result <- err.Error()
-			return
-		}
-		defer func() { _ = response.Body.Close() }()
-		data, _ := io.ReadAll(response.Body)
-		result <- string(data)
-	}()
-	<-started
-	close(stop)
-	// Once the drain starts, new MCP requests are refused on the shared port.
-	probe := &http.Client{Timeout: time.Second}
-	require.Eventually(t, func() bool {
+	synctest.Test(t, func(t *testing.T) {
+		listener := newMemListener()
+		client := listener.client()
+		const base = "http://daemon"
+		api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })
+		started, release := make(chan struct{}), make(chan struct{})
+		releaseRead := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseRead)
+		var once sync.Once
+		gate := docmcp.NewRequestGate()
+		mcp := gate.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fixture := false
+			once.Do(func() { fixture = true; close(started) })
+			if !fixture {
+				// A probe admitted before the drain started returns at once.
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			<-release
+			request, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api", nil)
+			if requestErr != nil {
+				http.Error(w, "request failed", http.StatusInternalServerError)
+				return
+			}
+			response, requestErr := client.Do(request)
+			if requestErr != nil {
+				http.Error(w, "API unavailable", http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			_, _ = io.Copy(w, response.Body)
+		}))
+		server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: withMCPRoute(api, mcp)}
+		t.Cleanup(func() { _ = server.Close(); client.CloseIdleConnections() })
+		stop, done := make(chan struct{}), make(chan error, 1)
+		go func() {
+			done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
+				gate.Shutdown, func() {}, func(context.Context) error { return nil })
+		}()
+		result := make(chan string, 1)
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/mcp", strings.NewReader("{}"))
-		if err != nil {
-			return false
-		}
+		require.NoError(t, err)
 		request.Header.Set("Content-Type", "application/json")
-		response, err := probe.Do(request)
-		if err != nil {
-			return false
-		}
+		go func() {
+			response, err := client.Do(request)
+			if err != nil {
+				result <- err.Error()
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			data, _ := io.ReadAll(response.Body)
+			result <- string(data)
+		}()
+		<-started
+		close(stop)
+		// Once the drain starts, new MCP requests are refused on the shared port.
+		synctest.Wait()
+		request, err = http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/mcp", strings.NewReader("{}"))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		require.NoError(t, err)
 		_ = response.Body.Close()
-		return response.StatusCode == http.StatusServiceUnavailable
-	}, time.Second*5, time.Millisecond*10)
-	releaseRead()
-	assert.Equal(t, "synthetic-vault", <-result)
-	require.NoError(t, <-done)
+		assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+		releaseRead()
+		assert.Equal(t, "synthetic-vault", <-result)
+		require.NoError(t, <-done)
+	})
 }
 
 func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	started, canceled := make(chan struct{}), make(chan struct{})
-	gate := docmcp.NewRequestGate()
-	mcp := gate.Wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
-		close(canceled)
-	}))
-	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: withMCPRoute(http.NotFoundHandler(), mcp)}
-	t.Cleanup(func() { _ = server.Close() })
-	stop, done := make(chan struct{}), make(chan error, 1)
-	var apiShutdownErr error
-	go func() {
-		done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
-			gate.Shutdown, func() {}, func(ctx context.Context) error {
-				// The gate must cancel the stalled read before the API deadline.
-				select {
-				case <-canceled:
-				case <-ctx.Done():
-				}
-				apiShutdownErr = ctx.Err()
-				return nil
-			})
-	}()
-	requestDone := make(chan struct{})
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+listener.Addr().String()+"/mcp", strings.NewReader("{}"))
-	require.NoError(t, err)
-	request.Header.Set("Content-Type", "application/json")
-	go func() {
-		defer close(requestDone)
-		response, err := http.DefaultClient.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-		}
-	}()
-	<-started
-	close(stop)
-	err = <-done
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.ErrorContains(t, err, "draining daemon MCP HTTP requests")
-	require.NoError(t, apiShutdownErr)
-	<-requestDone
+	synctest.Test(t, func(t *testing.T) {
+		listener := newMemListener()
+		client := listener.client()
+		started, canceled := make(chan struct{}), make(chan struct{})
+		gate := docmcp.NewRequestGate()
+		mcp := gate.Wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			close(started)
+			<-r.Context().Done()
+			close(canceled)
+		}))
+		server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: withMCPRoute(http.NotFoundHandler(), mcp)}
+		t.Cleanup(func() { _ = server.Close(); client.CloseIdleConnections() })
+		stop, done := make(chan struct{}), make(chan error, 1)
+		var apiShutdownErr error
+		go func() {
+			done <- serveDaemonHTTP(t.Context(), stop, []servingHTTP{{name: "API", server: server, listener: listener}},
+				gate.Shutdown, func() {}, func(ctx context.Context) error {
+					// The gate must cancel the stalled read before the API deadline.
+					select {
+					case <-canceled:
+					case <-ctx.Done():
+					}
+					apiShutdownErr = ctx.Err()
+					return nil
+				})
+		}()
+		requestDone := make(chan struct{})
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://daemon/mcp", strings.NewReader("{}"))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		go func() {
+			defer close(requestDone)
+			response, err := client.Do(request)
+			if err == nil {
+				_ = response.Body.Close()
+			}
+		}()
+		<-started
+		begun := time.Now()
+		close(stop)
+		err = <-done
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.ErrorContains(t, err, "draining daemon MCP HTTP requests")
+		require.NoError(t, apiShutdownErr)
+		assert.Less(t, time.Since(begun), daemon.HTTPDrainTimeout, "the MCP drain gives up within the daemon's drain budget")
+		<-requestDone
+	})
 }
 
 func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	started, canceled, jobsStopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	jobsStoppedBeforeCancel := false
-	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
-		select {
-		case <-jobsStopped:
-			jobsStoppedBeforeCancel = true
-		default:
-		}
-		close(canceled)
-	})}
-	t.Cleanup(func() { _ = server.Close() })
-	stop, done := make(chan struct{}), make(chan error, 1)
-	var apiShutdownErr error
-	go func() {
-		done <- serveDaemonHTTP(t.Context(), stop,
-			[]servingHTTP{{name: "MCP HTTP", server: server, listener: listener, drainedFirst: true}},
-			drainHTTPServer(server), func() { close(jobsStopped) },
-			func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
-	}()
-	requestDone := make(chan struct{})
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listener.Addr().String(), nil)
-	require.NoError(t, err)
-	go func() {
-		defer close(requestDone)
-		response, err := http.DefaultClient.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-		}
-	}()
-	<-started
-	close(stop)
-	require.ErrorIs(t, <-done, context.DeadlineExceeded)
-	// A stalled MCP read must leave the API its own share of the deadline.
-	require.NoError(t, apiShutdownErr)
-	<-canceled
-	assert.True(t, jobsStoppedBeforeCancel, "jobs stop before the MCP drain")
-	<-requestDone
+	synctest.Test(t, func(t *testing.T) {
+		listener := newMemListener()
+		client := listener.client()
+		started, canceled, jobsStopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		jobsStoppedBeforeCancel := false
+		server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			close(started)
+			<-r.Context().Done()
+			select {
+			case <-jobsStopped:
+				jobsStoppedBeforeCancel = true
+			default:
+			}
+			close(canceled)
+		})}
+		t.Cleanup(func() { _ = server.Close(); client.CloseIdleConnections() })
+		stop, done := make(chan struct{}), make(chan error, 1)
+		var apiShutdownErr error
+		go func() {
+			done <- serveDaemonHTTP(t.Context(), stop,
+				[]servingHTTP{{name: "MCP HTTP", server: server, listener: listener, drainedFirst: true}},
+				drainHTTPServer(server), func() { close(jobsStopped) },
+				func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
+		}()
+		requestDone := make(chan struct{})
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://mcp/", nil)
+		require.NoError(t, err)
+		go func() {
+			defer close(requestDone)
+			response, err := client.Do(request)
+			if err == nil {
+				_ = response.Body.Close()
+			}
+		}()
+		<-started
+		close(stop)
+		require.ErrorIs(t, <-done, context.DeadlineExceeded)
+		// A stalled MCP read must leave the API its own share of the deadline.
+		require.NoError(t, apiShutdownErr)
+		<-canceled
+		assert.True(t, jobsStoppedBeforeCancel, "jobs stop before the MCP drain")
+		<-requestDone
+	})
 }
 
 func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	require.NoError(t, listener.Close())
-	apiListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = apiListener.Close() })
-	mcpHTTP, apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second}, &http.Server{ReadHeaderTimeout: 10 * time.Second}
-	err = serveDaemonHTTP(t.Context(), nil, []servingHTTP{
-		{name: "API", server: apiHTTP, listener: apiListener},
-		{name: "MCP HTTP", server: mcpHTTP, listener: listener, drainedFirst: true},
-	}, drainHTTPServer(mcpHTTP), func() {}, func(context.Context) error { return nil })
-	require.ErrorIs(t, err, net.ErrClosed)
-	require.ErrorContains(t, err, "daemon MCP HTTP server")
-	// Shutdown can precede the API goroutine's entry into Serve.
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		rebound, bindErr := (&net.ListenConfig{}).Listen(t.Context(), "tcp", apiListener.Addr().String())
-		if assert.NoError(c, bindErr) {
-			assert.NoError(c, rebound.Close())
-		}
-	}, daemonShutdownTimeout, 10*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		listener, apiListener := newMemListener(), newMemListener()
+		require.NoError(t, listener.Close())
+		mcpHTTP, apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second}, &http.Server{ReadHeaderTimeout: 10 * time.Second}
+		err := serveDaemonHTTP(t.Context(), nil, []servingHTTP{
+			{name: "API", server: apiHTTP, listener: apiListener},
+			{name: "MCP HTTP", server: mcpHTTP, listener: listener, drainedFirst: true},
+		}, drainHTTPServer(mcpHTTP), func() {}, func(context.Context) error { return nil })
+		require.ErrorIs(t, err, net.ErrClosed)
+		require.ErrorContains(t, err, "daemon MCP HTTP server")
+		// Shutdown can precede the API goroutine's entry into Serve, which then
+		// closes the listener as it returns.
+		synctest.Wait()
+		assert.True(t, apiListener.isClosed(), "the API listener must be released")
+	})
 }
 
 func TestDaemonMCPHTTPTOMLPortSelectsMountedBinding(t *testing.T) {

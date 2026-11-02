@@ -80,26 +80,24 @@ func TestProcessingBackfillsRegisterOnceAndPublishPhotoState(t *testing.T) {
 	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1, "derive:photo-quality": 1, "extract:photo-sidecars": 1}, registered)
 	emptyQuery, err := query.Parse([]byte(`{}`))
 	require.NoError(t, err)
-	var signals *document.PhotoQualitySignals
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		page, err := catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: emptyQuery}, nil)
-		if assert.NoError(c, err) && assert.Len(c, page.Items, 1) {
-			assert.Equal(c, node.CurrentVersionID, page.Items[0].ContentVersionID)
-			signals = page.Items[0].Quality
-			assert.NotNil(c, signals)
-		}
-	}, daemonStartTimeout, 50*time.Millisecond)
+	// The safety-net timeout never fires; Settle returns once the lanes are idle.
+	settleCtx, cancelSettle := context.WithTimeout(t.Context(), daemonStartTimeout)
+	defer cancelSettle()
+	require.NoError(t, supervisor.Settle(settleCtx))
+	page, err := catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: emptyQuery}, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, node.CurrentVersionID, page.Items[0].ContentVersionID)
+	signals := page.Items[0].Quality
+	require.NotNil(t, signals)
 	require.NoError(t, document.ValidatePhotoQualitySignals(*signals))
 	assert.InDelta(t, 1, signals.Brightness, 0.01)
 	assert.InDelta(t, 0, signals.Focus, 0.01)
 	assert.InDelta(t, 1, signals.Blur, 0.01)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		prepared, err := catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
-		if !assert.NoError(c, err) || !assert.Len(c, prepared.Targets, 1) {
-			return
-		}
-		assert.Equal(c, store.PhotoXMPStateSynced, prepared.Targets[0].XMP.State, "the registered sidecar lane eventually syncs")
-	}, daemonStartTimeout, 50*time.Millisecond)
+	prepared, err = catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.Len(t, prepared.Targets, 1)
+	assert.Equal(t, store.PhotoXMPStateSynced, prepared.Targets[0].XMP.State, "the registered sidecar lane syncs")
 }
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {
@@ -695,17 +693,31 @@ func TestCheckoutStartupMissingStoreWaitsUntilSeparated(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, registry.Close()) })
 	_, attached := registry.Backend(storeID)
 	require.False(t, attached, "a missing store must stay unattached until checkout validation succeeds")
-	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	require.NoError(t, startCheckoutStoreWaits(supervisor, registry, specs, cfg, catalog, slog.Default()))
-	// A returning store stays held while checkout copies protect its parent.
-	require.NoError(t, os.Rename(parked, storePath))
-	require.Never(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 1500*time.Millisecond, 10*time.Millisecond)
-	// Clear the retired destination before reusing it for store data.
-	require.NoError(t, os.Rename(storePath, parked))
-	require.NoError(t, os.Rename(copyPath, filepath.Join(t.TempDir(), "edited.jpg")))
-	require.NoError(t, validateCheckoutBinding(t.Context(), catalog, cfg.StoreBindings["archive"]))
-	require.NoError(t, os.Rename(parked, storePath))
-	require.Eventually(t, func() bool { _, ok := registry.Backend(storeID); return ok }, 5*time.Second, 10*time.Millisecond)
-	require.Equal(t, blob.StoreOnline, registry.Observation(storeID).State)
+	now := time.Now()
+	// The validation job retries on its backoff timers, so it runs on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		// Start the bubble's clock at the real time the checkout rows use.
+		time.Sleep(time.Until(now))
+		supervisor := jobs.New(t.Context(), nil)
+		require.NoError(t, startCheckoutStoreWaits(supervisor, registry, specs, cfg, catalog, slog.Default()))
+		// A returning store stays held while checkout copies protect its parent,
+		// across many validation attempts.
+		require.NoError(t, os.Rename(parked, storePath))
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		_, attached = registry.Backend(storeID)
+		require.False(t, attached, "checkout copies must keep a returning store unattached")
+		// Clear the retired destination before reusing it for store data.
+		require.NoError(t, os.Rename(storePath, parked))
+		require.NoError(t, os.Rename(copyPath, filepath.Join(t.TempDir(), "edited.jpg")))
+		require.NoError(t, validateCheckoutBinding(t.Context(), catalog, cfg.StoreBindings["archive"]))
+		require.NoError(t, os.Rename(parked, storePath))
+		// The longest backoff between validation attempts is 30 seconds.
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		_, attached = registry.Backend(storeID)
+		require.True(t, attached, "a separated store attaches at the next validation")
+		require.Equal(t, blob.StoreOnline, registry.Observation(storeID).State)
+		require.NoError(t, supervisor.Shutdown(t.Context()))
+	})
 }
