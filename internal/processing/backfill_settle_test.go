@@ -16,6 +16,7 @@ import (
 )
 
 func TestBackfillSettlesWithoutWaitingOutRetryBackoff(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var attempts atomic.Int64
 		backfill := &Backfill[string]{
