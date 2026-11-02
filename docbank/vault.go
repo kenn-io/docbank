@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
-	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/upload"
@@ -31,6 +30,7 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/waitlock"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -148,9 +148,9 @@ type Vault struct {
 	processingErr     error
 	emailSpoolParent  string
 
-	lifecycle    waitLock
-	mutation     waitLock
-	preservation waitLock
+	lifecycle    waitlock.RWMutex
+	mutation     waitlock.RWMutex
+	preservation waitlock.RWMutex
 	closed       bool
 
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
@@ -327,7 +327,7 @@ func openVaultWithRootOpener(
 	vault := &Vault{
 		vaultRoot: config.Root, root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
 		emailSpoolParent: layout.BlobTmpDir(),
-		lifecycle:        newWaitLock(), mutation: newWaitLock(), preservation: newWaitLock(),
+		lifecycle:        waitlock.New(), mutation: waitlock.New(), preservation: waitlock.New(),
 	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
@@ -451,28 +451,6 @@ func (v *Vault) startProcessingWorker(ctx context.Context, run func(context.Cont
 		}
 	})
 }
-
-// waitLockExclusive is the writer's share of a waitLock; readers take one unit.
-const waitLockExclusive int64 = 1 << 30
-
-// waitLock is a reader/writer lock whose waiters block on channels rather
-// than runtime semaphores. A goroutine waiting for it is therefore durably
-// blocked inside a testing/synctest bubble, so tests can observe an
-// operation queued behind a lease or mutation without timing it. Waiters
-// are served in arrival order: a waiting writer holds back later readers,
-// as with sync.RWMutex.
-type waitLock struct{ gate *semaphore.Weighted }
-
-func newWaitLock() waitLock { return waitLock{gate: semaphore.NewWeighted(waitLockExclusive)} }
-
-// Lock and RLock wait without a context, like sync.RWMutex; Acquire only
-// fails when its context ends, and the background context never does.
-func (l waitLock) Lock()  { _ = l.gate.Acquire(context.Background(), waitLockExclusive) }
-func (l waitLock) RLock() { _ = l.gate.Acquire(context.Background(), 1) }
-
-func (l waitLock) Unlock()        { l.gate.Release(waitLockExclusive) }
-func (l waitLock) RUnlock()       { l.gate.Release(1) }
-func (l waitLock) TryRLock() bool { return l.gate.TryAcquire(1) }
 
 type embeddedMutationGate struct{ vault *Vault }
 

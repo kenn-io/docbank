@@ -1,4 +1,4 @@
-package docbank
+package waitlock
 
 import (
 	"testing"
@@ -16,10 +16,10 @@ func requireBlocked(t *testing.T, done <-chan struct{}, msg string) {
 	}
 }
 
-func TestWaitLockWriterExcludesReadersAndWriters(t *testing.T) {
+func TestWriterExcludesReadersAndWriters(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		lock := newWaitLock()
+		lock := New()
 		lock.Lock()
 		reader, writer := make(chan struct{}), make(chan struct{})
 		go func() { lock.RLock(); close(reader); lock.RUnlock() }()
@@ -34,10 +34,10 @@ func TestWaitLockWriterExcludesReadersAndWriters(t *testing.T) {
 	})
 }
 
-func TestWaitLockReadersShare(t *testing.T) {
+func TestReadersShare(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		lock := newWaitLock()
+		lock := New()
 		lock.RLock()
 		acquired, release := make(chan struct{}), make(chan struct{})
 		go func() {
@@ -57,10 +57,10 @@ func TestWaitLockReadersShare(t *testing.T) {
 	})
 }
 
-func TestWaitLockQueuedWriterBlocksLaterReaders(t *testing.T) {
+func TestQueuedWriterBlocksLaterReaders(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		lock := newWaitLock()
+		lock := New()
 		lock.RLock()
 		writerAcquired, writerRelease := make(chan struct{}), make(chan struct{})
 		go func() {
@@ -86,11 +86,11 @@ func TestWaitLockQueuedWriterBlocksLaterReaders(t *testing.T) {
 	})
 }
 
-func TestWaitLockRejectsOverRelease(t *testing.T) {
+func TestRejectsOverRelease(t *testing.T) {
 	t.Parallel()
-	require.Panics(t, func() { newWaitLock().RUnlock() })
-	require.Panics(t, func() { newWaitLock().Unlock() })
-	lock := newWaitLock()
+	require.Panics(t, func() { New().RUnlock() })
+	require.Panics(t, func() { New().Unlock() })
+	lock := New()
 	lock.RLock()
 	require.Panics(t, lock.Unlock, "releasing the writer share while only a reader holds the lock")
 }
