@@ -173,7 +173,7 @@ func personFacePreviewsQuery(hidden bool) string {
 // PersonFacePreviews returns up to three exact source versions in timeline order.
 func (s *Store) PersonFacePreviews(ctx context.Context, personID, gridRecipe string, hidden bool) (PersonFacePreviewPage, error) {
 	page := PersonFacePreviewPage{Items: []PersonFacePreview{}}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		if hidden {
 			if _, err := s.hiddenSession(ctx, tx); err != nil {
 				return err
@@ -206,7 +206,7 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 	people := make([]PhotoFacePerson, 0)
 	var faces []PhotoFace
 	assertions := make([]PersonDocumentAssertion, 0)
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
 		}

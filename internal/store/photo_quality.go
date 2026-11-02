@@ -198,7 +198,7 @@ func photoFaceInputsSQL(version string) string {
 func (s *Store) PhotoQualityFaces(ctx context.Context, version string) ([]PhotoFace, string, error) {
 	var faces []PhotoFace
 	var inputs string
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		faces, err = s.photoQualityFacesTx(ctx, tx, version)
 		if err != nil {

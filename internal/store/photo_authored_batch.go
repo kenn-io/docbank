@@ -94,7 +94,7 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 		selection.Limit = maxBatchTagTargets
 	}
 	result := PhotoAuthoredPreparation{Assets: []PhotoAsset{}, Targets: []PhotoPreparedTarget{}}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		ids, err := s.photoAuthoredSelectionIDs(ctx, tx, selection)
 		if err != nil {
 			return err

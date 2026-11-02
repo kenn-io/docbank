@@ -303,12 +303,18 @@ var (
 func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
 // withReadTx runs a consistent snapshot without reserving the writer.
 func (s *Store) withReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
-		return fmt.Errorf("starting read snapshot: %w", err)
+		return fmt.Errorf("beginning read transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	return fn(tx)
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing read transaction: %w", err)
+	}
+	return nil
 }
 
 // withStorageTx is the transaction primitive for bootstrap, import, audit

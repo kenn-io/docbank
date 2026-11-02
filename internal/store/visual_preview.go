@@ -418,7 +418,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
 
 // PersonPhotoPreviewSource authorizes an assigned source version through its live photo.
 func (s *Store) PersonPhotoPreviewSource(ctx context.Context, assetID, versionID, personID string) error {
-	return s.photoReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
+	return s.withReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
 }
 
 func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, assetID, versionID, personID string) error {
