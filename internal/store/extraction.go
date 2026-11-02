@@ -475,10 +475,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		}
 		var storedVersion int64
 		var storedStatus string
+		var storedText sql.NullString
 		err := tx.QueryRowContext(ctx, `
-			SELECT extractor_version,status FROM extracted_text
+			SELECT extractor_version,status,text FROM extracted_text
 			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
-		).Scan(&storedVersion, &storedStatus)
+		).Scan(&storedVersion, &storedStatus, &storedText)
 		if err == nil && result.ExtractorVersion < storedVersion {
 			return fmt.Errorf(
 				"extractor %s result version %d is older than stored version %d",
@@ -526,6 +527,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 				return publishErr
 			}
 			publishRendition = published
+		}
+		if !publishRendition && storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
+			if err := recordProcessedTx(ctx, tx, "", result.BlobHash); err != nil {
+				return err
+			}
 		}
 		if !publishRendition {
 			if _, err := tx.ExecContext(ctx,

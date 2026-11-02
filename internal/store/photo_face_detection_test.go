@@ -68,8 +68,18 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 		require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 		s = restored
 		fixture.s = restored
+		_, checkpoint, err := s.VaultChanges(ctx, "", 500)
+		require.NoError(t, err)
 		next.Roll, next.EyesOpen = tc.roll, tc.eyes
 		require.NoError(t, scan("b3", next))
+		changes, _, err := s.VaultChanges(ctx, checkpoint, 500)
+		require.NoError(t, err)
+		if tc.revision == 3 {
+			require.Empty(t, changes)
+		} else {
+			require.Len(t, changes, 1)
+			require.Equal(t, "processed", changes[0].Kind)
+		}
 		faces = read()
 		require.Len(t, faces, 1)
 		require.Equal(t, original.FaceID, faces[0].FaceID)
@@ -77,10 +87,22 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 		require.Equal(t, tc.roll, faces[0].Roll)
 		require.Equal(t, tc.eyes, faces[0].EyesOpen)
 	}
+	// A new detector with identical observations refreshes provenance silently.
+	_, checkpoint, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	require.NoError(t, scan("b4", next))
+	faces = read()
+	require.Len(t, faces, 1)
+	require.Equal(t, original.FaceID, faces[0].FaceID)
+	require.Equal(t, fakeHash("b4"), faces[0].DetectorFingerprint)
+	require.Equal(t, int64(8), faces[0].Revision)
+	changes, _, err := s.VaultChanges(ctx, checkpoint, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
 	// Completion is keyed to the detector, including empty results.
-	require.NoError(t, scan("b3"))
-	require.Len(t, read(), 1)
 	require.NoError(t, scan("b4"))
+	require.Len(t, read(), 1)
+	require.NoError(t, scan("b5"))
 	require.Empty(t, read())
 }
 
@@ -114,12 +136,17 @@ func TestPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t *testing.T) {
 				require.Empty(t, read()[0].AssertionID)
 			}
 			before := read()
+			_, checkpoint, err := s.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
 			observation.Box.X = .01
 			observation.Facing = new(.1)
 			require.NoError(t, scan("b2", observation))
 			require.Equal(t, before, read())
 			require.NoError(t, scan("b3"))
 			require.Equal(t, before, read())
+			changes, _, err := s.VaultChanges(ctx, checkpoint, 500)
+			require.NoError(t, err)
+			require.Empty(t, changes)
 			require.NoError(t, s.ValidateMetadata(ctx))
 		})
 	}

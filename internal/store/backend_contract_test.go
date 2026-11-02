@@ -524,6 +524,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPublishDocumentEventsAcceptsCanonicalEmptyProjection(t, newPostgresQueryStore)
 		}},
+		{"PublishDocumentEventsFeedDetectsOutputChanges", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsFeedDetectsOutputChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsFeedDetectsOutputChanges(t, newPostgresQueryStore)
+		}},
 		{"PublishDocumentEventsRetainsActorEvidenceInProjections", func(t *testing.T) {
 			t.Helper()
 			checkPublishDocumentEventsRetainsActorEvidenceInProjections(t, newTestStore)

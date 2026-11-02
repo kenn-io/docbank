@@ -117,6 +117,7 @@ func (s *Store) TrashPathRevision(
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
 func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string) error {
+	var changeIDs []int64
 	removed, trashedNodes := map[string]int64{}, map[int64]Node{}
 	if err := queryRows(ctx, tx, `
 			WITH RECURSIVE subtree(id) AS (
@@ -136,6 +137,7 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 		if err := rows.Scan(&node.ID, &node.Name, &node.ParentID, &fileID, &originalNode); err != nil {
 			return err
 		}
+		changeIDs = append(changeIDs, node.ID)
 		trashedNodes[node.ID] = node
 		if fileID.Valid {
 			removed[fileID.String] = originalNode.Int64
@@ -161,6 +163,9 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 		if err := s.recordPhotoXMPDetachedTx(ctx, tx, fileID, false); err != nil {
 			return err
 		}
+	}
+	if err := recordVaultChangesTx(ctx, tx, "trashed", changeIDs...); err != nil {
+		return err
 	}
 	trashedNodes[n.ID] = Node{ID: n.ID, Name: n.Name, ParentID: &s.rootID}
 	if err := s.refreshTrashedNodeWorkTx(ctx, tx, trashedNodes, n); err != nil {
@@ -296,6 +301,10 @@ func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (res
 func (s *Store) restoreNodeTx(
 	ctx context.Context, tx *sql.Tx, node Node, target restoreTarget, now string,
 ) (Node, error) {
+	ids, err := trashedSubtreeIDsTx(ctx, tx, node.ID, *node.TrashedAt)
+	if err != nil {
+		return Node{}, err
+	}
 	// Reattach the top node FIRST — parent, final (possibly re-suffixed)
 	// name, and liveness in one statement. Un-trashing before renaming
 	// would trip the live-sibling unique index whenever the original
@@ -335,6 +344,9 @@ func (s *Store) restoreNodeTx(
 		return Node{}, err
 	}
 	if err := bumpRevisionTx(ctx, tx, target.destID, now); err != nil {
+		return Node{}, err
+	}
+	if err := recordVaultChangesTx(ctx, tx, "restored", ids...); err != nil {
 		return Node{}, err
 	}
 	return nodeByIDTx(ctx, tx, node.ID)
@@ -579,6 +591,9 @@ func (s *Store) trashEmpty(
 		doomedIDs, err := doomedNodeIDsTx(ctx, tx, selection, selectionArgs...)
 		if err != nil {
 			return fmt.Errorf("listing nodes affected by trash empty: %w", err)
+		}
+		if err := recordVaultChangesTx(ctx, tx, "removed", doomedIDs...); err != nil {
+			return err
 		}
 		if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, doomedIDs); err != nil {
 			return err
