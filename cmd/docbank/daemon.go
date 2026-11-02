@@ -1031,14 +1031,19 @@ func startRetentionMaintenance(
 				logger.Warn("retention maintenance failed", "error", err)
 			}
 			jobs.ReportBusy(ctx, false)
+			// The pass reported busy, so it parks without a found flag.
+			settle, resume := jobs.Park(ctx, false)
 			select {
 			case <-ctx.Done():
+				resume()
 				return nil
 			case <-ticker.C:
+			case <-settle:
 			}
+			resume()
 		}
 	}
-	if err := supervisor.Start("maintenance:retention", pruneRetention); err != nil {
+	if err := supervisor.StartWorker("maintenance:retention", pruneRetention); err != nil {
 		return fmt.Errorf("starting retention maintenance: %w", err)
 	}
 	return nil

@@ -221,13 +221,11 @@ func TestDaemonMCPHTTPDisablesBackgroundIdleTimeout(t *testing.T) {
 	root := daemonMCPEnvironment(t)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
-	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"30ms\"\n"), 0o600))
-	stop := startServe(t)
+	stop, daemon := startServeReady(t)
 	record := waitForDaemon(t, root)
-	time.Sleep(250 * time.Millisecond) //nolint:kennlint // sleeptest: the daemon's idle ticker runs on the wall clock behind a real loopback listener, so synctest can't host it
-	_, _, found, err := daemonconn.Find(t.Context(), root)
-	require.NoError(t, err)
-	assert.True(t, found, "hosted MCP must keep a background daemon alive")
+	for _, job := range daemon.jobs.Snapshot() {
+		assert.NotEqual(t, idleTimeoutJob, job.Name, "hosted MCP must keep a background daemon alive")
+	}
 	stop()
 	assertDaemonMCPCleanedUp(t, root, record.Address)
 }

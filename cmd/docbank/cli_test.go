@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -776,25 +775,26 @@ func TestJobsShowsDaemonStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "extract:plain-text")
 
-	var got api.JobList
-	require.Eventually(t, func() bool {
-		out, err = runCLI(t, "jobs", "--json")
-		if err != nil || json.Unmarshal([]byte(out), &got) != nil {
-			return false
-		}
-		checksums, found := jobNamed(got, "maintenance:auxiliary-checksums")
-		for _, job := range got.Items {
-			if job.Status == "running" && job.Busy {
-				return false
-			}
-		}
-		return found && checksums.Status == "completed"
-	}, 5*time.Second, 25*time.Millisecond)
+	settleDaemon(t)
+	got := daemonJobs(t)
+	for _, job := range got.Items {
+		assert.False(t, job.Status == "running" && job.Busy, "job %s is still busy after settling", job.Name)
+	}
+	assert.Equal(t, "completed", requireJob(t, got, "maintenance:auxiliary-checksums").Status)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:source-metadata").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:email").Status)
 	assert.Equal(t, "running", requireJob(t, got, "process:renditions").Status)
+}
+
+func daemonJobs(t *testing.T) api.JobList {
+	t.Helper()
+	out, err := runCLI(t, "jobs", "--json")
+	require.NoError(t, err)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	return got
 }
 
 func jobNamed(list api.JobList, name string) (api.Job, bool) {
@@ -813,115 +813,111 @@ func requireJob(t *testing.T, list api.JobList, name string) api.Job {
 	return job
 }
 
+// idleTimeoutJob is the background daemon's idle-shutdown watch. It runs only
+// when nothing configured keeps the daemon alive.
+const idleTimeoutJob = "daemon.idle-timeout"
+
+func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DOCBANK_HOME", home)
+	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
+	startTestDaemon(t, home)
+	assert.Equal(t, "running", requireJob(t, daemonJobs(t), idleTimeoutJob).Status,
+		"a background daemon with nothing to keep it alive exits after idle_timeout")
+}
+
 func TestConfiguredBackupsCaptureAndKeepDaemonAlive(t *testing.T) {
 	home := t.TempDir()
 	repository := filepath.Join(t.TempDir(), "repo")
 	_, err := backup.Init(repository)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
-		"[server]\nidle_timeout = \"30ms\"\n[backup]\nrepo = \""+filepath.ToSlash(repository)+"\"\ninterval = \"24h\"\nkeep_last = 2\n",
+		"[backup]\nrepo = \""+filepath.ToSlash(repository)+"\"\ninterval = \"24h\"\nkeep_last = 2\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
-	startTestDaemon(t, home)
-	require.Eventually(t, func() bool {
-		out, err := runCLI(t, "backup", "list", "--json")
-		if err != nil {
-			return false
-		}
-		var points api.BackupSnapshotList
-		return json.Unmarshal([]byte(out), &points) == nil && len(points.Items) == 1
-	}, 5*time.Second, 25*time.Millisecond)
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: idle shutdown uses a wall-clock ticker behind a real loopback listener
-	_, _, found, err := daemonconn.Find(t.Context(), home)
+	_, daemon := startServeReady(t)
+	settleDaemon(t)
+	// No request is in flight, so only the backup schedule can hold the
+	// tracker that feeds the idle-shutdown watch.
+	assert.Zero(t, daemon.tracker.IdleFor(), "a backup schedule keeps the background daemon alive")
+	assert.Equal(t, "running", requireJob(t, daemonJobs(t), idleTimeoutJob).Status)
+
+	out, err := runCLI(t, "backup", "list", "--json")
 	require.NoError(t, err)
-	require.True(t, found)
+	var points api.BackupSnapshotList
+	require.NoError(t, json.Unmarshal([]byte(out), &points))
+	assert.Len(t, points.Items, 1, "the schedule captures a first snapshot at startup")
 }
 
 func TestConfiguredAutomaticPackingPacksAndKeepsDaemonAlive(t *testing.T) {
 	home := t.TempDir()
+	// The interval only enables packing; Settle starts each pass.
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
-		"[server]\nidle_timeout = \"30ms\"\n"+
-			"[storage]\npack_interval = \"250ms\"\npack_max_bytes = 1048576\n",
+		"[storage]\npack_interval = \"24h\"\npack_max_bytes = 1048576\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
+	settleDaemon(t)
 
-	var err error
-	require.Eventually(t, func() bool {
-		_, err = runCLI(t, "mkdir", "/agents")
-		return err == nil || !errors.Is(err, daemonconn.ErrMaintenanceBusy)
-	}, 10*time.Second, 25*time.Millisecond)
+	_, err := runCLI(t, "mkdir", "/agents")
 	require.NoError(t, err)
 	source := writeSourceFile(t, "session.jsonl", "{\"kind\":\"session\"}\n")
-	require.Eventually(t, func() bool {
-		_, err = runCLI(t, "add", source, "--dest", "/agents")
-		return err == nil || !errors.Is(err, daemonconn.ErrMaintenanceBusy)
-	}, 10*time.Second, 25*time.Millisecond)
+	_, err = runCLI(t, "add", source, "--dest", "/agents")
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		out, runErr := runCLI(t, "storage", "status", "--json")
-		if runErr != nil {
-			return false
-		}
-		var status api.StorageStatus
-		return json.Unmarshal([]byte(out), &status) == nil &&
-			status.LooseBlobs == 0 && status.PackedBlobs == 1
-	}, 10*time.Second, 25*time.Millisecond)
-	out, err := runCLI(t, "cat", "/agents/session.jsonl")
+	settleDaemon(t)
+	out, err := runCLI(t, "storage", "status", "--json")
+	require.NoError(t, err)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Zero(t, status.LooseBlobs)
+	assert.Equal(t, int64(1), status.PackedBlobs)
+	out, err = runCLI(t, "cat", "/agents/session.jsonl")
 	require.NoError(t, err)
 	assert.JSONEq(t, "{\"kind\":\"session\"}\n", out)
 
-	out, err = runCLI(t, "jobs", "--json")
-	require.NoError(t, err)
-	var got api.JobList
-	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	got := daemonJobs(t)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "storage:pack").Status)
-
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: the daemon's idle ticker runs on the wall clock behind a real loopback listener, so synctest can't host it
-	_, _, found, err := daemonconn.Find(t.Context(), home)
-	require.NoError(t, err)
-	assert.True(t, found)
+	_, idleWatched := jobNamed(got, idleTimeoutJob)
+	assert.False(t, idleWatched, "automatic packing keeps the background daemon alive")
 }
 
-func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
+func TestConfiguredWatchIngestsFilesAndRemainsObservable(t *testing.T) {
 	home := t.TempDir()
 	source := t.TempDir()
 	sourcePath := filepath.Join(source, "session.jsonl")
 	record := "{\"kind\":\"assistant-session\",\"topic\":\"quasararchive\"}\n"
 	require.NoError(t, os.WriteFile(sourcePath, []byte(record), 0o600))
+	// capture_on_change imports without waiting out settle_time, so the scan
+	// that Settle starts imports the file. The other timings are only shown.
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
-		"[server]\nidle_timeout = \"30ms\"\n"+
-			"[[watch]]\nname = \"sessions\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
-			"destination = \"/agents\"\nsettle_time = \"50ms\"\nscan_interval = \"10ms\"\n",
+		"[[watch]]\nname = \"sessions\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
+			"destination = \"/agents\"\nsettle_time = \"45s\"\nscan_interval = \"1h\"\ncapture_on_change = true\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
+	settleDaemon(t)
 
-	require.Eventually(t, func() bool {
-		out, err := runCLI(t, "cat", "/agents/session.jsonl")
-		return err == nil && out == record
-	}, 5*time.Second, 25*time.Millisecond)
-	require.Eventually(t, func() bool {
-		out, err := runCLI(t, "search", "quasararchive", "--json")
-		if err != nil {
-			return false
-		}
-		var report api.SearchReport
-		return json.Unmarshal([]byte(out), &report) == nil && len(report.Hits) == 1 &&
-			report.Hits[0].Path == "/agents/session.jsonl" && report.Hits[0].Match == "content"
-	}, 5*time.Second, 25*time.Millisecond)
-
-	out, err := runCLI(t, "jobs", "--json")
+	out, err := runCLI(t, "cat", "/agents/session.jsonl")
 	require.NoError(t, err)
-	var got api.JobList
-	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, record, out)
+	out, err = runCLI(t, "search", "quasararchive", "--json")
+	require.NoError(t, err)
+	var report api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Len(t, report.Hits, 1)
+	assert.Equal(t, "/agents/session.jsonl", report.Hits[0].Path)
+	assert.Equal(t, "content", report.Hits[0].Match)
+
+	got := daemonJobs(t)
 	assert.Equal(t, "running", requireJob(t, got, "process:vector-indexes").Status)
 	assert.Equal(t, "running", requireJob(t, got, "extract:plain-text").Status)
 	assert.Equal(t, "running", requireJob(t, got, "watch:sessions").Status)
+	_, idleWatched := jobNamed(got, idleTimeoutJob)
+	assert.False(t, idleWatched, "a configured watcher keeps the background daemon alive")
 
 	out, err = runCLI(t, "watch", "list", "--json")
 	require.NoError(t, err)
@@ -931,18 +927,11 @@ func TestConfiguredWatchIngestsStableFilesAndRemainsObservable(t *testing.T) {
 	assert.Equal(t, "sessions", watches.Items[0].Name)
 	assert.Equal(t, source, watches.Items[0].Source)
 	assert.Equal(t, "/agents", watches.Items[0].Destination)
-	assert.Equal(t, "50ms", watches.Items[0].SettleTime)
+	assert.Equal(t, "45s", watches.Items[0].SettleTime)
 	assert.Equal(t, "0s", watches.Items[0].MinimumAge)
-	assert.Equal(t, "10ms", watches.Items[0].ScanInterval)
+	assert.Equal(t, "1h0m0s", watches.Items[0].ScanInterval)
 	require.NotNil(t, watches.Items[0].Job)
 	assert.Equal(t, "running", watches.Items[0].Job.Status)
-
-	// A configured watcher keeps a background daemon alive even when the
-	// ordinary request-idle timeout is deliberately tiny.
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: the daemon's idle ticker runs on the wall clock behind a real loopback listener, so synctest can't host it
-	_, _, found, err := daemonconn.Find(t.Context(), home)
-	require.NoError(t, err)
-	assert.True(t, found)
 
 	sourceBytes, err := os.ReadFile(sourcePath)
 	require.NoError(t, err)

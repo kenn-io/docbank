@@ -330,6 +330,7 @@ const (
 // and waits for it to exit so TempDir removal never races a live daemon. It
 // returns once the daemon reports it is ready to serve.
 func startServe(t *testing.T) (stop func()) {
+	t.Helper()
 	stop, _ = startServeReady(t)
 	return stop
 }
@@ -372,12 +373,13 @@ func startServeReady(t *testing.T) (stop func(), daemon serveReady) {
 // background work left that its workers can do now.
 func settleDaemon(t *testing.T) {
 	t.Helper()
-	value, ok := testDaemons.Load(os.Getenv("DOCBANK_HOME"))
+	value, _ := testDaemons.Load(os.Getenv("DOCBANK_HOME"))
+	daemon, ok := value.(serveReady)
 	require.True(t, ok, "no in-process daemon serves DOCBANK_HOME")
 	// The timeout is a safety net for a hung worker; Settle never waits for it.
 	ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
 	defer cancel()
-	require.NoError(t, value.(serveReady).jobs.Settle(ctx))
+	require.NoError(t, daemon.jobs.Settle(ctx))
 }
 
 // waitForDaemon discovers the ready daemon through its runtime record like a
