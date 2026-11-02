@@ -77,7 +77,12 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     started = true;
     await run("add", path.join(scratch, "two-pages.pdf"), "--dest", "/", "--json");
     let sessionURL = "";
-    const open = async (name = "two-pages.pdf", reuseSession = false, fromReader = false) => {
+    const open = async (
+      name = "two-pages.pdf",
+      reuseSession = false,
+      fromReader = false,
+      beforeReview?: () => Promise<void>,
+    ) => {
       await page.goto("about:blank");
       const url = reuseSession ? sessionURL : await run("web", "--no-browser");
       sessionURL = url;
@@ -102,6 +107,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
       } else {
         await file.click();
+        await expect(page.getByRole("button", { name: "Redact PDF", exact: true })).toBeEnabled();
+        await beforeReview?.();
         await page.getByRole("button", { name: "Redact PDF", exact: true }).click();
       }
       await expect(
@@ -617,7 +624,10 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await page.getByRole("button", { name: "Discard and close" }).click();
     await writeFile(path.join(scratch, "cropped.pdf"), croppedReviewPDF());
     await run("add", path.join(scratch, "cropped.pdf"), "--dest", "/", "--json");
-    await open("cropped.pdf");
+    await open("cropped.pdf", false, false, async () => {
+      // The inspector holds the earlier revision; preparation revalidates it.
+      await run("tag", "assign", "review-pending", "/cropped.pdf");
+    });
     const cropped = page.getByRole("dialog", { name: "Redact cropped.pdf", exact: true });
     const expectedBoxes = [
       [3000, 3500, 10500, 6500],

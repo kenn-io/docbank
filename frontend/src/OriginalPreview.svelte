@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ReaderReview, ReaderReviewStatus, PDFReviewBridge } from "./pdfReview.js";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Spinner } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
@@ -38,17 +38,25 @@
   let loading = $state(false);
   let error = $state("");
   let publishedURL = "";
+  let verifiedKey = "";
 
   function revokePublishedURL(): void {
     if (!publishedURL) return;
     URL.revokeObjectURL(publishedURL);
     publishedURL = "";
   }
+  onDestroy(revokePublishedURL);
 
   const previewKey = $derived(`${session}:${source.key}`);
   $effect(() => {
-    void previewKey;
+    const key = previewKey,
+      revision = authorizationRevision;
     return untrack(() => {
+      if (preview && verifiedKey === key) {
+        loading = false;
+        progress = null;
+        return;
+      }
       const controller = new AbortController();
       let current = true;
       revokePublishedURL();
@@ -56,20 +64,15 @@
       progress = { received: 0, total: source.size };
       loading = true;
       error = "";
-      void readVerifiedPreview(
-        session,
-        source,
-        authorizationRevision,
-        controller.signal,
-        (next) => {
-          if (current) progress = next;
-        },
-      )
+      void readVerifiedPreview(session, source, revision, controller.signal, (next) => {
+        if (current) progress = next;
+      })
         .then((next) => {
           if (!current) {
             if (next.kind !== "text") URL.revokeObjectURL(next.url);
             return;
           }
+          verifiedKey = key;
           preview = next;
           if (next.kind !== "text") publishedURL = next.url;
         })
@@ -87,10 +90,6 @@
       return () => {
         current = false;
         controller.abort();
-        revokePublishedURL();
-        preview = null;
-        progress = null;
-        error = "";
       };
     });
   });

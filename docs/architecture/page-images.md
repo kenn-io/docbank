@@ -355,7 +355,9 @@ One ready preview plus another native operation may use about 3.7 GiB. These
 are file-payload bounds, not a global disk quota; tmpfs space is outside process
 RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
 The browser keeps the original's verified bytes in one EmbedPDF reader during
-reading and review. Original pixels are an unchecked browser rendering. Page
+reading and review. Original downloads use the latest observed node revision.
+Metadata changes retry unfinished downloads without replacing verified bytes.
+Original pixels are an unchecked browser rendering. Page
 count, boxes, intrinsic rotation and dimensions must match preparation before
 marking is enabled. Crop-relative rectangles are transformed through the
 preparation's rational affine transform; all four corners are rounded outward

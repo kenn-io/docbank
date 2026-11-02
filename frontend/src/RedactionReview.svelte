@@ -433,7 +433,7 @@
     <OriginalPreview
       {session}
       {source}
-      {authorizationRevision}
+      authorizationRevision={Math.max(authorizationRevision, revision)}
       onauthfailure={fail}
       expanded
       review={active
