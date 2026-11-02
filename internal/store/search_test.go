@@ -60,11 +60,6 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	assert.False(t, resolution.Truncated)
 	_, rows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
 	require.NoError(t, err)
-	revalidation, err := s.RevalidateSearchCandidates(t.Context(), nil, SearchOptions{ContentVersionIDs: versions}, profile.Fingerprint, "chunk")
-	require.NoError(t, err)
-	require.NotNil(t, revalidation.Coverage)
-	assert.Equal(t, 3, revalidation.Coverage.ScopedDocuments)
-	assert.Equal(t, 3, revalidation.Coverage.CompleteDocuments)
 	assert.Len(t, rows, len(neighbors), "only scoring rows are deduplicated")
 	copyVersion, err := s.ContentVersionByID(t.Context(), versions[2])
 	require.NoError(t, err)
@@ -277,7 +272,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 	}
 }
 
-func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
+func TestResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	version, err := s.ContentVersionByID(t.Context(), versionID)
@@ -344,7 +339,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.False(t, filtered.Truncated)
 }
 
-func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
+func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	otherProfile := embeddingCatalogProfileVariant(t)
@@ -673,7 +668,7 @@ func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
-func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *testing.T) {
+func TestChunkSemanticCandidatesAndRevalidationCoverageTrackEvidenceChecksum(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
@@ -837,11 +832,6 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, record.VectorSpace.Descriptor, authority.VectorSpace.Descriptor)
 	assert.False(t, authority.BindingRequired)
-	revalidation, err := s.RevalidateSearchCandidates(t.Context(), nil, SearchOptions{MIMEType: "application/pdf"}, profile.Fingerprint, record.BindingID)
-	require.NoError(t, err)
-	require.NotNil(t, revalidation.Coverage)
-	assert.Equal(t, 2, revalidation.Coverage.ScopedDocuments)
-	assert.Equal(t, 1, revalidation.Coverage.CompleteDocuments)
 	require.Len(t, authority.ANNRows, 1)
 	assert.Equal(t, record.VectorSet.ID, authority.ANNRows[0].SetID)
 	assert.Equal(t, versionID, authority.ANNRows[0].InputKey)

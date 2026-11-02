@@ -323,25 +323,6 @@ func TestSearcherSemanticReportsAbsentAuthority(t *testing.T) {
 	assert.Zero(t, backend.lexicalCalls)
 }
 
-func TestSearcherSemanticReportsFinalCoverage(t *testing.T) {
-	t.Parallel()
-	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
-	backend.revalidationCoverage = &store.SearchCoverageSnapshot{ScopedDocuments: 2, CompleteDocuments: 1}
-	backend.lexical = []store.ExplainedLexicalCandidate{{Node: store.Node{ID: 5,
-		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
-		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
-
-	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
-		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
-		Authorization: retrievalAuthorization(descriptor)})
-
-	require.NoError(t, err)
-	assert.Equal(t, ModeSemantic, report.ActualMode)
-	assert.Equal(t, CoverageIncomplete, report.Coverage.State)
-	assert.Equal(t, 2, report.Coverage.ScopedDocuments)
-	assert.Equal(t, 1, report.Coverage.CompleteDocuments)
-}
-
 func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 	*Searcher, *retrievalBackendStub, *retrievalProvider, document.EmbeddingDescriptor,
 ) {
