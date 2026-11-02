@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -132,6 +133,45 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 
 func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 	t.Parallel()
+	t.Run("photo preview blob recovers", func(t *testing.T) {
+		t.Parallel()
+		f := newPhotoDescriptionFixture(t)
+		x := newImageEmbeddingService(t, f)
+		f.grant(t, x.service, "images")
+		view, reason, err := photoDescriptionPreview(t.Context(), f.catalog, f.node.CurrentVersionID)
+		require.NoError(t, err)
+		require.Empty(t, reason)
+		hash := view.Generation.Preview.Output.BlobSHA256
+		source, err := f.blobs.OpenContext(t.Context(), hash)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(source)
+		require.NoError(t, err)
+		require.NoError(t, source.Close())
+		require.NoError(t, f.blobs.Remove(hash))
+		_, _, err = x.service.EmbeddingRuntimes().ImageGeneration(t.Context(), x.service.profiles["images"].record, x.binding, f.node.CurrentVersionID)
+		require.ErrorIs(t, err, errPhotoDescriptionInput)
+		catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
+		preparations := 0
+		catalog.beforePrepareImage = func() { preparations++ }
+		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: catalog, Authority: f.catalog, Blobs: f.blobs, GenerationBlobs: f.blobs, Runtime: x.service.EmbeddingRuntimes(), Gate: newTestOperationGate(), Owner: "synthetic-images", RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second, AttemptLifetime: 10 * time.Minute, MaxRows: 100, MaxDimensions: 100, MaxVectorBlobBytes: 1 << 20, LeaseDuration: time.Minute, IdleDelay: time.Millisecond, DescriptorFingerprints: []string{x.descriptor.Fingerprint}})
+		require.NoError(t, err)
+		now := time.Now().UTC()
+		worker.clock = func() time.Time { return now }
+		_, err = worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 1, preparations)
+		require.Zero(t, catalog.enqueued)
+
+		revision := f.catalog.WriteRevision()
+		_, err = f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+		require.NoError(t, err)
+		require.Equal(t, revision, f.catalog.WriteRevision(), "blob recovery needs no catalog write")
+		now = now.Add(time.Minute)
+		catalog.pauseClaims = false
+		processed, err := worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 1, processed, "retry image preparation after the preview blob recovers")
+	})
 	t.Run("ineligible photo", func(t *testing.T) {
 		t.Parallel()
 		f := newPhotoDescriptionFixture(t)
