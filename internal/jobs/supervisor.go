@@ -149,8 +149,9 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 	return s.start(name, run, false, false)
 }
 
-// StartWorker starts a long-lived polling worker that waits in Idle between
-// polls. Settle waits until every such worker finds no more work.
+// StartWorker starts a long-lived polling worker that waits in Idle or Park
+// between polls. Settle waits until every such worker finds no more work. A
+// worker that reports busy with ReportBusy counts as having found work.
 func (s *Supervisor) StartWorker(name string, run func(context.Context) error) error {
 	return s.start(name, run, false, true)
 }
@@ -204,6 +205,10 @@ func (s *Supervisor) run(job *state, run func(context.Context) error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		job.Busy = busy
+		if busy && job.worker {
+			// Work reported between parks keeps Settle going for another round.
+			s.roundFound = true
+		}
 	})
 	if job.worker {
 		ctx = context.WithValue(ctx, idleKey{}, func(found bool) (<-chan struct{}, func()) {
