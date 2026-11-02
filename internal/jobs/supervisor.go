@@ -173,8 +173,9 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 	return s.start(name, run, false, false)
 }
 
-// StartWorker starts a long-lived polling worker that waits in Idle or Park
-// between polls. Settle waits until every such worker finds no more work.
+// StartWorker starts a job that Settle waits for: a long-lived polling worker
+// that waits in Idle or Park between polls, or a one-shot operation that never
+// parks, which Settle waits for until it returns.
 func (s *Supervisor) StartWorker(name string, run func(context.Context) error) error {
 	return s.start(name, run, false, true)
 }
