@@ -58,9 +58,9 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 	require.Error(t, err, "a head must not select another original's evidence")
 }
 
-func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
 	_, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
@@ -100,7 +100,7 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	assert.Equal(t, "A", *activeMetadata.Fields[0].Value.String)
 	var generationCount int
 	require.NoError(t, s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))
+		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=$1`, sourceSHA256).Scan(&generationCount))
 	assert.Equal(t, 2, generationCount)
 }
 
@@ -129,9 +129,9 @@ func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {
 	assert.Equal(t, generation.GenerationID, active.GenerationID)
 }
 
-func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
 	require.NoError(t, err)
@@ -162,9 +162,9 @@ func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
 	assert.Empty(t, view.Attachment.IngestedAt)
 }
 
-func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
 	require.NoError(t, err)
@@ -191,9 +191,9 @@ func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
 	assert.Empty(t, view.Attachment.IngestedAt)
 }
 
-func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "before.pdf", fakeHash("a1"), 12, "application/pdf")
 	require.NoError(t, err)
@@ -352,9 +352,9 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 	}
 }
 
-func TestMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
 	require.NoError(t, err)
@@ -395,9 +395,9 @@ func TestMissingSourceMetadataTargetsCanAdvancePastAFailingHash(t *testing.T) {
 	assert.Equal(t, []SourceMetadataTarget{{SourceSHA256: fakeHash("b2"), Size: 4}}, second)
 }
 
-func TestMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(ctx, s.RootID(), "history.pdf", fakeHash("a1"), 3, "application/pdf")
 	require.NoError(t, err)
@@ -410,7 +410,7 @@ func TestMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T
 	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	// Stored bytes without a retained content version are not backfill work.
-	_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
+	_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES($1,$2,$3)`,
 		fakeHash("01"), 11, nowRFC3339())
 	require.NoError(t, err)
 

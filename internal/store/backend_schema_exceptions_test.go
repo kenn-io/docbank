@@ -3,11 +3,8 @@ package store
 // These exact exceptions describe the current boundary, not permission to omit
 // future objects. The comparison fails when an exception is stale or resolved.
 var sqliteOnlyBackendTables = map[string]string{
-	"document_event_attempts":            "event worker publication is unqualified",
-	"document_event_builds":              "event worker publication is unqualified",
 	"photo_description_explicit_waiters": "description worker publication is unqualified",
 	"photo_face_scans":                   "face detection publication is unqualified",
-	"photo_technical_metadata_state":     "technical metadata publication is unqualified",
 	"photo_timeline_pending":             "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
 	"photo_xmp_unsettled_pending":        "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
 	"storage_operation_cleanup":          "multi-store operations are unqualified",

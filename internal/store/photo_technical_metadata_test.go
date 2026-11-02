@@ -281,9 +281,9 @@ func TestPhotoTechnicalMetadataPublication(t *testing.T) {
 	assert.Zero(t, generations, "projection failure must roll back source publication")
 }
 
-func TestPhotoTechnicalMetadataRepublication(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoTechnicalMetadataRepublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "republication.jpg", fakeHash("ac"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestPhotoTechnicalMetadataRepublication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, generationA.GenerationID, projection.GenerationID)
 	assert.Equal(t, "A", *projection.Fields.CameraModel)
-	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=?`, generationA.GenerationID)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=$1`, generationA.GenerationID)
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("fc"), canonicalA)
 	require.NoError(t, err)
@@ -312,9 +312,9 @@ func TestPhotoTechnicalMetadataRepublication(t *testing.T) {
 	assert.Equal(t, generationA.GenerationID, projection.GenerationID)
 }
 
-func TestPhotoTechnicalMetadataVersionBinding(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoTechnicalMetadataVersionBinding(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "versioned.jpg", fakeHash("a6"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -621,7 +621,7 @@ func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	require.NoError(t, refreshPhotoTechnicalMetadataTx(ctx, tx), "corrupt evidence must not block re-projection")
+	require.NoError(t, s.refreshPhotoTechnicalMetadataTx(ctx, tx), "corrupt evidence must not block re-projection")
 	var projected int
 	require.NoError(t, tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, healthy.generation).Scan(&projected))
