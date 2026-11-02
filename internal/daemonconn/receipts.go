@@ -48,6 +48,10 @@ type Connection struct {
 	hc   *http.Client
 }
 
+// ErrBackupRepositoryNotConfigured identifies only the absent configuration
+// problem, not other backup_repository failures such as permissions or I/O.
+var ErrBackupRepositoryNotConfigured = errors.New("no backup repository configured; pass repo or set [backup] repo in config.toml")
+
 // WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
 // scoped browser credential and a daemon-lifetime upload proof secret, then
 // returns both in the local portal fragment. The master API key stays on the
@@ -493,7 +497,11 @@ func apiProblemError(e api.Error) error {
 	var cause error
 	detail := ""
 	observedScopeCount := 0
-	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
+	if e.Code == "backup_repository" && e.Detail == ErrBackupRepositoryNotConfigured.Error() {
+		// Preserve the existing message and wire detail while providing a
+		// cause that survives wrapping at the CLI process boundary.
+		cause = fmt.Errorf("daemon error (%d %s): %w", e.Status, e.Code, ErrBackupRepositoryNotConfigured)
+	} else if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
 		observedScopeCount = e.ObservedScopeCount
 	} else if e.Code == "hidden_lockout" {

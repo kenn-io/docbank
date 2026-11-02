@@ -15,6 +15,17 @@ import (
 // the process boundary before Cobra parses arguments instead.
 const legacyCommandReplacement = "docbank.legacy-replacement"
 
+// Recovery always teaches the public path, including on compatibility commands.
+func canonicalCommandPath(cmd *cobra.Command) string {
+	if cmd == nil {
+		return "docbank"
+	}
+	if replacement := cmd.Annotations[legacyCommandReplacement]; replacement != "" {
+		return replacement
+	}
+	return cmd.CommandPath()
+}
+
 func warnLegacyCommand(cmd *cobra.Command) {
 	if cmd == nil {
 		return
@@ -25,6 +36,9 @@ func warnLegacyCommand(cmd *cobra.Command) {
 }
 
 var documentCmd = &cobra.Command{
+	Example: `  docbank document add ./scans --dest /cases
+  docbank document list /cases --json
+  docbank document stat id:12 --json`,
 	Use: "document", Short: "Import, browse, and maintain documents and their history",
 	Long: `Work with files and directories in the virtual document tree.
 Start with add, browse with list or tree, inspect with stat, and download with
@@ -35,6 +49,9 @@ restore brings them back. Select nodes by absolute virtual path or id:N.`,
 }
 
 var vaultCmd = &cobra.Command{
+	Example: `  docbank vault info --json
+  docbank vault verify
+  docbank vault gc`,
 	Use: "vault", Short: "Identify, verify, and reclaim space in the selected vault",
 	Long: `info identifies the vault selected by DOCBANK_HOME (default ~/.docbank).
 verify checks metadata and stored bytes; gc previews unreachable blobs and
@@ -44,6 +61,9 @@ requires --run to reclaim them. Data commands start the daemon if needed.`,
 }
 
 var emailCmd = &cobra.Command{
+	Example: `  docbank email mailbox import ./mailbox.mbox --dest /mail
+  docbank email documents --help
+  docbank email pdf --help`,
 	Use: "email", Short: "Import mailboxes and inspect or render retained email",
 	Long: `mailbox imports explicitly selected MBOX, Takeout ZIP, or EML sources.
 documents inspects attachment relationships and publication receipts.

@@ -25,6 +25,7 @@ var (
 )
 
 var exportCmd = &cobra.Command{
+	Example: `  docbank export preview --request sel.json --json`,
 	Long: `Export exact original versions or rendered photos in a verified ZIP. Get
 version identities from stat --json. Save sel.json with this shape (use your own
 UUIDv4s and receipt):
