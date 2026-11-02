@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,46 +12,60 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
-// BenchmarkSemanticSearchCoverage measures one search's store calls with one
-// embedded document and a growing live scope. Fixture creation is excluded.
+// BenchmarkSemanticSearchCoverage measures one search's store calls with a
+// growing live scope and 10% embedded files. Fixture creation is excluded.
 func BenchmarkSemanticSearchCoverage(b *testing.B) {
 	for _, files := range []int{1000, 10000, 100000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
-			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
-			require.NoError(b, err)
-			b.Cleanup(func() { require.NoError(b, s.Close()) })
-			_, versionID, profile, _ := seedEmbeddingCatalog(b, s)
+			s, record, _ := newPublishedVectorIndexFixture(b)
 			ctx := b.Context()
-			record := embeddingSetFixture(ctx, s, versionID, profile.Fingerprint,
-				document.EmbeddingInputOriginalFile, "optional", "")
-			require.NoError(b, s.StageEmbeddingSet(ctx, record))
-			require.NoError(b, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{
-				FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID,
-					BindingID: record.BindingID, InputKind: record.InputKind},
-				SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
-				ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
-			}))
-			// The catalog fixture already includes one unembedded live file.
+			profileFingerprint := record.ProcessingProfileFingerprint
+			versionID := record.ContentVersionID
+			versions := make([]string, 0, files/10-1)
+			// The fixture includes one embedded file and one unembedded file.
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				for i := 1; i < files; i++ {
-					if _, _, err := s.createFileTx(ctx, tx, s.RootID(),
-						fmt.Sprintf("unembedded-%06d.pdf", i), catalogSourceHash, 20, "application/pdf"); err != nil {
+				for i := 2; i < files; i++ {
+					_, version, err := s.createFileTx(ctx, tx, s.RootID(),
+						fmt.Sprintf("coverage-%06d.pdf", i), catalogSourceHash, 20, "application/pdf")
+					if err != nil {
 						return err
+					}
+					if i%10 == 0 {
+						versions = append(versions, version.ID)
 					}
 				}
 				return nil
 			}))
-			set, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
-				MaxRows: 100, MaxDimension: record.VectorSpace.Descriptor.Dimension,
-				MaxBytes: len(record.VectorSet.Payload),
-			})
+			records := []EmbeddingSetRecord{record}
+			for _, id := range versions {
+				next := embeddingSetFixture(ctx, s, id, profileFingerprint, record.InputKind, record.BindingID, "")
+				require.NoError(b, s.StageEmbeddingSet(ctx, next))
+				require.NoError(b, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{
+					FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: id,
+						BindingID: next.BindingID, InputKind: next.InputKind},
+					SetID: next.ID, VectorSpaceID: next.VectorSpace.ID,
+					ProcessingProfileFingerprint: profileFingerprint, PublishedAt: embeddingCatalogTime,
+				}))
+				records = append(records, next)
+			}
+			var sets []document.VectorSetV1
+			var setIDs []string
+			for _, embedded := range records {
+				set, _, err := document.DecodeVectorSetV1(embedded.VectorSet.Payload, document.VectorBounds{
+					MaxRows: 100, MaxDimension: embedded.VectorSpace.Descriptor.Dimension,
+					MaxBytes: len(embedded.VectorSet.Payload),
+				})
+				require.NoError(b, err)
+				sets = append(sets, set)
+				setIDs = append(setIDs, embedded.VectorSet.ID)
+			}
+			manifest, err := vectorindex.NewManifest(setIDs)
 			require.NoError(b, err)
-			manifest, err := vectorindex.NewManifest([]string{record.VectorSet.ID})
-			require.NoError(b, err)
-			generation, err := vectorindex.BuildGeneration(manifest, []document.VectorSetV1{set}, vectorindex.Options{})
+			generation, err := vectorindex.BuildGeneration(manifest, sets, vectorindex.Options{})
 			require.NoError(b, err)
 			source, err := s.CaptureVectorIndexSource(ctx, record.VectorSpace.ID)
 			require.NoError(b, err)
+			require.Len(b, source.Members, files/10)
 			require.NoError(b, putVectorIndexGenerationForTest(b, s, VectorIndexGenerationRecord{
 				ID: hashVectorIndexTest("semantic-coverage-benchmark"), VectorSpaceID: record.VectorSpace.ID,
 				SourceManifestChecksum: source.ManifestChecksum, IndexManifestChecksum: generation.Metadata().Manifest.Checksum,
@@ -71,19 +84,19 @@ func BenchmarkSemanticSearchCoverage(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				now := time.Now().UTC()
-				authority, err := s.AcquireSemanticSearchAuthority(ctx, profile.Fingerprint, record.BindingID,
+				authority, err := s.AcquireSemanticSearchAuthority(ctx, profileFingerprint, record.BindingID,
 					"coverage-benchmark", now, time.Minute, SearchOptions{})
 				require.NoError(b, err)
-				resolution, resolveErr := s.ResolveSemanticCandidates(ctx, profile.Fingerprint, record.BindingID,
+				resolution, resolveErr := s.ResolveSemanticCandidates(ctx, profileFingerprint, record.BindingID,
 					record.InputKind, record.VectorSpace.ID, source.ManifestChecksum, neighbors, 20, SearchOptions{}, nil)
-				revalidation, revalidateErr := s.RevalidateSearchCandidates(ctx, requested, SearchOptions{}, profile.Fingerprint, record.BindingID)
+				revalidation, revalidateErr := s.RevalidateSearchCandidates(ctx, requested, SearchOptions{}, profileFingerprint, record.BindingID)
 				releaseErr := s.ReleaseVectorIndexGeneration(ctx, authority.Lease.ID, authority.Lease.FencingToken, now)
 				require.NoError(b, resolveErr)
 				require.NoError(b, revalidateErr)
 				require.NoError(b, releaseErr)
 				require.Len(b, resolution.Candidates, 1)
 				require.Len(b, revalidation.Candidates, 1)
-				require.Equal(b, &SearchCoverageSnapshot{ScopedDocuments: files + 1, CompleteDocuments: 1}, revalidation.Coverage)
+				require.Equal(b, &SearchCoverageSnapshot{ScopedDocuments: files, CompleteDocuments: files / 10}, revalidation.Coverage)
 			}
 		})
 	}

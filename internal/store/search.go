@@ -817,18 +817,25 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 	return source, annRows, err
 }
 
-// LiveSearchScopeCount counts current live files in normalized search filters.
-func (s *Store) LiveSearchScopeCount(ctx context.Context, opts SearchOptions) (int, error) {
-	return liveSearchScopeCount(ctx, s.db, opts)
+// LiveSearchScopeExists reports whether normalized search filters match a live file.
+func (s *Store) LiveSearchScopeExists(ctx context.Context, opts SearchOptions) (bool, error) {
+	scopeSQL, args := liveSearchScopeSQL(opts)
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 `+scopeSQL+` LIMIT 1)`, args...).Scan(&exists)
+	return exists, err
 }
 
 func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	scopeSQL, args := liveSearchScopeSQL(opts)
 	var count int
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		filterArgs...).Scan(&count)
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) `+scopeSQL, args...).Scan(&count)
 	return count, err
+}
+
+func liveSearchScopeSQL(opts SearchOptions) (string, []any) {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	return `FROM ` + nodeFrom + `
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL ` + filterSQL, filterArgs
 }
 
 // currentEmbeddingHeadsSQL keeps coverage and semantic retrieval on the same

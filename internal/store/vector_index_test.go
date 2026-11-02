@@ -320,17 +320,20 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
-func newPublishedVectorIndexFixture(t *testing.T) (*Store, EmbeddingSetRecord, VectorIndexSource) {
-	t.Helper()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
-	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+func newPublishedVectorIndexFixture(tb testing.TB) (*Store, EmbeddingSetRecord, VectorIndexSource) {
+	tb.Helper()
+	s, err := Open(tb.Context(), filepath.Join(tb.TempDir(), "docbank.db"))
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, s.Close()) })
+	_, versionID, profile, _ := seedEmbeddingCatalog(tb, s)
+	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(tb, s.StageEmbeddingSet(tb.Context(), record))
+	require.NoError(tb, s.PublishEmbeddingHead(tb.Context(), EmbeddingHeadRecord{
 		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
 		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
-	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
-	require.NoError(t, err)
+	source, err := s.CaptureVectorIndexSource(tb.Context(), record.VectorSpace.ID)
+	require.NoError(tb, err)
 	return s, record, source
 }
 
