@@ -87,10 +87,22 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 		require.Equal(t, tc.roll, faces[0].Roll)
 		require.Equal(t, tc.eyes, faces[0].EyesOpen)
 	}
+	// A new detector with identical observations refreshes provenance silently.
+	_, checkpoint, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	require.NoError(t, scan("b4", next))
+	faces = read()
+	require.Len(t, faces, 1)
+	require.Equal(t, original.FaceID, faces[0].FaceID)
+	require.Equal(t, fakeHash("b4"), faces[0].DetectorFingerprint)
+	require.Equal(t, int64(8), faces[0].Revision)
+	changes, _, err := s.VaultChanges(ctx, checkpoint, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
 	// Completion is keyed to the detector, including empty results.
-	require.NoError(t, scan("b3"))
-	require.Len(t, read(), 1)
 	require.NoError(t, scan("b4"))
+	require.Len(t, read(), 1)
+	require.NoError(t, scan("b5"))
 	require.Empty(t, read())
 }
 
