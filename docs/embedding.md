@@ -1194,4 +1194,4 @@ into a daemon-owned vault. External agents should continue to use the
 
 ## Idle embedding discovery
 
-A quiet vault skips embedding discovery. Any committed write other than search or vector-index coverage bookkeeping, a daemon restart, or consent expiry brings back one full pass. Transient input failures keep discovery retrying once a minute until the input recovers or is permanently rejected.
+A quiet vault skips embedding discovery. Any committed write other than search or vector-index coverage bookkeeping, a daemon restart, or expiry of a consent grant selected by discovery brings back one full pass. The worker's own enqueue and completion writes also cause another pass before discovery settles. Transient input failures keep discovery retrying once a minute until the input recovers or is permanently rejected.

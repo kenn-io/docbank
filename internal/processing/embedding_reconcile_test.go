@@ -90,6 +90,34 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 	_, err = restarted.ScanOnce(t.Context())
 	require.NoError(t, err)
 	require.Positive(t, catalog.examined, "restart always recovers durable authority")
+
+	expires = now.Add(5 * time.Minute)
+	grantRequest := store.ProcessingConsentGrantRequest{
+		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
+		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
+		RetainedArtifactClasses: consent.RetainedArtifactClasses, ExpiresAt: &expires,
+	}
+	_, err = f.catalog.GrantConsent(t.Context(), grantRequest)
+	require.NoError(t, err)
+	grantRequest.ExpiresAt = nil
+	_, err = f.catalog.GrantConsent(t.Context(), grantRequest)
+	require.NoError(t, err)
+	permanent, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	claim, work, found, err = f.catalog.ClaimEmbeddingWork(t.Context(), permanent.ID, "permanent-worker", now, time.Minute, worker.descriptorFingerprints)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NoError(t, f.catalog.FailEmbeddingWork(t.Context(), claim, work, store.EmbeddingFailureInputRejected, store.EmbeddingAttemptReceipt{}, now))
+	scan()
+	require.Positive(t, catalog.examined, "the permanent grant write wakes discovery")
+	scan()
+	require.Zero(t, catalog.examined)
+	revision := f.catalog.WriteRevision()
+	now = expires
+	scan()
+	require.Equal(t, revision, f.catalog.WriteRevision())
+	require.Zero(t, catalog.enqueued)
+	require.Zero(t, catalog.examined, "an unused older grant's expiry keeps discovery idle")
 }
 
 func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
