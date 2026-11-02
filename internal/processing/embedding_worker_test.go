@@ -1373,33 +1373,40 @@ func (catalog *observedEmbeddingCatalog) BeginEmbeddingProviderEgress(ctx contex
 
 func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	authorized, proceed, started := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	fake.runtime.block = true
-	fake.runtime.onBlock = func() { close(started) }
-	worker.catalog = &observedEmbeddingCatalog{Store: fixture.catalog, afterAuthorize: func() {
-		close(authorized)
-		select {
-		case <-proceed:
-		case <-ctx.Done():
-		}
-	}}
-	done := make(chan error, 1)
-	go func() { _, err := worker.ScanOnce(ctx); done <- err }()
-	<-authorized
-	revocation := startFencedRevocation(func() error {
-		_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
-		return err
+	// The fence's waiters block on channels, so synctest.Wait returns while a
+	// revocation waits for the provider call.
+	synctest.Test(t, func(t *testing.T) {
+		fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		authorized, proceed, started := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		fake.runtime.block = true
+		fake.runtime.onBlock = func() { close(started) }
+		worker.catalog = &observedEmbeddingCatalog{Store: fixture.catalog, afterAuthorize: func() {
+			close(authorized)
+			select {
+			case <-proceed:
+			case <-ctx.Done():
+			}
+		}}
+		done := make(chan error, 1)
+		go func() { _, err := worker.ScanOnce(ctx); done <- err }()
+		<-authorized
+		revoked := make(chan error, 1)
+		go func() {
+			_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
+			revoked <- err
+		}()
+		synctest.Wait()
+		requireStillWaiting(t, revoked, "revocation crossed authorized provider boundary")
+		close(proceed)
+		<-started
+		synctest.Wait()
+		requireStillWaiting(t, revoked, "revocation crossed active provider call")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		require.NoError(t, <-revoked)
 	})
-	revocation.requireWaiting(t, "revocation crossed authorized provider boundary")
-	close(proceed)
-	<-started
-	revocation.requireWaiting(t, "revocation crossed active provider call")
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
-	require.NoError(t, <-revocation.done)
 }
 
 func TestEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t *testing.T) {

@@ -343,69 +343,76 @@ func TestSearchAcceptsDistinctActiveProfiles(t *testing.T) {
 func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 	for _, outcome := range []string{"success", "invalid response", "canceled"} {
 		t.Run(outcome, func(t *testing.T) {
-			root, _, _ := exportFixture(t)
-			catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-			authorizer := &consentAuthorizer{catalog: catalog, request: store.ProviderOperationAuthorizationRequest{
-				Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
-				DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
-			}, authorized: make(chan struct{}), proceed: make(chan struct{})}
-			_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
-				Principal: authorizer.request.Principal, Scope: authorizer.request.Scope,
-				ProfileFingerprint: authorizer.request.ProfileFingerprint, DisclosureFingerprint: authorizer.request.DisclosureFingerprint,
-				InputClasses: authorizer.request.InputClasses,
-			})
-			require.NoError(t, err)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			started, finish := make(chan struct{}), make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				writer.Header().Set("Content-Type", "application/json")
-				writer.WriteHeader(http.StatusOK)
-				_ = http.NewResponseController(writer).Flush()
-				close(started)
-				select {
-				case <-finish:
-					if outcome == "invalid response" {
-						_, _ = writer.Write([]byte(`invalid`))
-					} else {
-						_, _ = writer.Write([]byte(`{"results":[]}`))
+			// The fence's waiters block on channels and the endpoint uses the
+			// in-memory network, so synctest.Wait returns while a revocation waits.
+			synctest.Test(t, func(t *testing.T) {
+				root, _, _ := exportFixture(t)
+				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+				authorizer := &consentAuthorizer{catalog: catalog, request: store.ProviderOperationAuthorizationRequest{
+					Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
+					DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
+				}, authorized: make(chan struct{}), proceed: make(chan struct{})}
+				_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+					Principal: authorizer.request.Principal, Scope: authorizer.request.Scope,
+					ProfileFingerprint: authorizer.request.ProfileFingerprint, DisclosureFingerprint: authorizer.request.DisclosureFingerprint,
+					InputClasses: authorizer.request.InputClasses,
+				})
+				require.NoError(t, err)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				started, finish := make(chan struct{}), make(chan struct{})
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					writer.Header().Set("Content-Type", "application/json")
+					writer.WriteHeader(http.StatusOK)
+					_ = http.NewResponseController(writer).Flush()
+					close(started)
+					select {
+					case <-finish:
+						if outcome == "invalid response" {
+							_, _ = writer.Write([]byte(`invalid`))
+						} else {
+							_, _ = writer.Write([]byte(`{"results":[]}`))
+						}
+					case <-request.Context().Done():
 					}
-				case <-request.Context().Done():
+				}))
+				client := newTestClientAt(t, 80, root, authorizer, &authorityStub{}, 1<<20)
+				client.http.Transport = server.Client().Transport
+				done := make(chan error, 1)
+				query := Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5}
+				go func() { _, err := client.Search(ctx, query); done <- err }()
+				<-authorizer.authorized
+				revoked := make(chan error, 1)
+				go func() {
+					_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: "search-user", Scope: "search"})
+					revoked <- err
+				}()
+				synctest.Wait()
+				requireStillWaiting(t, revoked, "revocation completed before the authorized HTTP request")
+				close(authorizer.proceed)
+				<-started
+				synctest.Wait()
+				requireStillWaiting(t, revoked, "revocation completed while reading the response")
+				if outcome == "canceled" {
+					cancel()
+				} else {
+					close(finish)
 				}
-			}))
-			t.Cleanup(server.Close)
-			client := newTestClient(t, server, root, authorizer, &authorityStub{}, 1<<20)
-			done := make(chan error, 1)
-			query := Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5}
-			go func() { _, err := client.Search(ctx, query); done <- err }()
-			<-authorizer.authorized
-			revocation := startFencedRevocation(func() error {
-				_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: "search-user", Scope: "search"})
-				return err
+				searchErr := <-done
+				switch outcome {
+				case "success":
+					require.NoError(t, searchErr)
+				case "invalid response":
+					require.ErrorIs(t, searchErr, ErrInvalidResponse)
+				case "canceled":
+					require.ErrorIs(t, searchErr, context.Canceled)
+				}
+				require.NoError(t, <-revoked, "search must release its consent lease")
+				_, err = client.Search(t.Context(), query)
+				require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
 			})
-			revocation.requireWaiting(t, "revocation completed before the authorized HTTP request")
-			close(authorizer.proceed)
-			<-started
-			revocation.requireWaiting(t, "revocation completed while reading the response")
-			if outcome == "canceled" {
-				cancel()
-			} else {
-				close(finish)
-			}
-			searchErr := <-done
-			switch outcome {
-			case "success":
-				require.NoError(t, searchErr)
-			case "invalid response":
-				require.ErrorIs(t, searchErr, ErrInvalidResponse)
-			case "canceled":
-				require.ErrorIs(t, searchErr, context.Canceled)
-			}
-			require.NoError(t, <-revocation.done, "search must release its consent lease")
-			_, err = client.Search(t.Context(), query)
-			require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
 		})
 	}
 }
@@ -534,5 +541,16 @@ func TestSearchRejectsNonJSONOrFailedResponses(t *testing.T) {
 			_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 1})
 			require.ErrorIs(t, err, ErrInvalidResponse)
 		})
+	}
+}
+
+// requireStillWaiting fails if done has delivered. Call it after
+// synctest.Wait, when every goroutine in the bubble is blocked.
+func requireStillWaiting(t *testing.T, done <-chan error, crossed string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.FailNow(t, crossed, "returned: %v", err)
+	default:
 	}
 }
