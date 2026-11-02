@@ -24,7 +24,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		root := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
-		ts, _ := newInMemoryTestServer(t, func(d *api.Deps) {
+		ts, _ := newBubbleTestServer(t, func(d *api.Deps) {
 			d.Jobs = jobs.New(t.Context(), nil)
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)

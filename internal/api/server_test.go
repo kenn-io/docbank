@@ -64,6 +64,30 @@ func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *te
 	return ts, s
 }
 
+// newBubbleTestServer builds the daemon newTestServer builds, but serves it
+// over httptest's in-memory network. Call it inside synctest.Test: the
+// store, server, and network then belong to the bubble, so the server's
+// timers run on fake time and synctest.Wait returns once its handlers are
+// idle. A real loopback listener would block in network I/O and keep the
+// bubble's clock from advancing. The in-memory network has no loopback
+// address, so requests reach the daemon as a loopback client on 127.0.0.1,
+// and the client sends the test API key, as newTestServer's client does.
+func newBubbleTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
+	t.Helper()
+	s, key := newTestAPIServer(t, mutate)
+	handler := s.Server.Handler()
+	ts := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = "127.0.0.1:1234"
+		handler.ServeHTTP(w, r)
+	}))
+	client := ts.Client()
+	client.Transport = &apiKeyTransport{key: key, next: client.Transport}
+	// The in-memory network accepts any address; use the loopback host the
+	// daemon's Host check allows.
+	ts.URL = "http://127.0.0.1"
+	return ts, s
+}
+
 // newTestAPIServer builds the same daemon API as newTestServer without a
 // network listener, and returns its API key. A test that builds it inside a
 // synctest bubble owns every wait the server makes, so time in the bubble
@@ -127,6 +151,14 @@ func (a *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		next = http.DefaultTransport
 	}
 	return next.RoundTrip(req)
+}
+
+// CloseIdleConnections lets httptest.Server.Close release the pooled
+// connections of the transport this one wraps.
+func (a *apiKeyTransport) CloseIdleConnections() {
+	if closer, ok := a.next.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
 }
 
 // testHash returns a sha256 hex digest of seed. The store only validates

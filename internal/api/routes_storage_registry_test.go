@@ -274,7 +274,7 @@ func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		namespace := filepath.Join(t.TempDir(), "archive")
-		ts, _ := newInMemoryTestServer(t, func(d *api.Deps) {
+		ts, _ := newBubbleTestServer(t, func(d *api.Deps) {
 			d.Jobs = jobs.New(t.Context(), nil)
 			t.Cleanup(d.Jobs.Stop)
 			d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{

@@ -209,7 +209,7 @@ func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T
 		supervisor := jobs.New(t.Context(), nil)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) }()
 		var service checkout.Service
-		ts, catalog := newInMemoryTestServer(t, func(d *api.Deps) { d.Jobs = supervisor; service = api.NewPhotoCheckoutService(*d) })
+		ts, catalog := newBubbleTestServer(t, func(d *api.Deps) { d.Jobs = supervisor; service = api.NewPhotoCheckoutService(*d) })
 		hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("photo"))
 		require.NoError(t, err)
 		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")

@@ -30,8 +30,6 @@ import (
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
@@ -506,42 +504,6 @@ func TestBrowserProcessingHasOneActivity(t *testing.T) {
 	}
 }
 
-// newProcessingBubbleServer is newTestServer for a synctest bubble. The store,
-// API server, and in-memory network belong to the bubble, so processing waits
-// and shutdown deadlines run on fake time.
-func newProcessingBubbleServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
-	t.Helper()
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	dbPath := filepath.Join(dir, "docbank.db")
-	s, err := store.Open(t.Context(), dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	blobsDir := filepath.Join(dir, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = blobs.Close() })
-	deps := api.Deps{
-		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(), WebURL: testWebURL,
-		EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
-	}
-	deps.Cfg.Server.APIKey = testAPIKey
-	mutate(&deps)
-	apiServer := api.NewServer(deps)
-	t.Cleanup(apiServer.Close)
-	handler := apiServer.Handler()
-	ts := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The in-memory network names a synthetic remote peer; present the
-		// loopback client that newTestServer serves.
-		r.Host, r.RemoteAddr = "127.0.0.1", "127.0.0.1:1"
-		handler.ServeHTTP(w, r)
-	}))
-	client := ts.Client()
-	client.Transport = &apiKeyTransport{key: testAPIKey, next: client.Transport}
-	return ts, &testStore{Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath, Server: apiServer}
-}
-
 func configureSupervisedProcessing(t *testing.T, configure func(*api.Deps)) func(*api.Deps) {
 	t.Helper()
 	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
@@ -555,7 +517,7 @@ func configureSupervisedProcessing(t *testing.T, configure func(*api.Deps)) func
 // assertBrowserProcessingActivity runs inside a synctest bubble.
 func assertBrowserProcessingActivity(t *testing.T, configure func(*api.Deps), started, release chan struct{}) {
 	t.Helper()
-	ts, catalog := newProcessingBubbleServer(t, configureSupervisedProcessing(t, configure))
+	ts, catalog := newBubbleTestServer(t, configureSupervisedProcessing(t, configure))
 	t.Cleanup(func() { closeProcessingSignal(release) })
 	node := createFileWithContent(t, ts, catalog, "/activity.txt", "synthetic processing activity\n")
 	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
@@ -630,7 +592,7 @@ func TestProcessingJobStreamPublishesDurableIdentityAndSurvivesDisconnect(t *tes
 			inner: inner, started: make(chan struct{}), release: make(chan struct{}),
 		}
 		t.Cleanup(func() { closeProcessingSignal(provider.release) })
-		ts, catalog := newProcessingBubbleServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithProvider(t, provider)))
+		ts, catalog := newBubbleTestServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithProvider(t, provider)))
 		node := createFileWithContent(t, ts, catalog, "/stream.txt", "durable before provider completion\n")
 		selector := map[string]any{"node_id": node.ID,
 			"content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -646,7 +608,7 @@ func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
 			inner: inner, started: make(chan struct{}), release: make(chan struct{}),
 		}
 		t.Cleanup(func() { closeProcessingSignal(provider.release) })
-		ts, catalog := newProcessingBubbleServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false)))
+		ts, catalog := newBubbleTestServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false)))
 		node := createFileWithContent(t, ts, catalog, "/embedding-only.txt", "embed after disconnect\n")
 		selector := map[string]any{"node_id": node.ID,
 			"content_version_id": node.CurrentVersionID, "profile": "private"}
@@ -664,7 +626,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 			EmbeddingProvider: inner, started: make(chan struct{}),
 			cancelled: make(chan struct{}), release: make(chan struct{}),
 		}
-		ts, catalog := newProcessingBubbleServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false)))
+		ts, catalog := newBubbleTestServer(t, configureSupervisedProcessing(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false)))
 		t.Cleanup(func() { closeProcessingSignal(provider.release) })
 		node := createFileWithContent(t, ts, catalog, "/shutdown.txt", "recover accepted processing after shutdown\n")
 		selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
@@ -802,7 +764,7 @@ func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T)
 		embedding := &observedProcessingEmbeddingProvider{
 			inner: newProcessingTestEmbeddingProvider(t), started: make(chan struct{}),
 		}
-		ts, catalog := newProcessingBubbleServer(t,
+		ts, catalog := newBubbleTestServer(t,
 			configureProcessingTestServiceWithProviders(t, rendition, embedding, true, document.EmbeddingOptional))
 		node := createFileWithContent(t, ts, catalog, "/combined.txt", "render and embed after disconnect\n")
 		selector := map[string]any{"node_id": node.ID,
@@ -817,7 +779,7 @@ func TestRenditionDisconnectDoesNotCancelFollowingEmbeddingEnqueue(t *testing.T)
 }
 
 // assertProcessingSurvivesDisconnect runs inside a synctest bubble against a
-// server from newProcessingBubbleServer.
+// server from newBubbleTestServer.
 // synctest.Wait marks each point at which every server goroutine has settled.
 func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selector map[string]any,
 	started, release chan struct{},
@@ -1655,7 +1617,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) {
 		base, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 		require.NoError(t, err)
 		provider := &consentChangeProvider{RenditionProvider: base}
-		ts, catalog := newProcessingBubbleServer(t, func(deps *api.Deps) {
+		ts, catalog := newBubbleTestServer(t, func(deps *api.Deps) {
 			gate := api.NewOperationGate()
 			deps.Gate = gate
 			deps.Processing, err = processing.NewService(t.Context(), processing.ServiceConfig{
