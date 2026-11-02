@@ -441,6 +441,17 @@ func (c *Connection) ProcessingStatus(ctx context.Context, jobID string) (api.Pr
 	return result, nil
 }
 
+func (c *Connection) ValidateDocumentSearch(ctx context.Context, request api.DocumentSearchValidationRequest) error {
+	result, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
+	if err != nil {
+		return err
+	}
+	if !result.Valid {
+		return errors.New("search validation response is invalid")
+	}
+	return nil
+}
+
 func (c *Connection) SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	var result api.DocumentSearchReport
 	apiResponse, err := c.API().SearchDocuments(ctx, &apiclient.SearchDocumentsRequestOptions{Body: &request})
