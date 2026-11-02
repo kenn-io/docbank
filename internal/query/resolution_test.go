@@ -318,8 +318,9 @@ func TestResolveQueryHonorsContextAndNilResolver(t *testing.T) {
 	assert.Empty(t, resolved.Dependencies)
 
 	_, err = ResolveQuery(context.Background(), lexicalQuery(`tag:red`), nil)
-	expressionErr := requireExpressionError(t, `tag:red`, err)
-	assert.Equal(t, "references are not supported here", expressionErr.Message)
+	require.Error(t, err)
+	var expressionErr *ExpressionError
+	assert.NotErrorAs(t, err, &expressionErr)
 }
 
 func TestResolveQueryEnforcesSavedDepthNodeByteAndDependencyBounds(t *testing.T) {

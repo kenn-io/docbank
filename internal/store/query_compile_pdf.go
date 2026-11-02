@@ -31,11 +31,18 @@ func compilePDFPredicate(field, value string, start, end int) (compiledQueryFrag
 	}, nil
 }
 
+// PDF filters accept only PDF fact fields, so references cannot resolve.
+type pdfFilterResolver struct{}
+
+func (pdfFilterResolver) Resolve(context.Context, query.ReferenceKind, string, bool) (query.Reference, error) {
+	return query.Reference{}, query.ErrUnknownReference
+}
+
 func compilePDFFilter(ctx context.Context, text string) (compiledQueryFragment, error) {
 	compiled, err := (queryCompiler{pdfOnly: true}).compile(ctx, query.Query{
 		V: 1, Text: text, Syntax: "advanced", Mode: "lexical",
 		Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"},
-	}, nil)
+	}, pdfFilterResolver{})
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
