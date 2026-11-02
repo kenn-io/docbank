@@ -314,7 +314,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 ) (ProviderOperationAuthorizationRequest, bool, error) {
 	inputs, _ := json.Marshal([]string{string(inputKind)})
 	retained, _ := json.Marshal([]string{"embedding_vector_set"})
-	rows, err := tx.QueryContext(ctx, `SELECT g.grant_id,g.principal,g.scope,g.expires_at FROM processing_consent_grants g
+	rows, err := tx.QueryContext(ctx, `SELECT g.principal,g.scope FROM processing_consent_grants g
 		JOIN current_processing_incarnation c ON c.incarnation_id=g.incarnation_id
 		WHERE g.vault_uid=$1 AND g.profile_fingerprint=$2 AND g.disclosure_fingerprint=$3
 		AND g.input_classes_json=$4 AND g.retained_classes_json=$5
@@ -326,19 +326,10 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 	}
 	defer func() { _ = rows.Close() }()
 	var candidates []ProviderOperationAuthorizationRequest
-	expiries := map[string]time.Time{}
 	for rows.Next() {
-		var grantID, principal, scope string
-		var expires sql.NullString
-		if err := rows.Scan(&grantID, &principal, &scope, &expires); err != nil {
+		var principal, scope string
+		if err := rows.Scan(&principal, &scope); err != nil {
 			return ProviderOperationAuthorizationRequest{}, false, err
-		}
-		if expires.Valid {
-			value, err := time.Parse(timestampLayout, expires.String)
-			if err != nil {
-				return ProviderOperationAuthorizationRequest{}, false, fmt.Errorf("parsing embedding consent expiry: %w", err)
-			}
-			expiries[grantID] = value
 		}
 		candidate := ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile, DisclosureFingerprint: disclosure,
@@ -350,7 +341,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 	}
 	for _, candidate := range candidates {
 		if authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at); err == nil {
-			if value := expiries[authorization.GrantID]; !value.IsZero() && (expiry.IsZero() || value.Before(*expiry)) {
+			if value := authorization.expiresAt; !value.IsZero() && (expiry.IsZero() || value.Before(*expiry)) {
 				*expiry = value
 			}
 			candidate.PriorAuthorization = &authorization

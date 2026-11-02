@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 type countedReconcileCatalog struct {
@@ -123,17 +125,19 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name  string
-		blobs func(store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs
+		name   string
+		column string
+		value  func(*testing.T, publicationFixture) string
 	}{
-		{"checksum mismatch", func(request store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs {
-			return &embeddingRuntimeTestBlobs{data: request.InputGeneration.GenerationJSON}
+		{"checksum mismatch", "generation_checksum", func(_ *testing.T, _ publicationFixture) string {
+			return workerHash("damaged generation checksum")
 		}},
-		{"evidence over limit", func(request store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs {
-			return &embeddingRuntimeTestBlobs{byHash: map[string][]byte{
-				request.InputGeneration.GenerationBlobHash:  request.InputGeneration.GenerationJSON,
-				request.InputGeneration.EvidenceFingerprint: make([]byte, (64<<20)+1),
-			}}
+		{"evidence over limit", "evidence_fingerprint", func(t *testing.T, f publicationFixture) string {
+			t.Helper()
+			receipt, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(make([]byte, (64<<20)+1)))
+			require.NoError(t, err)
+			require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(t, receipt)))
+			return receipt.Hash
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,7 +149,23 @@ func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found)
 			require.NoError(t, f.catalog.AbandonEmbeddingWork(t.Context(), claim, time.Now()))
-			worker.generationBlobs = tc.blobs(request)
+			// Damage catalog authority while retaining hash-valid physical blobs.
+			value := tc.value(t, f)
+			db, err := store.DefaultSQLiteDriver().Open(f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			_, err = db.ExecContext(t.Context(), `DROP TRIGGER embedding_input_generations_immutable_update`)
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `UPDATE embedding_input_generations SET `+tc.column+`=? WHERE generation_id=?`, value, request.InputGeneration.ID)
+			require.NoError(t, err)
+			generation := request.InputGeneration
+			if tc.column == "generation_checksum" {
+				generation.GenerationChecksum = value
+			} else {
+				generation.EvidenceFingerprint = value
+			}
+			_, err = hydrateEmbeddingGeneration(t.Context(), f.blobs, generation)
+			require.ErrorIs(t, err, ErrEmbeddingInputRejected)
 			catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
 			worker.catalog = catalog
 			now := time.Now().UTC()

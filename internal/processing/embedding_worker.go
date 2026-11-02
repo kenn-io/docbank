@@ -410,11 +410,12 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		var work EmbeddingWork
 		found := false
 
-		if !reconciled && !worker.clock().Before(worker.reconcileAt) && worker.reconcile.settled &&
-			worker.catalog.WriteRevision() == worker.reconcile.revision && (worker.reconcile.expiry.IsZero() || worker.clock().Before(worker.reconcile.expiry)) {
-			worker.reconcileAt = worker.clock().Add(time.Minute)
+		now := worker.clock()
+		if !reconciled && !now.Before(worker.reconcileAt) && worker.reconcile.settled &&
+			worker.catalog.WriteRevision() == worker.reconcile.revision && (worker.reconcile.expiry.IsZero() || now.Before(worker.reconcile.expiry)) {
+			worker.reconcileAt = now.Add(time.Minute)
 		}
-		if !reconciled && !worker.clock().Before(worker.reconcileAt) {
+		if !reconciled && !now.Before(worker.reconcileAt) {
 			if !worker.reconcile.sweeping {
 				worker.reconcile = embeddingReconcileState{sweeping: true, revision: worker.catalog.WriteRevision()}
 			}
