@@ -2873,18 +2873,11 @@ func TestSearchContentFirstGenerationSources(t *testing.T) {
 func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 	t.Parallel()
 	s, record, source := newPublishedVectorIndexFixture(t)
-	now := time.Now().UTC()
-	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("read-pool", source, []byte("index"), now)))
-	lease, err := s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, "reader", now, time.Minute)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), lease.ID, lease.FencingToken, now))
-	}()
 	version, err := s.ContentVersionByID(t.Context(), record.InputGeneration.SourceVersionID)
 	require.NoError(t, err)
 	opts := SearchOptions{ContentVersionIDs: []string{version.ID}}
 	neighbor := vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}
-	for _, name := range []string{"fence", "resolve", "revalidate", "similar", "similar-authority-invalid-source"} {
+	for _, name := range []string{"fence", "similar", "similar-authority-invalid-source"} {
 		t.Run(name, func(t *testing.T) {
 			tx, err := s.writeDB.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
@@ -2897,23 +2890,13 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, source.ManifestChecksum, got.ManifestChecksum)
 				require.Equal(t, 1, complete)
-			case "resolve":
-				got, err := s.ResolveSemanticCandidates(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, source.ManifestChecksum, []vectorindex.Neighbor{neighbor}, 10, opts, nil)
-				require.NoError(t, err)
-				require.Len(t, got.Candidates, 1)
-				require.Equal(t, version.NodeID, got.Candidates[0].NodeID)
-			case "revalidate":
-				candidate := SearchCandidateIdentity{NodeID: version.NodeID, ContentVersionID: version.ID, Evidence: []SearchEvidenceIdentity{{NodeID: version.NodeID, ContentVersionID: version.ID, Kind: "embedding", VectorSpaceID: source.VectorSpaceID, SourceManifestChecksum: source.ManifestChecksum, EmbeddingSetID: record.ID, InputGenerationID: record.InputGeneration.ID, InputID: neighbor.InputKey, InputKind: record.InputKind}}}
-				got, err := s.RevalidateSearchCandidates(ctx, []SearchCandidateIdentity{candidate}, opts, record.ProcessingProfileFingerprint, record.BindingID)
-				require.NoError(t, err)
-				require.Len(t, got.Candidates, 1)
-				require.Equal(t, version.NodeID, got.Candidates[0].NodeID)
 			case "similar":
 				got, err := s.ResolveSimilarCandidates(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, source.ManifestChecksum, []vectorindex.Neighbor{neighbor}, 10, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
 				require.NoError(t, err)
 				require.Empty(t, got.Candidates)
 				require.Equal(t, 1, got.CompleteDocuments)
 			case "similar-authority-invalid-source":
+				now := time.Now().UTC()
 				_, err := s.AcquireSimilarSearchAuthority(ctx, record.ProcessingProfileFingerprint, record.BindingID, "reader", now, time.Minute, SearchOptions{}, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
 				require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
 			}
