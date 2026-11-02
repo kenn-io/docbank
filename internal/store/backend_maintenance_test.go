@@ -56,7 +56,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_suggestion_fts_insert photo_suggestion_fts_update photo_suggestion_fts_delete
  tag_fts_insert tag_fts_update tag_fts_delete
  rendition_lexical_index_insert rendition_lexical_index_delete`},
-	{"processing authority", "pgschema.Setup initializes incarnation; runtime has read-only grants", "consent changes and incarnation replacement remain unqualified", `
+	{"processing authority", "consent.go; INSERT-only grants and revocations; setup owns incarnation", "renditions contracts; restore incarnation replacement remains unqualified", `
  current_processing_incarnation_immutable_update current_processing_incarnation_immutable_delete
  processing_incarnations_immutable_update processing_incarnations_immutable_delete
  processing_consent_grants_immutable_update processing_consent_grants_immutable_delete
@@ -70,7 +70,8 @@ var backendMaintenanceEffects = []backendMaintenance{
  media_input_artifacts_immutable_update visual_preview_generations_immutable_update
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
- embedding_vector_rows_immutable_update embedding_sets_immutable_update
+ embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
+	{"rendition records", "processing_catalog.go and search.go; runtime has no UPDATE grant", "renditions contracts; cleanup may delete immutable records", `
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update
  rendition_lexical_segments_immutable_update rendition_attachments_immutable_update`},

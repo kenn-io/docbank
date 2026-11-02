@@ -323,11 +323,14 @@ also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved quer
 definition management use the native Store operations on both databases.
 Extracted source metadata, typed photo facts, and document-event evidence,
 publication, terminal attempts and rebuild receipts also use shared operations.
+Original-file rendition jobs include consent, resumable claims, artifact staging
+and atomic head publication through the same Store.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-provider/rendition, embedding, page and media workers, search, transfer, backup recovery, multi-store placement
-and storage-operation jobs remain unqualified.
+photo-derived processing, extraction, embedding, page and media workers, search,
+transfer, backup recovery, multi-store placement and storage-operation jobs
+remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -474,6 +477,15 @@ GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnost
     ON documents.document_event_attempts TO docbank_runtime;
 GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
     ON documents.document_event_builds TO docbank_runtime;
+GRANT INSERT ON documents.processing_consent_grants, documents.processing_consent_revocations,
+    documents.processing_profiles, documents.rendition_builds, documents.rendition_artifacts,
+    documents.rendition_units, documents.rendition_lexical_segments,
+    documents.rendition_attachments, documents.rendition_jobs, documents.rendition_job_waiters,
+    documents.rendition_lexical_heads, documents.rendition_lexical_superseded TO docbank_runtime;
+GRANT INSERT ON documents.rendition_blob_staging TO docbank_runtime;
+GRANT INSERT, UPDATE(attachment_id, published_at) ON documents.rendition_heads TO docbank_runtime;
+GRANT UPDATE(provider_attempts) ON documents.rendition_jobs TO docbank_runtime;
+GRANT UPDATE(attachment_id) ON documents.rendition_job_waiters TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -746,6 +758,46 @@ corruption. Rebuild requests atomically advance the input epoch and record an
 idempotent receipt; refresh counts only current terminal attempts, and completed
 receipts remain immutable.
 
+#### Rendition jobs and publication
+
+Original-file rendition jobs run through the same Store operations on both
+backends. Consent grants bind the exact profile, disclosure, input classes and
+retained artifacts to the current processing incarnation. Revocations append a
+new fence. A new grant cannot replace the authorization used by an earlier
+provider call; publication rechecks that authorization inside its writer
+transaction. Runtime can insert grants and revocations but cannot update or
+delete their history. Incarnation replacement during restore remains unqualified.
+
+Jobs share a build only when source bytes, execution identity and captured output
+policy agree. Each version/profile waiter keeps its own consent. Claims,
+renewals, scheduled retries and resumable provider handles keep the existing
+lease and fencing rules. An expired provider call without a durable handle
+requires operator resolution. Worker error classification recognizes PostgreSQL
+serialization failures, deadlocks and lock unavailability; it does not retry
+unknown commit outcomes. Reusing a staged build or restoring a superseded
+head does not repeat provider work.
+
+Builds, artifacts, evidence units and text segments are immutable records. The
+runtime role may insert them; cleanup may delete them, but no update grant
+permits rewriting evidence. Job staging creates retention roots in the same
+transaction. Publication validates the source, retained policy, consent and
+complete lexical manifest, then moves rendition and lexical heads together.
+A failed replacement leaves the old heads and waiting job intact. Successful
+replacement removes stale chunk-embedding heads and failures, and collects
+superseded lexical generations only when no root or reader still needs them.
+
+Build reads, active rendition views and exact text resolution use repeatable-read
+snapshots. A purge committed during a read affects the next request. PostgreSQL
+stores the relational lexical projection and manifests; SQLite additionally
+maintains FTS through its existing triggers. PostgreSQL ranked search is not
+qualified by publication tests.
+
+The `renditions` backend suite covers this native lifecycle, including provider
+resume, revocation, lease theft, staged-build reuse, failed publication and
+concurrent purge. It does not qualify photo-description or face-detection jobs,
+email/media producers, extraction workers, embedding publication, or public
+PostgreSQL vault opening.
+
 #### Recoverable deletion
 
 Native document and folder trash, photo-group trash, trash browsing and restore
@@ -803,7 +855,7 @@ JSON values alone do not preserve indexed lookup plans.
 Both destructive operations retain the existing refusal while audit authority
 is active. Dry runs can inspect candidates but do not authorize deletion.
 Physical reclamation uses the separate catalog operations described below;
-processing workers remain unqualified.
+other processing producers remain unqualified.
 
 #### Derivative cleanup
 
@@ -908,7 +960,8 @@ correcting evidence invalidates derived events and people, schedules event
 recomputation, and advances the publication epochs for removed projections.
 SQLite retains its released trigger ownership, including the event epoch's
 per-head increment. Canonical event tables support this invalidation and its
-cascades; event publication and derivation workers remain unqualified.
+cascades; [event publication](#source-metadata-and-document-events) uses the
+shared Store. People publication remains unqualified.
 
 Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.

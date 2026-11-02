@@ -70,8 +70,27 @@ var (
 // contention failure. Workers may retry these errors while their fenced lease
 // remains live; all other catalog errors require normal state classification.
 func (s *Store) RenditionJobErrorRetryable(err error) bool {
-	return s != nil && err != nil && (s.driver.IsBusy(err) ||
-		errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn))
+	if s == nil || err == nil {
+		return false
+	}
+	if errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn) {
+		return true
+	}
+	if s.postgresSchema == "" {
+		return s.driver.IsBusy(err)
+	}
+	// Like SQLite busy errors, these abort the database operation. Do not
+	// treat other connection errors as retryable: commit may have succeeded.
+	var state interface{ SQLState() string }
+	if !errors.As(err, &state) {
+		return false
+	}
+	switch state.SQLState() {
+	case "40001", "40P01", "55P03":
+		return true
+	default:
+		return false
+	}
 }
 
 // RenditionJobRequest joins one authorized version/profile waiter to the
@@ -206,7 +225,7 @@ func (s *Store) EnqueueRenditionJob(
 		var currentSource, liveSource bool
 		if err := tx.QueryRowContext(ctx,
 			`SELECT v.blob_hash,n.name,n.current_version_id=v.version_id,n.trashed_at IS NULL
-			 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=?`, request.ContentVersionID,
+			 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=$1`, request.ContentVersionID,
 		).Scan(&sourceSHA256, &filename, &currentSource, &liveSource); errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("content version: %w", ErrNotFound)
 		} else if err != nil {
@@ -270,7 +289,7 @@ func (s *Store) EnqueueRenditionJob(
 				evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
 				execution_identity_fingerprint,execution_identity_json,
 				captured_artifact_policy_json,state,phase,available_at,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,'queued','queued',?,?,?)
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued','queued',$10,$11,$12)
 			ON CONFLICT(job_id) DO NOTHING`,
 			jobID, s.vaultID, sourceSHA256, profile.RenditionRequestFingerprint,
 			profile.EvidenceLexicalFingerprint, policyFingerprint, executionFingerprint,
@@ -280,15 +299,15 @@ func (s *Store) EnqueueRenditionJob(
 		}
 		var storedExecution string
 		if err := tx.QueryRowContext(ctx, `SELECT execution_identity_fingerprint
-			FROM rendition_jobs WHERE job_id=?`, jobID).Scan(&storedExecution); err != nil {
+			FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&storedExecution); err != nil {
 			return fmt.Errorf("reading shared rendition job identity: %w", err)
 		}
 		if storedExecution != executionFingerprint {
 			return errors.New("shared rendition build has an incompatible execution identity")
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET claim_epoch=max(
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET claim_epoch=`+metadataJSONDialect{s.postgresSchema != ""}.maximum()+`(
 			claim_epoch,COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots
-			WHERE root_id IN (?,?)),0)) WHERE job_id=?`,
+			WHERE root_id IN ($1,$2)),0)) WHERE job_id=$3`,
 			renditionJobRootID("build", jobID), renditionJobRootID("generation", jobID),
 			jobID); err != nil {
 			return fmt.Errorf("synchronizing rendition job fencing epoch: %w", err)
@@ -297,28 +316,28 @@ func (s *Store) EnqueueRenditionJob(
 		// failure. Resolve that transition before adding a waiter so terminal
 		// builds cannot retain a waiter that no worker is allowed to service.
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=?,
+			state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,
 			provider_started=0,provider_resume_handle=NULL,selected_waiter_id=NULL,
 			authorization_grant_id=NULL,authorization_incarnation_id=NULL,
-			authorization_revocation_fence=NULL,failure_code=NULL,updated_at=?
-			WHERE job_id=? AND state='failed'
+			authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$2
+			WHERE job_id=$3 AND state='failed'
 			  AND phase IN ('queued','build_staged','generation_staged')
 			  AND failure_code IN ('consent','stale_authority','pdf_password_required')`, now, now, jobID); err != nil {
 			return fmt.Errorf("requeueing safe rendition authority failure: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=?,
+			state='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,
 			selected_waiter_id=NULL,authorization_grant_id=NULL,
 			authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
-			failure_code=NULL,updated_at=?
-			WHERE job_id=? AND state='failed' AND phase='provider'
+			failure_code=NULL,updated_at=$2
+			WHERE job_id=$3 AND state='failed' AND phase='provider'
 			  AND provider_resume_handle IS NOT NULL AND execution_snapshot_json IS NOT NULL
 			  AND failure_code IN ('consent','stale_authority')`, now, now, jobID); err != nil {
 			return fmt.Errorf("requeueing sealed rendition resume after authority failure: %w", err)
 		}
 		var state RenditionJobState
 		if err := tx.QueryRowContext(ctx,
-			`SELECT state FROM rendition_jobs WHERE job_id=?`, jobID).Scan(&state); err != nil {
+			`SELECT state FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&state); err != nil {
 			return fmt.Errorf("checking rendition job join state: %w", err)
 		}
 		switch state {
@@ -343,7 +362,7 @@ func (s *Store) EnqueueRenditionJob(
 				authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
 				state,failure_code,
 				attachment_id,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'waiting',NULL,?,?,?)
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'waiting',NULL,$13,$14,$15)
 			ON CONFLICT(waiter_id) DO UPDATE SET
 				state='waiting',failure_code=NULL,updated_at=excluded.updated_at`,
 			waiterID, jobID, request.ContentVersionID, profile.Fingerprint,
@@ -355,7 +374,7 @@ func (s *Store) EnqueueRenditionJob(
 			return fmt.Errorf("joining rendition job: %w", err)
 		}
 		if request.ExplicitStart && request.ExecutionIdentity.Authorization.ProviderID != document.FaceDetectionProviderID {
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_description_explicit_waiters(waiter_id) VALUES(?)`, waiterID); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO photo_description_explicit_waiters(waiter_id) VALUES($1) ON CONFLICT DO NOTHING`, waiterID); err != nil {
 				return fmt.Errorf("recording explicit start: %w", err)
 			}
 		}
@@ -366,7 +385,7 @@ func (s *Store) EnqueueRenditionJob(
 			// A waiter that an explicit start created stays explicit when an automatic request joins it.
 			explicit := request.ExplicitStart
 			if !explicit && request.ExecutionIdentity.Authorization.ProviderID != document.FaceDetectionProviderID {
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters WHERE waiter_id=?)`, waiterID).Scan(&explicit); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters WHERE waiter_id=$1)`, waiterID).Scan(&explicit); err != nil {
 					return fmt.Errorf("reading explicit start: %w", err)
 				}
 			}
@@ -378,8 +397,8 @@ func (s *Store) EnqueueRenditionJob(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 				SELECT 1 FROM rendition_heads h
 				JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-				WHERE h.content_version_id=? AND h.profile_fingerprint=?
-				  AND a.attachment_id=? AND a.build_id=?
+				WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2
+				  AND a.attachment_id=$3 AND a.build_id=$4
 			)`, request.ContentVersionID, profile.Fingerprint, attachmentID, jobID).Scan(
 			&alreadyActive); err != nil {
 			return fmt.Errorf("checking active rendition waiter: %w", err)
@@ -403,7 +422,7 @@ func (s *Store) EnqueueRenditionJob(
 		}
 		if alreadyActive {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-					SET state='published',failure_code=NULL,updated_at=? WHERE waiter_id=?`, now, waiterID); err != nil {
+					SET state='published',failure_code=NULL,updated_at=$1 WHERE waiter_id=$2`, now, waiterID); err != nil {
 				return fmt.Errorf("joining active rendition waiter: %w", err)
 			}
 		} else {
@@ -420,12 +439,12 @@ func (s *Store) EnqueueRenditionJob(
 			if buildErr == nil {
 				result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 					state='queued',phase='build_staged',claim_owner=NULL,lease_expires_at=NULL,
-					claim_epoch=claim_epoch+1,available_at=?,provider_started=0,
+					claim_epoch=claim_epoch+1,available_at=$1,provider_started=0,
 					provider_resume_handle=NULL,selected_waiter_id=NULL,
 					authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 					authorization_revocation_fence=NULL,lexical_generation_id=NULL,
-					failure_code=NULL,updated_at=?
-					WHERE job_id=? AND state IN ('queued','completed')`, now, now, jobID)
+					failure_code=NULL,updated_at=$2
+					WHERE job_id=$3 AND state IN ('queued','completed')`, now, now, jobID)
 				if err != nil {
 					return fmt.Errorf("reusing completed rendition build for waiter: %w", err)
 				}
@@ -436,7 +455,7 @@ func (s *Store) EnqueueRenditionJob(
 				if reused != 0 {
 					var rootEpoch int64
 					if err := tx.QueryRowContext(ctx,
-						`SELECT claim_epoch FROM rendition_jobs WHERE job_id=?`, jobID,
+						`SELECT claim_epoch FROM rendition_jobs WHERE job_id=$1`, jobID,
 					).Scan(&rootEpoch); err != nil {
 						return fmt.Errorf("reading reusable rendition job epoch: %w", err)
 					}
@@ -451,11 +470,11 @@ func (s *Store) EnqueueRenditionJob(
 			} else {
 				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 					state='queued',phase='queued',claim_owner=NULL,lease_expires_at=NULL,
-					claim_epoch=claim_epoch+1,available_at=?,provider_started=0,
+					claim_epoch=claim_epoch+1,available_at=$1,provider_started=0,
 					provider_resume_handle=NULL,selected_waiter_id=NULL,
 					authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 					authorization_revocation_fence=NULL,lexical_generation_id=NULL,
-					failure_code=NULL,updated_at=? WHERE job_id=? AND state='completed'`,
+					failure_code=NULL,updated_at=$2 WHERE job_id=$3 AND state='completed'`,
 					now, now, jobID); err != nil {
 					return fmt.Errorf("restarting collected completed rendition job: %w", err)
 				}
@@ -492,7 +511,7 @@ func (s *Store) RenditionJobByID(ctx context.Context, id string) (RenditionJob, 
 // rendition build's executable identity.
 func (s *Store) RenditionInputBinding(ctx context.Context, buildID string) (string, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT execution_identity_json FROM rendition_jobs WHERE job_id=?`,
+	err := s.db.QueryRowContext(ctx, `SELECT execution_identity_json FROM rendition_jobs WHERE job_id=$1`,
 		buildID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -547,7 +566,7 @@ func (s *Store) ClaimRenditionJob(
 		err := tx.QueryRowContext(ctx, `
 			SELECT state,phase,claim_owner,claim_epoch,lease_expires_at,available_at,
 			       provider_started,provider_attempts,provider_resume_handle,lexical_generation_id
-			FROM rendition_jobs WHERE job_id=?`, jobID).Scan(
+			FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(
 			&state, &phase, &currentOwner, &epoch, &leaseRaw, &availableRaw,
 			&providerStarted, &providerAttempts, &resume, &generationID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -574,7 +593,7 @@ func (s *Store) ClaimRenditionJob(
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
 				// A photo description has no side effects, so it runs again instead of waiting for an operator.
 				var description bool
-				if err := tx.QueryRowContext(ctx, `SELECT json_extract(execution_identity_json,'$.upload.input_kind')='derived_upload' FROM rendition_jobs WHERE job_id=?`, jobID).Scan(&description); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&description); err != nil {
 					return fmt.Errorf("reading rendition job input kind: %w", err)
 				}
 				if description {
@@ -582,7 +601,7 @@ func (s *Store) ClaimRenditionJob(
 						UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,
 						lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,
 						selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,
-						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=? WHERE job_id=?`,
+						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$1 WHERE job_id=$2`,
 						at.Format(timestampLayout), jobID); err != nil {
 						return fmt.Errorf("requeueing expired photo description: %w", err)
 					}
@@ -592,7 +611,7 @@ func (s *Store) ClaimRenditionJob(
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
 				if _, err := tx.ExecContext(ctx, `
 					UPDATE rendition_jobs SET state='operator_required',claim_owner=NULL,
-					lease_expires_at=NULL,failure_code='ambiguous',updated_at=? WHERE job_id=?`,
+					lease_expires_at=NULL,failure_code='ambiguous',updated_at=$1 WHERE job_id=$2`,
 					at.Format(timestampLayout), jobID); err != nil {
 					return fmt.Errorf("quarantining ambiguous rendition job: %w", err)
 				}
@@ -609,8 +628,8 @@ func (s *Store) ClaimRenditionJob(
 		}
 		epoch++
 		result, err := tx.ExecContext(ctx, `
-			UPDATE rendition_jobs SET state='running',claim_owner=?,claim_epoch=?,
-				lease_expires_at=?,failure_code=NULL,updated_at=? WHERE job_id=?`,
+			UPDATE rendition_jobs SET state='running',claim_owner=$1,claim_epoch=$2,
+				lease_expires_at=$3,failure_code=NULL,updated_at=$4 WHERE job_id=$5`,
 			owner, epoch, expires.Format(timestampLayout), at.Format(timestampLayout), jobID)
 		if err != nil {
 			return fmt.Errorf("claiming rendition job: %w", err)
@@ -648,8 +667,8 @@ func (s *Store) ClaimNextRenditionJob(
 ) (RenditionJobClaim, bool, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT job_id FROM rendition_jobs
-		WHERE (state IN ('queued','retry_wait') AND available_at<=?)
-		   OR (state='running' AND lease_expires_at<=?)
+		WHERE (state IN ('queued','retry_wait') AND available_at<=$1)
+		   OR (state='running' AND lease_expires_at<=$2)
 		ORDER BY available_at,job_id LIMIT 64`,
 		at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout))
 	if err != nil {
@@ -701,7 +720,7 @@ func (s *Store) RenditionJobWorkByClaim(
 		var executionSnapshotJSON sql.NullString
 		if err := tx.QueryRowContext(ctx, `SELECT selected_waiter_id,
 			captured_artifact_policy_json,execution_identity_json,execution_snapshot_json
-			FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(
+			FROM rendition_jobs WHERE job_id=$1`, claim.JobID).Scan(
 			&waiterID, &policy, &executionIdentityJSON, &executionSnapshotJSON); err != nil {
 			return fmt.Errorf("reading rendition work identity: %w", err)
 		}
@@ -736,9 +755,9 @@ func (s *Store) RenditionJobWorkByClaim(
 			} else {
 				waiterID = sql.NullString{String: candidateID, Valid: true}
 				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-				selected_waiter_id=?,authorization_grant_id=?,
-				authorization_incarnation_id=?,authorization_revocation_fence=?,updated_at=?
-				WHERE job_id=? AND claim_epoch=?`, candidateID,
+				selected_waiter_id=$1,authorization_grant_id=$2,
+				authorization_incarnation_id=$3,authorization_revocation_fence=$4,updated_at=$5
+				WHERE job_id=$6 AND claim_epoch=$7`, candidateID,
 					candidateAuthorization.GrantID,
 					candidateAuthorization.ProcessingIncarnationID,
 					candidateAuthorization.RevocationFence,
@@ -828,7 +847,7 @@ func (s *Store) RenewRenditionJobClaim(
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			lease_expires_at=?,updated_at=? WHERE job_id=? AND claim_owner=? AND claim_epoch=?`,
+			lease_expires_at=$1,updated_at=$2 WHERE job_id=$3 AND claim_owner=$4 AND claim_epoch=$5`,
 			expires.Format(timestampLayout), at.UTC().Format(timestampLayout),
 			claim.JobID, claim.Owner, claim.Epoch)
 		if err != nil {
@@ -901,7 +920,7 @@ func (s *Store) BeginRenditionProvider(
 			       authorization_incarnation_id,authorization_revocation_fence,
 			       execution_identity_fingerprint,execution_snapshot_json,
 			       provider_resume_handle
-			FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(
+			FROM rendition_jobs WHERE job_id=$1`, claim.JobID).Scan(
 			&selected, &grant, &incarnation, &fence, &executionFingerprint,
 			&storedSnapshot, &resumeHandle); readErr != nil {
 			return fmt.Errorf("reading rendition provider authority: %w", readErr)
@@ -937,7 +956,7 @@ func (s *Store) BeginRenditionProvider(
 				failureCode = RenditionFailureStaleAuthority
 			}
 			if _, rejectErr := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=? AND job_id=? AND state='waiting'`,
+				SET state='rejected',failure_code=$1,updated_at=$2 WHERE waiter_id=$3 AND job_id=$4 AND state='waiting'`,
 				failureCode, at.UTC().Format(timestampLayout), waiterID, claim.JobID); rejectErr != nil {
 				return fmt.Errorf("rejecting stale rendition waiter: %w", rejectErr)
 			}
@@ -953,10 +972,10 @@ func (s *Store) BeginRenditionProvider(
 			}
 			result, requeueErr := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 				state='queued',claim_owner=NULL,lease_expires_at=NULL,
-				claim_epoch=claim_epoch+1,available_at=?,selected_waiter_id=?,
-				authorization_grant_id=?,authorization_incarnation_id=?,
-				authorization_revocation_fence=?,failure_code=NULL,updated_at=?
-				WHERE job_id=? AND claim_epoch=?`, at.UTC().Format(timestampLayout),
+				claim_epoch=claim_epoch+1,available_at=$1,selected_waiter_id=$2,
+				authorization_grant_id=$3,authorization_incarnation_id=$4,
+				authorization_revocation_fence=$5,failure_code=NULL,updated_at=$6
+				WHERE job_id=$7 AND claim_epoch=$8`, at.UTC().Format(timestampLayout),
 				nextWaiterID, nextAuthorization.GrantID,
 				nextAuthorization.ProcessingIncarnationID, nextAuthorization.RevocationFence,
 				at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
@@ -978,11 +997,11 @@ func (s *Store) BeginRenditionProvider(
 		}
 		_, err = tx.ExecContext(ctx, `
 			UPDATE rendition_jobs SET phase='provider',provider_started=1,
-				provider_attempts=provider_attempts+?,
-				execution_snapshot_json=COALESCE(execution_snapshot_json,?),
-				selected_waiter_id=?,authorization_grant_id=?,
-				authorization_incarnation_id=?,authorization_revocation_fence=?,updated_at=?
-			WHERE job_id=?`, attemptIncrement, nullableBytes(snapshotJSON), waiterID, authorization.GrantID,
+				provider_attempts=provider_attempts+$1,
+				execution_snapshot_json=COALESCE(execution_snapshot_json,$2),
+				selected_waiter_id=$3,authorization_grant_id=$4,
+				authorization_incarnation_id=$5,authorization_revocation_fence=$6,updated_at=$7
+			WHERE job_id=$8`, attemptIncrement, nullableBytes(snapshotJSON), waiterID, authorization.GrantID,
 			authorization.ProcessingIncarnationID, authorization.RevocationFence,
 			at.UTC().Format(timestampLayout), claim.JobID)
 		return err
@@ -1038,7 +1057,7 @@ func (s *Store) CheckpointRenditionProvider(
 			return errors.New("rendition provider has not started")
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs
-			SET provider_resume_handle=?,updated_at=? WHERE job_id=? AND claim_epoch=?`,
+			SET provider_resume_handle=$1,updated_at=$2 WHERE job_id=$3 AND claim_epoch=$4`,
 			handle, at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
 		if err != nil {
 			return fmt.Errorf("checkpointing rendition provider: %w", err)
@@ -1070,7 +1089,7 @@ func (s *Store) MarkRenditionJobRetry(
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			state='retry_wait',claim_owner=NULL,lease_expires_at=NULL,available_at=?,
+			state='retry_wait',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,
 			phase=CASE
 				WHEN phase='provider' AND provider_resume_handle IS NULL THEN 'queued'
 				ELSE phase
@@ -1101,7 +1120,7 @@ func (s *Store) MarkRenditionJobRetry(
 				WHEN phase='provider' AND provider_resume_handle IS NULL THEN NULL
 				ELSE authorization_revocation_fence
 			END,
-			failure_code=?,updated_at=? WHERE job_id=? AND claim_epoch=?`,
+			failure_code=$2,updated_at=$3 WHERE job_id=$4 AND claim_epoch=$5`,
 			availableAt.UTC().Format(timestampLayout), code, at.UTC().Format(timestampLayout),
 			claim.JobID, claim.Epoch)
 		if err != nil {
@@ -1205,7 +1224,7 @@ func (s *Store) finishRenditionJobClaim(
 		}
 		var hasWaiting bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM rendition_job_waiters WHERE job_id=? AND state='waiting'
+			SELECT 1 FROM rendition_job_waiters WHERE job_id=$1 AND state='waiting'
 		)`, claim.JobID).Scan(&hasWaiting); err != nil {
 			return fmt.Errorf("checking rendition job consumers: %w", err)
 		}
@@ -1217,14 +1236,14 @@ func (s *Store) finishRenditionJobClaim(
 		var discardedPhoto bool
 		if state == RenditionJobFailed && (code == RenditionFailureConsent || code == RenditionFailureStaleAuthority) {
 			if err := tx.QueryRowContext(ctx, `SELECT provider_resume_handle IS NULL AND
-				json_extract(execution_identity_json,'$.upload.input_kind')=? FROM rendition_jobs WHERE job_id=?`,
+				`+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`=$1 FROM rendition_jobs WHERE job_id=$2`,
 				document.RenditionInputDerivedUpload, claim.JobID).Scan(&discardedPhoto); err != nil {
 				return fmt.Errorf("checking discarded photo description: %w", err)
 			}
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state=?,
-			claim_owner=NULL,lease_expires_at=NULL,failure_code=?,updated_at=?
-			WHERE job_id=? AND claim_epoch=?`, state, code,
+		result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state=$1,
+			claim_owner=NULL,lease_expires_at=NULL,failure_code=$2,updated_at=$3
+			WHERE job_id=$4 AND claim_epoch=$5`, state, code,
 			at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
 		if err != nil {
 			return fmt.Errorf("finishing rendition job: %w", err)
@@ -1245,14 +1264,14 @@ func (s *Store) finishRenditionJobClaim(
 				execution_snapshot_json=NULL,selected_waiter_id=NULL,
 				authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 				authorization_revocation_fence=NULL,lexical_generation_id=NULL,
-				updated_at=? WHERE job_id=? AND claim_epoch=?`,
+				updated_at=$1 WHERE job_id=$2 AND claim_epoch=$3`,
 				at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch); err != nil {
 				return fmt.Errorf("resetting orphaned reopenable rendition job: %w", err)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots
-			SET active=0,released_at=?
-			WHERE root_id IN (?,?) AND fencing_token=? AND active=1`,
+			SET active=0,released_at=$1
+			WHERE root_id IN ($2,$3) AND fencing_token=$4 AND active=1`,
 			at.UTC().Format(timestampLayout), renditionJobRootID("build", claim.JobID),
 			renditionJobRootID("generation", claim.JobID), claim.Epoch); err != nil {
 			return fmt.Errorf("releasing terminal rendition job roots: %w", err)
@@ -1307,7 +1326,7 @@ func (s *Store) StageRenditionJobBuild(
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE rendition_jobs
-			SET phase='build_staged',updated_at=? WHERE job_id=? AND claim_epoch=?`,
+			SET phase='build_staged',updated_at=$1 WHERE job_id=$2 AND claim_epoch=$3`,
 			at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
 		return err
 	})
@@ -1342,9 +1361,9 @@ func (s *Store) StageRenditionJobGeneration(
 		}
 		if job.Phase == RenditionPhaseGenerationStaged {
 			result, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET
-				target_id=?,recorded_at=?
-				WHERE root_id=? AND root_kind='job' AND target_kind='lexical_generation'
-				  AND fencing_token=? AND active=1`, generation.ID, root.RecordedAt,
+				target_id=$1,recorded_at=$2
+				WHERE root_id=$3 AND root_kind='job' AND target_kind='lexical_generation'
+				  AND fencing_token=$4 AND active=1`, generation.ID, root.RecordedAt,
 				root.ID, claim.Epoch)
 			if err != nil {
 				return fmt.Errorf("refreshing rendition job generation root: %w", err)
@@ -1360,8 +1379,8 @@ func (s *Store) StageRenditionJobGeneration(
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			phase='generation_staged',lexical_generation_id=?,updated_at=?
-			WHERE job_id=? AND claim_epoch=?`, generation.ID,
+			phase='generation_staged',lexical_generation_id=$1,updated_at=$2
+			WHERE job_id=$3 AND claim_epoch=$4`, generation.ID,
 			at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
 		return err
 	})
@@ -1419,7 +1438,7 @@ func (s *Store) publishRenditionJob(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COALESCE(lexical_generation_id,''),provider_started,selected_waiter_id,authorization_grant_id,
 			       authorization_incarnation_id,authorization_revocation_fence,execution_identity_json
-			FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(
+			FROM rendition_jobs WHERE job_id=$1`, claim.JobID).Scan(
 			&generationID, &providerStarted, &selectedWaiter, &grantID, &incarnationID,
 			&revocationFence, &executionIdentityJSON); err != nil {
 			return fmt.Errorf("reading rendition publication authority: %w", err)
@@ -1514,7 +1533,7 @@ func (s *Store) publishRenditionJob(
 		publishedAt := at.UTC().Format(timestampLayout)
 		for _, waiter := range rejected {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+				SET state='rejected',failure_code=$1,updated_at=$2 WHERE waiter_id=$3`,
 				waiter.code, publishedAt, waiter.id); err != nil {
 				return fmt.Errorf("rejecting rendition waiter: %w", err)
 			}
@@ -1541,7 +1560,7 @@ func (s *Store) publishRenditionJob(
 				// One answer serves every waiter; an explicit one may replace a dismissal.
 				var explicit bool
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_description_explicit_waiters e JOIN rendition_job_waiters w ON w.waiter_id=e.waiter_id
- WHERE w.job_id=? AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
+ WHERE w.job_id=$1 AND w.state='waiting')`, claim.JobID).Scan(&explicit); err != nil {
 					return err
 				}
 				var description document.PhotoDescription
@@ -1578,7 +1597,7 @@ func (s *Store) publishRenditionJob(
 		}
 		for _, authority := range authorized {
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='published',failure_code=NULL,updated_at=? WHERE waiter_id=?`,
+				SET state='published',failure_code=NULL,updated_at=$1 WHERE waiter_id=$2`,
 				publishedAt, authority.waiter.ID); err != nil {
 				return fmt.Errorf("publishing rendition waiter: %w", err)
 			}
@@ -1587,12 +1606,12 @@ func (s *Store) publishRenditionJob(
 			state='completed',phase='published',claim_owner=NULL,lease_expires_at=NULL,
 			selected_waiter_id=NULL,authorization_grant_id=NULL,
 			authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
-			failure_code=NULL,updated_at=? WHERE job_id=? AND claim_epoch=?`,
+			failure_code=NULL,updated_at=$1 WHERE job_id=$2 AND claim_epoch=$3`,
 			publishedAt, claim.JobID, claim.Epoch); err != nil {
 			return fmt.Errorf("completing rendition job: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots
-			SET active=0,released_at=? WHERE root_id IN (?,?) AND fencing_token=? AND active=1`,
+			SET active=0,released_at=$1 WHERE root_id IN ($2,$3) AND fencing_token=$4 AND active=1`,
 			publishedAt, renditionJobRootID("build", claim.JobID),
 			renditionJobRootID("generation", claim.JobID), claim.Epoch); err != nil {
 			return fmt.Errorf("releasing rendition job roots: %w", err)
@@ -1620,7 +1639,7 @@ func authorizeStoredEgressTx(
 	var inputJSON, retainedJSON string
 	err := tx.QueryRowContext(ctx, `SELECT principal,scope,profile_fingerprint,disclosure_fingerprint,
 		input_classes_json,retained_classes_json FROM processing_consent_grants
-		WHERE grant_id=? AND vault_uid=?`, prior.GrantID, vaultID).Scan(
+		WHERE grant_id=$1 AND vault_uid=$2`, prior.GrantID, vaultID).Scan(
 		&request.Principal, &request.Scope, &request.ProfileFingerprint,
 		&request.DisclosureFingerprint, &inputJSON, &retainedJSON)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1648,8 +1667,8 @@ func mediaInputBindingVisibleForSourceTx(
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
 		JOIN content_versions c ON c.version_id=v.content_version_id
-		WHERE i.input_id=? AND o.caller_principal=? AND o.visible=1
-			AND c.blob_hash=? AND o.source_version_id=i.source_version_id`,
+		WHERE i.input_id=$1 AND o.caller_principal=$2 AND o.visible=1
+			AND c.blob_hash=$3 AND o.source_version_id=i.source_version_id`,
 		inputID, principal, sourceSHA256).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -1724,7 +1743,7 @@ func putRenditionJobRootTx(
 	var token int64
 	var active bool
 	err := tx.QueryRowContext(ctx, `SELECT root_kind,target_kind,target_id,fencing_token,active
-		FROM current_rendition_roots WHERE root_id=?`, root.ID).Scan(
+		FROM current_rendition_roots WHERE root_id=$1`, root.ID).Scan(
 		&kind, &targetKind, &targetID, &token, &active)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("reading rendition job root %s: %w", root.ID, err)
@@ -1775,7 +1794,7 @@ func loadRenditionJobWaiterTx(
 	err := query.QueryRowContext(ctx, `
 		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,attachment_id,state,failure_code,
 		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence
-		FROM rendition_job_waiters WHERE waiter_id=?`, id).Scan(
+		FROM rendition_job_waiters WHERE waiter_id=$1`, id).Scan(
 		&waiter.ID, &waiter.JobID, &waiter.ContentVersionID,
 		&waiter.ProfileFingerprint, &waiter.AttachmentID, &waiter.State, &failure,
 		&waiter.AuthorizationGrantID,
@@ -1804,7 +1823,7 @@ func requireRenditionClaimTx(
 	var epoch int64
 	err := tx.QueryRowContext(ctx, `
 		SELECT state,claim_owner,claim_epoch,lease_expires_at
-		FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(&state, &owner, &epoch, &leaseRaw)
+		FROM rendition_jobs WHERE job_id=$1`, claim.JobID).Scan(&state, &owner, &epoch, &leaseRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RenditionJob{}, ErrRenditionJobFenced
 	}

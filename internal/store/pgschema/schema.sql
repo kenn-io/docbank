@@ -2305,3 +2305,34 @@ CREATE TABLE {{schema}}.document_event_attempts (
     input_epoch bigint NOT NULL, input_revision bigint NOT NULL, inputs_sha256 text COLLATE "C" NOT NULL,
     state text COLLATE "C" NOT NULL, diagnostic_json bytea NOT NULL, attempted_at text COLLATE "C" NOT NULL
 );
+
+CREATE INDEX processing_consent_grants_authority
+    ON {{schema}}.processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    );
+
+CREATE INDEX processing_consent_grants_set
+    ON {{schema}}.processing_consent_grants(consent_set_id, grant_id);
+
+CREATE INDEX processing_consent_revocations_scope
+    ON {{schema}}.processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    );
+
+CREATE INDEX rendition_builds_source
+    ON {{schema}}.rendition_builds(source_sha256, build_id);
+
+CREATE INDEX rendition_artifacts_blob
+    ON {{schema}}.rendition_artifacts(blob_hash, build_id);
+
+CREATE INDEX rendition_jobs_claimable
+    ON {{schema}}.rendition_jobs(state, available_at, lease_expires_at, job_id);
+
+CREATE INDEX current_rendition_roots_target
+    ON {{schema}}.current_rendition_roots(target_kind, target_id, root_kind);
+
+CREATE INDEX current_rendition_roots_expiry
+    ON {{schema}}.current_rendition_roots(expires_at)
+    WHERE expires_at IS NOT NULL;
