@@ -13,10 +13,11 @@ Files imported through any Docbank ingestion path can supply evidence.
 
 ## Connect Kata
 
-Kata API schemas 0.21.0 through 0.28.x are supported. Other versions are rejected before any write.
+Kata API schemas 0.21.0 through 0.31.x are supported. Other versions are rejected before any write.
 `GET /api/v1/health` reports it as `api_schema_version`, separate from the Kata release number.
-Kata v0.18.0 reports schema 0.21.0; v0.19.0 reports 0.28.0. Both meet the
-requirement. Docbank checks it only when you use this integration.
+Kata v0.18.0 reports schema 0.21.0, v0.19.0 reports 0.28.0, and v0.20.0
+reports 0.31.0. All three meet the requirement. Docbank checks it only when you
+use this integration.
 
 Add this optional section to `$DOCBANK_HOME/config.toml`:
 
