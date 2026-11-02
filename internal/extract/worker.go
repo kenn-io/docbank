@@ -84,17 +84,21 @@ func (w *Worker) Run(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	// found records whether any scan since the last wait processed work.
+	found := false
 	for {
 		processed, err := w.ScanOnce(ctx)
 		if err != nil {
 			return err
 		}
+		found = found || processed > 0
 		if processed == batchSize {
 			continue
 		}
-		if jobs.Idle(ctx, w.interval, processed > 0) != nil {
+		if jobs.Idle(ctx, w.interval, found) != nil {
 			return nil
 		}
+		found = false
 	}
 }
 
