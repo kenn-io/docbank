@@ -232,13 +232,15 @@ func TestRenditionWorkerReleasesDaemonGateDuringProviderEgress(t *testing.T) {
 	})
 }
 
-func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) { //nolint:paralleltest // proves the fence holds by waiting 100ms of real time
+func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) {
+	t.Parallel()
 	for _, resumable := range []bool{false, true} {
 		name := "render"
 		if resumable {
 			name = "render resumable"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			testRenditionWorkerFencesConsentRevocationThroughProviderExecution(t, resumable)
 		})
 	}
@@ -294,37 +296,28 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 	}()
 	select {
 	case <-beginCommitted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider authority did not commit")
+	case runErr := <-workerDone:
+		require.FailNow(t, "provider authority did not commit", "worker returned: %v", runErr)
 	}
-	revocationDone := make(chan error, 1)
-	go func() {
+	revocation := startFencedRevocation(func() error {
 		_, revokeErr := fixture.catalog.RevokeConsent(
 			t.Context(), store.ProcessingConsentRevocationRequest{
 				Principal: request.Authorization.Principal,
 				Scope:     request.Authorization.Scope,
 			})
-		revocationDone <- revokeErr
-	}()
-	select {
-	case revokeErr := <-revocationDone:
-		require.FailNow(t, "consent revocation crossed an unstarted provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the unstarted provider fence keeps revocation blocked
-	}
+		return revokeErr
+	})
+	revocation.requireWaiting(t, "consent revocation crossed an unstarted provider fence")
 
 	close(allowProvider)
 	select {
 	case <-provider.renderStarted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider invocation did not start")
+	case runErr := <-workerDone:
+		require.FailNow(t, "provider invocation did not start", "worker returned: %v", runErr)
 	}
-	select {
-	case revokeErr := <-revocationDone:
-		require.FailNow(t, "consent revocation crossed an active provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the active provider fence keeps revocation blocked
-	}
+	revocation.requireWaiting(t, "consent revocation crossed an active provider fence")
 	close(provider.renderRelease)
-	require.NoError(t, <-revocationDone)
+	require.NoError(t, <-revocation.done)
 	require.NoError(t, <-workerDone)
 }
 

@@ -1371,7 +1371,8 @@ func (catalog *observedEmbeddingCatalog) BeginEmbeddingProviderEgress(ctx contex
 	return auth, fence, err
 }
 
-func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolint:paralleltest // proves the fence holds by waiting 100ms of real time
+func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
+	t.Parallel()
 	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -1388,30 +1389,17 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolin
 	done := make(chan error, 1)
 	go func() { _, err := worker.ScanOnce(ctx); done <- err }()
 	<-authorized
-	revoked := make(chan error, 1)
-	go func() {
+	revocation := startFencedRevocation(func() error {
 		_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
-		revoked <- err
-	}()
-	select {
-	case err := <-revoked:
-		cancel()
-		<-done
-		t.Fatalf("revocation crossed authorized provider boundary: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
-	}
+		return err
+	})
+	revocation.requireWaiting(t, "revocation crossed authorized provider boundary")
 	close(proceed)
 	<-started
-	select {
-	case err := <-revoked:
-		cancel()
-		<-done
-		t.Fatalf("revocation crossed active provider call: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the active provider call keeps revocation blocked
-	}
+	revocation.requireWaiting(t, "revocation crossed active provider call")
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
-	require.NoError(t, <-revoked)
+	require.NoError(t, <-revocation.done)
 }
 
 func TestEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t *testing.T) {
