@@ -25,7 +25,7 @@ import (
 func TestAddURLImportsEvidence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DOCBANK_HOME", home)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\nidle_timeout = \"150ms\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\nidle_timeout = \"1s\"\n"), 0o600))
 	binary := buildDocbank(t)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), home) })
 	content := "synthetic filing\n"
