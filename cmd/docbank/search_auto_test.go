@@ -335,8 +335,8 @@ func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	t.Cleanup(func() { resetFlags(rootCmd) })
 	const filter = "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"
 	var record kitdaemon.RuntimeRecord
-	var profileCalls, scopeCalls, searchCalls int
-	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &scopeCalls, &searchCalls)
+	var profileCalls, searchCalls int
+	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &searchCalls)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
 			assert.Equal(t, filter, r.URL.Query().Get("pdf_filter"))
