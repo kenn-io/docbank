@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAuditStatusPostgres(t *testing.T) {
+func checkAuditStatusPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, reader, publish, scopeID, child, outside := newAuditHistoryPostgresFixture(t)
 	ctx := t.Context()
@@ -52,7 +53,8 @@ func TestAuditStatusPostgres(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestAuditStatusSnapshotPostgres(t *testing.T) {
+func checkAuditStatusSnapshotPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, reader, publish, _, child, _ := newAuditHistoryPostgresFixture(t)
 	publish()
@@ -89,7 +91,8 @@ func TestAuditStatusSnapshotPostgres(t *testing.T) {
 	require.Equal(t, want, after)
 }
 
-func TestNodeAllocationAfterDeletePostgres(t *testing.T) {
+func checkNodeAllocationAfterDeletePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -115,7 +118,8 @@ func TestNodeAllocationAfterDeletePostgres(t *testing.T) {
 	}))
 }
 
-func TestAuditAuthorityAfterRollbackPostgres(t *testing.T) {
+func checkAuditAuthorityAfterRollbackPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, reader, publish, _, child, _ := newAuditHistoryPostgresFixture(t)
 	publish()

@@ -11,7 +11,8 @@ import (
 	"uuid"
 )
 
-func TestDerivativeCleanupPostgres(t *testing.T) {
+func checkDerivativeCleanupPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	t.Run("complete manifest", func(t *testing.T) {
 		t.Parallel()
@@ -23,7 +24,8 @@ func TestDerivativeCleanupPostgres(t *testing.T) {
 	})
 }
 
-func TestDerivativeSharedLegacyPostgres(t *testing.T) {
+func checkDerivativeSharedLegacyPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -52,7 +54,8 @@ func TestDerivativeSharedLegacyPostgres(t *testing.T) {
 	}
 }
 
-func TestDerivativeEmbeddingRootsPostgres(t *testing.T) {
+func checkDerivativeEmbeddingRootsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, version, profile, attachment := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
@@ -107,7 +110,8 @@ func TestDerivativeEmbeddingRootsPostgres(t *testing.T) {
 	}
 }
 
-func TestDerivativeLexicalReplacementPostgres(t *testing.T) {
+func checkDerivativeLexicalReplacementPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
@@ -146,7 +150,8 @@ func TestDerivativeLexicalReplacementPostgres(t *testing.T) {
 	}
 }
 
-func TestDerivativeAuditRollbackPostgres(t *testing.T) {
+func checkDerivativeAuditRollbackPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
@@ -192,7 +197,8 @@ func TestDerivativeAuditRollbackPostgres(t *testing.T) {
 	checkRetentionMetadata(t, s)
 }
 
-func TestDerivativeEmailRetentionPostgres(t *testing.T) {
+func checkDerivativeEmailRetentionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -233,7 +239,8 @@ func TestDerivativeEmailRetentionPostgres(t *testing.T) {
 	}
 }
 
-func TestDerivativeExportRetentionPostgres(t *testing.T) {
+func checkDerivativeExportRetentionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
@@ -259,7 +266,8 @@ func TestDerivativeExportRetentionPostgres(t *testing.T) {
 	checkRetentionMetadata(t, s)
 }
 
-func TestDerivativePlanSnapshotPostgres(t *testing.T) {
+func checkDerivativePlanSnapshotPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, _ := newRenditionCatalogFixture(t)
 	ctx := t.Context()

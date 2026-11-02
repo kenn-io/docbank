@@ -10,7 +10,7 @@ import (
 
 func newReportDownloadCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Example: `  docbank search-export download <report-id> --output out.zip`,
+		Example: `  docbank report download <report-id> --output out.zip`,
 		Use:     "download <report-id>",
 		Short:   "Save a verified report evidence ZIP",
 		Args:    cobra.ExactArgs(1)}
@@ -24,7 +24,7 @@ func newReportDownloadCommand() *cobra.Command {
 			return usageError(errors.New("report ID must be 48 lowercase hexadecimal characters"))
 		}
 		if output == "" {
-			return usageError(errors.New("search-export download requires --output"))
+			return usageError(fmt.Errorf("%s download requires --output", reportCommandPath(cmd)))
 		}
 		if _, err := prepareGetDestination(output, overwrite); err != nil {
 			return usageError(err)
@@ -50,13 +50,13 @@ func newReportDownloadCommand() *cobra.Command {
 func reportDeliveryError(id, output string, err error) error {
 	if code, ok := daemonconn.ProblemCode(err); ok && code == "report_unavailable" {
 		return fmt.Errorf("report %s is unavailable; create a new report with "+
-			"docbank search-export create --input <request.json> --output <path>: %w", id, err)
+			"docbank report create --input <request.json> --output <path>: %w", id, err)
 	}
 	if errors.Is(err, daemonconn.ErrReportReviewRequired) {
-		return fmt.Errorf("report %s needs date review; run docbank search-export dates %s, "+
-			"then docbank search-export revise %s --choices choices.json --output <path>: %w",
+		return fmt.Errorf("report %s needs date review; run docbank report dates %s, "+
+			"then docbank report revise %s --choices choices.json --output <path>: %w",
 			id, id, id, err)
 	}
 	return fmt.Errorf("report %s delivery did not finish cleanly; inspect %q before retrying with "+
-		"docbank search-export download %s --output <path>: %w", id, output, id, err)
+		"docbank report download %s --output <path>: %w", id, output, id, err)
 }

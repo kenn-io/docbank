@@ -1308,6 +1308,8 @@ CREATE TABLE {{schema}}.saved_query_runs (
     photos                     BIGINT NOT NULL DEFAULT 0
 );
 
+CREATE INDEX saved_query_runs_definition ON {{schema}}.saved_query_runs(saved_query_id, ran_at DESC);
+
 CREATE TABLE {{schema}}.term_report_history (
     id           TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     parent_id    TEXT COLLATE "C" NOT NULL,
@@ -1650,6 +1652,8 @@ CREATE TABLE {{schema}}.mailbox_jobs (
     job_json TEXT COLLATE "C" NOT NULL
 );
 
+CREATE INDEX mailbox_jobs_state ON {{schema}}.mailbox_jobs(state,owner,id);
+
 CREATE TABLE {{schema}}.mailbox_occurrences (
     job_id TEXT COLLATE "C" NOT NULL,
     ordinal BIGINT NOT NULL,
@@ -1670,7 +1674,7 @@ CREATE TABLE {{schema}}.photo_quality_signals (
     color_blue DOUBLE PRECISION,
     framing DOUBLE PRECISION,
     aesthetics DOUBLE PRECISION,
-    face_reports_json TEXT,
+    face_reports_json TEXT COLLATE "C",
     face_inputs TEXT COLLATE "C" NOT NULL DEFAULT '',
     PRIMARY KEY(content_version_id,evaluator_fingerprint)
 );
@@ -1741,6 +1745,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     suggestion_id        TEXT COLLATE "C" NOT NULL UNIQUE,
     content_version_id   TEXT COLLATE "C" NOT NULL,
     producer_fingerprint TEXT COLLATE "C" NOT NULL,
+    rotation             BIGINT,
     caption              TEXT COLLATE "C" NOT NULL DEFAULT '',
     tags_json            TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     visible_text         TEXT COLLATE "C" NOT NULL DEFAULT '',
@@ -1748,6 +1753,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     caption_resolved     BIGINT NOT NULL DEFAULT 0,
     resolved_tags_json   TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     awaiting             BIGINT NOT NULL DEFAULT 0,
+    text_settled         BIGINT NOT NULL DEFAULT 0,
     created_at           TEXT COLLATE "C" NOT NULL,
     UNIQUE (content_version_id, producer_fingerprint)
 );
@@ -2280,4 +2286,22 @@ CREATE TABLE {{schema}}.derivative_pack_purge_pending (
     pack_id TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (store_id, pack_id),
     FOREIGN KEY (store_id, pack_id) REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.photo_technical_metadata_state (
+    singleton         bigint PRIMARY KEY,
+    projection_recipe text COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.document_event_builds (
+    operation_id text COLLATE "C" PRIMARY KEY, request_sha256 text COLLATE "C" NOT NULL, deriver_fingerprint text COLLATE "C" NOT NULL,
+    state text COLLATE "C" NOT NULL, target_epoch bigint NOT NULL,
+    scanned bigint NOT NULL, published bigint NOT NULL, unavailable bigint NOT NULL,
+    failed bigint NOT NULL, started_at text COLLATE "C" NOT NULL, updated_at text COLLATE "C" NOT NULL, finished_at text COLLATE "C"
+);
+
+CREATE TABLE {{schema}}.document_event_attempts (
+    content_version_id text COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    input_epoch bigint NOT NULL, input_revision bigint NOT NULL, inputs_sha256 text COLLATE "C" NOT NULL,
+    state text COLLATE "C" NOT NULL, diagnostic_json bytea NOT NULL, attempted_at text COLLATE "C" NOT NULL
 );

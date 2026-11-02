@@ -12,8 +12,8 @@ import (
 var gcRun bool
 
 var gcCmd = &cobra.Command{
-	Example: `  docbank gc
-  docbank gc --run`,
+	Example: `  docbank vault gc
+  docbank vault gc --run`,
 	GroupID: groupOperations,
 	Use:     "gc",
 	Short:   "Reclaim unreachable blobs (dry-run unless --run)",
@@ -56,5 +56,5 @@ separate storage repack to reclaim physical pack space.`,
 
 func init() {
 	gcCmd.Flags().BoolVar(&gcRun, "run", false, "apply the change (default is a dry run)")
-	rootCmd.AddCommand(gcCmd)
+	registerGroupedCommand(vaultCmd, gcCmd, "gc")
 }

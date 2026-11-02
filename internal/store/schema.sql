@@ -3031,12 +3031,14 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_checkout_commit ON photo_change
 -- source version and producer. Accepting a field moves it to the authored
 -- fields and clears it here. The resolved columns remember what the owner has
 -- already decided, so a description regenerated after restore (awaiting=1)
--- offers only what is still open.
+-- offers only what is still open. text_settled marks a restored row whose text
+-- had nothing left to decide, so it regenerates only its rotation.
 CREATE TABLE IF NOT EXISTS photo_suggestions (
     id                   INTEGER PRIMARY KEY,
     suggestion_id        TEXT NOT NULL UNIQUE,
     content_version_id   TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     producer_fingerprint TEXT NOT NULL,
+    rotation             INTEGER,
     caption              TEXT NOT NULL DEFAULT '',
     tags_json            TEXT NOT NULL DEFAULT '[]',
     visible_text         TEXT NOT NULL DEFAULT '',
@@ -3044,6 +3046,7 @@ CREATE TABLE IF NOT EXISTS photo_suggestions (
     caption_resolved     INTEGER NOT NULL DEFAULT 0 CHECK (caption_resolved IN (0,1)),
     resolved_tags_json   TEXT NOT NULL DEFAULT '[]',
     awaiting             INTEGER NOT NULL DEFAULT 0 CHECK (awaiting IN (0,1)),
+    text_settled         INTEGER NOT NULL DEFAULT 0 CHECK (text_settled IN (0,1)),
     created_at           TEXT NOT NULL,
     UNIQUE (content_version_id, producer_fingerprint)
 );

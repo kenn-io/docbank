@@ -243,6 +243,14 @@ Instructions for autonomous coding agents working in this repository.
   forward migrations, without changing msgvault's or SQLite's existing history.
   The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
+- Register PostgreSQL operation tests in `internal/store/backend_contract_test.go`;
+  `make backend-coverage` reports that executable inventory. Keep schema
+  differences explicit in the parity tests and effect ownership in the coverage
+  report. Verify catalog effects through operation tests.
+  Remove resolved exceptions when porting an operation. A copied retained catalog
+  qualifies validation, not its producer. The development guide's
+  [backend checks](docs/internal/development.md#backend-support-and-drift-checks)
+  own the commands and limits. Keep this machinery out of runtime query paths.
 - Changes to catalogs read by shared metadata validation must update both
   canonical schemas in the same change, even when the feature's PostgreSQL
   writes are not ported yet. Keep SQL added to qualified operations portable,

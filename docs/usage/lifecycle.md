@@ -37,9 +37,9 @@ safe. Docbank skips matching content already present under a destination
 candidate.
 
 ```bash
-docbank add ~/Desktop/scans
-docbank tree /inbox
-docbank mv /inbox/scans/tax-notice.pdf /taxes/2026/
+docbank document add ~/Desktop/scans
+docbank document tree /inbox
+docbank document move /inbox/scans/tax-notice.pdf /taxes/2026/
 ```
 
 The source files remain untouched. Keep them until your normal backup process
@@ -62,12 +62,12 @@ automatically today. Running `gc --run` immediately after `rm` cannot reclaim
 the document because the recoverable trash entry still references it.
 
 ```bash
-docbank rm /inbox/duplicate.pdf
+docbank document remove /inbox/duplicate.pdf
 docbank trash list
 docbank trash empty --older-than 30d
 docbank trash empty --older-than 30d --run
-docbank gc
-docbank gc --run
+docbank vault gc
+docbank vault gc --run
 docbank storage status
 docbank storage repack
 ```
@@ -76,7 +76,7 @@ Read each dry-run count before adding `--run`. If a document should return,
 restore its stable selector before emptying:
 
 ```bash
-docbank restore id:42
+docbank document restore id:42
 ```
 
 ### On a schedule
@@ -86,7 +86,7 @@ a schedule appropriate for the archive. It reads and hashes every cataloged
 blob, so large vaults take time.
 
 ```bash
-docbank verify
+docbank vault verify
 ```
 
 A clean result proves that each cataloged hash can be read and still matches
@@ -128,12 +128,12 @@ does not copy blobs held only by secondary stores. The live reports can help
 you check how much content the primary holds:
 
 ```bash
-docbank info --json
+docbank vault info --json
 docbank storage list --json
 ```
 
 Find the store whose `role` is `primary`. Its `authoritative_objects` can be
-compared with `tracked_blobs` from `docbank info`, but the reports are separate
+compared with `tracked_blobs` from `docbank vault info`, but the reports are separate
 live snapshots. Watches, ingests, clients, and storage jobs can change either
 count between requests and before daemon shutdown, so matching values do not
 prove that a copy is complete. `sole_authority_objects` is weaker still: a blob
@@ -165,14 +165,14 @@ runtime records are not archive data.
 
 Protect the snapshot like the vault itself: document contents and a configured
 API key may both be present. Test restoration into a separate
-`DOCBANK_HOME`, then run `docbank verify` there.
+`DOCBANK_HOME`, then run `docbank vault verify` there.
 
 ```bash
 export DOCBANK_HOME=/tmp/docbank-restore-test
 mkdir -p "$DOCBANK_HOME"
 # Restore the archived vault contents into this directory.
-docbank verify
-docbank tree /
+docbank vault verify
+docbank document tree /
 docbank daemon stop
 ```
 
@@ -184,7 +184,7 @@ normal use.
 For routine recovery testing, prefer restoring the latest built-in snapshot to
 a separate target and inspecting it under a separate `DOCBANK_HOME`. Restore
 already verifies repository reads, SQLite integrity, and manifest statistics
-before it reports success. `docbank verify` then exercises the resulting live
+before it reports success. `docbank vault verify` then exercises the resulting live
 store through its normal daemon boundary.
 
 ## Move a vault
@@ -194,7 +194,7 @@ The portable path is a verified backup restore:
 1. Create and verify a snapshot repository.
 2. Restore into a separate target on the destination machine.
 3. Point `DOCBANK_HOME` at that target.
-4. Run `docbank verify`, then `docbank tree /`.
+4. Run `docbank vault verify`, then `docbank document tree /`.
 5. Start using the destination only after both checks succeed.
 
 Default restore puts all recovered content in a fresh local primary store, so
@@ -216,7 +216,7 @@ collect evidence before changing files by hand:
 
 ```bash
 docbank daemon status --json
-docbank verify
+docbank vault verify
 docbank daemon stop
 ```
 

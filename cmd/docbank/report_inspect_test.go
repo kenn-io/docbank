@@ -126,7 +126,7 @@ func TestReportSummaryOutput(t *testing.T) {
 		Coverage: report.Coverage{Warnings: []string{"synthetic missing evidence"}},
 	}
 	var output bytes.Buffer
-	require.NoError(t, writeReportSummary(&output, summary))
+	require.NoError(t, writeReportSummary(&output, summary, "docbank search-export"))
 	for _, want := range []string{summary.ID, "parent: " + summary.ParentID,
 		`"alpha\nbeta"`, "Hits: 1", "Hits + family: 2", "Unique hits: 3",
 		"Unique families: 4", "Unique hits + family: 5", "123 bytes",
@@ -136,7 +136,7 @@ func TestReportSummaryOutput(t *testing.T) {
 	require.NotContains(t, output.String(), "alpha\nbeta")
 	summary.State, summary.Counts, summary.UnresolvedDates = "needs_review", nil, 2
 	output.Reset()
-	require.NoError(t, writeReportSummary(&output, summary))
+	require.NoError(t, writeReportSummary(&output, summary, "docbank search-export"))
 	require.Contains(t, output.String(), "2 unresolved dates")
 	require.Contains(t, output.String(), "counts and downloads are withheld")
 	require.Contains(t, output.String(), "search-export dates "+summary.ID)
@@ -144,7 +144,7 @@ func TestReportSummaryOutput(t *testing.T) {
 	reader, writer := io.Pipe()
 	require.NoError(t, reader.Close())
 	t.Cleanup(func() { _ = writer.Close() })
-	require.ErrorIs(t, writeReportSummary(writer, summary), io.ErrClosedPipe)
+	require.ErrorIs(t, writeReportSummary(writer, summary, "docbank search-export"), io.ErrClosedPipe)
 }
 
 func TestReportHistoryShortPageOutput(t *testing.T) {
@@ -169,14 +169,14 @@ func TestReportHistoryShortPageOutput(t *testing.T) {
 	require.Equal(t, 2, page.Total)
 	require.Len(t, page.Items, 1)
 	var output bytes.Buffer
-	require.NoError(t, writeReportHistory(&output, page, 0))
+	require.NoError(t, writeReportHistory(&output, page, 0, "docbank search-export"))
 	require.Contains(t, output.String(), "--offset 1")
 	require.Contains(t, output.String(), strings.Repeat("c", 48))
 	require.Contains(t, output.String(), "recorded state: complete")
 	require.Contains(t, output.String(), "does not retain downloadable artifacts")
 	require.Contains(t, output.String(), "1 returned · 2 recorded runs total")
 	output.Reset()
-	require.NoError(t, writeReportHistory(&output, store.TermReportHistoryPage{Total: 2}, 100))
+	require.NoError(t, writeReportHistory(&output, store.TermReportHistoryPage{Total: 2}, 100, "docbank search-export"))
 	require.Contains(t, output.String(), "0 returned")
 	require.NotContains(t, output.String(), "Next page")
 }

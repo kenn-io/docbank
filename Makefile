@@ -76,7 +76,10 @@ clean:
 test:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
-.PHONY: test-pg
+.PHONY: backend-coverage test-pg
+backend-coverage:
+	go test -v -tags "$(BUILD_TAGS)" ./internal/store -run '^$$' -args -backend-coverage
+
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
 	go test -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store/pgschema
@@ -198,7 +201,7 @@ docs-deploy:
 	./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build homebrew install clean test test-pg test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test redaction-review-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build homebrew install clean test test-pg backend-coverage test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test redaction-review-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
 
 # Workflow actions run at the commits in .github/workflows/actions.lock,
 # including actions that other actions call. The organization requires

@@ -12,7 +12,7 @@ import (
 
 func newMailboxArchiveCommand() *cobra.Command {
 	return &cobra.Command{
-		Example: `  docbank mailbox register acme-mail 'Synthetic Acme mail archive'`,
+		Example: `  docbank email mailbox register acme-mail 'Synthetic Acme mail archive'`,
 		Long: `No output on success. Keep the archive ID you supplied; mailbox transfer
 --archive needs it.`,
 		Use:   "register <archive-id> <description>",
@@ -31,7 +31,7 @@ func newMailboxTransferCommand() *cobra.Command {
 	var archive, reference, dest, settings string
 	var revision int64
 	command := &cobra.Command{
-		Example: `  docbank mailbox transfer ./message.eml --archive acme-mail --reference message-1 --dest /cases/acme`,
+		Example: `  docbank email mailbox transfer ./message.eml --archive acme-mail --reference message-1 --dest /cases/acme`,
 		Long: `Requires: --archive from mailbox register and a stable --reference for this
 message. Output: JSON durable transfer receipt.`,
 		Use:   "transfer <message.eml>",

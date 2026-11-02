@@ -31,9 +31,9 @@ func oversizedSavedQueryPayload() []byte {
 	return []byte(`{"filters":{"paths":["/` + strings.Repeat("x", 70_000) + `"]}}`)
 }
 
-func TestSavedQueryLifecycleCanonicalizesAndFencesRevisions(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSavedQueryLifecycleCanonicalizesAndFencesRevisions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 
 	created, err := s.CreateSavedQuery(ctx, " Cafe\u0301 budget ", "Quarterly\nreview", SavedQueryKindQuery, []byte(savedQueryFullExpression))
@@ -122,9 +122,9 @@ func TestSavedQueryNormalizesDescriptionLineEndings(t *testing.T) {
 	assert.Equal(t, updated, stored)
 }
 
-func TestSavedQueriesAreBoundedPhotoScopedFilteredAndNameSorted(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSavedQueriesAreBoundedPhotoScopedFilteredAndNameSorted(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	_, err := s.CreateSavedQuery(ctx, "beta", "", SavedQueryKindQuery, []byte(`{"text":"b"}`))
 	require.NoError(t, err)
@@ -254,9 +254,9 @@ func TestSavedQueryPolicyValidationDoesNotMutateAuthority(t *testing.T) {
 	assert.Equal(t, created, items[0])
 }
 
-func TestSavedQueryConcurrentSameNameCreateHasOneWinner(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSavedQueryConcurrentSameNameCreateHasOneWinner(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	start := make(chan struct{})
 	results := make(chan error, 2)
@@ -287,9 +287,9 @@ func TestSavedQueryConcurrentSameNameCreateHasOneWinner(t *testing.T) {
 	assert.Equal(t, 1, collisions)
 }
 
-func TestSavedQueryConcurrentSameRevisionEditHasOneWinner(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	created, err := s.CreateSavedQuery(ctx, "race", "", SavedQueryKindQuery, []byte(`{"text":"before"}`))
 	require.NoError(t, err)

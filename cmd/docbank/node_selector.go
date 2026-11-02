@@ -70,7 +70,7 @@ func (s nodeSelector) resolveIncludingTrash(
 		err = fmt.Errorf("resolving %q: %w", s.raw, err)
 		if s.id == 0 && errors.Is(err, store.ErrNotFound) {
 			err = withHint(err,
-				`list paths with "docbank tree" or find by name with "docbank search <name>"`)
+				`list paths with "docbank document tree" or find by name with "docbank search <name>"`)
 		}
 		return api.Node{}, err
 	}

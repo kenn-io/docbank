@@ -25,9 +25,11 @@ var (
 	ErrPhotoSuggestionConflict        = errors.New("photo suggestion field is no longer pending")
 )
 
-// PhotoSuggestion is the pending part of one photo's description. Fields the
-// owner accepted or dismissed are no longer in it.
+// PhotoSuggestion holds pending description fields or a rotation correction.
+// Rotation proposals use the content version as their transient ID.
 type PhotoSuggestion struct {
+	Rotation         *int                      `json:"rotation,omitempty" enum:"90,180,270"`
+	RotationSource   string                    `json:"rotation_source,omitempty"`
 	AssetID          string                    `json:"asset_id"`
 	AssetRevision    int64                     `json:"asset_revision"`
 	SourceRevision   int64                     `json:"source_revision"`
@@ -39,19 +41,23 @@ type PhotoSuggestion struct {
 	Value            document.PhotoDescription `json:"value"`
 }
 
-// photoSuggestionSettledSQL is true when no description is wanted for version
-// from producer. Automatic work wants one only for a version without rows. An
-// explicit start also wants one when every row is another producer's
-// dismissal. A row awaiting regeneration after restore wants one from a
-// producer not dismissed on it.
+// photoRotationConfirmedSQL reports whether the owner confirmed the rotation
+// of the photo that suggestion row s describes.
+var photoRotationConfirmedSQL = `EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=s.content_version_id AND (f.confirmed_fields & ` + fmt.Sprint(PhotoConfirmedRotation) + `)<>0)`
+
+// photoSuggestionSettledSQL keeps automatic work settled once a row exists.
+// Explicit work refreshes unresolved rotation or dismissed text. Restored pending
+// fields still regenerate unless this producer was dismissed on that version.
+// A restored row with dismissed or settled text waits only for rotation, so it
+// settles once the owner confirms the rotation.
 func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
 	if explicit {
-		filter = ` AND (NOT s.dismissed OR s.producer_fingerprint=` + producer + `)`
+		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (NOT s.dismissed AND ` + photoRotationConfirmedSQL + `))`
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
- AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting)
-  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND s.producer_fingerprint=` + producer + `)))`
+ AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting AND NOT ((s.dismissed OR s.text_settled) AND ` + photoRotationConfirmedSQL + `))
+  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND NOT s.awaiting AND s.producer_fingerprint=` + producer + `)))`
 }
 
 // photoDescriptionEligibility is the rule for a query that has joined the
@@ -109,28 +115,56 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 	return true, nil
 }
 
-// publishPhotoSuggestionTx stores a provider's description for a version
-// unless the version is settled. The description is already normalized. Fields
-// the owner already has or resolved before a restore are left out.
+// publishPhotoSuggestionTx records the latest provider rotation and fills
+// unsettled description fields. Authored values and restored decisions stay
+// resolved. The description is already normalized.
 func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
-	if settled, err := photoDescriptionSettledTx(ctx, tx, version, producer, explicit); err != nil || settled {
+	// A new provider result replaces its previous orientation answer, including
+	// uncertainty or an upright answer, without reopening settled caption work.
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL WHERE content_version_id=?`, version); err != nil {
+		return err
+	}
+	// Explicit work can replace another producer's dismissal. Pending or
+	// accepted text stays settled even when admission allowed a rotation refresh.
+	textSettled := photoSuggestionSettledSQL("?1", "?2", false)
+	if explicit {
+		textSettled += ` AND EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=?1 AND (NOT s.dismissed OR s.producer_fingerprint=?2))`
+	}
+	var settled bool
+	if err := tx.QueryRowContext(ctx, `SELECT `+textSettled, version, producer).Scan(&settled); err != nil || settled {
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=? WHERE id=(SELECT id FROM photo_suggestions WHERE content_version_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`, description.Rotation, version)
 		return err
 	}
 	if ok, err := dropOwnedPhotoFieldsTx(ctx, tx, version, &description); err != nil || !ok {
 		return err
 	}
 	var awaiting int64
-	var captionResolved bool
-	var resolvedJSON string
-	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,resolved_tags_json FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &resolvedJSON)
+	var captionResolved, dismissed, settledText bool
+	var resolvedJSON, owner string
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,text_settled,resolved_tags_json,producer_fingerprint FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &settledText, &resolvedJSON, &owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if dismissed && explicit && owner != producer {
+		// An explicit request replaces another producer's restored dismissal.
+		// That dismissal stays settled with its producer, and the reply becomes
+		// a new suggestion, as it would before a backup.
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET awaiting=0 WHERE id=?`, awaiting); err != nil {
+			return err
+		}
+		awaiting, dismissed, captionResolved, resolvedJSON = 0, false, false, ""
 	}
 	var resolved []string
 	if resolvedJSON != "" {
 		if err := json.Unmarshal([]byte(resolvedJSON), &resolved); err != nil {
 			return err
 		}
+	}
+	if dismissed || settledText {
+		description.Caption, description.Tags, description.VisibleText = "", []string{}, ""
 	}
 	if captionResolved {
 		description.Caption = ""
@@ -141,19 +175,23 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		return err
 	}
 	if awaiting != 0 {
-		// The restored row now belongs to the producer that regenerated it. An
-		// older row of that producer is superseded by the owner's decisions it holds.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
-			return err
+		// Rotation-only regeneration preserves the original text producer.
+		// Otherwise the regenerated text supersedes that producer's older row
+		// while retaining the owner's restored decisions.
+		if !dismissed && !settledText {
+			owner = producer
+			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
+				return err
+			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,awaiting=0 WHERE id=?`, producer, description.Caption, string(tags), description.VisibleText, awaiting)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,rotation=?,awaiting=0 WHERE id=?`, owner, description.Caption, string(tags), description.VisibleText, description.Rotation, awaiting)
 		return err
 	}
 	id, err := newUUIDv4()
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,created_at) VALUES(?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, at.UTC().Format(timestampLayout))
+	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,rotation,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, description.Rotation, at.UTC().Format(timestampLayout))
 	return err
 }
 
@@ -180,6 +218,7 @@ type PhotoSuggestionResponse struct {
 	SourceRevision int64    `json:"source_revision"`
 	NodeRevision   int64    `json:"node_revision"`
 	Response       string   `json:"response" enum:"accepted,dismissed"`
+	Rotation       *int     `json:"rotation,omitempty" enum:"90,180,270" doc:"The clockwise angle shown in the rotation proposal, also supplied on dismissal."`
 	Caption        bool     `json:"caption"`
 	Tags           []string `json:"tags" maxItems:"64"`
 }
@@ -221,11 +260,16 @@ func scanPhotoSuggestion(row interface{ Scan(dest ...any) error }) (photoSuggest
 // values in the same transaction that clears them, or dismisses what remains.
 func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request PhotoSuggestionResponse) (PhotoSuggestion, error) {
 	accepted := request.Response == photoSuggestionAccepted
-	if !accepted && request.Response != photoSuggestionDismissed || accepted == (!request.Caption && len(request.Tags) == 0) {
+	if !accepted && request.Response != photoSuggestionDismissed || request.Rotation == nil && accepted == (!request.Caption && len(request.Tags) == 0) {
 		return PhotoSuggestion{}, ErrInvalidPhotoSuggestionResponse
 	}
 	var result PhotoSuggestion
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if request.Rotation != nil {
+			var err error
+			result, err = s.respondPhotoRotationTx(ctx, tx, id, request)
+			return err
+		}
 		row, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.suggestion_id=?`, id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -287,6 +331,7 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 		}
 	}
 	edit := PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{{AssetID: request.AssetID, AssetRevision: request.AssetRevision, FileID: row.Target, Revision: request.SourceRevision, NodeRevision: request.NodeRevision}}}
+	edit.Patch.Rotation = request.Rotation
 	if request.Caption {
 		edit.Patch.Caption = &row.Value.Caption
 	}
@@ -344,7 +389,7 @@ func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (st
 }
 
 // photoSuggestionsQuery lists the pending description of an asset's displayed photo.
-func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoSuggestion, error) {
+func (s *Store) photoSuggestionsQuery(ctx context.Context, q *sql.Tx, assetID string) ([]PhotoSuggestion, error) {
 	out := []PhotoSuggestion{}
 	err := queryRows(ctx, q, photoSuggestionRowSQL+` WHERE a.asset_id=? AND a.display_file_id=f.file_id AND NOT s.dismissed AND NOT s.awaiting
  AND (s.caption<>'' OR s.tags_json<>'[]' OR s.visible_text<>'') ORDER BY s.created_at,s.suggestion_id`, []any{assetID}, func(rows *sql.Rows) error {
@@ -364,10 +409,18 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q metadataQuerier, as
 			return nil, err
 		}
 	}
-	return slices.DeleteFunc(out, func(suggestion PhotoSuggestion) bool {
+	out = slices.DeleteFunc(out, func(suggestion PhotoSuggestion) bool {
 		value := suggestion.Value
 		return value.Caption == "" && len(value.Tags) == 0 && value.VisibleText == ""
-	}), nil
+	})
+	rotation, err := s.photoRotationSuggestionTx(ctx, q, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if rotation.Rotation != nil {
+		out = append(out, rotation)
+	}
+	return out, nil
 }
 
 // photoDescriptionTargetsSQL lists one page of versions wanting a description,

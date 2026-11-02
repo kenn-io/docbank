@@ -10,7 +10,8 @@ import (
 	"go.kenn.io/kit/pack"
 )
 
-func TestDocumentWritesPostgres(t *testing.T) {
+func checkDocumentWrites(t *testing.T, openStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
 		name := "ordinary"
@@ -18,7 +19,7 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			name = "audited"
 		}
 		t.Run(name, func(t *testing.T) {
-			s := newPostgresQueryStore(t)
+			s := openStore(t)
 			ctx := t.Context()
 			if audited {
 				plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "cli", nil)
@@ -105,7 +106,8 @@ func TestDocumentWritesPostgres(t *testing.T) {
 	}
 }
 
-func TestDocumentNegativeSizePostgres(t *testing.T) {
+func checkDocumentNegativeSizePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -127,7 +129,8 @@ func TestDocumentNegativeSizePostgres(t *testing.T) {
 // The released SQLite trigger results are the oracle for retained photo facts.
 // Replace/revert must remove and restore the displayed bytes' source and date;
 // moving an unowned sibling sidecar must refresh its original's export work.
-func TestDocumentPhotoMaintenancePostgres(t *testing.T) {
+func checkDocumentPhotoMaintenancePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -170,7 +173,8 @@ func TestDocumentPhotoMaintenancePostgres(t *testing.T) {
 	}
 }
 
-func TestDocumentSidecarWorkPostgres(t *testing.T) {
+func checkDocumentSidecarWorkPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source, asset, raw := xmpSidecarPhoto(t)
@@ -216,7 +220,8 @@ func TestDocumentSidecarWorkPostgres(t *testing.T) {
 	}
 }
 
-func TestDocumentTextSuppressionPostgres(t *testing.T) {
+func checkDocumentTextSuppressionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -251,7 +256,8 @@ func TestDocumentTextSuppressionPostgres(t *testing.T) {
 	require.Equal(t, hash, queuedHash)
 }
 
-func TestDocumentBlobPromotionPostgres(t *testing.T) {
+func checkDocumentBlobPromotionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	setup, owner := pgtest.NewDatabase(t)
@@ -288,7 +294,8 @@ func TestDocumentBlobPromotionPostgres(t *testing.T) {
 	require.Equal(t, replacement.Node, current)
 }
 
-func TestDocumentReintroducedPackMappingsPostgres(t *testing.T) {
+func checkDocumentReintroducedPackMappingsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	setup, owner := pgtest.NewDatabase(t)

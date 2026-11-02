@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-24
+last_edited: 2026-10-31
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -13,6 +13,36 @@ Run `docbank --help` for commands grouped by outcome, start-here examples,
 selectors, search scope, and exit codes. Follow with `docbank <command> --help`
 for its workflow and flags. Runnable commands include examples; prerequisite
 examples show where version, job, and snapshot IDs come from.
+
+## Command groups and older spellings
+
+Use `document --help` for files, directories, and content history, `vault --help`
+for vault identity and maintenance, and `email --help` for mailbox and email
+operations. Search queries remain `docbank search <query>`; `report` manages
+saved search-count evidence. Other domain groups keep their existing names.
+
+| Older spelling | Canonical command |
+| --- | --- |
+| `add`, `cat`, `edit`, `get`, `mkdir`, `provenance`, `put`, `refs` | `document <same action>` |
+| `restore`, `revert`, `stat`, `tree`, `versions` | `document <same action>` |
+| `ls` | `document list` |
+| `mv` (including `mv batch`) | `document move` (including `document move batch`) |
+| `rm` | `document remove` |
+| `info`, `gc`, `verify` | `vault <same action>` |
+| `email-documents` | `email documents` |
+| `email-pdf` | `email pdf` |
+| `mailbox` | `email mailbox` |
+| `search-export` | `report` |
+
+Older spellings remain callable for at least one release and are hidden from
+root help and completion suggestions. Executing an older spelling prints a
+deprecation notice on stderr. Flags, arguments, successful stdout, exit codes,
+HTTP routes, MCP tools, and daemon launch commands retain their contracts.
+Nested actions keep their flags and arguments: for example, `versions list`
+becomes `document versions list`. Regenerate installed completion scripts with
+`docbank completion bash|zsh|fish|powershell` to discover the new command tree.
+
+## Vault selection and execution
 
 Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
 See [Configuration](configuration.md). Virtual paths are absolute,
@@ -41,14 +71,14 @@ Create or append a verified passage and read its current source state. Requires
 an enabled Kata connection. See [Cite documents in Kata](usage/kata-evidence.md)
 for configuration, Unicode ranges, retry behavior and evidence compatibility.
 
-## docbank mailbox
+## docbank email mailbox
 
 ```text
-docbank mailbox import <mbox-or-zip> [--dest /] [--dialect mboxrd|mboxo] [--id ID] [--job-id ID] [--preview] [--label-tag LABEL=TAG-ID]
-docbank mailbox status|watch|cancel|resume|continue <job-id>
-docbank mailbox receipts <job-id> [--after ORDINAL] [--limit 100]
-docbank mailbox register <archive-id> <description>
-docbank mailbox transfer <message.eml> --archive ID --reference REF [--dest /] [--settings ID] [--if-rev REV]
+docbank email mailbox import <mbox-or-zip> [--dest /] [--dialect mboxrd|mboxo] [--id ID] [--job-id ID] [--preview] [--label-tag LABEL=TAG-ID]
+docbank email mailbox status|watch|cancel|resume|continue <job-id>
+docbank email mailbox receipts <job-id> [--after ORDINAL] [--limit 100]
+docbank email mailbox register <archive-id> <description>
+docbank email mailbox transfer <message.eml> --archive ID --reference REF [--dest /] [--settings ID] [--if-rev REV]
 ```
 
 Imports stream caller-selected files to the daemon. Output is JSON. `watch`
@@ -120,10 +150,10 @@ label is only unique inside its package and label set, so scope the lookup
 with `--package` when senders reuse numbering. Received labels come from the
 sender's load file; assigned labels come from Docbank's own productions.
 
-## docbank email-pdf
+## docbank email pdf
 
 ```text
-docbank email-pdf <version-uuid> <local-file> [--paper A4|Letter] [--overwrite]
+docbank email pdf <version-uuid> <local-file> [--paper A4|Letter] [--overwrite]
 ```
 
 Requests a retained PDF for one EML version through the daemon, waits for its
@@ -131,10 +161,10 @@ processing job, verifies the bytes independently, and publishes the local file
 atomically. New requests require a configured local renderer. See
 [Email PDFs](usage/email-pdf.md) for retained browser downloads and setup.
 
-## docbank info
+## docbank vault info
 
 ```
-docbank info [--json]
+docbank vault info [--json]
 ```
 
 Shows which vault `DOCBANK_HOME` selects and confirms that its daemon is
@@ -307,10 +337,10 @@ merge and split operation IDs make retries replayable. When you omit one, the
 CLI generates it and prints it to stderr before the request. A split needs at
 least one identity, assertion, assignment, or external UID.
 
-## docbank stat
+## docbank document stat
 
 ```
-docbank stat <path-or-id> [--json]
+docbank document stat <path-or-id> [--json]
 ```
 
 Inspects one document or directory. Human output shows its stable `id:N`
@@ -345,11 +375,11 @@ prevent verification from completing, such as an unreachable daemon, use
 `1`. HTTP clients should continue to branch on the API's problem `code` rather
 than translating process exits back into HTTP status.
 
-## docbank add
+## docbank document add
 
 ```
-docbank add <path>... [--dest <virtual-dir>] [--include <pattern>]... [--exclude <pattern>]... [--replace] [--progress auto|bar|plain] [--json]
-docbank add <path>... --preflight [--include <pattern>]... [--exclude <pattern>]... [--json]
+docbank document add <path>... [--dest <virtual-dir>] [--include <pattern>]... [--exclude <pattern>]... [--replace] [--progress auto|bar|plain] [--json]
+docbank document add <path>... --preflight [--include <pattern>]... [--exclude <pattern>]... [--json]
 ```
 
 Imports files or directory trees into the vault. Sources are copied,
@@ -466,10 +496,10 @@ See [Push a folder to another daemon](usage/pushing.md) for connection setup,
 source identity, version retention, import collections, traversal limits, and
 switching from a daemon-owned watch without re-uploading unchanged files.
 
-## docbank provenance
+## docbank document provenance
 
 ```
-docbank provenance <path-or-id> [--limit <n>] [--offset <n>] [--json]
+docbank document provenance <path-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
 Shows the immutable origin facts retained for one file, newest ingest first.
@@ -484,10 +514,10 @@ labels it as trashed. `--json` returns the complete node, path, page authority,
 and fact objects. The command is read-only and does not access or alter the
 original source.
 
-## docbank mkdir
+## docbank document mkdir
 
 ```
-docbank mkdir <absolute-virtual-path> [--json]
+docbank document mkdir <absolute-virtual-path> [--json]
 ```
 
 Creates one directory at the given virtual path and prints its stable
@@ -500,10 +530,10 @@ The daemon resolves the parent and creates the directory in one transaction,
 so a concurrent ancestor move cannot redirect a path-based request. `--json`
 returns the complete directory node.
 
-## docbank ls
+## docbank document list
 
 ```
-docbank ls [path-or-id] [--json]
+docbank document list [path-or-id] [--json]
 ```
 
 Lists a virtual directory (default `/`). Columns: `SELECTOR`, `KIND`
@@ -515,10 +545,10 @@ path names a file.
 ordered child list under `items`. Empty directories produce `"items": []`.
 JSON preserves the full-precision timestamps.
 
-## docbank tree
+## docbank document tree
 
 ```
-docbank tree [path-or-id] [-L <depth>] [--max-entries <count>] [--all] [--json]
+docbank document tree [path-or-id] [-L <depth>] [--max-entries <count>] [--all] [--json]
 ```
 
 Prints the subtree rooted at the path or stable node selector (default `/`),
@@ -540,19 +570,19 @@ array. Each item contains the node, its absolute virtual `path`, and its
 `depth_limit` or `entry_limit` reason, and the number of direct children not
 returned at that boundary.
 
-## docbank cat
+## docbank document cat
 
 ```
-docbank cat <path-or-id>
+docbank document cat <path-or-id>
 ```
 
 Streams the file's stored bytes to stdout. Fails with `not a file` for
 directories.
 
-## docbank get
+## docbank document get
 
 ```text
-docbank get <path-or-id> <local-file> [--overwrite] [--progress auto|bar|plain] [--json]
+docbank document get <path-or-id> <local-file> [--overwrite] [--progress auto|bar|plain] [--json]
 ```
 
 Downloads one current document version to a local file. Docbank writes into an
@@ -568,10 +598,10 @@ progress and returns the node ID, immutable version ID, hash, size, and absolute
 local output path. A trashed file remains retrievable by its stable `id:N`
 selector while its content version is retained.
 
-## docbank put
+## docbank document put
 
 ```text
-docbank put <local-file> <path-or-id> [--mime-type <type>] [--progress auto|bar|plain] [--json]
+docbank document put <local-file> <path-or-id> [--mime-type <type>] [--progress auto|bar|plain] [--json]
 ```
 
 Replaces one existing file's current content while retaining every prior
@@ -594,13 +624,13 @@ trashes, or replaces the node before the write, Docbank returns
 `stale_revision`.
 
 Success advances the node revision and creates a `content_replace` version.
-Older bytes remain available through `docbank versions cat <id>`. Even identical
+Older bytes remain available through `docbank document versions cat <id>`. Even identical
 replacement bytes record a versioned operation, while sharing the existing blob.
 
-## docbank edit
+## docbank document edit
 
 ```text
-docbank edit <path-or-id> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
+docbank document edit <path-or-id> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
 ```
 
 Downloads the current immutable version into a private temporary directory,
@@ -624,19 +654,19 @@ Private staging is removed on every ordinary outcome. If cleanup fails after an
 update already committed, Docbank keeps the command successful, prints the new
 version, and emits a warning rather than encouraging a duplicate retry.
 
-## docbank versions
+## docbank document versions
 
 ```text
-docbank versions <command>
+docbank document versions <command>
 ```
 
 Groups the `list`, `show`, `cat`, and `prune` operations for immutable
 document content versions.
 
-### docbank versions list
+### docbank document versions list
 
 ```text
-docbank versions list <path-or-id> [--limit <n>] [--offset <n>] [--json]
+docbank document versions list <path-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
 Lists the file's immutable content versions newest-first. The default limit
@@ -649,10 +679,10 @@ Every newly imported file has one revision-one `content_create` version. Each
 successful `put` adds a `content_replace` row and each `revert` adds a
 `content_revert` row naming its immutable source.
 
-### docbank versions show
+### docbank document versions show
 
 ```text
-docbank versions show <version-uuid> [--json]
+docbank document versions show <version-uuid> [--json]
 ```
 
 Inspects one immutable version by stable UUID, independent of the file's current
@@ -660,10 +690,10 @@ path. The human view prints node and node-revision identity, recording time,
 transition kind, blob hash, size, media type, and any reversion source.
 `--json` emits the typed record.
 
-### docbank versions cat
+### docbank document versions cat
 
 ```text
-docbank versions cat <version-uuid>
+docbank document versions cat <version-uuid>
 ```
 
 Writes that version's bytes to stdout. It exits successfully only after
@@ -672,13 +702,13 @@ the response version ID, byte count, SHA-256 identity, and terminal
 verification fails, so scripts publishing a file should write privately and
 rename it only after a successful exit.
 
-### docbank versions prune
+### docbank document versions prune
 
 ```text
-docbank versions prune <path-or-id> --version <version-uuid> [--version <version-uuid>...] [--run] [--json]
-docbank versions prune <path-or-id> --keep-newest <n> [--run] [--json]
-docbank versions prune <path-or-id> --older-than <age> [--run] [--json]
-docbank versions prune <path-or-id> --all-prior [--run] [--json]
+docbank document versions prune <path-or-id> --version <version-uuid> [--version <version-uuid>...] [--run] [--json]
+docbank document versions prune <path-or-id> --keep-newest <n> [--run] [--json]
+docbank document versions prune <path-or-id> --older-than <age> [--run] [--json]
+docbank document versions prune <path-or-id> --all-prior [--run] [--json]
 ```
 
 Selects prior versions to remove from one file. The command previews by
@@ -710,7 +740,7 @@ Pruning removes version records. It does not reclaim disk space. Human and
 JSON reports distinguish these storage effects:
 
 - Shared blobs remain reachable through other retained references.
-- Unreferenced loose blobs wait for `docbank gc --run`.
+- Unreferenced loose blobs wait for `docbank vault gc --run`.
 - Dead packed content waits for GC, then `docbank storage repack`.
 
 A blob can have loose and packed locations in different stores. The report
@@ -720,13 +750,13 @@ Physical byte totals cover every affected authorized location.
 Deleted version IDs stop resolving. Later backups preserve the pruned state.
 Earlier snapshots still contain their original history.
 
-## docbank email-documents
+## docbank email documents
 
 ```text
-docbank email-documents show <operation-id>
-docbank email-documents relations --parent-version <version-uuid> [--limit <n>]
-docbank email-documents relations --child-version <version-uuid> [--limit <n>]
-docbank email-documents release <operation-id> --request-digest <digest>
+docbank email documents show <operation-id>
+docbank email documents relations --parent-version <version-uuid> [--limit <n>]
+docbank email documents relations --child-version <version-uuid> [--limit <n>]
+docbank email documents release <operation-id> --request-digest <digest>
 ```
 
 Inspects or releases email attachment receipts through the authenticated
@@ -742,10 +772,10 @@ the original operation's retry guarantee. See
 [release email attachment references](usage/trash-and-gc.md#release-email-attachment-references)
 when a receipt blocks trash empty or version pruning.
 
-## docbank refs
+## docbank document refs
 
 ```text
-docbank refs <sha256> [--limit <n>] [--offset <n>] [--json]
+docbank document refs <sha256> [--limit <n>] [--offset <n>] [--json]
 ```
 
 Finds every immutable content version that retains the canonical lowercase
@@ -761,10 +791,10 @@ bounded result. `--json` emits the page envelope with `items`, `total`, `limit`,
 and `offset`. A cataloged physical blob with no retained content version is not
 a match. The command reports `no authoritative references`.
 
-## docbank revert
+## docbank document revert
 
 ```text
-docbank revert <path-or-id> <version-uuid> [--json]
+docbank document revert <path-or-id> <version-uuid> [--json]
 ```
 
 Makes a prior version current by creating a new immutable `content_revert`
@@ -876,7 +906,7 @@ terminal evidence contains the stable vault and allocation-lineage identities,
 allocation count/head, operation high-water mark, and every scope count/head.
 Human output reports the same evidence and protected-byte totals. JSON is
 suitable for external recording. Missing, corrupt, unreadable, or inconsistent
-authority exits non-zero. Use the top-level `docbank verify` when the decision
+authority exits non-zero. Use the top-level `docbank vault verify` when the decision
 requires every blob in the vault rather than only permanent audit content.
 
 Save a successful active JSON report outside the vault, then pass it back with
@@ -891,10 +921,10 @@ or nested scopes are rejected. See
 [Permanent audited history](usage/audited-history.md) for enrollment,
 supported mutations, and maintenance behavior.
 
-## docbank mv
+## docbank document move
 
 ```
-docbank mv <source-path-or-id> <dest-path> [--json]
+docbank document move <source-path-or-id> <dest-path> [--json]
 ```
 
 Moves or renames a node. The move changes metadata only. No bytes move. The
@@ -913,10 +943,10 @@ cycle`. On success, human output prints `moved [id:<id>] <new-path>`. `--json`
 returns the complete resulting node, including its stable ID, revision, and
 new path.
 
-### docbank mv batch
+### docbank document move batch
 
 ```
-docbank mv batch <plan.json|-> [--json]
+docbank document move batch <plan.json|-> [--json]
 ```
 
 Applies up to 1,000 moves as one all-or-nothing metadata transaction. A dash
@@ -941,10 +971,10 @@ parent, stale ID revision, collision, or cycle rejects the entire plan.
 Human output reports the stable ID and quoted old/new paths in request
 order. `--json` returns the same bounded receipt set as structured data.
 
-## docbank rm
+## docbank document remove
 
 ```
-docbank rm <path-or-id> [--json]
+docbank document remove <path-or-id> [--json]
 ```
 
 Soft-deletes a node by moving it, and for a directory its entire subtree,
@@ -952,7 +982,7 @@ to the trash. Nothing is permanently removed and no bytes are reclaimed.
 The freed name is immediately reusable. Prints:
 
 ```
-trashed [id:15] /taxes/2024/return.pdf (restore with: docbank restore id:15)
+trashed [id:15] /taxes/2024/return.pdf (restore with: docbank document restore id:15)
 ```
 
 `--json` returns the trashed node receipt. Its `path` is the pre-trash path
@@ -964,10 +994,10 @@ trash entry remains a restorable reference. Permanent metadata deletion,
 unreachable-content collection, and packed-space reclamation are the separate
 `trash empty --run`, `gc --run`, and `storage repack` operations.
 
-## docbank restore
+## docbank document restore
 
 ```
-docbank restore <id:N> [--json]
+docbank document restore <id:N> [--json]
 ```
 
 Returns a trashed node (by `id:N` selector; see `docbank trash list`) to its
@@ -1161,7 +1191,7 @@ Every command accepts `--json`. Download never releases automatically. See
 [Verified export bundles](usage/export-bundles.md) for the request format,
 retry rules, publication behavior, and shared capacity limits.
 
-## docbank search-export
+## docbank report
 
 Exports dated search counts and retains the evidence needed to check them.
 
@@ -1415,10 +1445,10 @@ dry-run or execution report as the HTTP API: `candidate_roots`,
 `retained_roots`, `held_roots`, `deleted`, and `run`. Human status lines are
 suppressed so stdout contains one JSON document.
 
-## docbank gc
+## docbank vault gc
 
 ```
-docbank gc [--run]
+docbank vault gc [--run]
 ```
 
 Garbage-collects unreachable blobs: content referenced by no live node,
@@ -1568,10 +1598,10 @@ failures, including cancellation, spool failures, and cleanup failures, report
 their cause and exit `1` without a validation report. Input-opening,
 legacy-normalization, and report-output errors also exit `1`.
 
-## docbank verify
+## docbank vault verify
 
 ```
-docbank verify
+docbank vault verify
 ```
 
 Validates logical metadata, including independent replay of any audit history,

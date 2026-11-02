@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-31
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -93,7 +93,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /photos/assets/flags` | read current display flags for up to 20,000 visible assets | Implemented |
 | `POST /photos/assets/query` | browse matching assets with live keyset pages or frozen semantic and hybrid pages | Implemented |
 | `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` · `POST /photos/authored/{file_id}/xmp` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences and optional `content_version_id` fencing the asset's displayed version, undo if revisions match, and resolve an XMP sync conflict by choosing the catalog or the sidecar | Implemented |
-| `POST /photos/suggestions/{suggestion_id}/response` | accept selected caption or tags of a photo suggestion with asset, source, and node revision fences, or dismiss the rest | Implemented |
+| `POST /photos/suggestions/{suggestion_id}/response` | accept selected caption or tags, or answer a rotation proposal with the displayed `rotation` angle and asset, source, and node revision fences; rotation requires a current nonzero proposal, accepts the displayed angle even if the live angle changed, and dismisses by confirming the current authored angle | Implemented |
 | `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
@@ -1882,10 +1882,10 @@ failure, while selected non-regular entries are reported as skipped findings.
 dest: "/inbox", include: [...], exclude: [...], replace: false,
 collection_label: "Review set"}`. It returns an `IngestReport` (`ingest_id`,
 `added`, `skipped`, `excluded`, per-path `failed` entries) and backs
-`docbank add`. `collection_label` is optional. Paths must be
+`docbank document add`. `collection_label` is optional. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves
-`docbank add`'s arguments to absolute paths before calling, so the command-line
+`docbank document add`'s arguments to absolute paths before calling, so the command-line
 UX still accepts relative and `cwd`-relative sources. Collisions resolve by the
 same suffixing rules as other imports when `replace` is false or omitted.
 

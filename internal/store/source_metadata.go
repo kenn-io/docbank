@@ -109,7 +109,7 @@ func (s *Store) PublishSourceMetadata(
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
 			generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
-		) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_sha256,contract_version,extractor_fingerprint) DO NOTHING`,
+		) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(source_sha256,contract_version,extractor_fingerprint) DO NOTHING`,
 			generation.GenerationID, sourceSHA256, metadata.ContractVersion, extractorFingerprint,
 			canonical, checksum, generation.CreatedAt); execErr != nil {
 			return fmt.Errorf("recording source metadata: %w", execErr)
@@ -117,7 +117,7 @@ func (s *Store) PublishSourceMetadata(
 		var stored SourceMetadataGeneration
 		if scanErr := tx.QueryRowContext(ctx, `SELECT generation_id,source_sha256,contract_version,
 			extractor_fingerprint,canonical_json,checksum,created_at FROM source_metadata_generations
-			WHERE source_sha256=? AND contract_version=? AND extractor_fingerprint=?`,
+			WHERE source_sha256=$1 AND contract_version=$2 AND extractor_fingerprint=$3`,
 			sourceSHA256, metadata.ContractVersion, extractorFingerprint).Scan(
 			&stored.GenerationID, &stored.SourceSHA256, &stored.ContractVersion,
 			&stored.ExtractorFingerprint, &stored.CanonicalJSON, &stored.Checksum, &stored.CreatedAt); scanErr != nil {
@@ -128,25 +128,32 @@ func (s *Store) PublishSourceMetadata(
 			return errors.New("source metadata extractor identity already has different evidence")
 		}
 		generation = stored
-		if err := insertPhotoTechnicalMetadataTx(ctx, tx, generation.GenerationID, photoFields); err != nil {
+		inserted, err := insertPhotoTechnicalMetadataTx(ctx, tx, generation.GenerationID, photoFields)
+		if err != nil {
 			return fmt.Errorf("recording photo technical metadata: %w", err)
 		}
 		var activeGeneration string
 		headErr := tx.QueryRowContext(ctx, `SELECT generation_id FROM source_metadata_heads
-			WHERE source_sha256=?`, sourceSHA256).Scan(&activeGeneration)
+			WHERE source_sha256=$1`, sourceSHA256).Scan(&activeGeneration)
 		if headErr != nil && !errors.Is(headErr, sql.ErrNoRows) {
 			return fmt.Errorf("reading active source metadata head: %w", headErr)
 		}
 		if activeGeneration == generation.GenerationID {
+			if inserted {
+				return s.refreshSourceMetadataPhotosTx(ctx, tx, sourceSHA256)
+			}
 			return nil
 		}
 		if _, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
-			VALUES(?,?,?) ON CONFLICT(source_sha256) DO UPDATE SET
+			VALUES($1,$2,$3) ON CONFLICT(source_sha256) DO UPDATE SET
 			generation_id=excluded.generation_id,published_at=excluded.published_at`,
 			sourceSHA256, generation.GenerationID, nowRFC3339()); execErr != nil {
 			return execErr
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT version_id FROM content_versions WHERE blob_hash=?`, sourceSHA256)
+		if err := s.refreshSourceMetadataPhotosTx(ctx, tx, sourceSHA256); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT version_id FROM content_versions WHERE blob_hash=$1`, sourceSHA256)
 		if err != nil {
 			return fmt.Errorf("reading source metadata versions: %w", err)
 		}
@@ -183,7 +190,7 @@ func activeSourceMetadata(
 	err := q.QueryRowContext(ctx, `SELECT g.generation_id,g.source_sha256,g.contract_version,
 		g.extractor_fingerprint,g.canonical_json,g.checksum,g.created_at
 		FROM source_metadata_heads h JOIN source_metadata_generations g ON g.generation_id=h.generation_id
-		WHERE h.source_sha256=?`, sourceSHA256).Scan(&generation.GenerationID, &generation.SourceSHA256,
+		WHERE h.source_sha256=$1`, sourceSHA256).Scan(&generation.GenerationID, &generation.SourceSHA256,
 		&generation.ContractVersion, &generation.ExtractorFingerprint, &generation.CanonicalJSON,
 		&generation.Checksum, &generation.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -215,12 +222,12 @@ func (s *Store) MissingSourceMetadataTargetsAfter(
 	}
 	// Shared originals need one retention check, not a join for each version.
 	rows, err := s.db.QueryContext(ctx, `SELECT b.hash,b.size FROM blobs b
-		WHERE b.hash>?
+		WHERE b.hash>$1
 			AND NOT EXISTS (SELECT 1 FROM source_metadata_generations g
-				WHERE g.source_sha256=b.hash AND g.contract_version=?
-					AND g.extractor_fingerprint=? AND g.generation_id IS NOT NULL)
+				WHERE g.source_sha256=b.hash AND g.contract_version=$2
+					AND g.extractor_fingerprint=$3 AND g.generation_id IS NOT NULL)
 			AND EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash=b.hash)
-		ORDER BY b.hash LIMIT ?`,
+		ORDER BY b.hash LIMIT $4`,
 		afterSHA256, document.SourceMetadataContractV1, fingerprint, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing missing source metadata: %w", err)
@@ -243,14 +250,14 @@ func (s *Store) ContentVersionSourceMetadata(ctx context.Context, versionID stri
 	if err := validateUUIDv4(versionID); err != nil {
 		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return SourceMetadataView{}, fmt.Errorf("starting source-metadata snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ?`, versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1`, versionID))
 	if err != nil {
 		return SourceMetadataView{}, fmt.Errorf("content version %q: %w", versionID, err)
 	}
@@ -291,7 +298,7 @@ func sourceMetadataViewForVersion(
 			}
 		}
 		err = q.QueryRowContext(ctx, `SELECT p.original_path,COALESCE(p.original_mtime,''),i.started_at
-			FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=?
+			FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=$1
 			AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 			ORDER BY i.started_at DESC,p.identity DESC LIMIT 1`, node.ID).Scan(
 			&facts.SourcePath, &facts.FilesystemMTime, &facts.IngestedAt)
@@ -322,7 +329,7 @@ func (s *Store) NodeSourceMetadataViewByPath(ctx context.Context, path string) (
 func (s *Store) nodeSourceMetadataView(
 	ctx context.Context, resolve func(*sql.Tx) (Node, error),
 ) (NodeSourceMetadataView, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return NodeSourceMetadataView{}, fmt.Errorf("starting node source-metadata snapshot: %w", err)
 	}
@@ -339,7 +346,7 @@ func (s *Store) nodeSourceMetadataView(
 	view := NodeSourceMetadataView{Node: nodeView.Node, Path: nodeView.Path}
 	if !node.IsDir() && node.CurrentVersionID != "" {
 		version, versionErr := scanContentVersion(tx.QueryRowContext(ctx,
-			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = ? AND node_id = ?`,
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id = $1 AND node_id = $2`,
 			node.CurrentVersionID, node.ID))
 		if versionErr != nil {
 			return NodeSourceMetadataView{}, versionErr

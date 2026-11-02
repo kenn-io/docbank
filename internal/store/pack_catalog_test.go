@@ -13,7 +13,8 @@ import (
 	"go.kenn.io/kit/packstore/packstoretest"
 )
 
-func TestPackCatalogContract(t *testing.T) {
+func checkPackCatalogContractSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	packstoretest.RunCatalogContract(t, newDocbankPackHarness, packstoretest.ContractOptions{
 		Now:       time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC),

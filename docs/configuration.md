@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-25
+last_edited: 2026-10-31
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -33,11 +33,11 @@ environment variable:
 export DOCBANK_HOME=/Volumes/Archive/docbank
 ```
 
-Run `docbank info` after selecting a vault to see its canonical path and vault
+Run `docbank vault info` after selecting a vault to see its canonical path and vault
 ID. This helps when one machine has several independent Docbank archives:
 
 ```bash
-DOCBANK_HOME=/Volumes/Archive/docbank docbank info
+DOCBANK_HOME=/Volumes/Archive/docbank docbank vault info
 ```
 
 The directory layout is created on first use:
@@ -100,8 +100,8 @@ owns or creates the vault root.
     Don't edit or prune `blobs/` or a secondary namespace by hand. The
     database authorizes physical files, including files for prior document
     versions. To reclaim space, use `docbank trash empty --run`,
-    `docbank gc --run`, and (for dead packed payload) `docbank storage repack`.
-    To check integrity, use `docbank verify`.
+    `docbank vault gc --run`, and (for dead packed payload) `docbank storage repack`.
+    To check integrity, use `docbank vault verify`.
 
 ## config.toml
 
@@ -316,7 +316,7 @@ with periodic reconciliation at the same interval.
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
 source are ignored. `exclude` stays a literal name-or-relative-path rule,
 including names containing `*`, `?`, or `[`. Add `exclude_patterns` for glob
-rules with the same [syntax as `docbank add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
+rules with the same [syntax as `docbank document add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
 a pattern without `/` matches basenames at any depth; one with `/` matches
 paths relative to the source root. Use `/` separators on every platform.
 Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
@@ -475,7 +475,7 @@ A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
 Inspect the source facts recorded for an imported file with
-`docbank provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
+`docbank document provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
 Provenance is distinct from job status. It survives daemon restarts and
 records where successfully ingested content came from, while `docbank jobs`
 describes only the current daemon run.
@@ -499,7 +499,7 @@ Compute both fingerprints with the release binary, using the exact model, trust 
 docbank processing vision-fingerprints --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
-Copy the printed `descriptor_fingerprint` and `disclosure_fingerprint` assignments into the tables below, then add them to `config.toml` and set `DOCBANK_VISION_KEY` in the daemon's environment. The other fingerprints identify synthetic policies; use stable identities for your policies and change them when those policies change.
+Copy the printed `descriptor_fingerprint` and `disclosure_fingerprint` assignments into the tables below, then add them to `config.toml` and set `DOCBANK_VISION_KEY` in the daemon's environment. Recompute these pinned fingerprints when the vision prompt changes, including an upgrade that adds orientation support, then review the changed processing plan and grant fresh consent. The other fingerprints identify synthetic policies; use stable identities for your policies and change them when those policies change.
 
 ```toml
 [credential_bindings.vision]
@@ -553,7 +553,9 @@ retain_sanitized_markdown = false
 retain_typed_artifacts = false
 ```
 
-Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. An explicit build can name another profile, but it describes a photo only when the photo has no pending suggestion. A build for a photo that already has a pending suggestion from any profile completes without a provider call; dismiss that suggestion first to ask another profile.
+Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. Automatic work leaves settled descriptions alone.
+
+A consented explicit build under another provider fingerprint can refresh rotation even when the photo already has a description. Pending and accepted caption and tag decisions stay settled. After a dismissal, an explicit build with a different provider fingerprint can offer replacement text along with the new rotation answer.
 
 ### Automatic face detection
 

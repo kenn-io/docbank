@@ -157,3 +157,47 @@ func (s *Store) writeLooseDocumentLocationTx(ctx context.Context, tx *sql.Tx, ha
 	}
 	return s.refreshPackSummariesTx(ctx, tx, packs)
 }
+
+// refreshSourceMetadataPhotosTx mirrors the source-head and technical-projection
+// triggers. Retained versions may share bytes, so visit each photo and asset
+// once. An empty source selects all headed photos after a full re-projection.
+func (s *Store) refreshSourceMetadataPhotosTx(ctx context.Context, tx *sql.Tx, source string) error {
+	if s.postgresSchema == "" {
+		return nil
+	}
+	statement := `SELECT DISTINCT f.node_id,f.asset_id FROM photo_files f
+		JOIN content_versions v ON v.node_id=f.node_id
+		JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash`
+	var args []any
+	if source != "" {
+		statement += ` WHERE v.blob_hash=$1`
+		args = []any{source}
+	}
+	var nodes []int64
+	assets := map[string]bool{}
+	if err := queryRows(ctx, tx, statement, args, func(rows *sql.Rows) error {
+		var nodeID int64
+		var asset *string
+		if err := rows.Scan(&nodeID, &asset); err != nil {
+			return err
+		}
+		nodes = append(nodes, nodeID)
+		if asset != nil {
+			assets[*asset] = true
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("finding photos for source metadata: %w", err)
+	}
+	for _, nodeID := range nodes {
+		if err := s.refreshPhotoTimelineTx(ctx, tx, nodeID); err != nil {
+			return fmt.Errorf("refreshing source metadata timeline: %w", err)
+		}
+	}
+	for asset := range assets {
+		if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset); err != nil {
+			return err
+		}
+	}
+	return nil
+}

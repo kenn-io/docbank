@@ -64,7 +64,7 @@ var (
 	photoTechnicalSelect = "p." + strings.Join(photoTechnicalColumns, ",p.")
 	photoTechnicalInsert = "INSERT INTO photo_technical_metadata(generation_id,capture_sort_key,capture_date," +
 		"camera_make_folded,camera_model_folded,lens_make_folded,lens_model_folded," +
-		strings.Join(photoTechnicalColumns, ",") + ") VALUES(?,?,?,?,?,?,?" + strings.Repeat(",?", len(photoTechnicalColumns)) +
+		strings.Join(photoTechnicalColumns, ",") + ") VALUES(" + numberedPlaceholders(7+len(photoTechnicalColumns)) +
 		") ON CONFLICT(generation_id) DO NOTHING"
 )
 
@@ -290,9 +290,9 @@ func photoTechnicalFieldsForMetadata(metadata document.SourceMetadataV1) (PhotoT
 // fact. Generations without photo facts, such as PDFs and email, get no row.
 func insertPhotoTechnicalMetadataTx(
 	ctx context.Context, tx *sql.Tx, generationID string, fields PhotoTechnicalFields,
-) error {
+) (bool, error) {
 	if fields.empty() {
-		return nil
+		return false, nil
 	}
 	var captureKey, captureDate string
 	if fields.CaptureTime != nil {
@@ -312,8 +312,12 @@ func insertPhotoTechnicalMetadataTx(
 		}
 		args = append(args, folded)
 	}
-	_, err := tx.ExecContext(ctx, photoTechnicalInsert, append(args, fields.columnValues()...)...)
-	return err
+	result, err := tx.ExecContext(ctx, photoTechnicalInsert, append(args, fields.columnValues()...)...)
+	if err != nil {
+		return false, err
+	}
+	inserted, err := result.RowsAffected()
+	return inserted != 0, err
 }
 
 // ContentVersionPhotoMetadata returns the projection selected by one exact
@@ -322,13 +326,13 @@ func (s *Store) ContentVersionPhotoMetadata(ctx context.Context, versionID strin
 	if err := validateUUIDv4(versionID); err != nil {
 		return PhotoTechnicalMetadata{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return PhotoTechnicalMetadata{}, fmt.Errorf("starting photo metadata snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 	if err != nil {
 		return PhotoTechnicalMetadata{}, fmt.Errorf("content version %q: %w", versionID, err)
 	}
@@ -341,7 +345,7 @@ func (s *Store) ContentVersionPhotoMetadata(ctx context.Context, versionID strin
 		ExtractorFingerprint: generation.ExtractorFingerprint, SourceChecksum: generation.Checksum,
 	}
 	err = tx.QueryRowContext(ctx, `SELECT `+photoTechnicalSelect+`
-		FROM photo_technical_metadata p WHERE p.generation_id=?`, generation.GenerationID).
+		FROM photo_technical_metadata p WHERE p.generation_id=$1`, generation.GenerationID).
 		Scan(result.Fields.columnPointers()...)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -365,7 +369,7 @@ func (s *Store) refreshPhotoTechnicalMetadata(ctx context.Context) error {
 		if current, err := photoTechnicalRecipeCurrent(ctx, tx); err != nil || current {
 			return err
 		}
-		return refreshPhotoTechnicalMetadataTx(ctx, tx)
+		return s.refreshPhotoTechnicalMetadataTx(ctx, tx)
 	})
 }
 
@@ -389,13 +393,13 @@ func photoTechnicalRecipeCurrent(ctx context.Context, q metadataQuerier) (bool, 
 // Pages of generation IDs are read and closed before writes so both SQLite
 // drivers can advance the same transaction safely. Each generation's canonical
 // JSON, up to 8 MiB, is then read alone, so the pass holds one at a time.
-func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
+func (s *Store) refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_technical_metadata`); err != nil {
 		return fmt.Errorf("removing stale photo technical metadata: %w", err)
 	}
 	readPage := func(after string) ([]string, error) {
 		rows, err := tx.QueryContext(ctx, `SELECT generation_id
-			FROM source_metadata_generations WHERE generation_id>?
+			FROM source_metadata_generations WHERE generation_id>$1
 			ORDER BY generation_id LIMIT 100`, after)
 		if err != nil {
 			return nil, fmt.Errorf("reading source metadata for photo projections: %w", err)
@@ -423,7 +427,7 @@ func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 			after = generationID
 			var canonical []byte
 			if err := tx.QueryRowContext(ctx, `SELECT canonical_json FROM source_metadata_generations
-				WHERE generation_id=?`, generationID).Scan(&canonical); err != nil {
+				WHERE generation_id=$1`, generationID).Scan(&canonical); err != nil {
 				return fmt.Errorf("reading source metadata %s for photo projection: %w", generationID, err)
 			}
 			metadata, _, err := document.DecodeSourceMetadataV1(canonical)
@@ -435,16 +439,16 @@ func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 			if err != nil {
 				return err
 			}
-			if err := insertPhotoTechnicalMetadataTx(ctx, tx, generationID, fields); err != nil {
+			if _, err := insertPhotoTechnicalMetadataTx(ctx, tx, generationID, fields); err != nil {
 				return err
 			}
 		}
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO photo_technical_metadata_state(singleton,projection_recipe)
-		VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET projection_recipe=excluded.projection_recipe`,
+		VALUES(1,$1) ON CONFLICT(singleton) DO UPDATE SET projection_recipe=excluded.projection_recipe`,
 		PhotoTechnicalProjectionRecipe)
 	if err != nil {
 		return fmt.Errorf("recording photo technical projection recipe: %w", err)
 	}
-	return nil
+	return s.refreshSourceMetadataPhotosTx(ctx, tx, "")
 }

@@ -20,7 +20,40 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  changes:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      groups: ${{ steps.changes.outputs.groups }}
+      all: ${{ steps.changes.outputs.all }}
+    steps:
+      - id: changes
+        uses: kenn-io/actions/changes@main
+        with:
+          filters: |
+            go:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,frontend/**}'
+              # Go tests check the configuration guide.
+              - docs/configuration.md
+            frontend:
+              - '!{README.md,AGENTS.md,CLAUDE.md,docs/**,website/**,cmd/**,docbank/**,document/**,internal/**,mcp/**,report/**,sqlite/**}'
+              - internal/web/**
+              - internal/api/openapi*
+              # Frontend code and tests import these shared Go package inputs.
+              - cmd/docbank/testdata/redaction-preparation.json
+              - document/format_metadata.json
+              - internal/daemonconn/testdata/processing_responses.json
+              - internal/query/testdata/identity-vectors.json
+            docs:
+              # Keep document/**: make docs-build runs its bridge contract tests.
+              - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
+
   postgres:
+    needs: changes
+    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 11
@@ -64,6 +97,8 @@ jobs:
         run: make test-pg
 
   docs:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'docs')) }}
     name: Public documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 16
@@ -144,6 +179,8 @@ jobs:
         run: docker logs playwright-browser-server
 
   frontend:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Web application
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -178,6 +215,8 @@ jobs:
         run: bash scripts/check-released-schemas.sh
 
   report-export-browser:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Browser reports and original exports
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -224,6 +263,8 @@ jobs:
         run: make photo-tabs-browser-test
 
   test:
+    needs: changes
+    if: *go-changed
     name: Linux tests
     runs-on: ubuntu-24.04
     timeout-minutes: 38
@@ -312,6 +353,8 @@ jobs:
         uses: $/.github/actions/go-cache-save
 
   purego:
+    needs: changes
+    if: *go-changed
     name: Pure-Go SQLite
     runs-on: ubuntu-24.04
     timeout-minutes: 36
@@ -344,6 +387,8 @@ jobs:
         uses: $/.github/actions/go-cache-save
 
   lint:
+    needs: changes
+    if: *go-changed
     name: golangci-lint
     runs-on: ubuntu-24.04
     timeout-minutes: 23
@@ -382,6 +427,8 @@ jobs:
         uses: $/.github/actions/go-cache-save
 
   windows:
+    needs: changes
+    if: *go-changed
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
     strategy:
       fail-fast: false

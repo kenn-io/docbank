@@ -244,7 +244,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 			if active {
 				change, err = s.changeAuditedTagAssignmentTx(ctx, tx, id, content.Node, content.Node.Revision, true)
 			} else {
-				change, err = changeTagAssignmentTx(ctx, tx, id, content.Node, content.Node.Revision, true, nowRFC3339())
+				change, err = s.changeTagAssignmentTx(ctx, tx, id, content.Node, content.Node.Revision, true, nowRFC3339())
 			}
 			if err != nil {
 				return MailboxTransferReceipt{}, err

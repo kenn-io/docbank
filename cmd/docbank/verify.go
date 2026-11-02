@@ -9,7 +9,7 @@ import (
 )
 
 var verifyCmd = &cobra.Command{
-	Example: `  docbank verify`,
+	Example: `  docbank vault verify`,
 	Long: `Re-hashes every stored blob and checks metadata. Exit 6 means integrity
 findings; exit 5 means the vault is busy; other nonzero codes mean the check
 could not finish.`,
@@ -50,4 +50,4 @@ could not finish.`,
 	},
 }
 
-func init() { rootCmd.AddCommand(verifyCmd) }
+func init() { registerGroupedCommand(vaultCmd, verifyCmd, "verify") }

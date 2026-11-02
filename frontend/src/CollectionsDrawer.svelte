@@ -277,7 +277,7 @@
       </div>
     {:else if items.length === 0}
       <p class="tool-muted">
-        No imports yet. Run <code>docbank add &lt;directory&gt; --dest /documents</code>.
+        No imports yet. Run <code>docbank document add &lt;directory&gt; --dest /documents</code>.
       </p>
     {:else if selected}
       {@const current = selected}

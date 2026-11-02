@@ -138,7 +138,7 @@ func (s *Store) EnsureDocumentEventRecipe(ctx context.Context, fingerprint strin
 			return nil
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE document_event_state SET
-			deriver_fingerprint=?,input_epoch=input_epoch+1,updated_at=? WHERE singleton=1`,
+			deriver_fingerprint=$1,input_epoch=input_epoch+1,updated_at=$2 WHERE singleton=1`,
 			fingerprint, nowRFC3339())
 		if err != nil {
 			return fmt.Errorf("updating document event recipe: %w", err)
@@ -162,7 +162,7 @@ func insertDocumentEventStateTx(
 ) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO document_event_state(
 		singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at
-	) VALUES(1,?,?,?,?,?)`, document.DocumentEventsContractV1, fingerprint, inputEpoch, 1,
+	) VALUES(1,$1,$2,$3,$4,$5)`, document.DocumentEventsContractV1, fingerprint, inputEpoch, 1,
 		nowRFC3339())
 	if err != nil {
 		return fmt.Errorf("recording document event state: %w", err)
@@ -206,7 +206,7 @@ func bumpDocumentEventInputEpochTx(
 	}
 	epoch := state.InputEpoch + 1
 	_, err = tx.ExecContext(ctx, `UPDATE document_event_state SET
-		deriver_fingerprint=?,input_epoch=?,updated_at=? WHERE singleton=1`,
+		deriver_fingerprint=$1,input_epoch=$2,updated_at=$3 WHERE singleton=1`,
 		fingerprint, epoch, nowRFC3339())
 	if err != nil {
 		return 0, fmt.Errorf("advancing document event input epoch: %w", err)
@@ -299,7 +299,7 @@ func (s *Store) validateDocumentEventFenceTx(
 	}
 	var revision int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision
-		FROM document_event_dirty WHERE content_version_id=?),0)`,
+		FROM document_event_dirty WHERE content_version_id=$1),0)`,
 		target.ContentVersionID).Scan(&revision); err != nil {
 		return fmt.Errorf("reading document event dirty revision: %w", err)
 	}
@@ -335,7 +335,7 @@ func recordDocumentEventAttemptTx(
 	var storedInputs, storedState string
 	var storedDiagnostics []byte
 	err := tx.QueryRowContext(ctx, `SELECT input_epoch,input_revision,inputs_sha256,state,
-		diagnostic_json FROM document_event_attempts WHERE content_version_id=?`,
+		diagnostic_json FROM document_event_attempts WHERE content_version_id=$1`,
 		target.ContentVersionID).Scan(&storedEpoch, &storedRevision, &storedInputs,
 		&storedState, &storedDiagnostics)
 	if err == nil && storedEpoch == target.InputEpoch && storedRevision == target.InputRevision &&
@@ -347,7 +347,7 @@ func recordDocumentEventAttemptTx(
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO document_event_attempts(
 		content_version_id,input_epoch,input_revision,inputs_sha256,state,diagnostic_json,attempted_at
-	) VALUES(?,?,?,?,?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET
+	) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(content_version_id) DO UPDATE SET
 		input_epoch=excluded.input_epoch,input_revision=excluded.input_revision,
 		inputs_sha256=excluded.inputs_sha256,state=excluded.state,
 		diagnostic_json=excluded.diagnostic_json,attempted_at=excluded.attempted_at`,
@@ -377,7 +377,7 @@ func (s *Store) MissingDocumentEventTargetsAfter(
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("document event backfill limit must be between 1 and 1000")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, fmt.Errorf("starting document event target snapshot: %w", err)
 	}
@@ -387,19 +387,19 @@ func (s *Store) MissingDocumentEventTargetsAfter(
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT cv.version_id,cv.node_id,cv.blob_hash,
-		cv.size,COALESCE(cv.mime_type,''),cv.recorded_at,?,COALESCE(d.revision,0)
+		cv.size,COALESCE(cv.mime_type,''),cv.recorded_at,CAST($1 AS BIGINT),COALESCE(d.revision,0)
 		FROM content_versions cv JOIN nodes n ON n.id=cv.node_id
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
 		LEFT JOIN document_event_attempts a ON a.content_version_id=cv.version_id
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
-		WHERE cv.version_id>? AND (a.content_version_id IS NULL OR a.input_epoch<?
+		WHERE cv.version_id>$2 AND (a.content_version_id IS NULL OR a.input_epoch<$3
 			OR a.input_revision<>COALESCE(d.revision,0)
 			OR a.state NOT IN ('indexed','failed','unavailable')
 			OR (a.state='indexed' AND (h.content_version_id IS NULL
 				OR h.input_epoch<>a.input_epoch
 				OR COALESCE(g.inputs_sha256,'')<>a.inputs_sha256)))
-		ORDER BY cv.version_id LIMIT ?`, state.InputEpoch, afterVersionID, state.InputEpoch, limit)
+		ORDER BY cv.version_id LIMIT $4`, state.InputEpoch, afterVersionID, state.InputEpoch, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing document event targets: %w", err)
 	}

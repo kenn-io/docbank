@@ -156,7 +156,7 @@ syntax and arity without executing examples.
 Use a command group at the root, source each ID, and mark required flags.
 Keep descriptions short: at most 12 Long lines for leaves and 20 for parents;
 root help and the TUI key table have explicit exceptions. Root help is limited
-to 4,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
+to 3,600 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
 so command examples can improve without maintaining hundreds of snapshots.
 After an intentional root change, review and regenerate it from the repository
 root:
@@ -167,6 +167,20 @@ go test -tags fts5 ./cmd/docbank -run TestRootHelpGolden -update
 
 Keep the CLI reference and guide examples in sync. Error next-step hints belong
 at the CLI process boundary; preserve error prefixes and daemon problem text.
+
+Register file/tree commands under `document`, vault identity and maintenance
+under `vault`, and email operations under `email`. `report` owns search-count
+evidence; leave `search` arguments available for arbitrary query words. Existing
+domain groups keep their names. Use `registerGroupedCommand` after installing
+the command's flags and children when moving another command. It retains a
+hidden root definition for at least one release, with separate Cobra state and
+shared handler flag values. Deprecation notices go to stderr at the process
+boundary before argument parsing, including errors and help; Cobra's built-in
+`Deprecated` field writes to stdout and breaks JSON and raw byte output.
+Keep nested compatibility definitions covered by
+`command_groups_test.go` and update the CLI reference mapping.
+Report text chooses its next-step command from the invoked spelling so the
+canonical path stays discoverable and legacy successful stdout stays compatible.
 
 ### Add a data operation
 
@@ -220,6 +234,78 @@ in `releasedSchemaFixtures`. Three checks enforce this:
   binary, so bumping the schema fails until the released version has a cutover
   adapter.
 
+### Backend support and drift checks
+
+`store.Store` is the database API boundary. Operations keep their validation,
+transactions, result assembly and catalog maintenance together. Backend-specific
+helpers handle concrete SQL and driver differences. The coverage machinery is
+compiled only into tests: it adds no interface dispatch, capability lookup or
+extra query to application requests.
+
+From the repository root, inspect the current evidence without opening a database:
+
+```sh
+make backend-coverage
+```
+
+The report distinguishes native PostgreSQL operations, retained-data validation
+and unqualified operations. A copied SQLite catalog can prove that PostgreSQL
+reads and validates it; it cannot qualify the worker that would produce it.
+Scenario counts describe the tests, not a completeness percentage or a
+performance guarantee. Unlisted operations remain unqualified. The public vault
+still opens SQLite.
+
+These test files own the inventory:
+
+- `internal/store/backend_contract_test.go` registers the executable scenarios
+  and their scope. Existing cases run once per backend. Shared cases use the same
+  assertions with each backend's fixture; PostgreSQL-specific cases cover its
+  snapshots, locks and native mutations. SQLite also keeps its full existing suite.
+- `internal/store/backend_schema_test.go` compares freshly installed canonical
+  catalogs: tables, logical column types, nullability, primary-key order,
+  foreign-key columns and actions, and index key columns, order, uniqueness and
+  partial status. It also checks PostgreSQL's byte-order text collation.
+  `backend_schema_exceptions_test.go` names each intentional or deferred
+  difference. Unlisted differences fail; resolved or stale exceptions fail too.
+- `internal/store/backend_maintenance_test.go` describes SQLite catalog effects
+  and their PostgreSQL owners or unqualified operations for the report. Keep
+  this inventory current when porting an effect. Operation tests establish
+  behavioral equivalence by exercising the writes and checking their results.
+
+The schema comparison deliberately normalizes integer widths, UUID/text storage
+and SQLite's nullable primary-key metadata. It excludes FTS virtual/shadow
+tables, engine allocation machinery and SQLite's released version field. It
+does not compare defaults, views, trigger bodies, expression/predicate SQL or
+foreign-key deferral timing. Those need operation tests. Matching index shapes
+also do not prove matching query plans: keep expressions aligned with their
+indexes and check plans on representative data when porting a query. Deferred
+indexes remain a performance qualification gap, including on tables that native
+operations already use.
+
+Run the shared SQLite contracts in both supported builds:
+
+```sh
+go test -race -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$'
+CGO_ENABLED=0 go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$'
+```
+
+With `DOCBANK_TEST_POSTGRES_DSN` set to a disposable PostgreSQL server, run
+`make test-pg` for setup, permissions and the complete PostgreSQL contract suite.
+CI runs that lane on PostgreSQL 16 and 18. To focus on one operation or the schema:
+
+```sh
+go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/documents/'
+go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/schema/Schema$'
+```
+
+Add new PostgreSQL cases to the registry so the report and CI select the same
+functions. Prefer one shared scenario where both backends have the same contract;
+keep backend-specific failure and concurrency evidence where it adds coverage.
+Do not repeat shared Go rejection cases on both databases merely to increase
+counts. Port a complete operation with its access indexes, validation, catalog
+effects and rollback behavior, then remove the relevant exceptions. Keep
+remaining implementation work in Kata rather than adding task lists to this guide.
+
 ### PostgreSQL schema lifecycle
 
 `internal/store/pgschema` owns canonical PostgreSQL catalogs for internal
@@ -236,11 +322,14 @@ pruning preserve retention holds and related catalog state. Derivative cleanup
 covers purge previews, rendition and embedding collection, extracted-text and
 email cleanup, and explicit rebuild authorization. Primary blob packing,
 repacking, bounded GC catalog selection and exact physical cleanup receipts
-also work with PostgreSQL metadata.
+also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved query
+definition management use the native Store operations on both databases.
+Extracted source metadata, typed photo facts, and document-event evidence,
+publication, terminal attempts and rebuild receipts also use shared operations.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-processing workers, search, transfer, backup recovery, multi-store placement
+provider/rendition, embedding, page and media workers, search, transfer, backup recovery, multi-store placement
 and storage-operation jobs remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
@@ -366,8 +455,28 @@ GRANT UPDATE(state, failure_code, updated_at)
 GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
     recorded_at, expires_at, active, released_at)
     ON documents.current_rendition_roots TO docbank_runtime;
-GRANT UPDATE(revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
+GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
+    ON documents.saved_queries TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
+GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
+    documents.document_events, documents.document_event_actors, documents.document_event_primaries
+    TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, published_at)
+    ON documents.source_metadata_heads TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_technical_metadata TO docbank_runtime;
+GRANT INSERT, UPDATE(projection_recipe)
+    ON documents.photo_technical_metadata_state TO docbank_runtime;
+GRANT INSERT, UPDATE(deriver_fingerprint, input_epoch)
+    ON documents.document_event_state TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, input_epoch, published_at)
+    ON documents.document_event_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnostic_json, attempted_at)
+    ON documents.document_event_attempts TO docbank_runtime;
+GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
+    ON documents.document_event_builds TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -564,49 +673,23 @@ receipts, repairs the surviving assets, and refreshes paired sidecar work after
 node deletion. These effects share the deletion transaction; a failure retains
 the original versions, jobs, receipts, epochs and node revisions.
 
-!!! info "Planned"
+`make backend-coverage` reports the recorded SQLite catalog effects,
+their PostgreSQL owners and their remaining boundaries. Audit enrollment already
+queues affected photos through `queueAuditPhotosTx`. Deleting authority or
+memberships during import/restore still needs that effect. XMP publication,
+people candidates and search also have unported effects; their
+retained tables do not establish write support.
 
-    Preserve these effects as the remaining mutation, import, restore and
-    maintenance operations are ported. PostgreSQL does not use maintenance
-    triggers; the Go operation owns the related changes.
+For each remaining port, capture affected identities before cascades remove the
+rows that identify them. Validate values and immutable-record rules in the Go
+write path, including imports and restores, and verify commit and rollback
+through the native operation. PostgreSQL does not use maintenance triggers.
 
-    SQLite currently owns these effects in triggers. They are separate from
-    value validation and must not disappear when a write is ported:
-
-    | Change | Required catalog effect |
-    | --- | --- |
-    | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
-    | Change a photo node's current version | Queue its node when the version changes |
-    | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
-    | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
-    | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
-
-    Initial and additional enrollment persistence already queue affected assets
-    on PostgreSQL through the shared audit writers, as described under
-    [shared query qualification](#shared-query-qualification). The remaining
-    mutation, cascading deletion and restore paths must preserve these effects
-    too; the presence of photo tables does not qualify those operations.
-
-    Shared Go validation must also enforce the audit invariants currently
-    covered by SQLite checks: one active authority row at `singleton=1`, known
-    record kinds, and positive stored operation sequences and entry counts
-    wherever present. Validate records before insertion and the complete
-    authority within the transaction, including imports and restores. The
-    PostgreSQL write paths must not rely on SQLite constraints for these rules.
-
-    This table identifies the immediate dependencies of the core catalogs,
-    not the complete trigger inventory. Bulk and cascading deletions must
-    capture affected identities before deleting the rows that identify them.
-    Each port must cover normal and audited writes, imports, restores and
-    maintenance paths, and verify both commit and rollback effects on both
-    backends. Engine-specific index maintenance, such as SQLite FTS5, remains
-    part of that engine's search implementation.
-
-    Preserve released SQLite schemas and their triggers. Replace each trigger
-    through the supported SQLite layout cutover only when its shared Go owner
-    is present. Do not run both owners for an effect such as advancing a binding
-    epoch. Successful SQL alone does not qualify a write; its related catalog
-    effects must be implemented too.
+Preserve released SQLite schemas and their triggers. Replace each trigger
+through the supported SQLite layout cutover only when its Go owner is present.
+Do not run both owners for an effect such as advancing a binding epoch.
+Engine-specific index maintenance, such as SQLite FTS5, remains part of that
+engine's search implementation.
 
 #### Native document writes
 
@@ -633,6 +716,38 @@ technical metadata and sidecar receipts. Physical cases cover compressed
 receipts, missing authority and dead pack mappings surviving logical collection.
 These are internal Store capabilities; they do not expose a public PostgreSQL
 vault or qualify the remaining storage and recovery lifecycle.
+
+#### Source metadata and document events
+
+Publishing source metadata atomically records immutable evidence, its photo
+technical projection, and the selected generation. Replaying an extractor's
+identical evidence selects that recorded generation; conflicting bytes fail.
+A changed head invalidates event and people projections for every retained
+version of the source bytes. Republishing the unchanged head does not dirty
+those versions again.
+
+PostgreSQL refreshes the affected photo timelines and export queue in that same
+transaction. It visits each photo and asset once even when retained versions
+share the source bytes. Rebuilding technical projections from retained evidence
+refreshes affected photos after the full replacement. SQLite retains its
+existing triggers, including FTS maintenance; PostgreSQL search remains
+unqualified.
+
+Document-event publication captures source and provenance evidence, then checks
+its digest, recipe, epoch and dirty revision under the writer lock. A stale
+result cannot become a head or a terminal attempt. Generation bytes, events,
+actors and primary selections are inserted together and cannot be updated by
+the runtime role. Head selection and terminal-attempt recording share the same
+transaction. Replaying the current publication preserves its epoch; failed
+writes retain the previous evidence and progress.
+
+Coverage, missing-work pages, metadata views and event evidence use repeatable-read
+snapshots when several queries assemble one result. Coverage uses the indexed
+event and primary-selection rows instead of expanding canonical JSON. Canonical
+source payloads remain bytes on both engines, including when checking size and
+corruption. Rebuild requests atomically advance the input epoch and record an
+idempotent receipt; refresh counts only current terminal attempts, and completed
+receipts remain immutable.
 
 #### Recoverable deletion
 
@@ -805,6 +920,34 @@ writes during history reads to verify snapshot consistency. These capabilities
 do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
 sidecar writing, portable metadata import, collection snapshots, reporting,
 backup or restore.
+
+#### Tags and saved definitions
+
+Tag creation, assignment, rename and deletion use the same Store methods on
+both databases, including audited operations and path-based assignment. Tag
+pages retain byte-order sorting, current assignment counts and trash filtering.
+Bulk edits preserve revision fences, atomic changes and immutable replay
+receipts, including replay after a tag is deleted. A bulk preview reads the tag
+and selected nodes from one repeatable-read snapshot.
+
+On PostgreSQL, tag writes refresh affected photo export work in their write
+transaction. Bulk edits and definition changes collect affected assets as a set,
+including sidecars belonging to those photos; SQLite retains its released
+triggers. Tag deletion still refuses definitions referenced by queued or running
+mailbox jobs.
+The job-state index supports that check. Runtime credentials can insert batch
+receipts but cannot update or delete them.
+
+Saved query and highlight definitions retain canonical payloads, optimistic
+revisions, idempotent edits, filtered pages and photo-only selectors. These
+mutations remain unavailable after audit enrollment, as on SQLite. Deleting a
+definition cascades retained run receipts through the definition index; this
+does not qualify saved-query execution or run publication on PostgreSQL.
+
+The `organization` backend scenarios cover native mutations, bulk replay and
+rollback, concurrent saved-definition edits, snapshot consistency and photo
+export effects. Mailbox jobs and settled photo receipts are retained fixtures;
+their producers remain outside this qualification.
 
 #### Shared query qualification
 

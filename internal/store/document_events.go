@@ -207,14 +207,14 @@ func (s *Store) publishDocumentEventsTx(
 		publishedAt := nowRFC3339()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_heads(
 			content_version_id,generation_id,input_epoch,published_at
-		) VALUES(?,?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET
+		) VALUES($1,$2,$3,$4) ON CONFLICT(content_version_id) DO UPDATE SET
 			generation_id=excluded.generation_id,input_epoch=excluded.input_epoch,
 			published_at=excluded.published_at`, target.ContentVersionID,
 			generation.GenerationID, target.InputEpoch, publishedAt); err != nil {
 			return DocumentEventGeneration{}, fmt.Errorf("selecting document event generation: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE document_event_state SET
-			publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, publishedAt); err != nil {
+			publication_epoch=publication_epoch+1,updated_at=$1 WHERE singleton=1`, publishedAt); err != nil {
 			return DocumentEventGeneration{}, fmt.Errorf("advancing document event publication epoch: %w", err)
 		}
 	}
@@ -226,7 +226,7 @@ func (s *Store) publishDocumentEventsTx(
 
 func validateDocumentEventTargetTx(ctx context.Context, tx *sql.Tx, target DocumentEventTarget) error {
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`,
 		target.ContentVersionID))
 	if err != nil {
 		return fmt.Errorf("document event target %q: %w", target.ContentVersionID, err)
@@ -247,7 +247,7 @@ func checkEventGenerationReplay(
 	var storedChecksum string
 	var storedJSON []byte
 	err := tx.QueryRowContext(ctx, `SELECT checksum,canonical_json
-		FROM document_event_generations WHERE generation_id=?`, id).
+		FROM document_event_generations WHERE generation_id=$1`, id).
 		Scan(&storedChecksum, &storedJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -271,7 +271,7 @@ func insertDocumentEventGeneration(
 	if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_generations(
 		generation_id,content_version_id,contract_version,deriver_fingerprint,inputs_sha256,
 		document_kind,canonical_json,checksum,event_count,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?)`, generation.GenerationID, generation.ContentVersionID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, generation.GenerationID, generation.ContentVersionID,
 		generation.ContractVersion, generation.DeriverFingerprint, generation.InputsSHA256,
 		generation.DocumentKind, generation.CanonicalJSON,
 		generation.Checksum, generation.EventCount, generation.CreatedAt); err != nil {
@@ -283,7 +283,7 @@ func insertDocumentEventGeneration(
 			precision,fraction_digits,timezone_kind,zone_text,offset_seconds,axis_key,utc_key,
 			claim_basis,parse_confidence,evidence_kind,evidence_id,evidence_sha256,
 			evidence_locator,sensitive
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, generation.GenerationID,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, generation.GenerationID,
 			event.EventID, event.SourceKey, event.DateKind, event.SourceKindRaw, event.DateValue,
 			event.RawValue, event.Precision, event.FractionDigits, event.TimezoneKind, event.ZoneText,
 			nullableDocumentEventOffset(event.OffsetSeconds), event.AxisKey,
@@ -296,7 +296,7 @@ func insertDocumentEventGeneration(
 			if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_actors(
 				generation_id,event_id,role,ordinal,actor_key,display_name,address,claim_json,
 				evidence_kind,evidence_id,sensitive
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, generation.GenerationID, event.EventID, actor.Role,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, generation.GenerationID, event.EventID, actor.Role,
 				actor.Ordinal, actor.ActorKey, actor.DisplayName, actor.Address, []byte(actor.Claim),
 				actor.EvidenceKind, actor.EvidenceID, documentEventBool(actor.Sensitive)); err != nil {
 				return fmt.Errorf("recording document event %s actor: %w", event.EventID, err)
@@ -306,7 +306,7 @@ func insertDocumentEventGeneration(
 	for _, primary := range record.Primaries {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_primaries(
 			generation_id,scope_class,disclosure,event_id,rule_id,reason
-		) VALUES(?,?,?,?,?,?)`, generation.GenerationID, primary.ScopeClass,
+		) VALUES($1,$2,$3,$4,$5,$6)`, generation.GenerationID, primary.ScopeClass,
 			primary.Disclosure, primary.EventID, primary.RuleID, primary.Reason); err != nil {
 			return fmt.Errorf("recording document event primary: %w", err)
 		}
@@ -337,7 +337,7 @@ func documentEventHeadChanged(
 	var storedGeneration string
 	var storedEpoch int64
 	err := tx.QueryRowContext(ctx, `SELECT generation_id,input_epoch FROM document_event_heads
-		WHERE content_version_id=?`, versionID).Scan(&storedGeneration, &storedEpoch)
+		WHERE content_version_id=$1`, versionID).Scan(&storedGeneration, &storedEpoch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
@@ -353,7 +353,7 @@ func (s *Store) DocumentEventsForVersion(
 	ctx context.Context,
 	versionID string,
 ) (DocumentEventView, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return DocumentEventView{}, fmt.Errorf("starting document event snapshot: %w", err)
 	}
@@ -365,7 +365,7 @@ func (s *Store) DocumentEventsForVersion(
 		g.canonical_json,g.checksum,g.event_count,g.created_at,
 		h.input_epoch,h.published_at
 		FROM document_event_heads h JOIN document_event_generations g
-		ON g.generation_id=h.generation_id WHERE h.content_version_id=?`, versionID).
+		ON g.generation_id=h.generation_id WHERE h.content_version_id=$1`, versionID).
 		Scan(&view.Generation.GenerationID, &view.Generation.ContentVersionID,
 			&view.Generation.ContractVersion, &view.Generation.DeriverFingerprint,
 			&view.Generation.InputsSHA256, &view.Generation.DocumentKind,
@@ -379,7 +379,7 @@ func (s *Store) DocumentEventsForVersion(
 		return DocumentEventView{}, fmt.Errorf("reading document event generation: %w", err)
 	}
 	view.Version, err = scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 	if err != nil {
 		return DocumentEventView{}, fmt.Errorf("reading document event version: %w", err)
 	}
@@ -409,7 +409,7 @@ func readDocumentEventGeneration(
 	var generation DocumentEventGeneration
 	err := tx.QueryRowContext(ctx, `SELECT generation_id,content_version_id,contract_version,
 		deriver_fingerprint,inputs_sha256,document_kind,canonical_json,
-		checksum,event_count,created_at FROM document_event_generations WHERE generation_id=?`,
+		checksum,event_count,created_at FROM document_event_generations WHERE generation_id=$1`,
 		generationID).Scan(&generation.GenerationID, &generation.ContentVersionID,
 		&generation.ContractVersion, &generation.DeriverFingerprint, &generation.InputsSHA256,
 		&generation.DocumentKind, &generation.CanonicalJSON,

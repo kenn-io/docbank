@@ -149,7 +149,7 @@ var currentSchemaTables = [...]string{
 	"mailbox_jobs", "mailbox_occurrences",
 	"email_document_publications", "email_document_relations",
 	"photo_hidden_credentials", "photo_hidden_failures", "photo_hidden_lockout",
-	"photo_quality_signals", "photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
+	"photo_suggestions", "photo_quality_signals", "photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
 	"photo_technical_metadata", "photo_technical_metadata_state", "photo_timeline", "photo_source_claims",
 	"photo_xmp_inputs", "photo_xmp_unsettled", "photo_xmp_unsettled_pending",
 	"photo_checkouts", "photo_checkout_entries",

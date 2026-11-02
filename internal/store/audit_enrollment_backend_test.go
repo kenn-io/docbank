@@ -10,7 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestAuditEnrollmentPhotosPostgres(t *testing.T) {
+func checkAuditEnrollmentPhotosPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 
