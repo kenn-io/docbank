@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -36,11 +38,13 @@ import (
 type fixture struct {
 	connection *daemonconn.Connection
 	baseURL    string
-	store      *store.Store
-	blobs      *blob.Store
-	vaultRoot  string
-	uploads    atomic.Int64
-	drop       atomic.Bool
+	// dial opens an in-memory connection to the fixture daemon.
+	dial      func(ctx context.Context, network, address string) (net.Conn, error)
+	store     *store.Store
+	blobs     *blob.Store
+	vaultRoot string
+	uploads   atomic.Int64
+	drop      atomic.Bool
 	// truncateReceipt sends success headers and only part of a committed receipt.
 	truncateReceipt atomic.Bool
 	// listings counts cursor list requests. In watch mode every scan with
@@ -91,7 +95,7 @@ func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 	server := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	t.Cleanup(server.Close)
 	f := &fixture{store: s, blobs: blobs, vaultRoot: dir}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if f.impostor.Load() {
 			f.serveImpostor(w, r)
 			return
@@ -168,12 +172,31 @@ func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 		}
 		server.Handler().ServeHTTP(w, r)
 	}))
-	t.Cleanup(ts.Close)
+	// In-memory connections buffer without limit. A socket-sized buffer keeps a
+	// large upload reading its source while the daemon handles the request.
+	ts.Config.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
+		if buffered, ok := conn.(interface{ SetReadBufferSize(size int) }); ok {
+			buffered.SetReadBufferSize(256 << 10)
+		}
+		return ctx
+	}
+	transport, ok := ts.Client().Transport.(*http.Transport)
+	require.True(t, ok)
 	f.server = ts
-	f.baseURL = ts.URL
-	f.connection, err = daemonconn.NewPushConnection(ts.URL, "synthetic-key")
-	require.NoError(t, err)
+	// The daemon accepts only loopback Host headers; the in-memory network
+	// accepts any address.
+	f.baseURL = "http://127.0.0.1"
+	f.dial = transport.DialContext
+	f.connection = f.connect(t)
 	return f
+}
+
+// connect opens a new push connection to the fixture daemon.
+func (f *fixture) connect(t *testing.T) *daemonconn.Connection {
+	t.Helper()
+	connection, err := daemonconn.NewPushConnectionWithDialer(f.baseURL, "synthetic-key", f.dial)
+	require.NoError(t, err)
+	return connection
 }
 
 func (f *fixture) serveImpostor(w http.ResponseWriter, r *http.Request) {
@@ -229,8 +252,7 @@ func TestPushFolderResumesWithoutUploadsAndKeepsDeletedDocuments(t *testing.T) {
 	node, err := f.store.NodeByPath(t.Context(), "/archive/nested/notes.txt")
 	require.NoError(t, err)
 	// A new client on a relocated folder has no cursor. All authority is remote.
-	resumed, err := daemonconn.NewPushConnection(f.baseURL, "synthetic-key")
-	require.NoError(t, err)
+	resumed := f.connect(t)
 	secondDir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(secondDir, "nested"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(secondDir, "nested", "notes.txt"), []byte("initial"), 0600))
@@ -320,30 +342,32 @@ func TestPushResumesAfterServerCommitsButResponseIsLost(t *testing.T) {
 
 func TestPushWatchRecoversAfterCommittedReceiptIsInterrupted(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("durable"), 0o600))
-	f.truncateReceipt.Store(true)
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	var outcomes []string
-	opts.Progress = func(_ string, outcome string) error {
-		outcomes = append(outcomes, outcome)
-		cancel()
-		return nil
-	}
-	report, err := push.Run(ctx, f.connection, opts)
-	require.ErrorIs(t, err, context.Canceled, "watch must recover by refreshing the committed cursor")
-	assert.Equal(t, []string{"skipped"}, outcomes)
-	assert.Equal(t, push.Report{Skipped: 1}, report)
-	assert.EqualValues(t, 1, f.uploads.Load(), "the committed upload must not be repeated")
-	node, err := f.store.NodeByPath(t.Context(), "/archive/notes.txt")
-	require.NoError(t, err)
-	assert.Equal(t, "durable", readNode(t, f, node.ID))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("durable"), 0o600))
+		f.truncateReceipt.Store(true)
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		var outcomes []string
+		opts.Progress = func(_ string, outcome string) error {
+			outcomes = append(outcomes, outcome)
+			cancel()
+			return nil
+		}
+		report, err := push.Run(ctx, f.connection, opts)
+		require.ErrorIs(t, err, context.Canceled, "watch must recover by refreshing the committed cursor")
+		assert.Equal(t, []string{"skipped"}, outcomes)
+		assert.Equal(t, push.Report{Skipped: 1}, report)
+		assert.EqualValues(t, 1, f.uploads.Load(), "the committed upload must not be repeated")
+		node, err := f.store.NodeByPath(t.Context(), "/archive/notes.txt")
+		require.NoError(t, err)
+		assert.Equal(t, "durable", readNode(t, f, node.ID))
+	})
 }
 
 func TestPushRejectsMalformedSuccessAndDigestMismatch(t *testing.T) {
@@ -389,86 +413,90 @@ func TestPushCancellationDoesNotReportSuccess(t *testing.T) {
 
 func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "file.txt")
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(time.Second)
-	opts.Folder.ScanInterval = config.Duration(100 * time.Millisecond)
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	assert.Equal(t, "added", next(t, events, "the first upload"))
-	require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
-	assert.Equal(t, "updated", next(t, events, "the settled change"))
-	cancel()
-	require.ErrorIs(t, next(t, done, "the watch to stop"), context.Canceled)
-	assert.EqualValues(t, 2, f.uploads.Load())
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		file := filepath.Join(dir, "file.txt")
+		require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(time.Second)
+		opts.Folder.ScanInterval = config.Duration(100 * time.Millisecond)
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		assert.Equal(t, "added", next(t, events, "the first upload"))
+		require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
+		assert.Equal(t, "updated", next(t, events, "the settled change"))
+		cancel()
+		require.ErrorIs(t, next(t, done, "the watch to stop"), context.Canceled)
+		assert.EqualValues(t, 2, f.uploads.Load())
+	})
 }
 
 func TestPushWatchUploadsEqualLengthEditsWithRestoredMtime(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "notes.txt")
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0o600))
-	before, err := os.Stat(file)
-	require.NoError(t, err)
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	events := make(chan string, 8)
-	opts.Progress = func(ref string, outcome string) error {
-		if ref == "z-sentinel.txt" {
-			// The scanner has finished notes.txt and cannot observe its temporary mtime.
-			if err := os.WriteFile(file, []byte("other"), 0o600); err != nil {
-				return err
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		file := filepath.Join(dir, "notes.txt")
+		require.NoError(t, os.WriteFile(file, []byte("first"), 0o600))
+		before, err := os.Stat(file)
+		require.NoError(t, err)
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		events := make(chan string, 8)
+		opts.Progress = func(ref string, outcome string) error {
+			if ref == "z-sentinel.txt" {
+				// The scanner has finished notes.txt and cannot observe its temporary mtime.
+				if err := os.WriteFile(file, []byte("other"), 0o600); err != nil {
+					return err
+				}
+				if err := os.Chtimes(file, before.ModTime(), before.ModTime()); err != nil {
+					return err
+				}
 			}
-			if err := os.Chtimes(file, before.ModTime(), before.ModTime()); err != nil {
-				return err
-			}
+			events <- outcome
+			return nil
 		}
-		events <- outcome
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	t.Cleanup(func() { cancel(); <-done })
-	select {
-	case outcome := <-events:
-		require.Equal(t, "added", outcome)
-	case <-ctx.Done():
-		t.Fatal("initial file was not uploaded")
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "z-sentinel.txt"), []byte("sentinel"), 0o600))
-	select {
-	case outcome := <-events:
-		require.Equal(t, "added", outcome)
-	case <-ctx.Done():
-		t.Fatal("sentinel was not uploaded")
-	}
-	after, err := os.Stat(file)
-	require.NoError(t, err)
-	require.Equal(t, before.Size(), after.Size())
-	require.Equal(t, before.ModTime(), after.ModTime())
-	require.True(t, os.SameFile(before, after))
-	select {
-	case outcome := <-events:
-		require.Equal(t, "updated", outcome)
-	case <-ctx.Done():
-		t.Fatal("same-size edit with restored mtime was not uploaded")
-	}
-	node, err := f.store.NodeByPath(t.Context(), "/archive/notes.txt")
-	require.NoError(t, err)
-	assert.Equal(t, "other", readNode(t, f, node.ID))
-	assert.EqualValues(t, 3, f.uploads.Load())
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		t.Cleanup(func() { cancel(); <-done })
+		select {
+		case outcome := <-events:
+			require.Equal(t, "added", outcome)
+		case <-ctx.Done():
+			t.Fatal("initial file was not uploaded")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "z-sentinel.txt"), []byte("sentinel"), 0o600))
+		select {
+		case outcome := <-events:
+			require.Equal(t, "added", outcome)
+		case <-ctx.Done():
+			t.Fatal("sentinel was not uploaded")
+		}
+		after, err := os.Stat(file)
+		require.NoError(t, err)
+		require.Equal(t, before.Size(), after.Size())
+		require.Equal(t, before.ModTime(), after.ModTime())
+		require.True(t, os.SameFile(before, after))
+		select {
+		case outcome := <-events:
+			require.Equal(t, "updated", outcome)
+		case <-ctx.Done():
+			t.Fatal("same-size edit with restored mtime was not uploaded")
+		}
+		node, err := f.store.NodeByPath(t.Context(), "/archive/notes.txt")
+		require.NoError(t, err)
+		assert.Equal(t, "other", readNode(t, f, node.ID))
+		assert.EqualValues(t, 3, f.uploads.Load())
+	})
 }
 
 func TestPushRefusesMalformedKnownSourceInsteadOfSkipping(t *testing.T) {
@@ -498,85 +526,87 @@ func TestPushRefusesMalformedKnownSourceInsteadOfSkipping(t *testing.T) {
 
 func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	watchDir := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(watchDir, "nested"), 0700))
-	watchFile := filepath.Join(watchDir, "nested", "notes.txt")
-	require.NoError(t, os.WriteFile(watchFile, []byte("watch initial"), 0600))
-	cfg := options(watchDir).Folder
-	cfg.Destination = "/watched"
-	cfg.SettleTime = config.Duration(time.Second)
-	cfg.ScanInterval = config.Duration(100 * time.Millisecond)
-	// The watch commits every change through its mutation gate, so the gate
-	// tells the test when to look at the catalog again.
-	mutated := make(chan struct{})
-	mutate := func(ctx context.Context, fn func() error) error {
-		err := fn()
-		select {
-		case mutated <- struct{}{}:
-		case <-ctx.Done():
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		watchDir := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(watchDir, "nested"), 0700))
+		watchFile := filepath.Join(watchDir, "nested", "notes.txt")
+		require.NoError(t, os.WriteFile(watchFile, []byte("watch initial"), 0600))
+		cfg := options(watchDir).Folder
+		cfg.Destination = "/watched"
+		cfg.SettleTime = config.Duration(time.Second)
+		cfg.ScanInterval = config.Duration(100 * time.Millisecond)
+		// The watch commits every change through its mutation gate, so the gate
+		// tells the test when to look at the catalog again.
+		mutated := make(chan struct{})
+		mutate := func(ctx context.Context, fn func() error) error {
+			err := fn()
+			select {
+			case mutated <- struct{}{}:
+			case <-ctx.Done():
+			}
+			return err
 		}
-		return err
-	}
-	w, err := ingest.NewWatcher(&ingest.Ingester{Store: f.store, Blobs: f.blobs}, f.vaultRoot, cfg,
-		mutate, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
-	ctx, stop := context.WithCancel(t.Context())
-	defer stop()
-	done := make(chan error, 1)
-	go func() { done <- w.Run(ctx) }()
-	var node store.Node
-	for {
-		next(t, mutated, "the watch to import notes.txt")
-		var lookupErr error
-		node, lookupErr = f.store.NodeByPath(t.Context(), "/watched/nested/notes.txt")
-		if lookupErr == nil {
-			break
-		}
-	}
-	content := []byte("watch last accepted")
-	sum := sha256.Sum256(content)
-	require.NoError(t, os.WriteFile(watchFile, content, 0600))
-	for node.BlobHash != hex.EncodeToString(sum[:]) {
-		next(t, mutated, "the watch to import the edit")
-		node, err = f.store.NodeByID(t.Context(), node.ID)
+		w, err := ingest.NewWatcher(&ingest.Ingester{Store: f.store, Blobs: f.blobs}, f.vaultRoot, cfg,
+			mutate, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
-	}
-	stop()
-	require.ErrorIs(t, next(t, done, "the watch to stop"), context.Canceled)
+		ctx, stop := context.WithCancel(t.Context())
+		defer stop()
+		done := make(chan error, 1)
+		go func() { done <- w.Run(ctx) }()
+		var node store.Node
+		for {
+			next(t, mutated, "the watch to import notes.txt")
+			var lookupErr error
+			node, lookupErr = f.store.NodeByPath(t.Context(), "/watched/nested/notes.txt")
+			if lookupErr == nil {
+				break
+			}
+		}
+		content := []byte("watch last accepted")
+		sum := sha256.Sum256(content)
+		require.NoError(t, os.WriteFile(watchFile, content, 0600))
+		for node.BlobHash != hex.EncodeToString(sum[:]) {
+			next(t, mutated, "the watch to import the edit")
+			node, err = f.store.NodeByID(t.Context(), node.ID)
+			require.NoError(t, err)
+		}
+		stop()
+		require.ErrorIs(t, next(t, done, "the watch to stop"), context.Canceled)
 
-	localDir := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(localDir, "nested"), 0700))
-	localFile := filepath.Join(localDir, "nested", "notes.txt")
-	require.NoError(t, os.WriteFile(localFile, content, 0600))
-	opts := options(localDir)
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, report.Skipped)
-	assert.Zero(t, report.Added)
-	assert.Zero(t, f.uploads.Load(), "switch-over must upload no unchanged bytes")
-	unchanged, err := f.store.NodeByID(t.Context(), node.ID)
-	require.NoError(t, err)
-	assert.Equal(t, node.Revision, unchanged.Revision)
-	assert.Equal(t, node.CurrentVersionID, unchanged.CurrentVersionID)
-	_, err = f.store.NodeByPath(t.Context(), "/archive")
-	require.ErrorIs(t, err, store.ErrNotFound, "switch-over must not create a destination or new node")
+		localDir := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(localDir, "nested"), 0700))
+		localFile := filepath.Join(localDir, "nested", "notes.txt")
+		require.NoError(t, os.WriteFile(localFile, content, 0600))
+		opts := options(localDir)
+		report, err := push.Run(t.Context(), f.connection, opts)
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Skipped)
+		assert.Zero(t, report.Added)
+		assert.Zero(t, f.uploads.Load(), "switch-over must upload no unchanged bytes")
+		unchanged, err := f.store.NodeByID(t.Context(), node.ID)
+		require.NoError(t, err)
+		assert.Equal(t, node.Revision, unchanged.Revision)
+		assert.Equal(t, node.CurrentVersionID, unchanged.CurrentVersionID)
+		_, err = f.store.NodeByPath(t.Context(), "/archive")
+		require.ErrorIs(t, err, store.ErrNotFound, "switch-over must not create a destination or new node")
 
-	require.NoError(t, os.WriteFile(localFile, []byte("push changed"), 0600))
-	report, err = push.Run(t.Context(), f.connection, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, report.Updated)
-	assert.EqualValues(t, 1, f.uploads.Load())
-	changed, err := f.store.NodeByPath(t.Context(), "/watched/nested/notes.txt")
-	require.NoError(t, err)
-	assert.Equal(t, node.ID, changed.ID)
-	assert.NotEqual(t, node.CurrentVersionID, changed.CurrentVersionID)
-	_, err = f.store.NodeByPath(t.Context(), "/archive")
-	require.ErrorIs(t, err, store.ErrNotFound, "changed identities must keep their existing destination")
-	report, err = push.Run(t.Context(), f.connection, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, report.Skipped)
-	assert.EqualValues(t, 1, f.uploads.Load(), "push's accepted hash must replace the old watch cursor for resume")
+		require.NoError(t, os.WriteFile(localFile, []byte("push changed"), 0600))
+		report, err = push.Run(t.Context(), f.connection, opts)
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Updated)
+		assert.EqualValues(t, 1, f.uploads.Load())
+		changed, err := f.store.NodeByPath(t.Context(), "/watched/nested/notes.txt")
+		require.NoError(t, err)
+		assert.Equal(t, node.ID, changed.ID)
+		assert.NotEqual(t, node.CurrentVersionID, changed.CurrentVersionID)
+		_, err = f.store.NodeByPath(t.Context(), "/archive")
+		require.ErrorIs(t, err, store.ErrNotFound, "changed identities must keep their existing destination")
+		report, err = push.Run(t.Context(), f.connection, opts)
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Skipped)
+		assert.EqualValues(t, 1, f.uploads.Load(), "push's accepted hash must replace the old watch cursor for resume")
+	})
 }
 
 func TestPushNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
@@ -632,25 +662,27 @@ func TestPushContinuesPastARejectedFile(t *testing.T) {
 
 func TestPushWatchRetriesAfterTheDaemonIsUnavailable(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	f.unavailable.Store(1)
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("first"), 0600))
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(200 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(50 * time.Millisecond)
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	assert.Equal(t, "added", next(t, events, "an upload"))
-	assert.EqualValues(t, 2, f.uploads.Load(), "the refused upload is retried")
-	assert.Empty(t, done, "an unavailable daemon does not end watch mode")
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		f.unavailable.Store(1)
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("first"), 0600))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(200 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(50 * time.Millisecond)
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		assert.Equal(t, "added", next(t, events, "an upload"))
+		assert.EqualValues(t, 2, f.uploads.Load(), "the refused upload is retried")
+		assert.Empty(t, done, "an unavailable daemon does not end watch mode")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }
 
 func TestPushRefusesTheNameOfAConfiguredDaemonWatch(t *testing.T) {
@@ -708,37 +740,39 @@ func TestPushUpdatesAMovedDocumentAfterItsOldFolderIsTrashed(t *testing.T) {
 
 func TestPushRetriesAKeyChallengeThatFailedInTransit(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("first"), 0600))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("first"), 0600))
 
-	f.challengeOutages.Store(1)
-	_, err := push.Run(t.Context(), f.connection, options(dir))
-	require.Error(t, err)
-	assert.False(t, daemonconn.IsKeyProofError(err), "a 503 challenge is not a failed proof: %v", err)
-	assert.True(t, daemonconn.IsTransportError(err), "unexpected error: %v", err)
+		f.challengeOutages.Store(1)
+		_, err := push.Run(t.Context(), f.connection, options(dir))
+		require.Error(t, err)
+		assert.False(t, daemonconn.IsKeyProofError(err), "a 503 challenge is not a failed proof: %v", err)
+		assert.True(t, daemonconn.IsTransportError(err), "unexpected error: %v", err)
 
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	assert.Equal(t, "added", next(t, events, "an upload"))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		assert.Equal(t, "added", next(t, events, "an upload"))
 
-	f.challengeFails.Store(0)
-	f.challengeOutages.Store(2)
-	f.server.CloseClientConnections()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("second"), 0600))
-	assert.Equal(t, "updated", next(t, events, "an upload"))
-	assert.EqualValues(t, 2, f.challengeFails.Load(), "both interrupted challenges were retried")
-	assert.Empty(t, done, "an interrupted challenge does not end watch mode")
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
+		f.challengeFails.Store(0)
+		f.challengeOutages.Store(2)
+		f.server.CloseClientConnections()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("second"), 0600))
+		assert.Equal(t, "updated", next(t, events, "an upload"))
+		assert.EqualValues(t, 2, f.challengeFails.Load(), "both interrupted challenges were retried")
+		assert.Empty(t, done, "an interrupted challenge does not end watch mode")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }
 
 func TestPushTreatsAnEditDuringUploadAsASourceChange(t *testing.T) {
@@ -754,95 +788,99 @@ func TestPushTreatsAnEditDuringUploadAsASourceChange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := newFixture(t)
-			dir := t.TempDir()
-			file := filepath.Join(dir, "file.txt")
-			// The file exceeds the socket buffers, so the upload still reads it
-			// when the daemon receives the request and the edit lands.
-			require.NoError(t, os.WriteFile(file, bytes.Repeat([]byte("x"), 32<<20), 0600))
-			before, err := os.Stat(file)
-			require.NoError(t, err)
-			edited := []byte("edited after hashing")
-			if tc.preserveMetadata {
-				edited = bytes.Repeat([]byte("y"), 32<<20)
-			}
-			edit := func() {
-				// Overwrite in place without briefly truncating to zero bytes.
-				source, err := os.OpenFile(file, os.O_WRONLY, 0)
-				if err != nil {
-					t.Errorf("opening source for edit: %v", err)
-					return
-				}
-				_, err = source.WriteAt(edited, 0)
-				assert.NoError(t, err)
-				assert.NoError(t, source.Truncate(int64(len(edited))))
-				assert.NoError(t, source.Close())
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				dir := t.TempDir()
+				file := filepath.Join(dir, "file.txt")
+				// The file exceeds the socket buffers, so the upload still reads it
+				// when the daemon receives the request and the edit lands.
+				require.NoError(t, os.WriteFile(file, bytes.Repeat([]byte("x"), 32<<20), 0600))
+				before, err := os.Stat(file)
+				require.NoError(t, err)
+				edited := []byte("edited after hashing")
 				if tc.preserveMetadata {
-					if err := os.Chtimes(file, before.ModTime(), before.ModTime()); err != nil {
-						t.Errorf("restoring source mtime: %v", err)
+					edited = bytes.Repeat([]byte("y"), 32<<20)
+				}
+				edit := func() {
+					// Overwrite in place without briefly truncating to zero bytes.
+					source, err := os.OpenFile(file, os.O_WRONLY, 0)
+					if err != nil {
+						t.Errorf("opening source for edit: %v", err)
 						return
 					}
-					after, err := os.Stat(file)
-					if assert.NoError(t, err) {
-						assert.Equal(t, before.Size(), after.Size())
-						assert.Equal(t, before.ModTime(), after.ModTime())
-						assert.True(t, os.SameFile(before, after))
+					_, err = source.WriteAt(edited, 0)
+					assert.NoError(t, err)
+					assert.NoError(t, source.Truncate(int64(len(edited))))
+					assert.NoError(t, source.Close())
+					if tc.preserveMetadata {
+						if err := os.Chtimes(file, before.ModTime(), before.ModTime()); err != nil {
+							t.Errorf("restoring source mtime: %v", err)
+							return
+						}
+						after, err := os.Stat(file)
+						if assert.NoError(t, err) {
+							assert.Equal(t, before.Size(), after.Size())
+							assert.Equal(t, before.ModTime(), after.ModTime())
+							assert.True(t, os.SameFile(before, after))
+						}
 					}
 				}
-			}
-			if tc.truncateThenRewrite {
-				truncate := func() { assert.NoError(t, os.Truncate(file, 0)) }
-				f.onUpload.Store(&truncate)
-				rewrite := func(response *httptest.ResponseRecorder) {
-					assert.Equal(t, http.StatusUnprocessableEntity, response.Code)
-					var problem struct {
-						Code string `json:"code"`
+				if tc.truncateThenRewrite {
+					truncate := func() { assert.NoError(t, os.Truncate(file, 0)) }
+					f.onUpload.Store(&truncate)
+					rewrite := func(response *httptest.ResponseRecorder) {
+						assert.Equal(t, http.StatusUnprocessableEntity, response.Code)
+						var problem struct {
+							Code string `json:"code"`
+						}
+						if assert.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem)) {
+							assert.Equal(t, "size_mismatch", problem.Code)
+						}
+						// The upload has finished reading the truncated source. Restore
+						// its metadata before the client can classify the rejection.
+						edit()
 					}
-					if assert.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem)) {
-						assert.Equal(t, "size_mismatch", problem.Code)
-					}
-					// The upload has finished reading the truncated source. Restore
-					// its metadata before the client can classify the rejection.
-					edit()
+					f.afterUpload.Store(&rewrite)
+				} else {
+					f.onUpload.Store(&edit)
 				}
-				f.afterUpload.Store(&rewrite)
-			} else {
-				f.onUpload.Store(&edit)
-			}
 
-			opts := options(dir)
-			opts.Watch = true
-			opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-			opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-			var failures atomic.Int64
-			opts.Failure = func(string, error) error { failures.Add(1); return nil }
-			events := make(chan string, 4)
-			opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-			ctx, cancel := context.WithCancel(t.Context())
-			var report push.Report
-			var runErr error
-			done := make(chan struct{})
-			go func() { report, runErr = push.Run(ctx, f.connection, opts); close(done) }()
-			t.Cleanup(func() { cancel(); <-done })
-			// Two real uploads and durable writes are bounded by the suite's
-			// deadline, not an additional filesystem throughput requirement.
-			select {
-			case outcome := <-events:
-				assert.Equal(t, "added", outcome)
-			case <-done:
-				require.FailNow(t, "watch stopped before adding the edited file", "%v", runErr)
-			}
-			cancel()
-			<-done
-			require.ErrorIs(t, runErr, context.Canceled)
-			require.NotErrorIs(t, runErr, push.ErrFilesFailed)
-			assert.Equal(t, 1, report.Added)
-			assert.Zero(t, report.Failed)
-			assert.Zero(t, failures.Load())
-			assert.EqualValues(t, 2, f.uploads.Load(), "the mismatched upload was retried with the edited bytes")
-			node, err := f.store.NodeByPath(t.Context(), "/archive/file.txt")
-			require.NoError(t, err)
-			assert.Equal(t, string(edited), readNode(t, f, node.ID))
+				opts := options(dir)
+				opts.Watch = true
+				opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+				opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+				var failures atomic.Int64
+				opts.Failure = func(string, error) error { failures.Add(1); return nil }
+				events := make(chan string, 4)
+				opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+				ctx, cancel := context.WithCancel(t.Context())
+				var report push.Report
+				var runErr error
+				done := make(chan struct{})
+				go func() { report, runErr = push.Run(ctx, f.connection, opts); close(done) }()
+				t.Cleanup(func() { cancel(); <-done })
+				// Fake time only passes while the watch is idle between scans, so
+				// the timeout does not bound the real uploads and durable writes.
+				select {
+				case outcome := <-events:
+					assert.Equal(t, "added", outcome)
+				case <-done:
+					require.FailNow(t, "watch stopped before adding the edited file", "%v", runErr)
+				case <-time.After(30 * time.Second):
+					require.FailNow(t, "the edited file was never added")
+				}
+				cancel()
+				<-done
+				require.ErrorIs(t, runErr, context.Canceled)
+				require.NotErrorIs(t, runErr, push.ErrFilesFailed)
+				assert.Equal(t, 1, report.Added)
+				assert.Zero(t, report.Failed)
+				assert.Zero(t, failures.Load())
+				assert.EqualValues(t, 2, f.uploads.Load(), "the mismatched upload was retried with the edited bytes")
+				node, err := f.store.NodeByPath(t.Context(), "/archive/file.txt")
+				require.NoError(t, err)
+				assert.Equal(t, string(edited), readNode(t, f, node.ID))
+			})
 		})
 	}
 }
@@ -932,51 +970,53 @@ func TestPushReportsAFileWhoseDocumentIsInTrash(t *testing.T) {
 
 func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "a.txt")
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	_, err := push.Run(t.Context(), f.connection, options(dir))
-	require.NoError(t, err)
-	node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
-	require.NoError(t, err)
-	_, _, err = f.store.Trash(t.Context(), node.ID, node.Revision)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		file := filepath.Join(dir, "a.txt")
+		require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+		_, err := push.Run(t.Context(), f.connection, options(dir))
+		require.NoError(t, err)
+		node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
+		require.NoError(t, err)
+		_, _, err = f.store.Trash(t.Context(), node.ID, node.Revision)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
 
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	failures := make(chan string, 4)
-	opts.Failure = func(ref string, _ error) error { failures <- ref; return nil }
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Equal(t, "a.txt", next(t, failures, "the trashed document's rejection"))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		failures := make(chan string, 4)
+		opts.Failure = func(ref string, _ error) error { failures <- ref; return nil }
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		require.Equal(t, "a.txt", next(t, failures, "the trashed document's rejection"))
 
-	trashed, err := f.store.NodeByID(t.Context(), node.ID)
-	require.NoError(t, err)
-	restored, _, err := f.store.Restore(t.Context(), node.ID, trashed.Revision)
-	require.NoError(t, err)
-	require.Equal(t, node.ID, restored.ID)
-	require.NoError(t, os.WriteFile(file, []byte("third"), 0600))
-	// A scan can settle on a partial write before "third" lands and push that
-	// state first, so drain events until the node holds the final content.
-	timeout := time.After(30 * time.Second)
-	for readNode(t, f, node.ID) != "third" {
-		select {
-		case outcome := <-events:
-			assert.Equal(t, "updated", outcome)
-		case <-timeout:
-			require.FailNow(t, "the restored document never received the third version")
+		trashed, err := f.store.NodeByID(t.Context(), node.ID)
+		require.NoError(t, err)
+		restored, _, err := f.store.Restore(t.Context(), node.ID, trashed.Revision)
+		require.NoError(t, err)
+		require.Equal(t, node.ID, restored.ID)
+		require.NoError(t, os.WriteFile(file, []byte("third"), 0600))
+		// A scan can settle on a partial write before "third" lands and push that
+		// state first, so drain events until the node holds the final content.
+		timeout := time.After(30 * time.Second)
+		for readNode(t, f, node.ID) != "third" {
+			select {
+			case outcome := <-events:
+				assert.Equal(t, "updated", outcome)
+			case <-timeout:
+				require.FailNow(t, "the restored document never received the third version")
+			}
 		}
-	}
-	cancel()
-	<-done
+		cancel()
+		<-done
+	})
 }
 
 // TestPushWatchAsksTheDaemonAfterAnUncertainUpload covers A -> B committed with
@@ -984,110 +1024,116 @@ func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 // the daemon may already hold B.
 func TestPushWatchAsksTheDaemonAfterAnUncertainUpload(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "a.txt")
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(time.Second)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Equal(t, "added", next(t, events, "an upload"))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		file := filepath.Join(dir, "a.txt")
+		require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(time.Second)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		require.Equal(t, "added", next(t, events, "an upload"))
 
-	// Hold the dropped response until the second version is committed and the
-	// source is back at the first version, so the edit cannot race the upload.
-	committed := make(chan int, 1)
-	restored := make(chan struct{})
-	release := sync.OnceFunc(func() { close(restored) })
-	defer release()
-	hold := func(status int) { committed <- status; <-restored }
-	f.afterDroppedCommit.Store(&hold)
-	f.drop.Store(true)
-	require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
-	select {
-	case status := <-committed:
-		require.Equal(t, http.StatusOK, status, "the daemon commits the second version")
-	case <-time.After(30 * time.Second):
-		t.Fatal("the second version never reached the daemon")
-	}
-	node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
-	require.NoError(t, err)
-	require.Equal(t, "second", readNode(t, f, node.ID))
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	release()
+		// Hold the dropped response until the second version is committed and the
+		// source is back at the first version, so the edit cannot race the upload.
+		committed := make(chan int, 1)
+		restored := make(chan struct{})
+		release := sync.OnceFunc(func() { close(restored) })
+		defer release()
+		hold := func(status int) { committed <- status; <-restored }
+		f.afterDroppedCommit.Store(&hold)
+		f.drop.Store(true)
+		require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
+		select {
+		case status := <-committed:
+			require.Equal(t, http.StatusOK, status, "the daemon commits the second version")
+		case <-time.After(30 * time.Second):
+			t.Fatal("the second version never reached the daemon")
+		}
+		node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
+		require.NoError(t, err)
+		require.Equal(t, "second", readNode(t, f, node.ID))
+		require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+		release()
 
-	assert.Equal(t, "updated", next(t, events, "an upload"), "the daemon holds the second version, so the first must be uploaded again")
-	assert.Equal(t, "first", readNode(t, f, node.ID))
-	cancel()
-	<-done
+		assert.Equal(t, "updated", next(t, events, "an upload"), "the daemon holds the second version, so the first must be uploaded again")
+		assert.Equal(t, "first", readNode(t, f, node.ID))
+		cancel()
+		<-done
+	})
 }
 
 func TestPushWatchSeesTrashAndPurgeAfterStartup(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "a.txt")
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	failures := make(chan string, 4)
-	opts.Failure = func(ref string, _ error) error { failures <- ref; return nil }
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Equal(t, "added", next(t, events, "an upload"))
-	node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		file := filepath.Join(dir, "a.txt")
+		require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		failures := make(chan string, 4)
+		opts.Failure = func(ref string, _ error) error { failures <- ref; return nil }
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		require.Equal(t, "added", next(t, events, "an upload"))
+		node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
+		require.NoError(t, err)
 
-	_, _, err = f.store.Trash(t.Context(), node.ID, node.Revision)
-	require.NoError(t, err)
-	touch := func() {
-		later := time.Now().Add(time.Duration(len(failures)+len(events)+1) * time.Second)
-		require.NoError(t, os.Chtimes(file, later, later))
-	}
-	touch()
-	assert.Equal(t, "a.txt", next(t, failures, "a rejection"), "unchanged bytes of a trashed document are an error, not unchanged")
+		_, _, err = f.store.Trash(t.Context(), node.ID, node.Revision)
+		require.NoError(t, err)
+		touch := func() {
+			later := time.Now().Add(time.Duration(len(failures)+len(events)+1) * time.Second)
+			require.NoError(t, os.Chtimes(file, later, later))
+		}
+		touch()
+		assert.Equal(t, "a.txt", next(t, failures, "a rejection"), "unchanged bytes of a trashed document are an error, not unchanged")
 
-	_, err = f.store.TrashEmpty(t.Context(), 0, true)
-	require.NoError(t, err)
-	touch()
-	assert.Equal(t, "added", next(t, events, "an upload"), "a purged document's file is imported again")
-	cancel()
-	<-done
+		_, err = f.store.TrashEmpty(t.Context(), 0, true)
+		require.NoError(t, err)
+		touch()
+		assert.Equal(t, "added", next(t, events, "an upload"), "a purged document's file is imported again")
+		cancel()
+		<-done
+	})
 }
 
 func TestPushWatchSurvivesAnOutageAtStartup(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	f.challengeOutages.Store(1)
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("first"), 0600))
-	opts := options(dir)
-	opts.Watch = true
-	opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
-	opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
-	events := make(chan string, 4)
-	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	assert.Equal(t, "added", next(t, events, "an upload"))
-	assert.EqualValues(t, 1, f.challengeFails.Load(), "the startup read met the outage")
-	assert.Empty(t, done)
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		f.challengeOutages.Store(1)
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("first"), 0600))
+		opts := options(dir)
+		opts.Watch = true
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		events := make(chan string, 4)
+		opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		assert.Equal(t, "added", next(t, events, "an upload"))
+		assert.EqualValues(t, 1, f.challengeFails.Load(), "the startup read met the outage")
+		assert.Empty(t, done)
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }
 
 func TestPushWatchCaptureOnChangeReachesFolderScanner(t *testing.T) {
