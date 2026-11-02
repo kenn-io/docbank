@@ -89,7 +89,7 @@ func TestVaultReadTools(t *testing.T) {
 	assert.EqualValues(t, 2, info["live_files"])
 	assert.EqualValues(t, 2, info["content_versions"])
 	found := payload("search_documents", map[string]any{"query": "alpha", "mode": "lexical", "profile": "local", "filters": map[string]any{}})
-	assert.EqualValues(t, 2, found["observed_scope_count"])
+	assert.Equal(t, vault.ID(), found["vault_id"])
 	results, ok := found["results"].([]any)
 	require.True(t, ok)
 	require.Len(t, results, 1)

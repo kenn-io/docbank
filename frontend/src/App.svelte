@@ -136,12 +136,7 @@
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
-  import {
-    changeNodeTag,
-    documentSearch,
-    liveNodeTags,
-    resolveDocumentSourceFence,
-  } from "./receipts.js";
+  import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
   import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
@@ -2146,29 +2141,29 @@
       }
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
-      const resolution = await resolveDocumentSourceFence(
-        session,
-        requestedTagID ? { tag_id: requestedTagID } : {},
-        controller.signal,
-      );
-      if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const baseRequest: generated.DocumentSearchRequest = {
         query,
         mode: mapped.mode,
         limit: 100,
         profile: profile.name,
         ...(mapped.binding_id ? { binding_id: mapped.binding_id } : {}),
-        fence: resolution.fence,
+        scope: {
+          kind: "all_live",
+          ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
+        },
         explain: true,
       };
-      const baseReport = resolution.fence.content_version_ids.length
-        ? await documentSearch(session, baseRequest, controller.signal)
-        : undefined;
+      const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nodes = new Map<number, Node | undefined>();
-      const baseRows = baseReport
-        ? await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes)
-        : [];
+      const baseRows = await hydrateProcessingRows(
+        baseReport,
+        session,
+        request,
+        controller.signal,
+        mode,
+        nodes,
+      );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nameReport = await generated.search(
         { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
@@ -2188,30 +2183,6 @@
         ...processingRows,
         ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),
       ];
-      if (!baseReport) {
-        applySearchRows(
-          nameRows,
-          query,
-          requestedTagID,
-          nameReport.truncated,
-          preferredSelectedID,
-          refreshing,
-        );
-        accepted = true;
-        if (requestedSort) applyResultSort(requestedSort);
-        naturalSearchNote = nameRows.length ? "" : "No documents match the current filter.";
-        loading = false;
-        // No document search ran, so there is no search_run to report.
-        if (submitted && nameRows.length === 0) {
-          try {
-            parseQuery(JSON.stringify({ text: query }));
-          } catch {
-            return;
-          }
-          reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
-        }
-        return;
-      }
       applySearchRows(
         withNames(baseRows),
         query,
@@ -2225,7 +2196,12 @@
       naturalSearchNote =
         baseReport.degradations.length > 0
           ? `Search note: ${baseReport.degradations.join(", ")}`
-          : "";
+          : baseRows.length === 0 &&
+              nameRows.length === 0 &&
+              baseReport.coverage.state === "complete" &&
+              baseReport.coverage.scoped_documents === 0
+            ? "No documents match the current filter."
+            : "";
       loading = false;
       searchPending = false;
       // The base results are accepted, so the search counts however reranking ends.
@@ -2233,7 +2209,8 @@
         type: baseReport.actual_mode,
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
-      if (!naturalSearchRerank(profile, mode, naturalRerank)) return outcome;
+      if (baseReport.results.length === 0 || !naturalSearchRerank(profile, mode, naturalRerank))
+        return outcome;
       naturalRerankPending = true;
       try {
         const reranked = await documentSearch(

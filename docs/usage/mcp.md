@@ -198,7 +198,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -261,19 +261,20 @@ restarting at page one.
 `list_documents.source_present` and `search_documents.filters.source_present`
 optionally exclude documents whose watched source is known to be gone.
 Both default to false. Push-owned documents remain included. The filter is
-applied before pagination and source-fence limits.
+applied before pagination and retrieval.
 
-Before searching, `search_documents` resolves its selector to a source fence:
-the exact set of current, live versions it will search. Filters may select a
-tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,
-and RFC 3339 `modified_since` or `modified_before` bounds of at most 64
-characters each. A scope above 4,096 versions returns `scope_too_large` with
-the observed count and is never truncated or broadened. The result reports the
-fence and its fingerprint, requested and actual mode, coverage, skipped
-reasons, and truncation state. It returns at most 100 hits. Each excerpt is
-capped at 512 characters and each hit has at most 64 evidence identities of at
-most 1,024 characters each. A result contains at most 64 skipped-reason codes
-of at most 64 characters each.
+`search_documents` with filters searches every matching live file without a
+4,096-file cap. Filters may select a tag UUID, a MIME type of at most 255
+characters, a positive ancestor node ID, and RFC 3339 `modified_since` or
+`modified_before` bounds of at most 64 characters each. Explicit version lists
+resolve to an exact source fence of up to 4,096 current, live versions.
+Only version-list searches return `fence`, `fence_fingerprint`, and
+`observed_scope_count`. Version-list searches always return `vault_id`; filter
+searches return it only with hits. Every search returns requested and actual
+mode, coverage, skipped reasons, and truncation state. It returns at most 100
+hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
+identities of at most 1,024 characters each. A result contains at most 64
+skipped-reason codes of at most 64 characters each.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing

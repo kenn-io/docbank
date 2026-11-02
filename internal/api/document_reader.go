@@ -30,10 +30,6 @@ func (r *DocumentReader) ResolveDocumentSourceFence(ctx context.Context, input D
 	return resolveDocumentSourceFence(ctx, r.processing, input)
 }
 
-func (r *DocumentReader) ValidateDocumentSearch(ctx context.Context, input DocumentSearchValidationRequest) error {
-	return validateDocumentSearch(ctx, r.processing, input)
-}
-
 func (r *DocumentReader) SearchDocuments(ctx context.Context, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	return searchDocuments(ctx, r.processing, input)
 }

@@ -451,12 +451,12 @@ codes and never include provider bodies, credentials, query text, or excerpts.
 The browser offers Plain words and Query syntax. The TUI exposes Names and
 text, Auto, Lexical, Semantic, and Hybrid as processing choices. TUI Auto maps
 to Hybrid only when an embedding binding is present; API Auto remains lexical.
-Semantic and Hybrid requests require a binding. Explicit processing searches
-resolve and validate a live source fence with sorted UUIDv4 IDs, an observed
-count, and a vault-bound fingerprint; searches that send
-`scope: {"kind":"all_live"}` instead select live files on the server using
-optional metadata filters. Both paths hydrate only live nodes whose current
-content version matches the result.
+Semantic and Hybrid requests require a binding. TUI and web natural searches
+send `scope: {"kind":"all_live"}` to select live files on the server using
+optional metadata filters. Explicit fenced searches keep their live source
+fence with sorted UUIDv4 IDs, an observed count, and a vault-bound fingerprint.
+Both paths hydrate only live nodes whose current content version matches the
+result.
 Clients may send `rerank: true` after base results are available; the daemon
 returns a bounded reranking receipt for that opt-in request.
 

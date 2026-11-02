@@ -17,7 +17,6 @@ type documentClient interface {
 	ListDocuments(ctx context.Context, request api.DocumentQuery) (api.DocumentPage, error)
 	ResolveDocumentSummaries(ctx context.Context, request api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error)
 	ResolveDocumentSourceFence(ctx context.Context, request api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error)
-	ValidateDocumentSearch(ctx context.Context, request api.DocumentSearchValidationRequest) error
 	SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error)
 }
 

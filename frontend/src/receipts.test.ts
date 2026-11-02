@@ -1,68 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { DocumentSearchReport, DocumentSearchRequest } from "./generated/docbank.js";
-import { validateDocumentSearchReport, validateDocumentSourceFenceResolution } from "./receipts.js";
+import { validateDocumentSearchReport } from "./receipts.js";
 
 const vault = "11111111-1111-4111-8111-111111111111";
 const versions = ["22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"];
-const crossLanguageFingerprint =
-  "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc";
-const emptyFenceFingerprint =
-  "sha256:460b958d02d96944be00a74a720c0b8af0248239d91c4351141b65d4b9551700";
-
-function fenceFingerprint(vaultID: string, ids: string[]): string {
-  const bytes = [...utf8ToBytes("docbank-document-source-fence/v1")];
-  const add = (value: number) =>
-    bytes.push((value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255);
-  add(vaultID.length);
-  bytes.push(...utf8ToBytes(vaultID));
-  add(ids.length);
-  for (const id of [...ids].sort()) {
-    add(id.length);
-    bytes.push(...utf8ToBytes(id));
-  }
-  return `sha256:${bytesToHex(sha256(new Uint8Array(bytes)))}`;
-}
-
 describe("processing receipts", () => {
-  it("accepts sorted IDs and the empty fence", () => {
-    expect(
-      validateDocumentSourceFenceResolution({
-        fence: { vault_uid: vault, content_version_ids: versions },
-        observed_scope_count: 2,
-        fence_fingerprint: crossLanguageFingerprint,
-      }).fence.content_version_ids,
-    ).toEqual(versions);
-    expect(
-      validateDocumentSourceFenceResolution({
-        fence: { vault_uid: vault, content_version_ids: [] },
-        observed_scope_count: 0,
-        fence_fingerprint: emptyFenceFingerprint,
-      }).fence.content_version_ids,
-    ).toEqual([]);
-  });
-
-  it("rejects unsorted IDs and a fingerprint for another version set", () => {
-    const valid = {
-      fence: { vault_uid: vault, content_version_ids: versions },
-      observed_scope_count: 2,
-      fence_fingerprint: crossLanguageFingerprint,
-    };
-    expect(() =>
-      validateDocumentSourceFenceResolution({
-        ...valid,
-        fence: { ...valid.fence, content_version_ids: [...versions].reverse() },
-      }),
-    ).toThrow(/The daemon returned an invalid source fence/);
-    expect(() =>
-      validateDocumentSourceFenceResolution({
-        ...valid,
-        fence_fingerprint: emptyFenceFingerprint,
-      }),
-    ).toThrow(/The daemon returned an invalid source fence/);
-  });
-
   it("requires a valid reranking receipt only for opted-in requests", () => {
     const request: DocumentSearchRequest = {
       query: "synthetic description",
@@ -157,33 +99,6 @@ describe("processing receipts", () => {
     const { media_sources: _, ...ordinary } = request;
     expect(() => validateDocumentSearchReport(report("b".repeat(64)), ordinary)).toThrow();
   });
-
-  it("accepts the 4096-ID fence and rejects the 4097-ID boundary", () => {
-    const ids = Array.from(
-      { length: 4096 },
-      (_, index) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
-    );
-    const valid = {
-      fence: { vault_uid: vault, content_version_ids: ids },
-      observed_scope_count: 4096,
-      fence_fingerprint: "sha256:cbf7dadb0ffdefd1c5024235dfdfdfe835766bc44fa5bc6654ec561df8b11872",
-    };
-    expect(validateDocumentSourceFenceResolution(valid).fence.content_version_ids).toHaveLength(
-      4096,
-    );
-    const oversizedIDs = [...ids, "00000000-0000-4000-8000-000000001000"];
-    expect(() =>
-      validateDocumentSourceFenceResolution({
-        ...valid,
-        fence: {
-          ...valid.fence,
-          content_version_ids: oversizedIDs,
-        },
-        observed_scope_count: 4097,
-        fence_fingerprint: fenceFingerprint(vault, oversizedIDs),
-      }),
-    ).toThrow(/The daemon returned an invalid source fence/);
-  });
 });
 
 describe("search result authority", () => {
@@ -234,6 +149,18 @@ describe("search result authority", () => {
       },
     ],
   });
+  it("accepts scoped hits and coverage beyond the version-list bound", () => {
+    const scoped = { ...request, fence: undefined, scope: { kind: "all_live" as const } };
+    const report = valid();
+    report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
+    report.results[0]!.vault_uid = "66666666-6666-4666-8666-666666666666";
+    report.coverage.scoped_documents = 5000;
+    report.coverage.complete_documents = 5000;
+    expect(validateDocumentSearchReport(report, scoped).results).toHaveLength(1);
+    report.results[0]!.vault_uid = "invalid";
+    expect(() => validateDocumentSearchReport(report, scoped)).toThrow();
+  });
+
   it.each([
     [
       "foreign vault",
