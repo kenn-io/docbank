@@ -63,14 +63,14 @@ func TestPushWatchReportsAnUnreadableFileOnceUntilItIsReadable(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) == 1 }, 30*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "added", next(t, events, "b.txt to be pushed"))
 	// A new file needs a full settle window, so many scans pass before it is pushed.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "d.txt"), []byte("later"), 0o600))
-	require.Eventually(t, func() bool { return len(events) == 2 }, 30*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "added", next(t, events, "d.txt to be pushed"))
 	assert.Len(t, failures, 2, "each unreadable entry is reported once across many scans")
 
 	require.NoError(t, os.Chmod(filepath.Join(dir, "a.txt"), 0o600))
-	require.Eventually(t, func() bool { return len(events) == 3 }, 30*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "added", next(t, events, "a.txt to be pushed once readable"))
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
 }

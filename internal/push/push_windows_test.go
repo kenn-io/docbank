@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,24 +81,30 @@ func TestPushWatchUploadsAFileAfterItsByteRangeLockIsReleased(t *testing.T) {
 	opts.Failure = func(ref string, _ error) error { failures <- ref; return nil }
 	events := make(chan string, 4)
 	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+	// Each watch scan with files to push reads the cursors before it reads any
+	// file. Read 1 is at startup and read 2 precedes the first attempt on the
+	// locked file. A third read can only come after that attempt failed and
+	// the file was observed again; a permanent rejection would never get here.
+	retried := make(chan struct{})
+	signalRetry := sync.OnceFunc(func() { close(retried) })
+	onListing := func(listings int64) {
+		if listings >= 3 {
+			signalRetry()
+		}
+	}
+	f.onListing.Store(&onListing)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
 
-	// Each watch scan with files to push reads the cursors before it reads any
-	// file. Read 1 is at startup and read 2 precedes the first attempt on the
-	// locked file. A third read can only come after that attempt failed and
-	// the file was observed again; a permanent rejection would never get here.
-	require.Eventually(t, func() bool { return f.listings.Load() >= 3 }, 30*time.Second, 20*time.Millisecond,
-		"the locked file is retried rather than rejected")
+	next(t, retried, "the locked file to be retried rather than rejected")
 	assert.Empty(t, failures, "a locked file is retried, not reported")
 	assert.Empty(t, events, "nothing is pushed while the file is locked")
 
 	require.NoError(t, windows.UnlockFileEx(handle, 0, 1<<20, 0, &lock))
 	unlocked = true
-	require.Eventually(t, func() bool { return len(events) == 1 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "added", <-events)
+	assert.Equal(t, "added", next(t, events, "the unlocked file to be pushed"))
 	assert.Empty(t, failures)
 	node, err := f.store.NodeByPath(t.Context(), "/archive/locked.txt")
 	require.NoError(t, err)

@@ -46,6 +46,8 @@ type fixture struct {
 	// listings counts cursor list requests. In watch mode every scan with
 	// files to push makes one before it reads any file.
 	listings atomic.Int64
+	// onListing runs after each cursor list request is counted, with the count.
+	onListing atomic.Pointer[func(listings int64)]
 	// afterDroppedCommit runs once the daemon has answered a dropped upload,
 	// with that answer's status, and before the connection is closed.
 	afterDroppedCommit atomic.Pointer[func(status int)]
@@ -112,7 +114,10 @@ func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 			return
 		}
 		if r.URL.Path == "/api/v1/push/sources" {
-			f.listings.Add(1)
+			listings := f.listings.Add(1)
+			if hook := f.onListing.Load(); hook != nil {
+				(*hook)(listings)
+			}
 		}
 		if r.URL.Path == "/api/v1/push/uploads" {
 			f.uploads.Add(1)
@@ -398,14 +403,11 @@ func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "added", <-events)
+	assert.Equal(t, "added", next(t, events, "the first upload"))
 	require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "updated", <-events)
+	assert.Equal(t, "updated", next(t, events, "the settled change"))
 	cancel()
-	require.Eventually(t, func() bool { return len(done) > 0 }, 30*time.Second, 20*time.Millisecond)
-	require.ErrorIs(t, <-done, context.Canceled)
+	require.ErrorIs(t, next(t, done, "the watch to stop"), context.Canceled)
 	assert.EqualValues(t, 2, f.uploads.Load())
 }
 
@@ -505,30 +507,43 @@ func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 	cfg.Destination = "/watched"
 	cfg.SettleTime = config.Duration(time.Second)
 	cfg.ScanInterval = config.Duration(100 * time.Millisecond)
+	// The watch commits every change through its mutation gate, so the gate
+	// tells the test when to look at the catalog again.
+	mutated := make(chan struct{})
+	mutate := func(ctx context.Context, fn func() error) error {
+		err := fn()
+		select {
+		case mutated <- struct{}{}:
+		case <-ctx.Done():
+		}
+		return err
+	}
 	w, err := ingest.NewWatcher(&ingest.Ingester{Store: f.store, Blobs: f.blobs}, f.vaultRoot, cfg,
-		func(_ context.Context, fn func() error) error { return fn() }, slog.New(slog.DiscardHandler))
+		mutate, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
 	var node store.Node
-	require.Eventually(t, func() bool {
+	for {
+		next(t, mutated, "the watch to import notes.txt")
 		var lookupErr error
 		node, lookupErr = f.store.NodeByPath(t.Context(), "/watched/nested/notes.txt")
-		return lookupErr == nil
-	}, 30*time.Second, 20*time.Millisecond)
+		if lookupErr == nil {
+			break
+		}
+	}
 	content := []byte("watch last accepted")
 	sum := sha256.Sum256(content)
 	require.NoError(t, os.WriteFile(watchFile, content, 0600))
-	require.Eventually(t, func() bool {
-		var lookupErr error
-		node, lookupErr = f.store.NodeByID(t.Context(), node.ID)
-		return lookupErr == nil && node.BlobHash == hex.EncodeToString(sum[:])
-	}, 30*time.Second, 20*time.Millisecond)
+	for node.BlobHash != hex.EncodeToString(sum[:]) {
+		next(t, mutated, "the watch to import the edit")
+		node, err = f.store.NodeByID(t.Context(), node.ID)
+		require.NoError(t, err)
+	}
 	stop()
-	require.Eventually(t, func() bool { return len(done) > 0 }, 30*time.Second, 20*time.Millisecond)
-	require.ErrorIs(t, <-done, context.Canceled)
+	require.ErrorIs(t, next(t, done, "the watch to stop"), context.Canceled)
 
 	localDir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(localDir, "nested"), 0700))
@@ -631,8 +646,7 @@ func TestPushWatchRetriesAfterTheDaemonIsUnavailable(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "added", <-events)
+	assert.Equal(t, "added", next(t, events, "an upload"))
 	assert.EqualValues(t, 2, f.uploads.Load(), "the refused upload is retried")
 	assert.Empty(t, done, "an unavailable daemon does not end watch mode")
 	cancel()
@@ -714,15 +728,13 @@ func TestPushRetriesAKeyChallengeThatFailedInTransit(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "added", <-events)
+	assert.Equal(t, "added", next(t, events, "an upload"))
 
 	f.challengeFails.Store(0)
 	f.challengeOutages.Store(2)
 	f.server.CloseClientConnections()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("second"), 0600))
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "updated", <-events)
+	assert.Equal(t, "updated", next(t, events, "an upload"))
 	assert.EqualValues(t, 2, f.challengeFails.Load(), "both interrupted challenges were retried")
 	assert.Empty(t, done, "an interrupted challenge does not end watch mode")
 	cancel()
@@ -944,7 +956,7 @@ func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(failures) > 0 }, 30*time.Second, 20*time.Millisecond)
+	require.Equal(t, "a.txt", next(t, failures, "the trashed document's rejection"))
 
 	trashed, err := f.store.NodeByID(t.Context(), node.ID)
 	require.NoError(t, err)
@@ -986,8 +998,7 @@ func TestPushWatchAsksTheDaemonAfterAnUncertainUpload(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	require.Equal(t, "added", <-events)
+	require.Equal(t, "added", next(t, events, "an upload"))
 
 	// Hold the dropped response until the second version is committed and the
 	// source is back at the first version, so the edit cannot race the upload.
@@ -1011,8 +1022,7 @@ func TestPushWatchAsksTheDaemonAfterAnUncertainUpload(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
 	release()
 
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "updated", <-events, "the daemon holds the second version, so the first must be uploaded again")
+	assert.Equal(t, "updated", next(t, events, "an upload"), "the daemon holds the second version, so the first must be uploaded again")
 	assert.Equal(t, "first", readNode(t, f, node.ID))
 	cancel()
 	<-done
@@ -1036,8 +1046,7 @@ func TestPushWatchSeesTrashAndPurgeAfterStartup(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	require.Equal(t, "added", <-events)
+	require.Equal(t, "added", next(t, events, "an upload"))
 	node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
 	require.NoError(t, err)
 
@@ -1048,14 +1057,12 @@ func TestPushWatchSeesTrashAndPurgeAfterStartup(t *testing.T) {
 		require.NoError(t, os.Chtimes(file, later, later))
 	}
 	touch()
-	require.Eventually(t, func() bool { return len(failures) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "a.txt", <-failures, "unchanged bytes of a trashed document are an error, not unchanged")
+	assert.Equal(t, "a.txt", next(t, failures, "a rejection"), "unchanged bytes of a trashed document are an error, not unchanged")
 
 	_, err = f.store.TrashEmpty(t.Context(), 0, true)
 	require.NoError(t, err)
 	touch()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "added", <-events, "a purged document's file is imported again")
+	assert.Equal(t, "added", next(t, events, "an upload"), "a purged document's file is imported again")
 	cancel()
 	<-done
 }
@@ -1076,8 +1083,7 @@ func TestPushWatchSurvivesAnOutageAtStartup(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "added", <-events)
+	assert.Equal(t, "added", next(t, events, "an upload"))
 	assert.EqualValues(t, 1, f.challengeFails.Load(), "the startup read met the outage")
 	assert.Empty(t, done)
 	cancel()
@@ -1106,4 +1112,20 @@ func TestPushWatchCaptureOnChangeReachesFolderScanner(t *testing.T) {
 		t.Fatal("prompt push waited for the hour-long settle window")
 	}
 	require.EqualValues(t, 1, f.uploads.Load())
+}
+
+// next returns the next value the watch sends on ch. The watch reports every
+// outcome on a channel, so the test never polls; the timer is only a safety net.
+func next[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+	select {
+	case value := <-ch:
+		return value
+	case <-timeout.C:
+	}
+	require.FailNowf(t, "timed out", "waiting for %s", what)
+	var zero T
+	return zero
 }
