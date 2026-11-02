@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,8 @@ func TestPrintChanges(t *testing.T) {
 	out.Reset()
 	stderr.Reset()
 	require.NoError(t, printChanges(&out, &stderr, true, watch))
-	require.Equal(t, "{\"cursor\":\"saved\",\"kind\":\"created\",\"node_id\":42,\"revision\":3}\n", out.String())
+	require.True(t, strings.HasSuffix(out.String(), "\n"))
+	require.Equal(t, 1, strings.Count(out.String(), "\n"))
+	require.JSONEq(t, `{"cursor":"saved","kind":"created","node_id":42,"revision":3}`, out.String())
 	require.Equal(t, "cursor: checkpoint\n", stderr.String())
 }
