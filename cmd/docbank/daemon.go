@@ -655,6 +655,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
 		TelemetryCapture:      telemetry.CaptureHandler(telemetryReporter, layout.Root),
+		RepackPage:            daemonRepackPage,
 	})
 	defer srv.Close()
 	newHTTPServer := func(handler http.Handler) *http.Server {
@@ -843,6 +844,20 @@ func listenLocalDiscovery(ctx context.Context, listener net.Listener) (net.Liste
 		return nil, "", fmt.Errorf("listening on loopback: %w", err)
 	}
 	return local, local.Addr().String(), nil
+}
+
+// repackNow is the time a daemon repack measures pack ages at; nil means the
+// current time. In-process tests move it ahead so a pack they wrote moments
+// earlier is already older than a tiny --min-age.
+var repackNow func() time.Time
+
+func daemonRepackPage(
+	ctx context.Context, s *store.Store, blobs *blob.Store, opts internalmaintenance.RepackOptions,
+) (internalmaintenance.RepackReport, error) {
+	if repackNow != nil {
+		opts.Now = repackNow()
+	}
+	return internalmaintenance.Repack(ctx, s, blobs, opts)
 }
 
 // renditionWorkerClock is the rendition workers' clock; nil means the current

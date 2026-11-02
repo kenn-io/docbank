@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -1842,8 +1843,19 @@ func TestStoragePackBudgetAndJSON(t *testing.T) {
 	assert.Equal(t, int64(2), status.PackedBlobs)
 }
 
+// measureRepackAgesAhead makes the in-process daemon's repacks measure pack
+// ages a second ahead. A pack written moments earlier then passes
+// --min-age 1ns without the test relying on the clock moving.
+func measureRepackAgesAhead(t *testing.T) {
+	t.Helper()
+	previous := repackNow
+	repackNow = func() time.Time { return time.Now().Add(time.Second) }
+	t.Cleanup(func() { repackNow = previous })
+}
+
 func TestStorageRepackJSON(t *testing.T) {
 	_ = setupVaultHome(t)
+	measureRepackAgesAhead(t)
 	for name, content := range map[string]string{
 		"keep.txt": "keep", "drop-a.txt": "drop a", "drop-b.txt": "drop b",
 	} {
