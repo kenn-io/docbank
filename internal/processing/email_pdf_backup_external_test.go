@@ -3,6 +3,7 @@ package processing_test
 import (
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -20,24 +21,26 @@ func TestEmailPDFRetainedReceiptReuseAndPhysicalBackup(t *testing.T) {
 			name = "released-v0.9-upgrade"
 		}
 		t.Run(name, func(t *testing.T) {
-			processing.RunEmailPDFRetentionTest(t, released, func(catalog *store.Store, blobs *blob.Store) (*store.Store, *blob.Store) {
-				repository, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
-				require.NoError(t, err)
-				_, err = backupapp.Create(t.Context(), repository, "email-pdf", catalog, blobs, backup.CreateOptions{Jobs: 2})
-				require.NoError(t, err)
-				proof, err := backup.Verify(t.Context(), repository, backupapp.New("email-pdf"), backup.VerifyOptions{Jobs: 2})
-				require.NoError(t, err)
-				require.Empty(t, proof.Problems)
-				destination := filepath.Join(t.TempDir(), "restored")
-				_, err = backupapp.Restore(t.Context(), repository, "email-pdf", backup.RestoreOptions{TargetDir: destination, Jobs: 2})
-				require.NoError(t, err)
-				restored, err := store.OpenForRestore(t.Context(), filepath.Join(destination, "docbank.db"), store.DefaultSQLiteDriver())
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, restored.Close()) })
-				bs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(destination, "blobs"))
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, bs.Close()) })
-				return restored, bs
+			synctest.Test(t, func(t *testing.T) {
+				processing.RunEmailPDFRetentionTest(t, released, func(catalog *store.Store, blobs *blob.Store) (*store.Store, *blob.Store) {
+					repository, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
+					require.NoError(t, err)
+					_, err = backupapp.Create(t.Context(), repository, "email-pdf", catalog, blobs, backup.CreateOptions{Jobs: 2})
+					require.NoError(t, err)
+					proof, err := backup.Verify(t.Context(), repository, backupapp.New("email-pdf"), backup.VerifyOptions{Jobs: 2})
+					require.NoError(t, err)
+					require.Empty(t, proof.Problems)
+					destination := filepath.Join(t.TempDir(), "restored")
+					_, err = backupapp.Restore(t.Context(), repository, "email-pdf", backup.RestoreOptions{TargetDir: destination, Jobs: 2})
+					require.NoError(t, err)
+					restored, err := store.OpenForRestore(t.Context(), filepath.Join(destination, "docbank.db"), store.DefaultSQLiteDriver())
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, restored.Close()) })
+					bs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(destination, "blobs"))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, bs.Close()) })
+					return restored, bs
+				})
 			})
 		})
 	}

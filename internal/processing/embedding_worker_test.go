@@ -387,25 +387,30 @@ func TestEmbeddingWorkerCapacityBisectionReachesSingleItemBatch(t *testing.T) {
 	assert.Equal(t, []int{8, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1}, fixture.runtime.batchSizes(work.Binding.Name))
 }
 
-func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *testing.T) { //nolint:paralleltest // asserts cancellation returns within one second of real time
+func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"provider", "persistence"} {
 		t.Run(phase, func(t *testing.T) {
-			fixture := newEmbeddingWorkerFixture(t)
-			work := fixture.work(phase, document.EmbeddingInputRenditionChunk, "semantic")
-			fixture.catalog.enqueue(work)
-			ctx, cancel := context.WithCancel(t.Context())
-			if phase == "provider" {
-				fixture.runtime.block = true
-				fixture.runtime.onBlock = cancel
-			} else {
-				fixture.blobs.block = true
-				fixture.blobs.onBlock = cancel
-			}
-			started := time.Now()
-			_, err := fixture.worker(t).ScanOnce(ctx)
-			require.ErrorIs(t, err, context.Canceled)
-			assert.Less(t, time.Since(started), time.Second)
-			assert.Empty(t, fixture.catalog.heads)
+			// On the bubble's clock, a prompt return takes no time at all; any
+			// retry or poll wait before it would show up as elapsed time.
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newEmbeddingWorkerFixture(t)
+				work := fixture.work(phase, document.EmbeddingInputRenditionChunk, "semantic")
+				fixture.catalog.enqueue(work)
+				ctx, cancel := context.WithCancel(t.Context())
+				if phase == "provider" {
+					fixture.runtime.block = true
+					fixture.runtime.onBlock = cancel
+				} else {
+					fixture.blobs.block = true
+					fixture.blobs.onBlock = cancel
+				}
+				started := time.Now()
+				_, err := fixture.worker(t).ScanOnce(ctx)
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Zero(t, time.Since(started), "cancellation returns without waiting")
+				assert.Empty(t, fixture.catalog.heads)
+			})
 		})
 	}
 }
