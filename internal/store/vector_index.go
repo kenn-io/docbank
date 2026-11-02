@@ -471,6 +471,9 @@ func (s *Store) ReadVectorIndexVectorSet(ctx context.Context, reader RenditionBl
 	return data, nil
 }
 
+// AcquireVectorIndexGeneration leases and pins the generation it names. The manifest
+// check uses a read snapshot before the lease. Callers that need the source current
+// at use time re-check it, as semanticSearchAuthorityFence does.
 func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
 	at time.Time, duration time.Duration,
 ) (VectorIndexReaderLease, error) {

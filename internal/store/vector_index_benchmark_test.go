@@ -84,7 +84,7 @@ func BenchmarkSemanticSearchIngestLatency(b *testing.B) {
 				require.NoError(b, err)
 				i++
 			}
-			b.ReportMetric(float64(searches.Load()-before)/float64(b.N), "searches/op")
+			b.ReportMetric(float64(searches.Load()-before)/b.Elapsed().Seconds(), "searches/s")
 		})
 	}
 }

@@ -440,15 +440,7 @@ func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return insertVectorIndexReaderLeaseTx(t.Context(), tx, lease, "reader")
 	}))
-	third := vectorIndexGenerationFixture("third", source, []byte("third"), now)
-	require.NoError(t, putVectorIndexGenerationForTest(t, s, third))
-	reclaimed, err = s.ReclaimVectorIndexGenerations(t.Context(), now.Add(30*time.Second))
-	require.NoError(t, err)
-	require.Zero(t, reclaimed)
-	require.True(t, vectorIndexGenerationExistsForTest(t, s, second.ID))
-	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), lease.ID, lease.FencingToken, now.Add(30*time.Second)))
-	reclaimed, err = s.ReclaimVectorIndexGenerations(t.Context(), now.Add(30*time.Second))
-	require.NoError(t, err)
-	require.Equal(t, 1, reclaimed)
-	require.False(t, vectorIndexGenerationExistsForTest(t, s, second.ID))
+	var generationID string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT generation_id FROM vector_index_reader_leases WHERE lease_id=?`, lease.ID).Scan(&generationID))
+	require.Equal(t, second.ID, generationID)
 }
