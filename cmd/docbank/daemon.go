@@ -845,6 +845,11 @@ func listenLocalDiscovery(ctx context.Context, listener net.Listener) (net.Liste
 	return local, local.Addr().String(), nil
 }
 
+// renditionWorkerClock is the rendition workers' clock; nil means the current
+// time. In-process tests hold it still so a provider retry the worker schedules
+// never becomes due while the test reads the recorded failure.
+var renditionWorkerClock func() time.Time
+
 // startProcessingJobs registers the daemon jobs that derive data from stored
 // originals. The rendition worker starts only when a provider adapter is
 // bound, so `docbank jobs` never reports rendition work that cannot happen.
@@ -862,7 +867,7 @@ func startProcessingJobs(
 			worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
 				Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
 				Owner: fmt.Sprintf("daemon-rendition-worker-%d", index), LeaseDuration: 5 * time.Minute,
-				IdleDelay: time.Second, Logger: logger,
+				IdleDelay: time.Second, Logger: logger, Clock: renditionWorkerClock,
 			})
 			if err != nil {
 				return fmt.Errorf("configuring rendition worker: %w", err)

@@ -96,6 +96,13 @@ func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig) *daemonco
 	previousRetryDelay := mistralMaxRetryDelay
 	mistralMaxRetryDelay = time.Nanosecond
 	t.Cleanup(func() { mistralMaxRetryDelay = previousRetryDelay })
+	// The rendition worker's clock stands still a day ahead, so jobs queued
+	// now are due at once but a transient failure's retry never comes due.
+	// The recorded retry state then cannot change while the test reads it.
+	held := time.Now().UTC().Add(24 * time.Hour)
+	previousClock := renditionWorkerClock
+	renditionWorkerClock = func() time.Time { return held }
+	t.Cleanup(func() { renditionWorkerClock = previousClock })
 	cfg, _ := mistralOCRProcessingConfig(t)
 	providerRuntime := cfg.RenditionProfiles["documents"].Runtime
 	providerRuntime.AllowedCIDRs = []string{"192.0.2.0/32"}
@@ -142,9 +149,13 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	require.Equal(t, node.CurrentVersionID, job.ContentVersionID)
-	// The run started here retries in the background with nothing a test can
-	// wait on, so TestDaemonWatchProfileAdmitsImports checks the recorded
-	// transient failure through the daemon's rendition worker instead.
+	// The provider is unreachable, so after the client's HTTP retries the worker
+	// records a transient failure and schedules a retry.
+	settleDaemon(t)
+	status, err := daemon.ProcessingStatus(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "retry_wait", status.State, "%+v", status)
+	require.Equal(t, "transient", status.FailureCode)
 }
 
 func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
@@ -173,8 +184,8 @@ func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	require.Len(t, items, 1)
 	// The daemon watch callback queues the exact imported version. The
 	// provider is unreachable, so after the client's HTTP retries the worker
-	// records a transient failure that waits to retry. The next attempt is
-	// due a second after that failure.
+	// records a transient failure that waits to retry; the held worker clock
+	// keeps that retry from coming due.
 	require.Equal(t, "retry_wait", items[0].LatestProcessingState)
 	// Starting the same processing joins the queued rendition job, and its
 	// status reports why that job is waiting.
