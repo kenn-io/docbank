@@ -840,6 +840,20 @@ func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOpt
 	return count, err
 }
 
+// currentEmbeddingHeadsSQL keeps coverage and semantic retrieval on the same
+// current-source, binding and rendition authority.
+func currentEmbeddingHeadsSQL() string {
+	return `FROM ` + nodeFrom + `
+		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
+		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
+		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
+		 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
+		 AND es.profile_fingerprint=eh.profile_fingerprint
+		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+		WHERE n.kind='file' AND n.trashed_at IS NULL
+		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))`
+}
+
 func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
@@ -850,17 +864,8 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
 	args = append(args, filterArgs...)
-	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
-		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
-		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
-		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
-		 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
-		 AND es.profile_fingerprint=eh.profile_fingerprint
-		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL
-		  AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=?
-		  AND eh.vector_space_id=?
-		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`)) `+filterSQL,
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
+		AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=? AND eh.vector_space_id=? `+filterSQL,
 		args...).Scan(&complete)
 	return required, complete, err
 }

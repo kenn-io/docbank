@@ -11,7 +11,8 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 )
 
-func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
+func checkEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	bge, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileBGEM3})
 	require.NoError(t, err)
@@ -25,14 +26,14 @@ func TestEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			testLegacyProfileReuse(t, testCase.modelInput, testCase.reusedAfterPolicyChange)
+			testLegacyProfileReuse(t, open(t), testCase.modelInput, testCase.reusedAfterPolicyChange)
 		})
 	}
 }
 
-func testLegacyProfileReuse(t *testing.T, modelInput *document.ModelInputContract, reusedAfterPolicyChange bool) {
+func testLegacyProfileReuse(t *testing.T, s *Store, modelInput *document.ModelInputContract, reusedAfterPolicyChange bool) {
 	t.Helper()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	s, version, profile, _ := seedEmbeddingCatalog(t, s)
 	descriptor := embeddingCatalogDescriptor()
 	if modelInput != nil {
 		descriptor.ModelInput, descriptor.CompatibilityID = *modelInput, modelInput.CompatibilityID

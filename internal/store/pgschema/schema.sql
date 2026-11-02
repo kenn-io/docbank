@@ -2258,6 +2258,28 @@ CREATE INDEX rendition_job_waiters_job ON {{schema}}.rendition_job_waiters(job_i
 CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_waiters(content_version_id, job_id);
 CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
 CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
+
+CREATE INDEX embedding_jobs_ready
+    ON {{schema}}.embedding_jobs(state,available_at,job_id);
+
+CREATE INDEX embedding_jobs_generation
+    ON {{schema}}.embedding_jobs(generation_id);
+
+CREATE INDEX embedding_jobs_vector_space
+    ON {{schema}}.embedding_jobs(vector_space_id);
+
+CREATE INDEX embedding_vector_sets_payload
+    ON {{schema}}.embedding_vector_sets(payload_blob_hash, vector_set_id);
+
+CREATE INDEX embedding_sets_input_generation
+    ON {{schema}}.embedding_sets(input_generation_id, embedding_set_id);
+
+CREATE INDEX embedding_sets_vector_set
+    ON {{schema}}.embedding_sets(vector_set_id, embedding_set_id);
+
+CREATE INDEX embedding_sets_vector_space
+    ON {{schema}}.embedding_sets(vector_space_id, embedding_set_id);
+
 CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
 CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
 CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
