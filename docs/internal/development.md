@@ -1397,6 +1397,8 @@ Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, cal
 
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
 
+The native PDF engine reclaims retired runtime memory after each page while holding its exclusive backing lease. This keeps decoded module metadata from accumulating between pages under the same RSS ceiling.
+
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
 The LibreOffice PDF proof runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
 The Render PDF image workflow (`render-pdf-image.yml`) publishes missing images on `main` pushes or a manual run from a trusted branch, then runs the proofs.

@@ -606,6 +606,9 @@ func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.
 	if err != nil {
 		return err
 	}
+	// Reclaim retired runtime metadata before another page decodes the module.
+	// Keep the engine gate and process-wide backing lease through cleanup.
+	defer e.scavenge()
 	defer lease.Free() // Also release when initialization fails before runtime ownership.
 	// Reserve the already bounded linear-memory capacity once. Wazero's
 	// default growth path reallocates/copies the old buffer, which can exceed
