@@ -47,6 +47,7 @@ interface LayerEvent {
   target: HTMLElement;
   status: "mounted" | "disposed";
 }
+type PageIdentity = Pick<LayerEvent, "documentId" | "pageIndex">;
 interface Layer {
   event: LayerEvent;
   svg: SVGSVGElement;
@@ -72,7 +73,7 @@ export class PDFReviewBridge {
   };
   private updating = false;
   private settingMode = false;
-  private pointerActive = false;
+  private pointer?: PageIdentity;
   private lastStatus = "";
   private frame = 0;
   constructor(
@@ -118,7 +119,7 @@ export class PDFReviewBridge {
           return;
         // A reader tool (pan or pointer) takes ownership from marquee marking.
         this.review = { ...this.review, drawing: false };
-        this.pointerActive = false;
+        this.pointer = undefined;
         for (const layer of this.layers.values()) layer.start = undefined;
         this.review.ondrawing(false);
         this.review.ondrag(false);
@@ -279,30 +280,32 @@ export class PDFReviewBridge {
       entries.every((e) => e.status === "ready")
     );
   }
-  private cancelDraft() {
-    if (!this.pointerActive && ![...this.layers.values()].some((l) => l.start)) return;
-    this.pointerActive = false;
-    for (const layer of this.layers.values()) layer.start = undefined;
-    this.setDrawingMode(false);
-    this.review?.ondrag(false);
+  private cancelDraft(page?: PageIdentity) {
+    const matches = (other: PageIdentity) =>
+      !page || (other.documentId === page.documentId && other.pageIndex === page.pageIndex);
+    const pointer = this.pointer && matches(this.pointer);
+    const drafts = [...this.layers.values()].filter((l) => l.start && matches(l.event));
+    if (!pointer && !drafts.length) return;
+    if (pointer) {
+      this.pointer = undefined;
+      this.setDrawingMode(false);
+    }
+    for (const layer of drafts) layer.start = undefined;
+    this.review?.ondrag(!!this.pointer || [...this.layers.values()].some((l) => l.start));
     this.update();
   }
   private renderEvent = (raw: Event) => {
     const event = (raw as CustomEvent<ImageEvent>).detail;
     if (event.status === "disposed") this.images.delete(event.token);
     else this.images.set(event.token, event);
-    if (event.status !== "ready" && this.review?.drawing) {
-      this.pointerActive = false;
-      this.setDrawingMode(false);
-      this.review.ondrag(false);
-      for (const layer of this.layers.values()) layer.start = undefined;
-    }
+    if (event.status !== "ready" && !this.isReady(event.pageIndex)) this.cancelDraft(event);
     this.update();
   };
   private layerEvent = (raw: Event) => {
     const event = (raw as CustomEvent<LayerEvent>).detail,
       old = this.layers.get(event.target);
     if (old) {
+      this.cancelDraft(old.event);
       old.remove();
       old.svg.remove();
       this.layers.delete(event.target);
@@ -322,14 +325,14 @@ export class PDFReviewBridge {
           e.stopImmediatePropagation();
           return;
         }
-        this.pointerActive = true;
+        this.pointer = event;
         this.review.ondrag(true);
         this.host.focus({ preventScroll: true });
       };
       surface.addEventListener("pointerdown", down, true);
       const up = () => {
-        if (!this.pointerActive) return;
-        this.pointerActive = false;
+        if (!this.pointer) return;
+        this.pointer = undefined;
         this.review?.ondrag([...this.layers.values()].some((l) => l.start));
       };
       window.addEventListener("pointerup", up);
@@ -509,11 +512,11 @@ export class PDFReviewBridge {
         layer.start = { ...cursor };
         review.ondrag(true);
       }
-    } else if (event.key === "Escape" && (layer.start || this.pointerActive)) {
+    } else if (event.key === "Escape" && (layer.start || this.pointer)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       layer.start = undefined;
-      this.pointerActive = false;
+      this.pointer = undefined;
       review.ondrag(false);
       this.setDrawingMode(false);
       this.update();

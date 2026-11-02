@@ -365,8 +365,9 @@ the library's Apply/Commit operation.
 
 The pinned viewer extension reports actual base/tile image decoding and provides
 an inert layer inside the existing page transform. Drawing requires the current
-page's displayed images to have decoded; redraw, failure and disposal cancel
-unfinished marks. Generation-scoped callbacks cannot revive a retired render.
+page's displayed images to have decoded. Image events cancel unfinished marks
+only when their document and page become unavailable; neighboring pages do not
+interrupt drawing. Generation-scoped callbacks cannot revive a retired render.
 Print/export commands stay disabled during review, as do the library's redaction
 commands. The same worker and original bytes survive mode changes.
 

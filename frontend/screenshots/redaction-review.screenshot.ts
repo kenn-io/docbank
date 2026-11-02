@@ -262,10 +262,75 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await expect
         .poll(async () => Number(await keyboardBox.getAttribute(attribute)))
         .toBeCloseTo(Number(value), 8);
+    const previewAction = drawer.getByRole("button", { name: "Preview redaction", exact: true });
+    for (const { gesture, failedPage } of [
+      { gesture: "keyboard", failedPage: 2 },
+      { gesture: "pointer", failedPage: 2 },
+      { gesture: "keyboard", failedPage: 1 },
+    ]) {
+      await drawer.locator("embedpdf-container").focus();
+      const bounds = (await canvas.boundingBox())!;
+      if (gesture === "keyboard") {
+        await page.keyboard.press("Enter");
+        await page.keyboard.press("Shift+ArrowRight");
+        await page.keyboard.press("Shift+ArrowDown");
+      } else {
+        await page.mouse.move(bounds.x + bounds.width / 3, bounds.y + bounds.height / 3);
+        await page.mouse.down();
+        await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      }
+      await expect(
+        previewAction,
+        `${gesture} draft before page ${failedPage} fails`,
+      ).toBeDisabled();
+      // Fail an actual displayed image: only its own page's draft may be canceled.
+      const failedLayer = drawer.getByRole("group", {
+        name: `Page ${failedPage} review layer`,
+        exact: true,
+      });
+      const imageURL = await failedLayer.evaluate(
+        (layer, failedPage) =>
+          new Promise<string>((resolve) => {
+            const host = (layer.getRootNode() as ShadowRoot).host;
+            const image = layer.parentElement!.querySelector("img")!;
+            const source = image.src;
+            const failed = (raw: Event) => {
+              const { pageIndex, status } = (raw as CustomEvent).detail;
+              if (pageIndex !== failedPage - 1 || status !== "error") return;
+              host.removeEventListener("embedpdf:page-render", failed);
+              resolve(source);
+            };
+            host.addEventListener("embedpdf:page-render", failed);
+            image.src = "data:image/png;base64,AAAA";
+          }),
+        failedPage,
+      );
+      if (failedPage === 1) {
+        await expect(drawToggle).toBeDisabled();
+        await expect(previewAction).toBeEnabled();
+        await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
+      } else {
+        await expect(drawToggle).toBeEnabled();
+        await expect(previewAction).toBeDisabled();
+        if (gesture === "keyboard") await page.keyboard.press("Enter");
+        else await page.mouse.up();
+        await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
+        await drawer.getByRole("button", { name: "Remove", exact: true }).last().click();
+      }
+      await failedLayer.evaluate((layer, source) => {
+        layer.parentElement!.querySelector("img")!.src = source;
+      }, imageURL);
+      await expect
+        .poll(() =>
+          failedLayer.evaluate((layer) => layer.parentElement!.querySelector("img")!.naturalWidth),
+        )
+        .toBeGreaterThan(0);
+      await expect(drawToggle).toBeEnabled();
+    }
+    await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("Shift+ArrowRight");
     await page.keyboard.press("Shift+ArrowDown");
-    const previewAction = drawer.getByRole("button", { name: "Preview redaction", exact: true });
     await expect(previewAction).toBeDisabled();
     await drawer
       .getByRole("complementary", { name: "Masks and coverage" })
