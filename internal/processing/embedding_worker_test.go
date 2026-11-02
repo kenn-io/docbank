@@ -676,6 +676,7 @@ func mutateEmbeddingWorkerBinding(t *testing.T, work EmbeddingWork,
 // made on worker-visible catalog state, never on fake call existence alone.
 type embeddingWorkerFakeCatalog struct {
 	revision                        uint64
+	writeRevision                   func() uint64
 	reconcilePage                   func(store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	reconcileError                  func() error
 	mu                              sync.Mutex
@@ -706,6 +707,9 @@ func (c *embeddingWorkerFakeCatalog) enqueue(work ...EmbeddingWork) {
 func (c *embeddingWorkerFakeCatalog) WriteRevision() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.writeRevision != nil {
+		return c.writeRevision()
+	}
 	return c.revision
 }
 
@@ -2464,10 +2468,11 @@ func TestEmbeddingWorkerCompletesUnalignedDiscoveryStreams(t *testing.T) {
 			_, err := worker.ScanOnce(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, 3, calls, "completed cycle waits without rescanning")
+			f.catalog.revision++
 			now = now.Add(time.Minute)
 			_, err = worker.ScanOnce(t.Context())
 			require.NoError(t, err)
-			require.Equal(t, 3, calls, "unchanged catalog stays settled")
+			require.Equal(t, 4, calls, "catalog write starts a fresh cycle")
 		})
 	}
 }
@@ -2512,6 +2517,7 @@ func newRejectedPreviewFixture(t *testing.T) *rejectedPreviewFixture {
 
 	fake.runtimeRegistry = service.embeddings
 	fake.descriptor = descriptor
+	fake.catalog.writeRevision = f.catalog.WriteRevision
 	fixture := &rejectedPreviewFixture{f: f, fake: fake, now: time.Now().UTC()}
 	fake.catalog.reconcilePage = func(request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
 		prepare := request.PrepareImageGeneration
@@ -2547,14 +2553,17 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 		{name: "remembered until restart", verify: func(t *testing.T, x *rejectedPreviewFixture) {
 			t.Helper()
 			x.publish("rejected-preview.jpg")
-			for range 2 {
-				x.scan(t)
-			}
+			x.scan(t)
+			x.scan(t)
+			require.Equal(t, 1, x.calls, "permanent rejections permit settling")
+			_, err := x.f.catalog.Mkdir(t.Context(), x.f.catalog.RootID(), "wake-discovery")
+			require.NoError(t, err)
+			x.scan(t)
 			require.Equal(t, 1, x.calls)
 
 			restarted := x.fake.worker(t)
 			restarted.clock = x.worker.clock
-			_, err := restarted.ScanOnce(t.Context())
+			_, err = restarted.ScanOnce(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, 2, x.calls)
 			var metadata bytes.Buffer
@@ -2577,8 +2586,10 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 			}
 			require.Greater(t, x.calls, limit, "scans reach every rejected preview")
 			settled := x.calls
+			_, err := x.f.catalog.Mkdir(t.Context(), x.f.catalog.RootID(), "wake-discovery")
+			require.NoError(t, err)
 			x.scan(t)
-			require.Equal(t, settled, x.calls, "permanent rejections permit settling even after eviction")
+			require.Greater(t, x.calls, settled, "evicted rejections are prepared again after a write")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -95,22 +95,18 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		blobs   func(store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs
-		settles bool
+		name  string
+		blobs func(store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs
 	}{
-		{"blob unavailable", func(store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs {
-			return &embeddingRuntimeTestBlobs{openErr: errors.New("synthetic blob temporarily unavailable")}
-		}, false},
 		{"checksum mismatch", func(request store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs {
 			return &embeddingRuntimeTestBlobs{data: request.InputGeneration.GenerationJSON}
-		}, true},
+		}},
 		{"evidence over limit", func(request store.EmbeddingJobRequest) *embeddingRuntimeTestBlobs {
 			return &embeddingRuntimeTestBlobs{byHash: map[string][]byte{
 				request.InputGeneration.GenerationBlobHash:  request.InputGeneration.GenerationJSON,
 				request.InputGeneration.EvidenceFingerprint: make([]byte, (64<<20)+1),
 			}}
-		}, true},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -134,14 +130,14 @@ func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 			catalog.examined = 0
 			_, err = worker.ScanOnce(t.Context())
 			require.NoError(t, err)
-			require.Equal(t, tc.settles, catalog.examined == 0, "only permanently rejected input lets the vault settle")
+			require.Zero(t, catalog.examined, "permanently rejected input lets the vault settle")
 		})
 	}
 }
 
 func TestEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T) {
 	t.Parallel()
-	for _, inputErr := range []error{context.DeadlineExceeded, context.Canceled} {
+	for _, inputErr := range []error{context.DeadlineExceeded, context.Canceled, errors.New("synthetic blob temporarily unavailable")} {
 		t.Run(inputErr.Error(), func(t *testing.T) {
 			t.Parallel()
 			f, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)
@@ -158,7 +154,6 @@ func TestEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T) {
 			worker.generationBlobs = &embeddingRuntimeTestBlobs{openErr: inputErr}
 			processed, err := worker.ScanOnce(t.Context())
 			require.NoError(t, err)
-			require.NoError(t, t.Context().Err(), "the blob operation failed while its caller stayed active")
 			require.Zero(t, processed)
 			require.Positive(t, catalog.examined)
 			require.Zero(t, catalog.enqueued)

@@ -23,7 +23,7 @@ func BenchmarkEmbeddingWorkerIdleScan(b *testing.B) {
 				db, err := store.DefaultSQLiteDriver().Open(f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 				require.NoError(b, err)
 				b.Cleanup(func() { require.NoError(b, db.Close()) })
-				// Reuse the store benchmark's bulk generation seed on the fixture writer.
+				// These generation copies only exist to scale the sweep.
 				for _, query := range []string{
 					`INSERT INTO embedding_input_generations SELECT printf('%064x',seq.i+100000000),generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at FROM embedding_input_generations g,seq WHERE g.generation_id=?`,
 					`INSERT INTO embedding_generation_inputs SELECT printf('%064x',seq.i+100000000),input_id,input_order,rendered_checksum FROM embedding_generation_inputs g,seq WHERE g.generation_id=?`,
