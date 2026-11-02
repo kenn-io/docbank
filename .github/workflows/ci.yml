@@ -41,8 +41,15 @@ jobs:
             $load = Start-Process -PassThru -NoNewWindow -FilePath go -ArgumentList @('test','-tags','fts5','-count=1','./internal/ingest/','./internal/mailbox/','./internal/pdfproduction/','./internal/checkout/') -RedirectStandardOutput load.out -RedirectStandardError load.err
             Start-Sleep -Seconds 20
           }
+          Write-Output "TEMP=$env:TEMP"
+          Get-Volume | Format-Table -AutoSize | Out-String | Write-Output
+          $counters = Start-Process -PassThru -NoNewWindow -FilePath typeperf -ArgumentList @('\PhysicalDisk(*)\Avg. Disk sec/Write','\PhysicalDisk(*)\Avg. Disk sec/Transfer','\PhysicalDisk(*)\Current Disk Queue Length','\Processor(_Total)\% Processor Time','\Memory\Pages/sec','\Memory\Available MBytes','-si','1','-o','counters.csv','-f','CSV','-y')
+          $env:PUSHDBG_HEARTBEAT = '1'
           go test -tags fts5 -count=6 -timeout 40m -v -run 'TestPushOverlapsUploadsAndHandlesCancellation/canceled=false' ./internal/push/ *> push.log
-          $code = $LASTEXITCODE
+          $env:PUSHDBG_HEARTBEAT = ''
           if ($load) { $load | Wait-Process -Timeout 1800 -ErrorAction SilentlyContinue }
+          Stop-Process -Id $counters.Id -ErrorAction SilentlyContinue
           Get-Content push.log
+          Write-Output '=== counters'
+          Get-Content counters.csv
           exit 0
