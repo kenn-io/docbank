@@ -387,16 +387,11 @@ func TestFolderWatchHintDoesNotHashUnrelatedAcceptedFile(t *testing.T) {
 		return err
 	}, failOnReject(t))
 	require.NoError(t, err)
-	var twoChange int64
 	scanner.watcher.observeFile = func(source watchSource, withChange bool) (watchFileState, error) {
-		state, err := source.observe(withChange)
-		if source.ref == "two.txt" && withChange {
-			if twoChange == 0 {
-				twoChange = state.fingerprint.change
-			}
-			state.fingerprint.change = twoChange
+		if source.ref == "two.txt" {
+			return source.observe(false)
 		}
-		return state, err
+		return source.observe(withChange)
 	}
 	root, err := scanner.openRoot()
 	require.NoError(t, err)
