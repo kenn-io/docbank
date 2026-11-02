@@ -51,9 +51,9 @@ func TestWaitLockReadersShare(t *testing.T) {
 		lock.RUnlock()
 		close(release)
 		lock.RUnlock()
-		synctest.Wait()
-		lock.Lock()
-		lock.Unlock()
+		writer := make(chan struct{})
+		go func() { lock.Lock(); close(writer); lock.Unlock() }()
+		<-writer
 	})
 }
 
