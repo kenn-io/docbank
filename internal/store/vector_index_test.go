@@ -246,17 +246,17 @@ func metadataEmbeddingTimeForTest(value time.Time) string {
 	return value.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
 
-func putVectorIndexGenerationForTest(t *testing.T, s *Store, record VectorIndexGenerationRecord) error {
-	t.Helper()
-	return s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(t.Context(), `INSERT INTO vector_index_generations(
+func putVectorIndexGenerationForTest(tb testing.TB, s *Store, record VectorIndexGenerationRecord) error {
+	tb.Helper()
+	return s.withStorageTx(tb.Context(), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(tb.Context(), `INSERT INTO vector_index_generations(
 			generation_id,vector_space_id,source_manifest_checksum,index_manifest_checksum,
 			generation_bytes,byte_size,row_count,built_at) VALUES(?,?,?,?,?,?,?,?)`, record.ID,
 			record.VectorSpaceID, record.SourceManifestChecksum, record.IndexManifestChecksum,
 			record.Bytes, len(record.Bytes), record.RowCount, record.BuiltAt); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO vector_index_heads(
+		_, err := tx.ExecContext(tb.Context(), `INSERT INTO vector_index_heads(
 			vector_space_id,generation_id,source_manifest_checksum) VALUES(?,?,?)
 			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,
 			source_manifest_checksum=excluded.source_manifest_checksum`, record.VectorSpaceID,

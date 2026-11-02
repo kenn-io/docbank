@@ -680,14 +680,12 @@ type SemanticSearchCandidate struct {
 	MediaEvidence     SearchMediaEvidence
 }
 
-// SemanticSearchResolution binds ranked candidates and coverage to the same
+// SemanticSearchResolution binds ranked candidates to the
 // current-head snapshot after query embedding and vector search complete.
 type SemanticSearchResolution struct {
 	SourceManifestChecksum string
 	Candidates             []SemanticSearchCandidate
 	Truncated              bool
-	ScopedDocuments        int
-	CompleteDocuments      int
 	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
 	NextNeighbor int
 }
@@ -695,16 +693,12 @@ type SemanticSearchResolution struct {
 // SemanticSearchAuthority pins the exact persisted vector-space descriptor and
 // one active local index generation for a query. ANNRows is the source-fenced
 // subset that must be supplied to vector search before it scores any row.
-// Required and Complete count current documents after applying the operator
-// scope.
 type SemanticSearchAuthority struct {
-	VectorSpace       EmbeddingVectorSpaceRecord
-	Lease             VectorIndexReaderLease
-	InputKind         document.EmbeddingInputKind
-	BindingRequired   bool
-	ScopedDocuments   int
-	CompleteDocuments int
-	ANNRows           []vectorindex.RowIdentity
+	VectorSpace     EmbeddingVectorSpaceRecord
+	Lease           VectorIndexReaderLease
+	InputKind       document.EmbeddingInputKind
+	BindingRequired bool
+	ANNRows         []vectorindex.RowIdentity
 }
 
 // AcquireSemanticSearchAuthority resolves the query contract from durable E1
@@ -761,7 +755,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	release := func() {
 		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
-	current, required, complete, annRows, err := s.semanticSearchAuthorityFence(ctx,
+	current, annRows, err := s.semanticSearchAuthorityFence(ctx,
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
 	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
 		release()
@@ -780,12 +774,12 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
 		BindingRequired: binding.Activation == document.EmbeddingRequired,
-		ScopedDocuments: required, CompleteDocuments: complete, ANNRows: annRows}, nil
+		ANNRows:         annRows}, nil
 }
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
-) (source VectorIndexSource, required, complete int, annRows []vectorindex.RowIdentity, retErr error) {
+) (source VectorIndexSource, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
@@ -794,11 +788,6 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 			}
 		}
 		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
-		if err != nil {
-			return err
-		}
-		required, complete, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
-			bindingID, inputKind, vectorSpaceID, opts)
 		if err != nil {
 			return err
 		}
@@ -825,7 +814,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		})
 		return nil
 	})
-	return source, required, complete, annRows, err
+	return source, annRows, err
 }
 
 // LiveSearchScopeCount counts current live files in normalized search filters.
@@ -905,11 +894,6 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = current.ManifestChecksum
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx,
-			profileFingerprint, bindingID, inputKind, vectorSpaceID, normalized)
-		if err != nil {
-			return err
-		}
 		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
 			inputKind, vectorSpaceID, filterSQL, filterArgs,
 			normalized.CollapsesPhotoDuplicates())

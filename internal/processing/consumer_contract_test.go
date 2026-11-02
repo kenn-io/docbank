@@ -137,7 +137,7 @@ func newConsumerSource(t *testing.T, consumer externalConsumer, revoked retrieva
 					SourceManifestChecksum: strings.Repeat("c", 64),
 					IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 					RowCount:               generation.Metadata().RowCount}},
-			BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1},
+			BindingRequired: true},
 	}
 }
 
@@ -199,8 +199,7 @@ func (source *consumerSource) ResolveSemanticCandidates(_ context.Context, _, _ 
 	for _, candidate := range documents {
 		byInput[candidate.inputID] = candidate
 	}
-	resolution := store.SemanticSearchResolution{SourceManifestChecksum: sourceManifest, ScopedDocuments: len(documents),
-		CompleteDocuments: len(documents)}
+	resolution := store.SemanticSearchResolution{SourceManifestChecksum: sourceManifest}
 	for _, neighbor := range neighbors {
 		candidate, allowed := byInput[neighbor.InputKey]
 		if !allowed {
@@ -246,7 +245,8 @@ func (source *consumerSource) RevalidateSearchCandidates(_ context.Context, cand
 			})
 		}
 	}
-	return store.SearchCandidateRevalidation{Candidates: allowed}, nil
+	return store.SearchCandidateRevalidation{Candidates: allowed,
+		Coverage: &store.SearchCoverageSnapshot{ScopedDocuments: len(documents), CompleteDocuments: len(documents)}}, nil
 }
 
 func (source *consumerSource) NormalizeSearchOptions(_ context.Context, scope store.SearchOptions) (store.SearchOptions, error) {

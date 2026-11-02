@@ -83,7 +83,7 @@ func TestSearcherSemanticUsesExactDescriptorAndExhaustsLeasedGeneration(t *testi
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
 		InputKind: document.EmbeddingInputOriginalFile, BindingRequired: true,
-		ScopedDocuments: 1, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation),
+		ANNRows: retrievalANNRows(t, generation),
 	}, semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
 		ContentVersionID: "version-semantic", Path: "/semantic.pdf",
 		VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
@@ -135,7 +135,7 @@ func TestSearcherRejectsChangedQueryModelInputBeforeProviderOrIndex(t *testing.T
 				SourceManifestChecksum: strings.Repeat("c", 64),
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
-		ScopedDocuments: 1, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation)}}
+		ANNRows: retrievalANNRows(t, generation)}}
 	provider := &retrievalProvider{descriptor: changed, vector: []float32{1, 0}}
 	searcher, err := NewSearcher(SearcherConfig{Backend: backend,
 		Encoders: &retrievalResolver{provider: provider}, Owner: "retrieval-test",
@@ -326,9 +326,7 @@ func TestSearcherSemanticReportsAbsentAuthority(t *testing.T) {
 func TestSearcherSemanticReportsFinalCoverage(t *testing.T) {
 	t.Parallel()
 	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
-	backend.finalScopedDocuments = 2
-	backend.finalCompleteDocuments = 1
-	backend.finalCoverageSet = true
+	backend.revalidationCoverage = &store.SearchCoverageSnapshot{ScopedDocuments: 2, CompleteDocuments: 1}
 	backend.lexical = []store.ExplainedLexicalCandidate{{Node: store.Node{ID: 5,
 		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
 		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
@@ -358,12 +356,13 @@ func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
 		BindingRequired: required,
-		ScopedDocuments: scoped, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation),
-	}, semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
-		ContentVersionID: "version-semantic", Path: "/semantic.pdf",
-		VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
-		InputGenerationID: "generation", InputID: "input",
-		InputKind: document.EmbeddingInputOriginalFile, Score: 999}}}
+		ANNRows:         retrievalANNRows(t, generation),
+	}, revalidationCoverage: &store.SearchCoverageSnapshot{ScopedDocuments: scoped, CompleteDocuments: 1},
+		semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
+			ContentVersionID: "version-semantic", Path: "/semantic.pdf",
+			VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
+			InputGenerationID: "generation", InputID: "input",
+			InputKind: document.EmbeddingInputOriginalFile, Score: 999}}}
 	provider := &retrievalProvider{descriptor: descriptor, vector: []float32{1, 0}}
 	searcher, err := NewSearcher(SearcherConfig{Backend: backend,
 		Encoders: &retrievalResolver{provider: provider}, Owner: "retrieval-test",
@@ -395,28 +394,26 @@ func retrievalANNRows(t *testing.T, generation *vectorindex.Generation) []vector
 }
 
 type retrievalBackendStub struct {
-	revalidated            []store.SearchCandidateIdentity
-	lexicalTruncated       bool
-	semanticTruncated      bool
-	vaultID                string
-	lexical                []store.ExplainedLexicalCandidate
-	authority              store.SemanticSearchAuthority
-	semantic               []store.SemanticSearchCandidate
-	semanticPages          []store.SemanticSearchResolution
-	excludedNodes          map[int64]struct{}
-	acquireErr             error
-	neighborCount          int
-	sourceManifest         string
-	acquiredAt             time.Time
-	releasedAt             time.Time
-	lexicalCalls           int
-	lexicalLimit           int
-	vectorLimit            int
-	releaseErr             error
-	releaseContextErr      error
-	finalScopedDocuments   int
-	finalCompleteDocuments int
-	finalCoverageSet       bool
+	revalidated          []store.SearchCandidateIdentity
+	lexicalTruncated     bool
+	semanticTruncated    bool
+	vaultID              string
+	lexical              []store.ExplainedLexicalCandidate
+	authority            store.SemanticSearchAuthority
+	semantic             []store.SemanticSearchCandidate
+	semanticPages        []store.SemanticSearchResolution
+	excludedNodes        map[int64]struct{}
+	acquireErr           error
+	neighborCount        int
+	sourceManifest       string
+	acquiredAt           time.Time
+	releasedAt           time.Time
+	lexicalCalls         int
+	lexicalLimit         int
+	vectorLimit          int
+	releaseErr           error
+	releaseContextErr    error
+	revalidationCoverage *store.SearchCoverageSnapshot
 }
 
 func (backend *retrievalBackendStub) AcquireSemanticSearchAuthority(_ context.Context, _, _, _ string,
@@ -440,15 +437,10 @@ func (backend *retrievalBackendStub) ResolveSemanticCandidates(_ context.Context
 		page.SourceManifestChecksum = sourceManifest
 		return page, nil
 	}
-	scoped, complete := backend.finalScopedDocuments, backend.finalCompleteDocuments
-	if !backend.finalCoverageSet {
-		scoped, complete = backend.authority.ScopedDocuments, backend.authority.CompleteDocuments
-	}
 	return store.SemanticSearchResolution{
 		Truncated:              backend.semanticTruncated,
 		SourceManifestChecksum: sourceManifest,
 		Candidates:             append([]store.SemanticSearchCandidate(nil), backend.semantic...),
-		ScopedDocuments:        scoped, CompleteDocuments: complete,
 	}, nil
 }
 
@@ -475,7 +467,7 @@ func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Contex
 			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,
 		})
 	}
-	return store.SearchCandidateRevalidation{Candidates: candidates}, nil
+	return store.SearchCandidateRevalidation{Candidates: candidates, Coverage: backend.revalidationCoverage}, nil
 }
 
 type retrievalResolver struct {
