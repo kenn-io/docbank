@@ -20,5 +20,6 @@ func TestPrintChanges(t *testing.T) {
 	out.Reset()
 	stderr.Reset()
 	require.NoError(t, printChanges(&out, &stderr, true, watch))
-	require.JSONEq(t, "{\"cursor\":\"saved\",\"kind\":\"created\",\"node_id\":42,\"revision\":3}\n", out.String())
+	require.Equal(t, "{\"cursor\":\"saved\",\"kind\":\"created\",\"node_id\":42,\"revision\":3}\n", out.String())
+	require.Equal(t, "cursor: checkpoint\n", stderr.String())
 }
