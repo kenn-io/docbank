@@ -50,7 +50,11 @@ type Runner interface {
 	Run(ctx context.Context, request Request) (Result, error)
 }
 
-type nativeRunner struct{}
+type nativeRunner struct {
+	// observeStdout also receives the child's stdout as it arrives. It lets
+	// tests see when a sandboxed helper is running; production leaves it nil.
+	observeStdout io.Writer
+}
 
 // NewNativeRunner returns the enforcing runner for the current platform.
 func NewNativeRunner() (Runner, error) {
@@ -68,7 +72,7 @@ func Run(ctx context.Context, request Request) (Result, error) {
 
 func (nativeRunner) Identity() string { return NativeRunnerIdentity }
 
-func (nativeRunner) Run(ctx context.Context, request Request) (result Result, err error) {
+func (runner nativeRunner) Run(ctx context.Context, request Request) (result Result, err error) {
 	if err := request.validate(); err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
@@ -123,6 +127,9 @@ func (nativeRunner) Run(ctx context.Context, request Request) (result Result, er
 	command.Env = slices.Clone(request.Policy.Environment)
 	command.Stdin = bytes.NewReader(request.Stdin)
 	command.Stdout = output
+	if runner.observeStdout != nil {
+		command.Stdout = io.MultiWriter(output, runner.observeStdout)
+	}
 	diagnostics := providerutil.NewBoundedBuffer(16<<10, nil)
 	command.Stderr = diagnostics
 	command.ExtraFiles = []*os.File{executable, control, statusWriter}

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -138,26 +139,27 @@ func TestOperationCheckOrdersCallerExpiryAndTotalTimeout(t *testing.T) {
 }
 
 func TestExecutorStreamsUploadAndStopsOnEarlyRejection(t *testing.T) {
-	sourceReader, sourceWriter := io.Pipe()
-	t.Cleanup(func() { _ = sourceWriter.Close() })
-	var interrupted atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		controller := http.NewResponseController(response)
-		assert.NoError(t, controller.EnableFullDuplex())
-		response.Header().Set("Retry-After", "7")
-		response.WriteHeader(http.StatusTooManyRequests)
-		assert.NoError(t, controller.Flush())
-	}))
-	t.Cleanup(server.Close)
-	executor := newTestExecutor(server)
-	operation, err := NewOperation(t.Context(), testProvider,
-		time.Now().UTC().Add(time.Minute).Format(TimestampForm), time.Minute)
-	require.NoError(t, err)
-	defer operation.Cancel()
+	synctest.Test(t, func(t *testing.T) {
+		sourceReader, sourceWriter := io.Pipe()
+		t.Cleanup(func() { _ = sourceWriter.Close() })
+		var interrupted atomic.Int64
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			controller := http.NewResponseController(response)
+			assert.NoError(t, controller.EnableFullDuplex())
+			response.Header().Set("Retry-After", "7")
+			response.WriteHeader(http.StatusTooManyRequests)
+			assert.NoError(t, controller.Flush())
+		}))
+		executor := newTestExecutor(server)
+		operation, err := NewOperation(t.Context(), testProvider,
+			time.Now().UTC().Add(time.Minute).Format(TimestampForm), time.Minute)
+		require.NoError(t, err)
+		defer operation.Cancel()
 
-	done := make(chan Response, 1)
-	go func() {
-		response, doErr := executor.Do(operation, &Usage{}, Request{
+		// The source never produces bytes, so only the early rejection can
+		// release the upload. Otherwise every goroutine stays blocked and
+		// synctest reports the deadlock.
+		response, err := executor.Do(operation, &Usage{}, Request{
 			Stage: StageSubmission, Method: http.MethodPost, Path: "/submit",
 			Upload: &MultipartUpload{
 				FieldName: "file", Filename: "blocked.pdf", MediaType: "application/pdf",
@@ -165,17 +167,11 @@ func TestExecutorStreamsUploadAndStopsOnEarlyRejection(t *testing.T) {
 				Interrupt: func() error { interrupted.Add(1); return sourceReader.Close() },
 			},
 		})
-		assert.NoError(t, doErr)
-		done <- response
-	}()
-	select {
-	case response := <-done:
+		require.NoError(t, err)
 		assert.Equal(t, http.StatusTooManyRequests, response.Status)
 		assert.Equal(t, 7*time.Second, response.RetryAfter)
 		assert.Equal(t, int64(1), interrupted.Load())
-	case <-time.After(2 * time.Second):
-		t.Fatal("early rejection did not release the blocked upload")
-	}
+	})
 }
 
 func TestExecutorDeliversMultipartFieldsAndCountsResponseBytes(t *testing.T) {
@@ -345,11 +341,30 @@ func assertCode(t *testing.T, err error, want document.RenditionErrorCode) {
 func serveHTTP2GoAway(t *testing.T, listener net.Listener) *atomic.Int32 {
 	t.Helper()
 	var bodies atomic.Int32
+	var mu sync.Mutex
+	conns := make(map[net.Conn]struct{})
+	stopped := false
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		stopped = true
+		for conn := range conns {
+			_ = conn.Close()
+		}
+	})
 	serve := func(conn net.Conn) {
+		mu.Lock()
+		if stopped {
+			mu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		conns[conn] = struct{}{}
+		mu.Unlock()
 		defer func() {
 			// Closing with client frames unread makes Windows reset the connection,
 			// which discards the GOAWAY or response the client has not read yet.
-			_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)) //nolint:kennlint // deadlinetest: bounds the real peer drain before closing the connection
+			// Drain until the client closes the connection or the test ends.
 			_, _ = io.Copy(io.Discard, conn)
 			_ = conn.Close()
 		}()

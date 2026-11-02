@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -498,8 +499,8 @@ func TestNativeRunnerCancellationBeforePreparation(t *testing.T) {
 }
 
 func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
-	runner, err := NewNativeRunner()
-	requireNativeNoError(t, err)
+	descendantReady := newOutputSignal("descendant-ready")
+	runner := nativeRunner{observeStdout: descendantReady}
 	request := sandboxTestRequest(t, buildSandboxHelper(t, "descendant", "", ""), []byte("probe"), 1<<20)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -509,10 +510,36 @@ func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
 	case err := <-finished:
 		skipUnavailable(t, err)
 		require.FailNow(t, "isolated runner exited before cancellation", "%v", err)
-	case <-time.After(200 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the descendant helper runs until it is canceled
+	case <-descendantReady.seen:
 	}
 	cancel()
 	require.ErrorIs(t, <-finished, context.Canceled)
+}
+
+// outputSignal closes seen once the bytes written to it contain marker.
+type outputSignal struct {
+	marker string
+	seen   chan struct{}
+	mu     sync.Mutex
+	output []byte
+	found  bool
+}
+
+func newOutputSignal(marker string) *outputSignal {
+	return &outputSignal{marker: marker, seen: make(chan struct{})}
+}
+
+func (signal *outputSignal) Write(value []byte) (int, error) {
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+	if !signal.found {
+		signal.output = append(signal.output, value...)
+		if bytes.Contains(signal.output, []byte(signal.marker)) {
+			signal.found = true
+			close(signal.seen)
+		}
+	}
+	return len(value), nil
 }
 
 func TestNativeRunnerTerminatesPromptlyOnStdoutOverflow(t *testing.T) {
