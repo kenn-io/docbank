@@ -23,6 +23,11 @@ type OperationGate struct {
 	preservation *semaphore.Weighted
 	admission    sync.RWMutex
 	maintenance  int
+
+	// afterRouteMutation is a test hook. It runs after a route mutation
+	// commits and before its handler builds the response, so a test can
+	// commit a competing change inside that window.
+	afterRouteMutation func()
 }
 
 // NewOperationGate creates one daemon-wide operation coordinator. Every
@@ -76,7 +81,13 @@ func (g *OperationGate) mutate(ctx context.Context, fn func() error) error {
 		return fmt.Errorf("acquiring route mutation gate: %w", err)
 	}
 	defer g.mu.Release(1)
-	return fn()
+	if err := fn(); err != nil {
+		return err
+	}
+	if g.afterRouteMutation != nil {
+		g.afterRouteMutation()
+	}
+	return nil
 }
 
 func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) error {
