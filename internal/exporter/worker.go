@@ -76,6 +76,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.cleanupAbandoned(ctx); err != nil {
 		return err
 	}
+	// found records whether any export since the last idle wait ran.
+	found := false
 	for {
 		if err := w.Cleanup(ctx); err != nil {
 			return err
@@ -84,15 +86,14 @@ func (w *Worker) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !processed {
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
+		if processed {
+			found = true
+			continue
 		}
+		if err := jobs.Idle(ctx, time.Second, found); err != nil {
+			return err
+		}
+		found = false
 	}
 }
 
