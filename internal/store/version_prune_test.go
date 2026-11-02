@@ -43,6 +43,8 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	_, beforePrune, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
 	preview, err := s.PruneContentVersions(ctx, created.ID, replaced.Revision,
 		VersionPruneSelector{KeepNewest: 2}, false)
 	require.NoError(t, err)
@@ -55,6 +57,9 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, preview.LooseBlobsPendingGC)
 	require.Len(t, preview.Candidates, 1)
 	assert.Equal(t, created.CurrentVersionID, preview.Candidates[0].ID)
+	changes, _, err := s.VaultChanges(ctx, beforePrune, 500)
+	require.NoError(t, err)
+	assert.Empty(t, changes, "dry runs must leave the feed unchanged")
 
 	_, err = s.PruneContentVersions(ctx, created.ID, created.Revision,
 		VersionPruneSelector{KeepNewest: 2}, true)
@@ -68,6 +73,21 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, receipt.DeletedVersions)
 	assert.Equal(t, replaced.Revision+1, receipt.Node.Revision)
 	assert.Equal(t, current.ID, receipt.Node.CurrentVersionID)
+	assert.Nil(t, receipt.Checkpoint)
+	changes, afterPrune, err := s.VaultChanges(ctx, beforePrune, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "version_added", changes[0].Kind)
+	assert.Equal(t, created.ID, changes[0].NodeID)
+	assert.Equal(t, int64(4), changes[0].Revision)
+
+	empty, err := s.PruneContentVersions(ctx, created.ID, receipt.Node.Revision,
+		VersionPruneSelector{KeepNewest: 2}, true)
+	require.NoError(t, err)
+	assert.False(t, empty.Changed)
+	changes, _, err = s.VaultChanges(ctx, afterPrune, 500)
+	require.NoError(t, err)
+	assert.Empty(t, changes, "empty candidate sets must leave the feed unchanged")
 	_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
 	require.ErrorIs(t, err, ErrNotFound)
 	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)

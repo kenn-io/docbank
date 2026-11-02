@@ -155,6 +155,9 @@ func (s *Store) PruneContentVersions(
 			}
 			result.Node.Revision++
 			result.Node.ModifiedAt = now
+			if err := recordVaultChangesTx(ctx, tx, "version_added", node.ID); err != nil {
+				return err
+			}
 		}
 		versionIDs := make([]string, len(result.Candidates))
 		for index, version := range result.Candidates {

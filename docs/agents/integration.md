@@ -532,7 +532,7 @@ Each line carries `cursor`, `kind`, `node_id`, and `revision`. Save the cursor a
 | Kind | Meaning |
 | --- | --- |
 | `created` | A file or directory was created. |
-| `version_added` | A content version was replaced, confirmed with new bytes, or reverted. |
+| `version_added` | A content version was replaced, confirmed with new bytes, or reverted, or the node's content history was pruned. |
 | `moved` | A node changed its name or parent. |
 | `tagged` | The node's tags changed, including a tag rename or deletion. |
 | `trashed` | A node was trashed, including each affected descendant. |
