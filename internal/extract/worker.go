@@ -92,22 +92,9 @@ func (w *Worker) Run(ctx context.Context) error {
 		if processed == batchSize {
 			continue
 		}
-		if !w.wait(ctx) {
+		if jobs.Idle(ctx, w.interval, processed > 0) != nil {
 			return nil
 		}
-	}
-}
-
-func (w *Worker) wait(ctx context.Context) bool {
-	timer := time.NewTimer(w.interval)
-	select {
-	case <-ctx.Done():
-		if !timer.Stop() {
-			<-timer.C
-		}
-		return false
-	case <-timer.C:
-		return true
 	}
 }
 
