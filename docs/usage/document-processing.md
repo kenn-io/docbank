@@ -219,16 +219,19 @@ API-key-only. No MCP tool is exposed.
 
 ### Review a PDF in the browser
 
-Select a live PDF in **Documents**, then choose **Redact PDF**. The configured
+Open a live PDF in **Documents**, then choose **Redact PDF**. Reading and
+marking share the same page navigation, search and zoom; the inspector offers
+the same entry point. The configured
 Linux amd64 page runtime is required. The editor supports one original PDF up
 to 64 MiB and 16 pages. Empty files, saved-result sources and related previews
 cannot start a review. **Fit page** initially shows the whole page; choose
 **Fit width** or a percentage to inspect it more closely.
 
-1. Render any missing original page, then choose **Draw rectangle** or **Mask
-   whole page**. To draw with the keyboard, focus the mask canvas, move with
+1. Wait for the original page to render, then choose **Draw rectangle** or **Mask
+   whole page**. To draw with the keyboard, focus the PDF, move with
    arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
-   cancels the unfinished rectangle. Page and zoom changes cancel it too.
+   cancels the unfinished rectangle. The reader announces the page and cursor
+   position in inches. Page and zoom changes cancel the unfinished rectangle too.
    Drawing stays on after each rectangle.
 2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
    rectangle cuts through text, review the proposed expansion and explicitly
@@ -238,6 +241,15 @@ cannot start a review. **Fit page** initially shows the whole page; choose
 4. Choose **Confirm and download ZIP**, then **Download ZIP**. Extract
    `redacted.pdf` to open it. The ZIP also contains the sanitized text and receipt.
    Keep the tab open until the transfer finishes.
+
+**Original** is an unchecked browser rendering of verified source bytes. It may
+differ from the server renderer. Server coverage gaps and the verified
+**Redacted** view remain authoritative. Drawing is disabled while the displayed
+page is loading or has failed; **Retry page** retries a failed image.
+
+**Back to reading** discards masks and preview after confirmation, then restores
+the reading position. The original stays loaded. Original print and export are
+disabled during review; delivery goes through the confirmed ZIP download.
 
 The original is unchanged. A changed source version before preview requires
 reopening the intended PDF; tags, names and moves preserve masks. Once ready,

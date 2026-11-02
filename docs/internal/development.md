@@ -50,14 +50,17 @@ with their independent contracts in `document/bridge/` and
 ### PDF reader dependency corrections
 
 `npm ci` runs `frontend/scripts/patch-embedpdf.mjs` against EmbedPDF 2.15.1.
-It confines keyboard shortcuts to the viewer element and destroys an
-engine that finishes initializing after the viewer unmounts. Without these
-corrections, a hidden preview can replace copied text with an empty string,
-and switching documents during initialization can leave three workers running.
-The patch rejects an unexpected package version or bundle. Remove it when an
-upstream release supplies both fixes, and rerun the document-reader browser
-proof before changing the pin. The container frontend stage includes the patch
-script and the bundled fallback font.
+It confines shortcuts to the viewer, destroys engines initialized after unmount,
+and installs the readable page hooks in `embedpdf-page-hooks.mjs`. The hooks
+expose actual image decoding and an inert overlay mount for shared PDF review.
+They neither modify the PDF nor apply redactions. The Vite build checks that the
+pinned bundle and exact payload are patched, including installs using
+`--ignore-scripts`; run `npm --prefix frontend run postinstall` to apply them.
+
+Remove each correction when upstream supplies its equivalent, and rerun the
+combined reader/redaction browser qualification before changing the pin. Both
+patch files and the bundled fallback font are included in the container's
+frontend stage.
 
 The PDF rendering CI lane runs `frontend/screenshots/redaction-review.run.mjs`
 against both SQLite builds. It executes the document-reader and redaction-review

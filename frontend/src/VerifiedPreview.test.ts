@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import VerifiedPreview from "./VerifiedPreview.svelte";
+import OriginalPreview from "./OriginalPreview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
 
 afterEach(() => {
@@ -56,6 +57,44 @@ function body(selected: SelectedSource, bytes: Uint8Array): Response {
     },
   });
 }
+
+it("retries a stale original when authorization advances and keeps verified content", async () => {
+  const bytes = new TextEncoder().encode("Unchanged document after a metadata edit");
+  const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
+  const revisions: number[] = [];
+  let downloads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") {
+      const { revision } = JSON.parse(String(init.body));
+      revisions.push(revision);
+      if (revision === 8)
+        return Response.json(
+          { status: 409, code: "download_selection_stale", detail: "Selection is stale" },
+          { status: 409, headers: { "Content-Type": "application/problem+json" } },
+        );
+      if (revision === 9) return ready(selected, "refreshed");
+    }
+    if (String(input).endsWith("ticket=refreshed")) {
+      downloads++;
+      return body(selected, bytes);
+    }
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  const view = render(OriginalPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("Selection is stale");
+  await view.rerender({ authorizationRevision: 9 });
+  const content = await screen.findByText("Unchanged document after a metadata edit");
+  expect(revisions).toEqual([8, 9]);
+  await view.rerender({ authorizationRevision: 10 });
+  expect(screen.getByText("Unchanged document after a metadata edit")).toBe(content);
+  expect(revisions).toEqual([8, 9]);
+  expect(downloads).toBe(1);
+});
 
 it("keeps Email available and selected for a parameterized email MIME type", async () => {
   const selected = source(
