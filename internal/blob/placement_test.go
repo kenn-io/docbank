@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -118,57 +119,59 @@ func TestPlacementRunnerRejectsDestinationRemovedBeforeCatalogCommit(t *testing.
 }
 
 func TestPlacementRunnerRetriesFinalPersistenceFailure(t *testing.T) {
-	metadata, blobs, runner, destination, root := placementTestVaultWithSecondaries(
-		t, "archive",
-	)
-	file, _ := placementTestFile(t, metadata, blobs, []byte("retry final receipt"))
-	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
-		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
-		DestinationStoreID: destination[0].ID,
-	})
-	require.NoError(t, err)
-	operationID := createPlacementOperation(t, metadata, plan)
-
-	db, err := metadata.SQLiteDriver().Open(filepath.Join(root, "metadata.db"),
-		docsqlite.OpenOptions{
-			Access:          docsqlite.ReadWriteExisting,
-			TransactionMode: docsqlite.Immediate,
+	synctest.Test(t, func(t *testing.T) {
+		metadata, blobs, runner, destination, root := placementTestVaultWithSecondaries(
+			t, "archive",
+		)
+		file, _ := placementTestFile(t, metadata, blobs, []byte("retry final receipt"))
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: destination[0].ID,
 		})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.ExecContext(t.Context(), `
-		CREATE TRIGGER reject_storage_operation_completion
-		BEFORE UPDATE OF state ON storage_operations
-		WHEN NEW.state='completed'
-		BEGIN SELECT RAISE(ABORT, 'synthetic completion persistence failure'); END`)
-	require.NoError(t, err)
+		require.NoError(t, err)
+		operationID := createPlacementOperation(t, metadata, plan)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	supervisor := jobs.New(ctx, nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	runner.RetryDelay = 10 * time.Millisecond
-	require.NoError(t, runner.Start(supervisor, operationID))
-	require.Eventually(t, func() bool {
-		operation, readErr := metadata.StorageOperation(t.Context(), operationID)
-		if readErr != nil || operation.State != store.StorageOperationRunning ||
-			operation.CompletedObjects != 1 {
-			return false
-		}
-		snapshots := supervisor.Snapshot()
-		return len(snapshots) == 1 && snapshots[0].Status == jobs.StatusRunning
-	}, 3*time.Second, 10*time.Millisecond)
+		db, err := metadata.SQLiteDriver().Open(filepath.Join(root, "metadata.db"),
+			docsqlite.OpenOptions{
+				Access:          docsqlite.ReadWriteExisting,
+				TransactionMode: docsqlite.Immediate,
+			})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, db.Close()) })
+		_, err = db.ExecContext(t.Context(), `
+			CREATE TRIGGER reject_storage_operation_completion
+			BEFORE UPDATE OF state ON storage_operations
+			WHEN NEW.state='completed'
+			BEGIN SELECT RAISE(ABORT, 'synthetic completion persistence failure'); END`)
+		require.NoError(t, err)
 
-	_, err = db.ExecContext(t.Context(), `DROP TRIGGER reject_storage_operation_completion`)
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		operation, readErr := metadata.StorageOperation(t.Context(), operationID)
-		if readErr != nil || operation.State != store.StorageOperationCompleted {
-			return false
-		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		supervisor := jobs.New(ctx, nil)
+		t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+		runner.RetryDelay = time.Minute
+		require.NoError(t, runner.Start(supervisor, operationID))
+		// The job parks on its retry timer after the rejected completion.
+		synctest.Wait()
+		operation, err := metadata.StorageOperation(t.Context(), operationID)
+		require.NoError(t, err)
+		assert.Equal(t, store.StorageOperationRunning, operation.State)
+		assert.Equal(t, int64(1), operation.CompletedObjects)
 		snapshots := supervisor.Snapshot()
-		return len(snapshots) == 1 && snapshots[0].Status == jobs.StatusCompleted
-	}, 3*time.Second, 10*time.Millisecond)
+		require.Len(t, snapshots, 1)
+		assert.Equal(t, jobs.StatusRunning, snapshots[0].Status)
+
+		_, err = db.ExecContext(t.Context(), `DROP TRIGGER reject_storage_operation_completion`)
+		require.NoError(t, err)
+		time.Sleep(runner.RetryDelay)
+		synctest.Wait()
+		operation, err = metadata.StorageOperation(t.Context(), operationID)
+		require.NoError(t, err)
+		assert.Equal(t, store.StorageOperationCompleted, operation.State)
+		snapshots = supervisor.Snapshot()
+		require.Len(t, snapshots, 1)
+		assert.Equal(t, jobs.StatusCompleted, snapshots[0].Status)
+	})
 }
 
 func TestPlacementRunnerRevokesPackedSourceAuthority(t *testing.T) {
@@ -439,84 +442,92 @@ func pendingCleanupReplay(
 }
 
 func TestPlacementRunnerCleanupRetryWaitsForConcurrentIngestPublication(t *testing.T) {
-	metadata, blobs, runner, destination := placementTestVault(t)
-	content := []byte("reauthorize while cleanup waits")
-	file, hash := placementTestFile(t, metadata, blobs, content)
-	plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
-		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
-		DestinationStoreID: destination.ID, RetireSource: true,
-	})
-	require.NoError(t, err)
-	operationID := createPlacementOperation(t, metadata, plan)
-	_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
-	require.NoError(t, err)
-	_, err = runner.placeOne(t.Context(), operationID, plan.Request, plan.Hashes[0])
-	require.NoError(t, err)
-	cleanups, err := metadata.StorageOperationCleanups(t.Context(), operationID)
-	require.NoError(t, err)
-	require.Len(t, cleanups, 1)
-	primary, ok := blobs.WritableBackend(packstore.StoreID(metadata.PrimaryBlobStoreID()))
-	require.True(t, ok)
-	require.NoError(t, primary.Retire(t.Context(), cleanups[0].Ref))
-
-	written := make(chan WriteReceipt, 1)
-	publish := make(chan struct{})
-	ingestDone := make(chan error, 1)
-	go func() {
-		ingestDone <- blobs.WithMutation(t.Context(), func() error {
-			receipt, writeErr := blobs.WriteDetailedContext(
-				t.Context(), bytes.NewReader(content),
-			)
-			if writeErr != nil {
-				return writeErr
-			}
-			written <- receipt
-			<-publish
-			encoding, encodingErr := receipt.EncodingName()
-			if encodingErr != nil {
-				return encodingErr
-			}
-			_, createErr := metadata.CreateFile(
-				t.Context(), metadata.RootID(), "reauthorized.txt",
-				receipt.Hash, receipt.Size, "text/plain", store.BlobPhysical{
-					Encoding: encoding, StoredBytes: receipt.StoredSize,
-					PackEligible: receipt.PackEligible, Created: receipt.Created,
-				},
-			)
-			return createErr
+	synctest.Test(t, func(t *testing.T) {
+		metadata, blobs, runner, destination := placementTestVault(t)
+		content := []byte("reauthorize while cleanup waits")
+		file, hash := placementTestFile(t, metadata, blobs, content)
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: destination.ID, RetireSource: true,
 		})
-	}()
-	republished := <-written
-	require.True(t, republished.Created)
+		require.NoError(t, err)
+		operationID := createPlacementOperation(t, metadata, plan)
+		_, err = metadata.ClaimStorageOperation(t.Context(), operationID)
+		require.NoError(t, err)
+		_, err = runner.placeOne(t.Context(), operationID, plan.Request, plan.Hashes[0])
+		require.NoError(t, err)
+		cleanups, err := metadata.StorageOperationCleanups(t.Context(), operationID)
+		require.NoError(t, err)
+		require.Len(t, cleanups, 1)
+		primary, ok := blobs.WritableBackend(packstore.StoreID(metadata.PrimaryBlobStoreID()))
+		require.True(t, ok)
+		require.NoError(t, primary.Retire(t.Context(), cleanups[0].Ref))
 
-	cleanupDone := make(chan error, 1)
-	go func() { cleanupDone <- runner.Run(t.Context(), operationID) }()
-	maintenanceQueued := false
-	deadline := time.After(time.Second)
-	for !maintenanceQueued {
+		written := make(chan WriteReceipt, 1)
+		publish := make(chan struct{})
+		ingestDone := make(chan error, 1)
+		go func() {
+			ingestDone <- blobs.WithMutation(t.Context(), func() error {
+				receipt, writeErr := blobs.WriteDetailedContext(
+					t.Context(), bytes.NewReader(content),
+				)
+				if writeErr != nil {
+					return writeErr
+				}
+				written <- receipt
+				<-publish
+				encoding, encodingErr := receipt.EncodingName()
+				if encodingErr != nil {
+					return encodingErr
+				}
+				_, createErr := metadata.CreateFile(
+					t.Context(), metadata.RootID(), "reauthorized.txt",
+					receipt.Hash, receipt.Size, "text/plain", store.BlobPhysical{
+						Encoding: encoding, StoredBytes: receipt.StoredSize,
+						PackEligible: receipt.PackEligible, Created: receipt.Created,
+					},
+				)
+				return createErr
+			})
+		}()
+		republished := <-written
+		require.True(t, republished.Created)
+
+		cleanupDone := make(chan error, 1)
+		go func() { cleanupDone <- runner.Run(t.Context(), operationID) }()
+		// Cleanup parks on the coordinator behind the ingest mutation.
+		synctest.Wait()
 		select {
-		case <-deadline:
-			t.Fatal("cleanup did not wait behind the active ingest mutation")
+		case err := <-cleanupDone:
+			t.Fatalf("cleanup did not wait behind the active ingest mutation: %v", err)
 		default:
 		}
-		probeCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; queued maintenance keeps the mutation probe waiting
-		probeErr := blobs.WithMutation(probeCtx, func() error { return nil })
-		cancel()
-		maintenanceQueued = errors.Is(probeErr, context.DeadlineExceeded)
-	}
-	close(publish)
-	require.NoError(t, <-ingestDone)
-	require.NoError(t, <-cleanupDone)
+		// Queued maintenance keeps a later mutation waiting too.
+		probeCtx, cancelProbe := context.WithCancel(t.Context())
+		probed := make(chan error, 1)
+		go func() { probed <- blobs.WithMutation(probeCtx, func() error { return nil }) }()
+		synctest.Wait()
+		select {
+		case err := <-probed:
+			t.Fatalf("mutation bypassed queued cleanup maintenance: %v", err)
+		default:
+		}
+		cancelProbe()
+		require.ErrorIs(t, <-probed, context.Canceled)
+		close(publish)
+		require.NoError(t, <-ingestDone)
+		require.NoError(t, <-cleanupDone)
 
-	cleanups, err = metadata.StorageOperationCleanups(t.Context(), operationID)
-	require.NoError(t, err)
-	assert.Empty(t, cleanups)
-	primaryLocation, err := runner.currentLocation(
-		t.Context(), hash, metadata.PrimaryBlobStoreID(),
-	)
-	require.NoError(t, err)
-	_, err = blobs.VerifyLocation(t.Context(), hash, primaryLocation)
-	require.NoError(t, err)
+		cleanups, err = metadata.StorageOperationCleanups(t.Context(), operationID)
+		require.NoError(t, err)
+		assert.Empty(t, cleanups)
+		primaryLocation, err := runner.currentLocation(
+			t.Context(), hash, metadata.PrimaryBlobStoreID(),
+		)
+		require.NoError(t, err)
+		_, err = blobs.VerifyLocation(t.Context(), hash, primaryLocation)
+		require.NoError(t, err)
+	})
 }
 
 func TestPlacementRunnerResumesAfterCommittedDestinationRepair(t *testing.T) {
@@ -569,50 +580,54 @@ func TestPlacementRunnerResumesAfterCommittedDestinationRepair(t *testing.T) {
 }
 
 func TestPlacementRunnerReschedulesFailedPhysicalCleanup(t *testing.T) {
-	metadata, blobs, runner, secondary := placementTestVault(t)
-	file, _ := placementTestFile(t, metadata, blobs, []byte("retry cleanup"))
-	copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
-		TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
-		DestinationStoreID: secondary.ID,
-	})
-	require.NoError(t, err)
-	require.NoError(t, runner.Run(
-		t.Context(), createPlacementOperation(t, metadata, copyPlan),
-	))
+	synctest.Test(t, func(t *testing.T) {
+		metadata, blobs, runner, secondary := placementTestVault(t)
+		file, _ := placementTestFile(t, metadata, blobs, []byte("retry cleanup"))
+		copyPlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: secondary.ID,
+		})
+		require.NoError(t, err)
+		require.NoError(t, runner.Run(
+			t.Context(), createPlacementOperation(t, metadata, copyPlan),
+		))
 
-	backend, ok := blobs.registry.backends[packstore.StoreID(secondary.ID)]
-	require.True(t, ok)
-	failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
-	failing.fail.Store(true)
-	blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
+		backend, ok := blobs.registry.backends[packstore.StoreID(secondary.ID)]
+		require.True(t, ok)
+		failing := &failOnceRetireBackend{Backend: backend, failed: make(chan struct{})}
+		failing.fail.Store(true)
+		blobs.registry.backends[packstore.StoreID(secondary.ID)] = failing
 
-	retirePlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
-		TargetNodeID: file.ID, SourceStoreID: secondary.ID,
-		DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
-	})
-	require.NoError(t, err)
-	operationID := createPlacementOperation(t, metadata, retirePlan)
-	runner.RetryDelay = 100 * time.Millisecond
-	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	require.NoError(t, runner.Start(supervisor, operationID))
+		retirePlan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: file.ID, SourceStoreID: secondary.ID,
+			DestinationStoreID: metadata.PrimaryBlobStoreID(), RetireSource: true,
+		})
+		require.NoError(t, err)
+		operationID := createPlacementOperation(t, metadata, retirePlan)
+		runner.RetryDelay = time.Minute
+		supervisor := jobs.New(t.Context(), nil)
+		t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+		require.NoError(t, runner.Start(supervisor, operationID))
 
-	select {
-	case <-failing.failed:
-	case <-time.After(30 * time.Second):
-		t.Fatal("cleanup failure was not observed")
-	}
-	// The synchronous retry test below checks the persisted queued state.
-	// Here, wait for automatic completion without racing the retry timer or
-	// imposing a one-second disk-I/O budget on Windows runners.
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		// The job parks on its retry timer after the failed cleanup.
+		synctest.Wait()
+		select {
+		case <-failing.failed:
+		default:
+			t.Fatal("cleanup failure was not observed")
+		}
 		snapshots := supervisor.Snapshot()
-		require.Len(c, snapshots, 1)
-		require.Equal(c, jobs.StatusCompleted, snapshots[0].Status, "%+v", snapshots[0])
-	}, 30*time.Second, 10*time.Millisecond)
-	operation, err := metadata.StorageOperation(t.Context(), operationID)
-	require.NoError(t, err)
-	assert.Equal(t, store.StorageOperationCompleted, operation.State)
+		require.Len(t, snapshots, 1)
+		require.Equal(t, jobs.StatusRunning, snapshots[0].Status, "%+v", snapshots[0])
+		time.Sleep(runner.RetryDelay)
+		synctest.Wait()
+		snapshots = supervisor.Snapshot()
+		require.Len(t, snapshots, 1)
+		require.Equal(t, jobs.StatusCompleted, snapshots[0].Status, "%+v", snapshots[0])
+		operation, err := metadata.StorageOperation(t.Context(), operationID)
+		require.NoError(t, err)
+		assert.Equal(t, store.StorageOperationCompleted, operation.State)
+	})
 }
 
 func TestPlacementRunnerRecordsCommittedProgressBeforeCleanupRetry(t *testing.T) {
