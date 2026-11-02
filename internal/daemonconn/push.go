@@ -26,6 +26,15 @@ import (
 
 const pushProofTimeout = 30 * time.Second
 
+// pushResponseHeaderTimeout bounds the wait for an upload receipt. The daemon
+// answers only after the durable commit, and a push keeps a window of uploads
+// in flight, so the last upload of a window also waits for the commits queued
+// ahead of it: on slow or busy storage that queue alone can exceed 30 seconds.
+// The bound matches the dialer's keepalive detection of a dead peer (30s idle
+// plus nine 30s probes), so it still ends a request whose tunnel stopped
+// answering without failing a healthy daemon that is working through a window.
+const pushResponseHeaderTimeout = 5 * time.Minute
+
 // ErrPushResponseInterrupted means the upload may have committed but its
 // receipt could not be read. A push can recover by rereading the source cursor.
 var ErrPushResponseInterrupted = errors.New("push upload response was interrupted")
@@ -51,7 +60,7 @@ func NewPushConnection(origin, key string) (*Connection, error) {
 	prover := keyProver{base: base, key: key}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: pushResponseHeaderTimeout,
 		IdleConnTimeout:       90 * time.Second,
 		// Keep a complete folder-push window connected between batches.
 		MaxIdleConnsPerHost: 32,

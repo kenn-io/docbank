@@ -119,13 +119,16 @@ example because of their permissions or a read error during upload. In
 readable. If the daemon cannot be reached, answers with a
 server error, or loses an acknowledgment, a one-shot push stops with an error
 and reports only acknowledged files. Other uploads may already be in flight;
-push cancels them and waits for its source readers to finish. Ctrl+C stops the
-run and still prints the final count. Run the same command again to resume from
-server state. Files already committed do not need another upload. There is no local
-cursor database. [Backup and restore](backup.md) preserve push provenance and
-source cursors even when a source's accepted version was pruned. A cursor does
-not keep those pruned bytes in the backup; backups include bytes still required
-by retained content and other authority.
+push cancels them and waits for its source readers to finish. The daemon
+acknowledges a file only after committing it, and push keeps up to 32 uploads
+in flight, so a busy or slow daemon can take a while to answer. Push waits up to
+five minutes for each acknowledgment before it treats the answer as lost.
+Ctrl+C stops the run and still prints the final count. Run the same command
+again to resume from server state. Files already committed do not need another
+upload. There is no local cursor database. [Backup and restore](backup.md)
+preserve push provenance and source cursors even when a source's accepted
+version was pruned. A cursor does not keep those pruned bytes in the backup;
+backups include bytes still required by retained content and other authority.
 
 ## Switch from a daemon-owned watch
 
