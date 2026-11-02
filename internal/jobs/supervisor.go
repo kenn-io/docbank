@@ -51,12 +51,26 @@ type state struct {
 	// pollRound is the settle round in which the worker's current or latest
 	// poll began.
 	pollRound uint64
+	// retryPending records the worker's latest ReportRetryPending.
+	retryPending bool
 }
 
 type reportErrorKey struct{}
 type reportBusyKey struct{}
 type idleKey struct{}
 type reportFoundKey struct{}
+type reportRetryKey struct{}
+
+// ReportRetryPending records whether a worker holds work that only a later
+// retry time can make ready, such as a target in retry backoff. Settle cannot
+// finish that work early, so it treats the worker as settled and names it in
+// Supervisor.PendingRetries. Calls outside a job started with StartWorker have
+// no effect.
+func ReportRetryPending(ctx context.Context, pending bool) {
+	if report, ok := ctx.Value(reportRetryKey{}).(func(bool)); ok {
+		report(pending)
+	}
+}
 
 // ReportFound records that a worker did work, for a worker whose waits are far
 // from the work, so it parks with found set to false. Settle then runs another
@@ -224,6 +238,11 @@ func (s *Supervisor) run(job *state, run func(context.Context) error) {
 			defer s.mu.Unlock()
 			s.roundFound = true
 		})
+		ctx = context.WithValue(ctx, reportRetryKey{}, func(pending bool) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			job.retryPending = pending
+		})
 	}
 	runErr = run(ctx)
 }
@@ -254,10 +273,26 @@ func (s *Supervisor) notifyLocked() {
 	s.changed = make(chan struct{})
 }
 
+// PendingRetries names the running workers that last reported work waiting
+// for a retry time. Settle returns without that work, so a caller can check it.
+func (s *Supervisor) PendingRetries() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var names []string
+	for _, job := range s.jobs {
+		if job.worker && job.Status == StatusRunning && job.retryPending {
+			names = append(names, job.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Settle wakes every polling worker started with StartWorker and returns once a
 // complete round finishes in which each of them polled after the round began
 // and found no work. A worker that finds work starts another round, so work
-// that one worker hands to another is finished too. Settle does not wait for
+// that one worker hands to another is finished too. Work that waits for a
+// retry time is not finished; see PendingRetries. Settle does not wait for
 // jobs started with Start or StartTransient.
 func (s *Supervisor) Settle(ctx context.Context) error {
 	s.mu.Lock()

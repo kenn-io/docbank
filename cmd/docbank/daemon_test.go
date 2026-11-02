@@ -378,6 +378,9 @@ func settleDaemon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
 	defer cancel()
 	require.NoError(t, daemon.jobs.Settle(ctx))
+	if pending := daemon.jobs.PendingRetries(); len(pending) > 0 {
+		t.Logf("settled with work waiting for a retry time: %v", pending)
+	}
 }
 
 // waitForDaemon discovers the ready daemon through its runtime record like a

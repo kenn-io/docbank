@@ -83,7 +83,9 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 				return err
 			}
 			b.warn("listing backfill targets will retry", "error", err)
-			if err := jobs.Wait(ctx, backfillListRetryDelay); err != nil {
+			// Only the next attempt can tell whether listing works again.
+			jobs.ReportRetryPending(ctx, true)
+			if err := jobs.Idle(ctx, backfillListRetryDelay, false); err != nil {
 				return err
 			}
 			continue
@@ -95,8 +97,9 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			if b.DrainOnce && len(retries) == 0 {
 				return nil
 			}
-			// Only a completed scan reports to Settle; the waits inside a scan
-			// below do not, because later pages are still unread.
+			// Only a completed scan reports no work to Settle. Targets in retry
+			// backoff become ready only with time.
+			jobs.ReportRetryPending(ctx, len(retries) > 0)
 			if err := jobs.Idle(ctx, retries.waitDelay(b.now(), idleDelay), passFound); err != nil {
 				return err
 			}
@@ -131,11 +134,17 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 		if attempted == 0 {
 			delay = retries.waitDelay(b.now(), backfillMaxIdleDelay)
 		}
+		// Later pages are still unread, so a pause inside a scan reports found
+		// work: Settle wakes the backfill to read on instead of waiting it out.
+		found := true
 		if errors.Is(err, errBackfillControl) {
-			// The page is relisted, so an overdue retry must not make this a busy loop.
+			// The page is relisted, so an overdue retry must not make this a busy
+			// loop. Only the next control read can tell whether it works again.
 			delay = backfillListRetryDelay
+			found = false
+			jobs.ReportRetryPending(ctx, true)
 		}
-		if err := jobs.Wait(ctx, delay); err != nil {
+		if err := jobs.Idle(ctx, delay, found); err != nil {
 			return err
 		}
 	}

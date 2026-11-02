@@ -256,3 +256,35 @@ func TestSettleIgnoresBusyReportsWithoutWork(t *testing.T) {
 		require.NoError(t, s.Shutdown(t.Context()))
 	})
 }
+
+func TestSettleNamesWorkersWaitingForARetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := New(t.Context(), discardLogger())
+		var polls atomic.Int64
+		require.NoError(t, s.StartWorker("retrying", func(ctx context.Context) error {
+			for {
+				// The only work waits for a retry time an hour away.
+				polls.Add(1)
+				ReportRetryPending(ctx, true)
+				if err := Idle(ctx, time.Hour, false); err != nil {
+					return err
+				}
+			}
+		}))
+		require.NoError(t, s.StartWorker("quiet", func(ctx context.Context) error {
+			for {
+				if err := Idle(ctx, time.Hour, false); err != nil {
+					return err
+				}
+			}
+		}))
+		synctest.Wait()
+		start := time.Now()
+		require.NoError(t, s.Settle(t.Context()))
+		assert.Zero(t, time.Since(start), "Settle must not wait out a retry delay")
+		assert.Equal(t, []string{"retrying"}, s.PendingRetries())
+		assert.GreaterOrEqual(t, polls.Load(), int64(2), "Settle still asks the worker to poll")
+		require.NoError(t, s.Shutdown(t.Context()))
+		assert.Empty(t, s.PendingRetries(), "a stopped worker holds no retry")
+	})
+}
