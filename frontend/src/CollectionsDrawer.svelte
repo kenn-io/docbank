@@ -320,7 +320,7 @@
             { label: "Imported", value: formatDate(current.started_at) },
           ]}
         />
-        <p class="tool-muted">{current.source_description}</p>
+        <p class="tool-muted">{current.url_fetch?.requested_url ?? current.source_description}</p>
         <div class="tool-field">
           <label for="import-label">Label</label>
           {#if labelLoading && !observedLabel}
@@ -425,7 +425,7 @@
                 class="import-summary"
                 type="button"
                 aria-label={`Browse import ${displayName(collection)}`}
-                title={collection.source_description}
+                title={collection.url_fetch?.requested_url ?? collection.source_description}
                 onclick={() => void browse(collection)}
               >
                 <span class="tool-row-main">

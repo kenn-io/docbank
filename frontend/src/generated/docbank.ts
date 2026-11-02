@@ -1353,6 +1353,15 @@ export interface ClaimBackupRepositoryRequest {
   repo?: string;
 }
 
+export interface URLFetch {
+  etag?: string;
+  fetched_at: string;
+  final_url: string;
+  last_modified?: string;
+  requested_url: string;
+  version: number;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1371,6 +1380,7 @@ export interface Collection {
   started_at: string;
   /** @minimum 0 */
   total_bytes: number;
+  url_fetch?: URLFetch;
 }
 
 export interface CollectionLabel {
@@ -1464,6 +1474,7 @@ export interface CollectionQualitySummary {
   started_at: string;
   /** @minimum 0 */
   total_bytes: number;
+  url_fetch?: URLFetch;
 }
 
 export interface QualityBucket {
@@ -7433,6 +7444,7 @@ export interface ProvenanceFact {
   source_kind: string;
   /** @pattern ^[0-9a-f]{64}$ */
   supersedes?: string;
+  url_fetch?: URLFetch;
 }
 
 export interface ProvenanceAppendReceipt {
@@ -8908,6 +8920,7 @@ export interface UploadReceipt {
   /** @pattern ^[0-9a-f]{64}$ */
   computed_hash: string;
   computed_size: number;
+  ingest_id?: string;
   node: Node;
   status: UploadReceiptStatus;
 }
@@ -10213,9 +10226,13 @@ offset?: number;
 
 export type UploadFileParams = {
 /**
+ * Absolute destination directory path; creates missing parents; exclusive with parent_id
+ */
+parent_path?: string;
+/**
  * Stable destination directory node ID
  */
-parent_id: number;
+parent_id?: number;
 /**
  * Virtual filename; must equal the multipart filename
  * @minLength 1
@@ -10224,6 +10241,10 @@ name: string;
 };
 
 export type UploadFileHeaders = {
+/**
+ * JSON URL fetch evidence
+ */
+'X-Docbank-URL-Fetch'?: string;
 /**
  * Expected lowercase hexadecimal SHA-256 of the file payload
  * @pattern ^[0-9a-f]{64}$

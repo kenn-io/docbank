@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -832,6 +833,27 @@ func TestPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T) {
 		require.EqualValues(t, 1, estimate.Assets)
 	}
 	require.NotContains(t, skipped, kept.ID)
+}
+
+func TestPhotoCheckoutNamesURLImportsByDocument(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	source := "https://example.com/download?id=7&sig=" + strings.Repeat("a", 300)
+	fetch := fmt.Sprintf(`{"version":1,"requested_url":%q,"final_url":"https://example.com/filing.png","fetched_at":"2026-10-01T12:34:56Z"}`, source)
+	run, err := s.BeginIngest(ctx, "url", fetch)
+	require.NoError(t, err)
+	node, _, err := s.IngestFile(ctx, run, s.RootID(), "filing.png", browseHash("png"), 20, "image/png", source, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
+	require.NoError(t, err)
+	require.Empty(t, checkout.SkippedPhotos)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "filing.png", path.Base(entries[0].Path))
 }
 
 func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {

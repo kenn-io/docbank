@@ -219,7 +219,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 // candidate name.
 func resolveIngestNameTx(
 	ctx context.Context,
-	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
+	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
 	// Select candidate IDs through the blob index before joining their active
@@ -253,7 +253,9 @@ func resolveIngestNameTx(
 			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
 		match := false
-		if !originalPath.Valid {
+		if sourceKind == "url" {
+			match = storedSourceKind.String == "url" && originalPath.String == sourceRef
+		} else if !originalPath.Valid {
 			// Without provenance, only a name in the incoming suffix family
 			// identifies a prior import of this content.
 			_, match = parseSuffix(sibName, base, ext)
@@ -313,6 +315,12 @@ func resolveIngestNameTx(
 func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, bool, error) {
 	receipt, added, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
 		originalPath, originalMtime, ingestFileOptions{}, physical...)
+	return receipt.Node, added, err
+}
+
+// IngestFilePlanned publishes missing directories and an ordinary import together.
+func (s *Store) IngestFilePlanned(ctx context.Context, run IngestRun, plan IngestDirectoryPlan, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, bool, error) {
+	receipt, added, _, err := s.ingestFile(ctx, run, 0, name, blobHash, size, mimeType, originalPath, originalMtime, ingestFileOptions{directoryPlan: &plan}, physical...)
 	return receipt.Node, added, err
 }
 
@@ -401,7 +409,7 @@ func (s *Store) ingestFileTx(
 		resolution IngestDirectoryResolution
 	)
 	ingestAdded := false
-	if options.directoryPlan != nil || options.observeMembership {
+	if run.initialLabel != nil || options.observeMembership {
 		ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -433,7 +441,7 @@ func (s *Store) ingestFileTx(
 		var existingID int64
 		var skip bool
 		finalName, existingID, skip, err = resolveIngestNameTx(
-			ctx, tx, parentID, name, blobHash, run.record.SourceKind,
+			ctx, tx, parentID, name, blobHash, run.record.SourceKind, originalPath,
 		)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -496,7 +504,7 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
-	if options.directoryPlan == nil && !options.observeMembership {
+	if run.initialLabel == nil && !options.observeMembership {
 		ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err

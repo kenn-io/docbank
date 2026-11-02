@@ -29,3 +29,16 @@ export function basename(path: string): string {
   if (path === "/") return "/";
   return path.slice(path.lastIndexOf("/") + 1);
 }
+
+export function formatRawBytes(bytes: Uint8Array, invalidPrefix = ""): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    const raw = Array.from(bytes, (byte) =>
+      byte < 128
+        ? String.fromCharCode(byte).replace(/\\/g, "\\\\")
+        : `\\x${byte.toString(16).padStart(2, "0")}`,
+    ).join("");
+    return invalidPrefix + raw;
+  }
+}

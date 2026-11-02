@@ -122,6 +122,13 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 		rootCmd.SetArgs(args)
 		return rootCmd.ExecuteContext(context.Background())
 	}
+	t.Run("URL fetch failure", func(t *testing.T) {
+		server := httptest.NewServer(http.NotFoundHandler())
+		defer server.Close()
+		require.Error(t, execute(false, false, []string{"add", server.URL, "--allow-http"}))
+		require.Len(t, events, 1)
+		assert.JSONEq(t, fmt.Sprintf(shown, "add"), <-events)
+	})
 	for _, tc := range []struct {
 		name  string
 		args  []string

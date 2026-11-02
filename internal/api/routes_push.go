@@ -177,7 +177,7 @@ func registerPushUploadOpenAPI(api huma.API) {
 	}
 	parameters := []*huma.Param{}
 	for _, param := range upload.Parameters {
-		if param.Name != "parent_id" {
+		if param.Name != "parent_id" && param.Name != "parent_path" && param.Name != "X-Docbank-URL-Fetch" {
 			parameters = append(parameters, param)
 		}
 	}
