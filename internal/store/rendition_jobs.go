@@ -751,6 +751,11 @@ func (s *Store) RenditionJobWorkByClaim(
 			candidateID, candidateAuthorization, selectErr := selectRenditionJobWaiterTx(
 				ctx, tx, s.vaultID, job, at.UTC())
 			if selectErr != nil {
+				if !errors.Is(selectErr, ErrProcessingConsentRequired) &&
+					!errors.Is(selectErr, ErrRenditionJobStaleAuthority) {
+					return selectErr
+				}
+				// Commit expected rejections; database failures must roll back.
 				noAuthorizedWaiter = selectErr
 			} else {
 				waiterID = sql.NullString{String: candidateID, Valid: true}

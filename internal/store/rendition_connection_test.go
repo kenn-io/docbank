@@ -20,7 +20,7 @@ import (
 
 func checkRenditionConnectionFailurePostgres(t *testing.T) {
 	t.Helper()
-	for _, failure := range []string{"before write", "commit response"} {
+	for _, failure := range []string{"before write", "waiter selection", "commit response"} {
 		t.Run(failure, func(t *testing.T) {
 			setup, owner := pgtest.NewDatabase(t)
 			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
@@ -28,8 +28,14 @@ func checkRenditionConnectionFailurePostgres(t *testing.T) {
 			versions := seedRenditionCatalogVersions(t, s)
 			request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
 			grantRenditionJobConsent(t, s, request)
-			job, _, err := s.EnqueueRenditionJob(ctx, request)
+			job, waiter, err := s.EnqueueRenditionJob(ctx, request)
 			require.NoError(t, err)
+			at := time.Now().UTC().Add(time.Second)
+			var claim RenditionJobClaim
+			if failure == "waiter selection" {
+				claim, err = s.ClaimRenditionJob(ctx, job.ID, "first-worker", at, time.Minute)
+				require.NoError(t, err)
+			}
 			conn, err := s.db.Conn(ctx)
 			require.NoError(t, err)
 			var config *pgx.ConnConfig
@@ -50,7 +56,8 @@ func checkRenditionConnectionFailurePostgres(t *testing.T) {
 				if injected {
 					return
 				}
-				if failure == "before write" && strings.Contains(query.SQL, "SET state='running',claim_owner=") {
+				if failure == "before write" && strings.Contains(query.SQL, "SET state='running',claim_owner=") ||
+					failure == "waiter selection" && strings.Contains(query.SQL, "SELECT waiter_id FROM rendition_job_waiters") {
 					injectionErr = setup.QueryRowContext(ctx, `SELECT pg_terminate_backend($1,5000)`, conn.PgConn().PID()).Scan(&injected)
 				} else if failure == "commit response" && query.SQL == "commit" {
 					injected = true
@@ -68,12 +75,16 @@ func checkRenditionConnectionFailurePostgres(t *testing.T) {
 			writer := stdlib.OpenDB(*config)
 			t.Cleanup(func() { require.NoError(t, writer.Close()) })
 			s.writeDB = writer
-			at := time.Now().UTC().Add(time.Second)
-			_, _, err = s.ClaimNextRenditionJob(ctx, "first-worker", at, time.Minute)
+			if failure == "waiter selection" {
+				_, err = s.RenditionJobWorkByClaim(ctx, claim, at)
+			} else {
+				_, _, err = s.ClaimNextRenditionJob(ctx, "first-worker", at, time.Minute)
+			}
 			require.NoError(t, injectionErr)
 			require.True(t, injected)
 			require.Error(t, err)
-			if failure == "before write" {
+			switch failure {
+			case "before write":
 				require.True(t, s.RenditionJobErrorRetryable(err), "a disconnected, uncommitted claim must not stop the worker: %v", err)
 				stored, err := s.RenditionJobByID(ctx, job.ID)
 				require.NoError(t, err)
@@ -83,7 +94,13 @@ func checkRenditionConnectionFailurePostgres(t *testing.T) {
 				require.True(t, found)
 				require.Equal(t, job.ID, claim.JobID)
 				require.EqualValues(t, 1, claim.Epoch)
-			} else {
+			case "waiter selection":
+				require.True(t, s.RenditionJobErrorRetryable(err), "a disconnect while selecting work must not stop the worker: %v", err)
+				work, err := s.RenditionJobWorkByClaim(ctx, claim, at)
+				require.NoError(t, err)
+				require.Equal(t, job.ID, work.Job.ID)
+				require.Equal(t, waiter.ID, work.Waiter.ID)
+			case "commit response":
 				require.False(t, s.RenditionJobErrorRetryable(err), "the worker cannot retry an unknown commit outcome: %v", err)
 				stored, err := s.RenditionJobByID(ctx, job.ID)
 				require.NoError(t, err)
