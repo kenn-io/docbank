@@ -509,9 +509,13 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			}
 		}
 	}
-	closeProviderResultGate(provider)
+	// Stop while the provider still holds the first result, so the running
+	// job cannot finish and publish a rendition before the metadata export.
+	// Releasing the gate first let the worker publish during shutdown, and the
+	// rewritten "running" job then contradicted its own published generation.
 	stop()
 	waitForDaemonStop(t, sourceRoot)
+	closeProviderResultGate(provider)
 	beforeRestore := provider.requests.Load()
 
 	var sourceMetadata bytes.Buffer
