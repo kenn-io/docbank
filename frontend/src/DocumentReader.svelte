@@ -29,19 +29,20 @@
   } = $props();
   let redacting = $state(untrack(() => startReview));
   let review = $state<ReturnType<typeof RedactionReview>>();
-  let reviewTrigger: HTMLElement | undefined;
+  let reviewTrigger = $state<HTMLElement>();
   const redactionAction = $derived(pdfRedactionAction(source, node, actionsDisabled));
   const redactionDisabled = $derived(redactionAction?.disabledReason ?? "");
   const pdf = $derived(source.mimeType.split(";")[0]?.trim().toLowerCase() === "application/pdf");
 </script>
 
-<div class="reader-shell" class:reviewing={redacting}>
+<div class="reader-shell">
   <Modal
     title={redacting ? `Redact ${source.name}` : source.name}
     ariaLabel={`${redacting ? "Redact" : "Read"} ${source.name}`}
     width="calc(100vw - 32px)"
     maxWidth="none"
     maxHeight="calc(100svh - 32px)"
+    footer={redacting ? undefined : readingActions}
     onclose={() => {
       if (redacting) review?.requestClose(true);
       else onclose();
@@ -59,7 +60,7 @@
           onworkspaceclose={onclose}
           onclose={() => {
             redacting = false;
-            void tick().then(() => reviewTrigger?.focus());
+            void tick().then(() => reviewTrigger?.querySelector("button")?.focus());
           }}
         />
       {:else}<OriginalPreview
@@ -70,35 +71,28 @@
           expanded
         />{/if}
     </div>
-    {#snippet footer()}
-      <div class="reading-actions" hidden={redacting}>
-        <DownloadButton {session} {source} {authorizationRevision} {onauthfailure} />
-        {#if redactionAction}
-          <AppTooltip text={redactionDisabled}>
-            <Button
-              disabled={!!redactionDisabled}
-              onclick={(event) => {
-                reviewTrigger = event.currentTarget as HTMLElement;
-                redacting = true;
-              }}>Redact PDF</Button
-            >
-          </AppTooltip>
-        {/if}
-      </div>
-    {/snippet}
   </Modal>
 </div>
 
+{#snippet readingActions()}
+  <div class="reading-actions">
+    <DownloadButton {session} {source} {authorizationRevision} {onauthfailure} />
+    {#if redactionAction}
+      <span bind:this={reviewTrigger}>
+        <AppTooltip text={redactionDisabled}>
+          <Button disabled={!!redactionDisabled} onclick={() => (redacting = true)}
+            >Redact PDF</Button
+          >
+        </AppTooltip>
+      </span>
+    {/if}
+  </div>
+{/snippet}
+
 <style>
-  .reader-shell.reviewing > :global(.kit-modal-overlay > .kit-modal-panel > .kit-modal-footer) {
-    display: none;
-  }
   .reading-actions {
     display: flex;
     gap: var(--space-2);
-  }
-  .reading-actions[hidden] {
-    display: none;
   }
   .reader-shell > :global(.kit-modal-overlay > .kit-modal-panel) {
     height: calc(100svh - 32px);

@@ -149,7 +149,15 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   await expect(zoom).toHaveValue("100");
   const pageImage = await reader.locator("embedpdf-container img").first().boundingBox();
   expect(pageImage).not.toBeNull();
-  await page.mouse.click(pageImage!.x + pageImage!.width / 2, pageImage!.y + 100);
+  await page.evaluate(() => navigator.clipboard.writeText("No text selected"));
+  await page.mouse.click(
+    pageImage!.x + (80 / 612) * pageImage!.width,
+    pageImage!.y + (64 / 792) * pageImage!.height,
+  );
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("No text selected");
   await page.mouse.move(
     pageImage!.x + (70 / 612) * pageImage!.width,
     pageImage!.y + (64 / 792) * pageImage!.height,

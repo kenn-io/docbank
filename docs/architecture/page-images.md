@@ -372,6 +372,9 @@ only when their document and page become unavailable; neighboring pages do not
 interrupt drawing. Generation-scoped callbacks cannot revive a retired render.
 Print/export commands stay disabled during review, as do the library's redaction
 commands. The same worker and original bytes survive mode changes.
+Returning to reading restores its zoom mode, including Fit width and Automatic,
+so the page continues to fit when the window resizes. Keyboard arrow movement
+accounts for viewing rotation before updating physical mask coordinates.
 
 Redacted keeps one server PNG URL, verifies its length/hash and header before
 decode, and binds its frame to preparation. These are the images checked against

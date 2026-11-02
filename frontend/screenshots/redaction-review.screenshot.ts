@@ -19,7 +19,7 @@ declare global {
 }
 
 test.skip(!captures, "DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR enables real PDF review");
-test.use({ reducedMotion: "reduce" });
+test.use({ reducedMotion: "reduce", deviceScaleFactor: 2 });
 
 test("reviews masks and downloads the exact verified PDF in the browser", async ({ page }) => {
   test.setTimeout(360000);
@@ -258,6 +258,14 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await page.keyboard.press(key);
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.40 inches.");
+    const cursor = canvas.locator('svg [stroke="#0076d6"]').last();
+    const cursorSize = (await cursor.boundingBox())!;
+    expect(cursorSize.width).toBeGreaterThanOrEqual(12);
+    expect(cursorSize.height).toBeGreaterThanOrEqual(12);
+    await page.screenshot({
+      path: path.join(captures!, "redaction-keyboard.png"),
+      animations: "disabled",
+    });
     const keyboardBox = canvas.locator('svg rect[fill="#00000040"]');
     await expect(keyboardBox).toHaveCount(1);
     for (const [attribute, value] of Object.entries({
@@ -269,6 +277,27 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await expect
         .poll(async () => Number(await keyboardBox.getAttribute(attribute)))
         .toBeCloseTo(Number(value), 8);
+    await drawer.getByRole("button", { name: "Page Settings", exact: true }).click();
+    await drawer.getByRole("menuitem", { name: "Rotate Clockwise", exact: true }).click();
+    await expect(drawToggle).toBeEnabled();
+    await drawer.locator("embedpdf-container").focus();
+    await page.keyboard.press("Shift+ArrowRight");
+    await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.30 inches.");
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(cursorStatus).toHaveText("Page 1, cursor 0.50, 0.30 inches.");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("Shift+ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(keyboardBox).toHaveCount(2);
+    for (const [attribute, value] of Object.entries({ x: 36, y: 14.4, width: 7.2, height: 7.2 }))
+      await expect
+        .poll(async () => Number(await keyboardBox.last().getAttribute(attribute)))
+        .toBeCloseTo(value, 8);
+    await drawer.getByRole("button", { name: "Remove", exact: true }).last().click();
+    await drawer.getByRole("button", { name: "Page Settings", exact: true }).click();
+    await drawer.getByRole("menuitem", { name: "Rotate Counter-Clockwise", exact: true }).click();
+    await expect(drawToggle).toBeEnabled();
     const previewAction = drawer.getByRole("button", { name: "Preview redaction", exact: true });
     for (const { gesture, failedPage } of [
       { gesture: "keyboard", failedPage: 2 },
@@ -347,6 +376,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(previewAction).toBeDisabled();
     await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Escape");
+    await expect(drawToggle).toBeChecked();
     await expect(previewAction).toBeEnabled();
     await expect(page.getByRole("dialog", { name: "Discard redaction?" })).toBeHidden();
     await page.keyboard.press("Enter");
@@ -592,6 +622,12 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     expect(bundles[0]!.equals(bundles[1]!)).toBe(true);
     await run("put", path.join(scratch, "two-pages.pdf"), "/two-pages.pdf");
     await page.setViewportSize({ width: 640, height: 900 });
+    const saveReview = drawer.getByRole("button", { name: "Save review", exact: true });
+    await saveReview.focus();
+    await expect(saveReview).toBeFocused();
+    const narrowReview = page.waitForEvent("download");
+    await page.keyboard.press("Enter");
+    expect((await narrowReview).suggestedFilename()).toContain("PRIVATE-review.json");
     await page.screenshot({
       path: path.join(captures!, "redaction-narrow.png"),
       animations: "disabled",
@@ -738,6 +774,48 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await run("add", path.join(scratch, "fractional.pdf"), "--dest", "/", "--json");
     await open("fractional.pdf");
     const fractional = page.getByRole("dialog", { name: "Redact fractional.pdf", exact: true });
+    await originalPage(1, fractional);
+    await setZoom("200", fractional);
+    const fractionalLayer = fractional.getByRole("group", {
+      name: "Page 1 review layer",
+      exact: true,
+    });
+    const beforeScroll = await fractionalLayer.evaluate((layer) => {
+      let viewport = layer.parentElement;
+      while (viewport && getComputedStyle(viewport).overflowY !== "auto")
+        viewport = viewport.parentElement;
+      if (!viewport) throw new Error("Reader scroll container absent");
+      viewport.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      const top = layer.getBoundingClientRect().y;
+      viewport.scrollBy({ top: 200, left: 200, behavior: "instant" });
+      return top;
+    });
+    await expect
+      .poll(async () => (await fractionalLayer.boundingBox())!.y)
+      .toBeLessThan(beforeScroll - 100);
+    await expect(
+      fractional.getByRole("switch", { name: "Draw rectangle", exact: true }),
+    ).toBeEnabled();
+    await fractional.getByRole("switch", { name: "Draw rectangle", exact: true }).click();
+    await expect
+      .poll(() =>
+        fractionalLayer.evaluate((layer) => getComputedStyle(layer.parentElement!).cursor),
+      )
+      .toBe("crosshair");
+    const fractionalBounds = (await fractionalLayer.boundingBox())!;
+    // Two to three inches from the crop's top-left, after zooming and scrolling.
+    await page.mouse.move(
+      fractionalBounds.x + fractionalBounds.width / 8,
+      fractionalBounds.y + (fractionalBounds.height * 2) / 11,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      fractionalBounds.x + (fractionalBounds.width * 3) / 16,
+      fractionalBounds.y + (fractionalBounds.height * 3) / 11,
+      { steps: 5 },
+    );
+    await page.mouse.up();
+    await expect(fractional.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     for (let n = 1; n <= 4; n++) {
       await originalPage(n, fractional);
       if (n === 4) {
@@ -751,8 +829,23 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await expect(gap).toHaveAttribute("height", "792");
       }
       await fractional.getByRole("button", { name: `Mask whole page ${n}`, exact: true }).click();
-      await expect(fractional.getByRole("button", { name: "Remove", exact: true })).toHaveCount(n);
+      await expect(fractional.getByRole("button", { name: "Remove", exact: true })).toHaveCount(
+        n + 1,
+      );
     }
+    // Check the submitted physical box without rendering the large four-page fixture.
+    await page.route("**/api/v1/redaction/resolve", (route) => route.abort());
+    const fractionalResolve = page.waitForRequest(
+      (r) => new URL(r.url()).pathname === "/api/v1/redaction/resolve" && r.method() === "POST",
+    );
+    await fractional.getByRole("button", { name: "Preview redaction", exact: true }).click();
+    const submittedBox = (await fractionalResolve).postDataJSON().masks[0].selector.boxes[0];
+    for (const [key, value] of Object.entries({ x0: 20000, y0: 20000, x1: 30000, y1: 30000 }))
+      expect(Math.abs(submittedBox[key] - value)).toBeLessThan(100);
+    await expect(
+      fractional.getByRole("button", { name: "Preview redaction", exact: true }),
+    ).toBeEnabled();
+    await page.unroute("**/api/v1/redaction/resolve");
     // Closing while a decoded image is delayed must not revive the old review.
     await page.evaluate(() => (window.reviewDecode.mode = "delay"));
     const fractionalZoom = fractional.getByRole("textbox", { name: "Set zoom" });
@@ -768,6 +861,25 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       window.reviewDecode.mode = "pass";
       window.reviewDecode.pending.splice(0).forEach((f) => f());
     });
+    await expect.poll(() => page.workers().length).toBe(0);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await open("two-pages.pdf", false, true);
+    await drawer.getByRole("button", { name: "Back to reading", exact: true }).click();
+    await reader.getByRole("button", { name: "Zoom Menu", exact: true }).click();
+    await reader.getByRole("menuitem", { name: "Fit to Width", exact: true }).click();
+    const widthZoom = Number(await reader.getByRole("textbox", { name: "Set zoom" }).inputValue());
+    await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
+    await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled();
+    await drawer.getByRole("button", { name: "Back to reading", exact: true }).click();
+    await page.setViewportSize({ width: 1280, height: 960 });
+    await expect
+      .poll(async () =>
+        Number(await reader.getByRole("textbox", { name: "Set zoom" }).inputValue()),
+      )
+      .toBeLessThan(widthZoom);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(reader.getByRole("textbox", { name: "Set zoom" })).toHaveValue(String(widthZoom));
+    await reader.getByRole("button", { name: "Close", exact: true }).click();
     await expect.poll(() => page.workers().length).toBe(0);
     expect(errors).toEqual([]);
   } catch (cause) {

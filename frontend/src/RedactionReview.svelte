@@ -813,11 +813,15 @@
   @media (max-width: 760px) {
     .review-workspace.active {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(200px, 1fr) minmax(140px, 0.65fr) auto;
+      grid-template-rows: minmax(200px, 1fr) minmax(180px, 0.8fr) auto;
     }
     .redaction-editor {
       grid-column: 1;
       grid-row: 2;
+      overflow-y: scroll;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      scrollbar-color: var(--text-muted) transparent;
     }
     .review-footer {
       grid-row: 3;

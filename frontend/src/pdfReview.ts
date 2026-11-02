@@ -8,6 +8,7 @@ import type {
   ViewportPlugin,
   CommandsPlugin,
   UIPlugin,
+  ZoomLevel,
 } from "@embedpdf/svelte-pdf-viewer";
 import { ZoomMode } from "@embedpdf/svelte-pdf-viewer";
 import type {
@@ -66,7 +67,7 @@ export class PDFReviewBridge {
   private geometryError = "";
   private disposed = false;
   private saved?: {
-    zoom: number;
+    zoom: ZoomLevel;
     rotation: number;
     x: number;
     y: number;
@@ -203,7 +204,10 @@ export class PDFReviewBridge {
   configure(review?: ReaderReview) {
     const leaving = !review && !!this.review;
     this.review = review;
-    if (!review?.drawing || !review.visible) this.cancelDraft();
+    if (!review?.drawing || !review.visible) {
+      this.cancelDraft();
+      this.announce("");
+    }
     if (leaving) {
       this.bound = undefined;
       this.geometryError = "";
@@ -235,7 +239,7 @@ export class PDFReviewBridge {
         rotation = this.registry!.getPlugin<RotatePlugin>("rotate")!.provides().forDocument(id);
       const metrics = viewport.getMetrics();
       this.saved = {
-        zoom: this.zoom()!.getState().currentZoomLevel,
+        zoom: this.zoom()!.getState().zoomLevel,
         rotation: rotation.getRotation(),
         x: metrics.scrollLeft,
         y: metrics.scrollTop,
@@ -390,13 +394,6 @@ export class PDFReviewBridge {
   private paint() {
     const prep = this.bound,
       doc = this.document();
-    const pageNumber = this.scroll()?.getCurrentPage() ?? 1,
-      current = [...this.layers.values()].find((l) => l.event.pageIndex === pageNumber - 1);
-    this.announce(
-      this.review?.drawing && this.review.visible && current && this.isReady(pageNumber - 1)
-        ? `Page ${pageNumber}, cursor ${(current.cursor.x / 10000).toFixed(2)}, ${(current.cursor.y / 10000).toFixed(2)} inches.`
-        : "",
-    );
     for (const layer of this.layers.values()) {
       const { svg, event } = layer;
       svg.replaceChildren();
@@ -440,16 +437,31 @@ export class PDFReviewBridge {
             "#0076d6",
             "#0076d626",
           );
-        rect(
-          {
-            x0: Math.max(0, cursor.x - 50),
-            y0: Math.max(0, cursor.y - 50),
-            x1: Math.min(frame.width, cursor.x + 50),
-            y1: Math.min(frame.height, cursor.y + 50),
-          },
-          "#0076d6",
-          "#0076d6",
+        if (index !== (this.scroll()?.getCurrentPage() ?? 1) - 1) continue;
+        const point = overlayBox(
+          { x0: cursor.x, y0: cursor.y, x1: cursor.x, y1: cursor.y },
+          page,
+          frame,
         );
+        const matrix = svg.getScreenCTM();
+        if (matrix) {
+          // Keep the crosshair visible at every zoom and viewing rotation.
+          const arm = 8 / Math.hypot(matrix.a, matrix.b);
+          for (const [color, width] of [
+            ["white", "4"],
+            ["#0076d6", "2"],
+          ]) {
+            const crosshair = document.createElementNS(svgNS, "path");
+            crosshair.setAttribute(
+              "d",
+              `M ${point.x - arm} ${point.y} h ${arm * 2} M ${point.x} ${point.y - arm} v ${arm * 2}`,
+            );
+            crosshair.setAttribute("stroke", color!);
+            crosshair.setAttribute("stroke-width", width!);
+            crosshair.setAttribute("vector-effect", "non-scaling-stroke");
+            svg.append(crosshair);
+          }
+        }
       } else layer.start = undefined;
     }
   }
@@ -474,23 +486,22 @@ export class PDFReviewBridge {
     if (event.key.startsWith("Arrow")) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      const rotation = this.registry!.getPlugin<RotatePlugin>("rotate")!
+        .provides()
+        .forDocument(this.document()!.id)
+        .getRotation();
+      const dx = event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0,
+        dy = event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0;
+      // Physical coordinates already include the source's intrinsic rotation.
+      const [x, y] = [
+        [dx, dy],
+        [dy, -dx],
+        [-dx, -dy],
+        [-dy, dx],
+      ][rotation]!;
       layer.cursor = {
-        x: Math.max(
-          0,
-          Math.min(
-            frame.width,
-            layer.cursor.x +
-              (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0),
-          ),
-        ),
-        y: Math.max(
-          0,
-          Math.min(
-            frame.height,
-            layer.cursor.y +
-              (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0),
-          ),
-        ),
+        x: Math.max(0, Math.min(frame.width, layer.cursor.x + x!)),
+        y: Math.max(0, Math.min(frame.height, layer.cursor.y + y!)),
       };
     } else if (event.key === "Enter") {
       event.preventDefault();
@@ -520,7 +531,10 @@ export class PDFReviewBridge {
       review.ondrag(false);
       this.setDrawingMode(false);
       this.update();
-    }
+    } else return;
+    this.announce(
+      `Page ${index + 1}, cursor ${(layer.cursor.x / 10000).toFixed(2)}, ${(layer.cursor.y / 10000).toFixed(2)} inches.`,
+    );
     this.paint();
   };
   focus() {
