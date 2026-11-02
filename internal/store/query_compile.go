@@ -70,6 +70,7 @@ func compileQuery(
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
 	photoDisplayMetadata bool
+	pdfOnly              bool
 	photoHidden          bool
 }
 
@@ -176,11 +177,14 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 	syntax := expression.Syntax
 	switch syntax.Kind {
 	case query.ExpressionAll:
-		if field != "" {
+		if field != "" || c.pdfOnly {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
 		}
 		return trueCompiledFragment(), nil
 	case query.ExpressionField:
+		if c.pdfOnly && query.PDFFieldKind(syntax.Field) == "" {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
+		}
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
@@ -237,6 +241,9 @@ func (c queryCompiler) compileAssociativeChildren(
 
 func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
+	if c.pdfOnly && field == "" {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
+	}
 	if syntax.Value == "" && field != "flag" && field != "label" {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
 	}
@@ -244,7 +251,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		return c.compileScalarPredicate("flag", "pick", syntax.Start, syntax.End)
 	}
 	switch {
-	case isPhotoScalarField(field), slices.Contains([]string{"mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates"}, field):
+	case query.PDFFieldKind(field) != "", isPhotoScalarField(field), slices.Contains([]string{"mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates"}, field):
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
@@ -288,7 +295,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 
 func (c queryCompiler) compileNearExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
-	if field != "" && field != compiledNameField {
+	if c.pdfOnly || field != "" && field != compiledNameField {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "NEAR is supported only for text and name operands")
 	}
 	if len(expression.Children) != 2 {
@@ -336,6 +343,9 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
+	if query.PDFFieldKind(field) != "" {
+		return compilePDFPredicate(field, value, start, end)
+	}
 	if field == "person" {
 		return c.compilePersonPredicate(value), nil
 	}

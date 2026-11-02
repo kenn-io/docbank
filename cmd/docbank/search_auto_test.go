@@ -44,6 +44,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{Name: "alpha", EmbeddingBindings: []string{"b", "a"}, QueryEmbeddingBindings: []string{"b", "a"}},
 	}
 	cases := []automaticSearchCase{
+		{name: "PDF evidence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"}, skipped: true},
 		{name: "source presence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{SourcePresent: true}, skipped: true},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
@@ -326,4 +327,29 @@ func TestSearchCLIAgentAndExplicitLexicalFilters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "fuzzy=complete")
 	assert.Contains(t, out, "match=fuzzy_name path=/docs/query-words.txt")
+}
+
+func TestSearchCLIForwardsPDFFilter(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	t.Cleanup(func() { resetFlags(rootCmd) })
+	const filter = "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"
+	var record kitdaemon.RuntimeRecord
+	var profileCalls, searchCalls int
+	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &searchCalls)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
+			assert.Equal(t, filter, r.URL.Query().Get("pdf_filter"))
+			assert.Empty(t, r.URL.Query().Get("q"))
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{PDFFilter: filter, Limit: 50, Hits: []api.SearchHit{}}))
+			return
+		}
+		handshake(w, r)
+	}))
+	t.Cleanup(server.Close)
+	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "key", "synthetic-token", "")
+	_, err := daemonconn.RuntimeStore(root).Write(record)
+	require.NoError(t, err)
+	_, err = runCLI(t, "search", "--pdf-filter", filter, "--json")
+	require.NoError(t, err)
 }

@@ -54,6 +54,19 @@ func init() {
 			}
 			return nil, nil //nolint:nilnil // SQL NULL marks a photo with no folder.
 		})
+	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_source_metadata_json_v1", 3,
+		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			var encoded []byte
+			switch value := args[0].(type) {
+			case []byte:
+				encoded = value
+			case string:
+				encoded = []byte(value)
+			}
+			contract, _ := args[1].(string)
+			checksum, _ := args[2].(string)
+			return docsqlite.SourceMetadataJSON(encoded, contract, checksum), nil
+		})
 }
 
 const (

@@ -86,6 +86,12 @@ func TestDocumentEventEvidenceCorruptionCanBeFencedAsTerminalFailure(t *testing.
 	require.NoError(t, err)
 	require.Empty(t, targets, "a captured corrupt authority must not hot retry")
 
+	_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_generations
+		SET canonical_json=?,contract_version='source-metadata/v2' WHERE generation_id=?`, canonical, generation.GenerationID)
+	require.NoError(t, err)
+	_, _, err = s.ActiveSourceMetadata(t.Context(), node.BlobHash)
+	require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
+
 	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, fakeHash("f82b"), mustSourceMetadata(t, "replacement"))
 	require.NoError(t, err)
 	err = s.RecordDocumentEventAttempt(t.Context(), target, snapshot.InputsSHA256,

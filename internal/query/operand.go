@@ -54,3 +54,58 @@ func ParseSizeOperand(value string) (int64, error) {
 }
 
 func validSizeBound(value int64) bool { return value >= 0 && value <= maxSafeInteger }
+
+var pdfFieldKinds = map[string]string{
+	"pdf_encrypted":                  "boolean",
+	"pdf_last_signature_covers_file": "boolean",
+	"pdf_has_javascript":             "boolean",
+	"pdf_has_launch_actions":         "boolean",
+	"pdf_permissions":                "string_list",
+	"pdf_signature_field_count":      "integer",
+	"pdf_signature_field_count_min":  "integer",
+	"pdf_signature_field_count_max":  "integer",
+	"pdf_embedded_file_count":        "integer",
+	"pdf_embedded_file_count_min":    "integer",
+	"pdf_embedded_file_count_max":    "integer",
+}
+
+// PDFFieldKind reports the recorded value kind for a PDF query field.
+func PDFFieldKind(field string) string { return pdfFieldKinds[field] }
+
+// PDFFieldComparison separates a fact field from its optional range bound.
+func PDFFieldComparison(field string) (string, string) {
+	if base, ok := strings.CutSuffix(field, "_min"); ok {
+		return base, ">="
+	}
+	if base, ok := strings.CutSuffix(field, "_max"); ok {
+		return base, "<="
+	}
+	return field, "="
+}
+
+func withPDFFields(fields map[string]struct{}) map[string]struct{} {
+	for field := range pdfFieldKinds {
+		fields[field] = struct{}{}
+	}
+	return fields
+}
+
+// ParsePDFOperand validates a typed PDF fact operand.
+func ParsePDFOperand(field, value string) (any, error) {
+	switch PDFFieldKind(field) {
+	case "integer":
+		return ParseSizeOperand(value)
+	case "boolean":
+		if value == "true" {
+			return true, nil
+		}
+		if value == "false" {
+			return false, nil
+		}
+	case "string_list":
+		if utf8.ValidString(value) && value != "" && len(value) <= 256 {
+			return value, nil
+		}
+	}
+	return nil, fmt.Errorf("invalid %s operand", field)
+}

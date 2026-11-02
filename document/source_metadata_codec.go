@@ -105,6 +105,22 @@ func DecodeSourceMetadataV1(encoded []byte) (SourceMetadataV1, string, error) {
 	return value, checksum, nil
 }
 
+// DecodeSourceMetadataGenerationV1 validates the stored contract and checksum
+// before exposing the canonical evidence to metadata readers.
+func DecodeSourceMetadataGenerationV1(encoded []byte, contractVersion, expectedChecksum string) (SourceMetadataV1, error) {
+	if contractVersion != SourceMetadataContractV1 {
+		return SourceMetadataV1{}, errors.New("unsupported source metadata generation contract")
+	}
+	metadata, checksum, err := DecodeSourceMetadataV1(encoded)
+	if err != nil {
+		return SourceMetadataV1{}, err
+	}
+	if checksum != expectedChecksum {
+		return SourceMetadataV1{}, errors.New("source metadata generation checksum mismatch")
+	}
+	return metadata, nil
+}
+
 func canonicalSourceMetadataV1(value SourceMetadataV1) (SourceMetadataV1, error) {
 	if value.ContractVersion != SourceMetadataContractV1 {
 		return SourceMetadataV1{}, fmt.Errorf(

@@ -8231,6 +8231,7 @@ export interface SearchReport {
   mime_type?: string;
   modified_before?: string;
   modified_since?: string;
+  pdf_filter?: string;
   source_present?: boolean;
   tag_id?: string;
   truncated: boolean;
@@ -10102,6 +10103,10 @@ export type SearchParams = {
 q?: string;
 fuzzy?: boolean;
 source_present?: boolean;
+/**
+ * @maxLength 16384
+ */
+pdf_filter?: string;
 /**
  * @minimum 1
  * @maximum 1000
