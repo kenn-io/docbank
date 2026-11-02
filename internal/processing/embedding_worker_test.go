@@ -1024,21 +1024,16 @@ type embeddingWorkerFakeBlobs struct {
 
 type embeddingRuntimeTestBlobs struct {
 	data    []byte
-	byHash  map[string][]byte
 	openErr error
 	opens   int
 }
 
-func (blobs *embeddingRuntimeTestBlobs) OpenContext(_ context.Context, hash string) (io.ReadSeekCloser, error) {
+func (blobs *embeddingRuntimeTestBlobs) OpenContext(_ context.Context, _ string) (io.ReadSeekCloser, error) {
 	blobs.opens++
 	if blobs.openErr != nil {
 		return nil, blobs.openErr
 	}
-	data := blobs.data
-	if blobs.byHash != nil {
-		data = blobs.byHash[hash]
-	}
-	return &embeddingRuntimeReadSeekCloser{Reader: bytes.NewReader(data)}, nil
+	return &embeddingRuntimeReadSeekCloser{Reader: bytes.NewReader(blobs.data)}, nil
 }
 
 type embeddingRuntimeReadSeekCloser struct{ *bytes.Reader }

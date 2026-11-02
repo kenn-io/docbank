@@ -16,12 +16,20 @@ import (
 type countedReconcileCatalog struct {
 	*store.Store
 
-	examined    int
-	enqueued    int
-	pauseClaims bool
+	examined           int
+	enqueued           int
+	pauseClaims        bool
+	beforePrepareImage func()
 }
 
 func (c *countedReconcileCatalog) ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+	if c.beforePrepareImage != nil {
+		prepare := request.PrepareImageGeneration
+		request.PrepareImageGeneration = func(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+			c.beforePrepareImage()
+			return prepare(ctx, profile, binding, version)
+		}
+	}
 	result, err := c.Store.ReconcileEmbeddingJobs(ctx, request)
 	c.examined += result.Examined
 	c.enqueued += result.Enqueued
@@ -124,6 +132,29 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 
 func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 	t.Parallel()
+	t.Run("ineligible photo", func(t *testing.T) {
+		t.Parallel()
+		f := newPhotoDescriptionFixture(t)
+		x := newImageEmbeddingService(t, f)
+		f.grant(t, x.service, "images")
+		catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
+		preparations := 0
+		catalog.beforePrepareImage = func() {
+			preparations++
+			// Eligibility can change after discovery selects its targets.
+			_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
+			require.NoError(t, err)
+		}
+		worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: catalog, Authority: f.catalog, Blobs: f.blobs, GenerationBlobs: f.blobs, Runtime: x.service.EmbeddingRuntimes(), Gate: newTestOperationGate(), Owner: "synthetic-images", RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second, AttemptLifetime: 10 * time.Minute, MaxRows: 100, MaxDimensions: 100, MaxVectorBlobBytes: 1 << 20, LeaseDuration: time.Minute, IdleDelay: time.Millisecond, DescriptorFingerprints: []string{x.descriptor.Fingerprint}})
+		require.NoError(t, err)
+		now := time.Now().UTC()
+		worker.clock = func() time.Time { return now }
+		_, err = worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 1, preparations)
+		require.Zero(t, catalog.enqueued)
+		require.True(t, worker.reconcile.settled, "an ineligible photo lets discovery settle")
+	})
 	for _, tc := range []struct {
 		name   string
 		column string

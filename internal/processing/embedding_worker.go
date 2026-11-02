@@ -310,7 +310,7 @@ func (state *embeddingReconcileState) inputError(err error) {
 	if err == nil || errors.Is(err, ErrEmbeddingInputRejected) {
 		return
 	}
-	if preparation, ok := errors.AsType[*store.ImagePreparationError](err); ok && preparation.Rejected {
+	if _, ok := errors.AsType[*store.ImagePreparationError](err); ok {
 		return
 	}
 	state.retry = true
