@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -492,48 +493,51 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 	t.Parallel()
 	for _, boundary := range []string{"receipt", "build", "lexical"} {
 		t.Run(boundary, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
-			blocking := &blockingPublicationCatalog{
-				renditionPublicationCatalog: fixture.catalog,
-				boundary:                    boundary, reached: make(chan struct{}), release: make(chan struct{}),
-			}
-			publisher, err := NewArtifactPublisher(blocking, fixture.blobs)
-			require.NoError(t, err)
-			staged := fixture.stage(t, publicationIDs{"bc", "5c", "9c"},
-				"concurrent synthetic evidence", "concurrent markdown")
-			publicationDone := make(chan error, 1)
-			go func() {
-				_, publishErr := publisher.PublishRendition(t.Context(), staged)
-				publicationDone <- publishErr
-			}()
-			<-blocking.reached
+			// The blob coordinator's queue lives in the bubble, so a blocked
+			// lease durably blocks its goroutine.
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newPublicationFixture(t)
+				blocking := &blockingPublicationCatalog{
+					renditionPublicationCatalog: fixture.catalog,
+					boundary:                    boundary, reached: make(chan struct{}), release: make(chan struct{}),
+				}
+				publisher, err := NewArtifactPublisher(blocking, fixture.blobs)
+				require.NoError(t, err)
+				staged := fixture.stage(t, publicationIDs{"bc", "5c", "9c"},
+					"concurrent synthetic evidence", "concurrent markdown")
+				publicationDone := make(chan error, 1)
+				go func() {
+					_, publishErr := publisher.PublishRendition(t.Context(), staged)
+					publicationDone <- publishErr
+				}()
+				<-blocking.reached
 
-			purgeDone := make(chan error, 1)
-			go func() {
-				_, purgeErr := maintenance.PurgeDerivatives(
-					t.Context(), fixture.catalog, fixture.blobs, store.PurgeRequest{})
-				purgeDone <- purgeErr
-			}()
-			require.Eventually(t, func() bool {
-				probeCtx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the in-flight publication keeps queued maintenance and the probe waiting
+				purgeDone := make(chan error, 1)
+				go func() {
+					_, purgeErr := maintenance.PurgeDerivatives(
+						t.Context(), fixture.catalog, fixture.blobs, store.PurgeRequest{})
+					purgeDone <- purgeErr
+				}()
+				synctest.Wait()
+				select {
+				case purgeErr := <-purgeDone:
+					require.Failf(t, "purge completed during publication", "error: %v", purgeErr)
+				default:
+				}
+				probeCtx, cancel := context.WithTimeout(t.Context(), time.Minute)
 				defer cancel()
-				return errors.Is(fixture.blobs.WithMutation(probeCtx, func() error { return nil }),
-					context.DeadlineExceeded)
-			}, 10*time.Second, time.Millisecond,
-				"purge must queue exclusive maintenance behind the in-flight publication")
-			select {
-			case purgeErr := <-purgeDone:
-				require.Failf(t, "purge completed during publication", "error: %v", purgeErr)
-			default:
-			}
+				require.ErrorIs(t, fixture.blobs.WithMutation(probeCtx, func() error { return nil }),
+					context.DeadlineExceeded,
+					"purge must queue exclusive maintenance behind the in-flight publication")
 
-			close(blocking.release)
-			require.NoError(t, <-publicationDone)
-			require.NoError(t, <-purgeDone)
-			view, err := fixture.catalog.ActiveRendition(
-				t.Context(), fixture.versionID, fixture.profile.Fingerprint)
-			require.NoError(t, err)
-			assert.Equal(t, staged.Build.ID, view.Build.ID)
+				close(blocking.release)
+				require.NoError(t, <-publicationDone)
+				require.NoError(t, <-purgeDone)
+				view, err := fixture.catalog.ActiveRendition(
+					t.Context(), fixture.versionID, fixture.profile.Fingerprint)
+				require.NoError(t, err)
+				assert.Equal(t, staged.Build.ID, view.Build.ID)
+			})
 		})
 	}
 }

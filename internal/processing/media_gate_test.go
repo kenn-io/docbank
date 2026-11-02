@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +13,7 @@ func TestMediaMutationsWaitForMaintenance(t *testing.T) {
 	for _, operation := range []string{"submit", "declare", "revoke"} {
 		t.Run(operation, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
-			gate := newWorkerTestGate()
+			gate := &observedMutationGate{workerTestGate: newWorkerTestGate(), arrived: make(chan struct{}, 1)}
 			service, err := NewService(t.Context(), ServiceConfig{
 				Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: gate,
 				SpoolDirectory: t.TempDir(), Principal: "daemon:operator", MediaTokenKey: [32]byte{1},
@@ -49,10 +48,21 @@ func TestMediaMutationsWaitForMaintenance(t *testing.T) {
 			var before bytes.Buffer
 			require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &before))
 			require.NoError(t, gate.MaintainContext(t.Context(), func() error {
-				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held maintenance gate keeps the mutation waiting
+				ctx, cancel := context.WithCancel(context.WithValue(t.Context(), observedMutation{}, true))
 				defer cancel()
-				_, err := mutate(ctx)
-				require.ErrorIs(t, err, context.DeadlineExceeded)
+				mutated := make(chan error, 1)
+				go func() {
+					_, err := mutate(ctx)
+					mutated <- err
+				}()
+				select {
+				case <-gate.arrived:
+				case err := <-mutated:
+					require.FailNow(t, "the mutation finished without the operation gate", "error: %v", err)
+				}
+				// Maintenance holds the gate, so the mutation can only end by cancellation.
+				cancel()
+				require.ErrorIs(t, <-mutated, context.Canceled)
 				var after bytes.Buffer
 				require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &after))
 				require.Equal(t, before.String(), after.String())
@@ -62,5 +72,34 @@ func TestMediaMutationsWaitForMaintenance(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "succeeded", receipt.OperationState)
 		})
+	}
+}
+
+type observedMutation struct{}
+
+// observedMutationGate reports when a mutation marked with observedMutation
+// reaches the operation gate.
+type observedMutationGate struct {
+	*workerTestGate
+
+	arrived chan struct{}
+}
+
+func (gate *observedMutationGate) MutateContext(ctx context.Context, fn func() error) error {
+	gate.observe(ctx)
+	return gate.workerTestGate.MutateContext(ctx, fn)
+}
+
+func (gate *observedMutationGate) CaptureContext(ctx context.Context, fn func() error) error {
+	gate.observe(ctx)
+	return gate.workerTestGate.CaptureContext(ctx, fn)
+}
+
+func (gate *observedMutationGate) observe(ctx context.Context) {
+	if ctx.Value(observedMutation{}) != nil {
+		select {
+		case gate.arrived <- struct{}{}:
+		default:
+		}
 	}
 }

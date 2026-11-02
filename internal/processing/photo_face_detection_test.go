@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -40,6 +41,7 @@ func TestPhotoFaceDetectionProfilesPlanAndFirstReadyTarget(t *testing.T) {
 
 func TestPhotoFaceDetectionFlow(t *testing.T) {
 	t.Parallel()
+	now := time.Now()
 	for _, tc := range []struct {
 		name, reply string
 		faceCount   int
@@ -48,52 +50,56 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 		{"empty", `{"faces":[]}`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t)
-			ctx := t.Context()
-			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
-			targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Empty(t, targets)
-			// Settle a caption first. It must neither block detection nor be changed by it.
-			f.grant(t, f.service, "vision")
-			require.Equal(t, 1, f.backfill(t, f.service))
-			suggestions := f.suggestions(t)
-			require.Len(t, suggestions, 1)
-			f.mu.Lock()
-			f.reply = tc.reply
-			f.mu.Unlock()
-			job := f.enqueueFaceDetection(t, service)
-			f.runWorker(t, service)
-			saved, err := f.catalog.RenditionJobByID(ctx, job.ID)
-			require.NoError(t, err)
-			require.Equal(t, store.RenditionJobCompleted, saved.State)
-			faces, assertions, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
-			require.NoError(t, err)
-			require.Empty(t, assertions)
-			require.Len(t, faces, tc.faceCount)
-			require.Equal(t, suggestions, f.suggestions(t))
-			_, calls := f.counts()
-			require.Equal(t, 2, calls)
-			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Empty(t, targets)
-			if tc.faceCount == 0 {
-				return
-			}
-			face := faces[0]
-			require.Equal(t, document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, face.Box)
-			require.NotEmpty(t, face.DetectorFingerprint)
-			require.Empty(t, face.AssertionID)
-			// A changed detector runs once.
-			service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
-			f.grant(t, service, "faces")
-			targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
-			require.NoError(t, err)
-			require.Len(t, targets, 1)
-			require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
-			f.runWorker(t, service)
-			_, calls = f.counts()
-			require.Equal(t, 3, calls)
+			// An empty target scan pauses in proportion to its query time; the bubble keeps that pause off the real clock.
+			synctest.Test(t, func(t *testing.T) {
+				time.Sleep(time.Until(now))
+				f := newPhotoDescriptionFixture(t)
+				ctx := t.Context()
+				service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
+				targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+				require.NoError(t, err)
+				require.Empty(t, targets)
+				// Settle a caption first. It must neither block detection nor be changed by it.
+				f.grant(t, f.service, "vision")
+				require.Equal(t, 1, f.backfill(t, f.service))
+				suggestions := f.suggestions(t)
+				require.Len(t, suggestions, 1)
+				f.mu.Lock()
+				f.reply = tc.reply
+				f.mu.Unlock()
+				job := f.enqueueFaceDetection(t, service)
+				f.runWorker(t, service)
+				saved, err := f.catalog.RenditionJobByID(ctx, job.ID)
+				require.NoError(t, err)
+				require.Equal(t, store.RenditionJobCompleted, saved.State)
+				faces, assertions, _, err := f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
+				require.NoError(t, err)
+				require.Empty(t, assertions)
+				require.Len(t, faces, tc.faceCount)
+				require.Equal(t, suggestions, f.suggestions(t))
+				_, calls := f.counts()
+				require.Equal(t, 2, calls)
+				targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+				require.NoError(t, err)
+				require.Empty(t, targets)
+				if tc.faceCount == 0 {
+					return
+				}
+				face := faces[0]
+				require.Equal(t, document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, face.Box)
+				require.NotEmpty(t, face.DetectorFingerprint)
+				require.Empty(t, face.AssertionID)
+				// A changed detector runs once.
+				service = f.newVisionServiceWith(t, map[string]string{"faces": "detector-2"}, document.FaceDetectionProviderID)
+				f.grant(t, service, "faces")
+				targets, err = service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
+				require.NoError(t, err)
+				require.Len(t, targets, 1)
+				require.NoError(t, service.admitPhotoDescription(ctx, targets[0]))
+				f.runWorker(t, service)
+				_, calls = f.counts()
+				require.Equal(t, 3, calls)
+			})
 		})
 	}
 }

@@ -83,7 +83,7 @@ func newPhotoDescriptionFixture(t *testing.T) *photoDescriptionFixture {
 	recipe, _ := VisualPreviewRecipeForSize("grid")
 	_, err = EnsureVisualPreview(ctx, catalog, blobs, node.CurrentVersionID, recipe)
 	require.NoError(t, err)
-	f.server = httptest.NewServer(f.serve(t))
+	f.server = httptest.NewTestServer(t, f.serve(t))
 	t.Cleanup(f.server.Close)
 	f.catalog, f.blobs, f.written, f.node, f.asset, f.recipe = catalog, blobs, written, node, asset, recipe
 	f.service = f.newService(t, "vision", "synthetic-vision")
@@ -521,119 +521,143 @@ func (f *photoDescriptionFixture) addPhoto(t *testing.T, name string, height int
 
 func TestPhotoDescriptionRetryWaitHoldsNoAdmissionSlotAndRetriesAfterAHeal(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	f.addPhoto(t, "second.jpg", 700)
-	f.mu.Lock()
-	f.dropDescribe = true
-	f.mu.Unlock()
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		f := newPhotoDescriptionFixture(t)
+		f.grant(t, f.service, "vision")
+		f.addPhoto(t, "second.jpg", 700)
+		f.mu.Lock()
+		f.dropDescribe = true
+		f.mu.Unlock()
 
-	// One worker: the first photo fails into its retry backoff.
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	first, err := f.service.photoVisionTargets(ctx, nil, "", 50, 1, vision.ProviderID)
-	require.NoError(t, err)
-	require.Len(t, first, 1)
-	require.NoError(t, f.service.admitPhotoDescription(ctx, first[0]))
-	f.runWorker(t, f.service)
+		// One worker: the first photo fails into its retry backoff.
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		first, err := f.service.photoVisionTargets(ctx, nil, "", 50, 1, vision.ProviderID)
+		require.NoError(t, err)
+		require.Len(t, first, 1)
+		require.NoError(t, f.service.admitPhotoDescription(ctx, first[0]))
+		f.runWorker(t, f.service)
 
-	next, err := f.service.photoVisionTargets(ctx, nil, "", 50, 1, vision.ProviderID)
-	require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
-	require.Len(t, next, 1)
-	require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
+		next, err := f.service.photoVisionTargets(ctx, nil, "", 50, 1, vision.ProviderID)
+		require.NoError(t, err, "a sleeping retry does not hold the only admission slot")
+		require.Len(t, next, 1)
+		require.NotEqual(t, first[0].version.ID, next[0].version.ID, "the other photo is admitted meanwhile")
 
-	// The endpoint heals. The call has no side effects, so the first photo is simply asked for again.
-	f.mu.Lock()
-	f.dropDescribe = false
-	f.mu.Unlock()
-	asset, err := f.catalog.PhotoAssetForNode(ctx, first[0].version.NodeID)
-	require.NoError(t, err)
-	// The retry waits out its backoff, so run the worker until the queue offers it.
-	require.Eventually(t, func() bool {
-		if f.drainWorker(t.Context(), f.service) != nil {
-			return false
+		// The endpoint heals. The call has no side effects, so the first photo is simply asked for again.
+		f.mu.Lock()
+		f.dropDescribe = false
+		f.mu.Unlock()
+		asset, err := f.catalog.PhotoAssetForNode(ctx, first[0].version.NodeID)
+		require.NoError(t, err)
+		authored := func() []store.PhotoSuggestion {
+			prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			return prepared.Suggestions
 		}
-		prepared, err := f.catalog.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
-		return err == nil && len(prepared.Suggestions) == 1
-	}, 10*time.Second, 100*time.Millisecond, "the retry produces the suggestion once the endpoint answers")
+		require.NoError(t, f.drainWorker(t.Context(), f.service))
+		require.Empty(t, authored(), "the healed photo is still backing off")
+		time.Sleep(time.Second)
+		require.NoError(t, f.drainWorker(t.Context(), f.service))
+		require.Len(t, authored(), 1, "the retry produces the suggestion once the endpoint answers")
+	})
 }
 
 func TestPhotoDescriptionProviderFailureReprobesBeforeFreshPhotoAdmission(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	ctx := t.Context()
-	service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
-	f.grant(t, service, "alpha")
-	f.grant(t, service, "beta")
+	now := time.Now()
+	// An empty target scan pauses in proportion to its query time; the bubble keeps that pause off the real clock.
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		f := newPhotoDescriptionFixture(t)
+		ctx := t.Context()
+		service := f.newServiceWith(t, map[string]string{"alpha": "model-a", "beta": "model-b"})
+		f.grant(t, service, "alpha")
+		f.grant(t, service, "beta")
 
-	ready, err := service.photoDescriptionProfiles(ctx, nil, vision.ProviderID)
-	require.NoError(t, err)
-	require.Equal(t, []string{"alpha", "beta"}, ready)
-	probes, _ := f.counts()
-	require.Equal(t, 2, probes)
+		ready, err := service.photoDescriptionProfiles(ctx, nil, vision.ProviderID)
+		require.NoError(t, err)
+		require.Equal(t, []string{"alpha", "beta"}, ready)
+		probes, _ := f.counts()
+		require.Equal(t, 2, probes)
 
-	f.mu.Lock()
-	f.failModel = "model-a"
-	f.mu.Unlock()
-	require.Equal(t, 1, f.backfill(t, service))
-	require.Empty(t, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
-	fresh := f.addPhoto(t, "fresh.jpg", 700)
-	targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
-	require.NoError(t, err)
-	require.NotEmpty(t, targets)
-	var versions []string
-	for _, target := range targets {
-		require.Equal(t, "beta", target.profile)
-		versions = append(versions, target.version.ID)
-		require.NoError(t, service.admitPhotoDescription(ctx, target))
-	}
-	require.Contains(t, versions, fresh, "the healthy second provider receives the next fresh photo")
-	f.runWorker(t, service)
-	freshVersion, err := f.catalog.ContentVersionByID(ctx, fresh)
-	require.NoError(t, err)
-	asset, err := f.catalog.PhotoAssetForNode(ctx, freshVersion.NodeID)
-	require.NoError(t, err)
-	prepared, err := f.catalog.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	require.NoError(t, err)
-	require.Len(t, prepared.Suggestions, 1)
-	probes, _ = f.counts()
-	require.Equal(t, 3, probes, "the failed description invalidates the first provider's passing probe")
+		f.mu.Lock()
+		f.failModel = "model-a"
+		f.mu.Unlock()
+		require.Equal(t, 1, f.backfill(t, service))
+		require.Empty(t, f.suggestions(t), "the first provider's authentication failure adds no suggestion")
+		fresh := f.addPhoto(t, "fresh.jpg", 700)
+		targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
+		require.NoError(t, err)
+		require.NotEmpty(t, targets)
+		var versions []string
+		for _, target := range targets {
+			require.Equal(t, "beta", target.profile)
+			versions = append(versions, target.version.ID)
+			require.NoError(t, service.admitPhotoDescription(ctx, target))
+		}
+		require.Contains(t, versions, fresh, "the healthy second provider receives the next fresh photo")
+		f.runWorker(t, service)
+		freshVersion, err := f.catalog.ContentVersionByID(ctx, fresh)
+		require.NoError(t, err)
+		asset, err := f.catalog.PhotoAssetForNode(ctx, freshVersion.NodeID)
+		require.NoError(t, err)
+		prepared, err := f.catalog.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+		require.NoError(t, err)
+		require.Len(t, prepared.Suggestions, 1)
+		probes, _ = f.counts()
+		require.Equal(t, 3, probes, "the failed description invalidates the first provider's passing probe")
+	})
 }
 
 func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
-	f.grant(t, f.service, "vision")
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
-	f.mu.Lock()
-	// The first probe waits; any other probe fails.
-	f.onProbe = func(call int) {
-		if call == 1 {
-			<-release
-			return
-		}
+	now := time.Now()
+	// The vision endpoint runs on the bubble's in-memory network, so a
+	// request waiting for the probe in flight is durably blocked.
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(now))
+		f := newPhotoDescriptionFixture(t)
+		f.grant(t, f.service, "vision")
+		probing, release := make(chan struct{}), make(chan struct{})
+		var releaseOnce sync.Once
+		unblock := func() { releaseOnce.Do(func() { close(release) }) }
+		t.Cleanup(unblock)
 		f.mu.Lock()
-		f.probeFails = true
+		// The first probe waits; any other probe fails.
+		f.onProbe = func(call int) {
+			if call == 1 {
+				close(probing)
+				<-release
+				return
+			}
+			f.mu.Lock()
+			f.probeFails = true
+			f.mu.Unlock()
+		}
 		f.mu.Unlock()
-	}
-	f.mu.Unlock()
-	profile := f.service.profiles["vision"]
-	first := make(chan error, 1)
-	go func() { first <- f.service.requireVisionReadiness(t.Context(), profile) }()
-	require.Eventually(t, func() bool { probes, _ := f.counts(); return probes == 1 }, 5*time.Second, time.Millisecond)
+		profile := f.service.profiles["vision"]
+		first := make(chan error, 1)
+		go func() { first <- f.service.requireVisionReadiness(t.Context(), profile) }()
+		<-probing
 
-	second := make(chan error, 1)
-	go func() { second <- f.service.requireVisionReadiness(t.Context(), profile) }()
-	require.Never(t, func() bool { probes, _ := f.counts(); return probes > 1 }, 100*time.Millisecond, time.Millisecond,
-		"an overlapping request waits for the probe in flight")
-	unblock()
-	require.NoError(t, <-first)
-	require.NoError(t, <-second, "the success stands")
-	probes, _ := f.counts()
-	require.Equal(t, 1, probes)
+		second := make(chan error, 1)
+		go func() { second <- f.service.requireVisionReadiness(t.Context(), profile) }()
+		synctest.Wait()
+		select {
+		case err := <-second:
+			require.Failf(t, "an overlapping request waits for the probe in flight", "returned: %v", err)
+		default:
+		}
+		probes, _ := f.counts()
+		require.Equal(t, 1, probes, "an overlapping request sends no probe of its own")
+		unblock()
+		require.NoError(t, <-first)
+		require.NoError(t, <-second, "the success stands")
+		probes, _ = f.counts()
+		require.Equal(t, 1, probes)
+	})
 }
 
 func TestPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t *testing.T) {
