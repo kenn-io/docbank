@@ -145,9 +145,9 @@ func TestDaemonReadRejectsForbiddenKeyOnTransportReplacement(t *testing.T) {
 	assert.Equal(t, 1, calls, "a rejected replacement must never receive the retried read")
 	assert.Equal(t, int32(2), ensures.Load())
 	assert.Equal(t, 1, closed.count(old))
-	require.Eventually(t, func() bool {
-		return closed.count(forbiddenReplacement) == 1
-	}, time.Second, time.Millisecond)
+	// The acquisition goroutine closes the rejected replacement after it wakes the readers.
+	<-closed.closedOnce(forbiddenReplacement)
+	assert.Equal(t, 1, closed.count(forbiddenReplacement))
 }
 
 func TestDaemonLeaseSharesForbiddenKeyAcquisitionFailureAcrossWaiters(t *testing.T) {
@@ -198,9 +198,9 @@ func TestDaemonLeaseSharesForbiddenKeyAcquisitionFailureAcrossWaiters(t *testing
 	}
 	assert.Equal(t, int32(2), ensures.Load(), "all waiters must share one rejected replacement")
 	assert.Equal(t, 1, closed.count(old))
-	require.Eventually(t, func() bool {
-		return closed.count(forbiddenReplacement) == 1
-	}, time.Second, time.Millisecond)
+	// The acquisition goroutine closes the rejected replacement after it wakes the readers.
+	<-closed.closedOnce(forbiddenReplacement)
+	assert.Equal(t, 1, closed.count(forbiddenReplacement))
 }
 
 func TestDaemonLeaseRecoversFromStaleRuntimeOnNextSafeCall(t *testing.T) {
@@ -855,19 +855,40 @@ func problemDaemonClientWithObserved(t *testing.T, code, detail string, observed
 }
 
 type closedClients struct {
-	mu     sync.Mutex
-	counts map[*daemonconn.Connection]int
+	mu      sync.Mutex
+	counts  map[*daemonconn.Connection]int
+	signals map[*daemonconn.Connection]chan struct{}
 }
 
 func newClosedClients() *closedClients {
-	return &closedClients{counts: make(map[*daemonconn.Connection]int)}
+	return &closedClients{counts: make(map[*daemonconn.Connection]int),
+		signals: make(map[*daemonconn.Connection]chan struct{})}
 }
 
 func (closed *closedClients) close(c *daemonconn.Connection) error {
 	closed.mu.Lock()
 	defer closed.mu.Unlock()
 	closed.counts[c]++
+	if closed.counts[c] == 1 {
+		close(closed.signalLocked(c))
+	}
 	return nil
+}
+
+// closedOnce is closed when c is first closed.
+func (closed *closedClients) closedOnce(c *daemonconn.Connection) <-chan struct{} {
+	closed.mu.Lock()
+	defer closed.mu.Unlock()
+	return closed.signalLocked(c)
+}
+
+func (closed *closedClients) signalLocked(c *daemonconn.Connection) chan struct{} {
+	signal, ok := closed.signals[c]
+	if !ok {
+		signal = make(chan struct{})
+		closed.signals[c] = signal
+	}
+	return signal
 }
 
 func (closed *closedClients) count(c *daemonconn.Connection) int {

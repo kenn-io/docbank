@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -240,12 +239,8 @@ func TestPackageZIPPreflightCleansUnsealedFailedUploads(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("synthetic ZIP bytes"), 0o600))
 			_, err = preflightPackageZIP(ctx, lease, path, api.PackagePreflightRequest{Profile: "dat-concordance-v1", Encoding: "utf-8"})
 			require.ErrorIs(t, err, errProcessingOutcomeUnknown)
-			var containerID string
-			select {
-			case containerID = <-declared:
-			case <-time.After(5 * time.Second):
-				t.Fatal("container was not declared")
-			}
+			// The fake daemon declares the container before it drops the connection.
+			containerID := <-declared
 			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/packages/containers/"+containerID, nil)
 			request.Header.Set("X-Api-Key", cfg.Server.APIKey)
 			response := httptest.NewRecorder()
