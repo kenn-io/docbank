@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -227,42 +227,46 @@ func TestAuthorizeSourceCloseFailureDoesNotLeakAuthorizedUpload(t *testing.T) {
 
 func TestAuthorizeCancellationClosesSourceAndCleansSpool(t *testing.T) {
 	record := inspectCapability(t, []byte("alpha\n"))
-	directory := t.TempDir()
-	reader := newBlockingReadCloser()
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, err := Authorize(ctx, Source{Reader: reader, Directory: directory}, record,
-			UploadMetadata{Filename: "notes.txt"})
-		done <- err
-	}()
-	reader.waitStarted(t)
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
-	assert.True(t, reader.closed())
-	assert.Empty(t, spoolEntries(t, directory))
+	// The bubble turns a source read that cancellation never closes into a
+	// deadlock panic instead of a wall-clock wait.
+	synctest.Test(t, func(t *testing.T) {
+		directory := t.TempDir()
+		reader := newBlockingReadCloser()
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			_, err := Authorize(ctx, Source{Reader: reader, Directory: directory}, record,
+				UploadMetadata{Filename: "notes.txt"})
+			done <- err
+		}()
+		<-reader.started
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		assert.True(t, reader.closed())
+		assert.Empty(t, spoolEntries(t, directory))
+	})
 }
 
 func TestAuthorizeCancellationClosesReturnedUpload(t *testing.T) {
 	data := []byte("alpha\n")
 	record := inspectCapability(t, data)
-	directory := t.TempDir()
-	ctx, cancel := context.WithCancel(t.Context())
-	upload, err := Authorize(ctx, Source{
-		Reader: io.NopCloser(bytes.NewReader(data)), Directory: directory,
-	}, record, UploadMetadata{Filename: "notes.txt"})
-	require.NoError(t, err)
-	cancel()
-	var readErr error
-	require.Eventually(t, func() bool {
-		_, readErr = upload.Read(make([]byte, 1))
-		return readErr != nil
-	}, 5*time.Second, 10*time.Millisecond)
-	// Cancellation can land after the caller already holds the upload, so the
-	// reason must survive the handoff rather than surfacing as os.ErrClosed.
-	require.ErrorIs(t, readErr, context.Canceled)
-	require.NoError(t, upload.Close())
-	assert.Empty(t, spoolEntries(t, directory))
+	synctest.Test(t, func(t *testing.T) {
+		directory := t.TempDir()
+		ctx, cancel := context.WithCancel(t.Context())
+		upload, err := Authorize(ctx, Source{
+			Reader: io.NopCloser(bytes.NewReader(data)), Directory: directory,
+		}, record, UploadMetadata{Filename: "notes.txt"})
+		require.NoError(t, err)
+		cancel()
+		// Wait for the cancellation callback to finish closing the upload.
+		synctest.Wait()
+		_, readErr := upload.Read(make([]byte, 1))
+		// Cancellation can land after the caller already holds the upload, so the
+		// reason must survive the handoff rather than surfacing as os.ErrClosed.
+		require.ErrorIs(t, readErr, context.Canceled)
+		require.NoError(t, upload.Close())
+		assert.Empty(t, spoolEntries(t, directory))
+	})
 }
 
 func TestAuthorizeCancellationAtValidatedHandoffCleansWithoutRacing(t *testing.T) {
@@ -428,15 +432,6 @@ func (reader *blockingReadCloser) Close() error {
 		close(reader.closedC)
 	}
 	return nil
-}
-
-func (reader *blockingReadCloser) waitStarted(t *testing.T) {
-	t.Helper()
-	select {
-	case <-reader.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("source read did not start")
-	}
 }
 
 func (reader *blockingReadCloser) closed() bool {
