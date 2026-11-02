@@ -458,6 +458,9 @@ func (s *Store) changeTagAssignmentTx(
 				"advancing node %d after tag assignment change: %w", node.ID, err,
 			)
 		}
+		if err := recordVaultChangesTx(ctx, tx, "tagged", node.ID); err != nil {
+			return TagAssignmentChange{}, err
+		}
 		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id=$1`, node.ID); err != nil {
 			return TagAssignmentChange{}, err
 		}
@@ -649,10 +652,17 @@ func checkTagRevision(tag Tag, expected int64) error {
 }
 
 func (s *Store) touchTaggedNodesTx(ctx context.Context, tx *sql.Tx, tagID, timestamp string) error {
+	ids, err := tagAssignmentNodeIDsTx(ctx, tx, tagID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE nodes SET revision = revision + 1, modified_at = $1
 		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = $2)`, timestamp, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
+	}
+	if err := recordVaultChangesTx(ctx, tx, "tagged", ids...); err != nil {
+		return err
 	}
 	return s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (SELECT node_id FROM node_tags WHERE tag_id=$1)`, tagID)
 }

@@ -710,6 +710,9 @@ func (s *Store) installContentVersionWithOperationTx(
 	if err != nil {
 		return Node{}, ContentVersion{}, err
 	}
+	if err := recordVaultChangesTx(ctx, tx, "version_added", n.ID); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	return updated, version, nil
 }
 

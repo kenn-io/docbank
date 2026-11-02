@@ -119,6 +119,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		matchedFaces[p.face] = p.observation
 		matchedObservations[p.observation] = true
 	}
+	changed := false
 	for i, face := range faces {
 		if protected[face.FaceID] {
 			continue
@@ -128,6 +129,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_faces WHERE face_id=?`, face.FaceID); err != nil {
 				return err
 			}
+			changed = true
 			continue
 		}
 		o := result.Faces[j]
@@ -138,6 +140,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET x=?,y=?,width=?,height=?,roll=?,facing=?,eyes_open=?,smile=?,detector_fingerprint=?,revision=revision+1 WHERE face_id=?`, o.Box.X, o.Box.Y, o.Box.Width, o.Box.Height, o.Roll, o.Facing, o.EyesOpen, o.Smile, detector, face.FaceID); err != nil {
 			return err
 		}
+		changed = true
 	}
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces WHERE content_version_id=?`, version).Scan(&count); err != nil {
@@ -155,7 +158,11 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		if err := insertPhotoFaceTx(ctx, tx, face); err != nil {
 			return err
 		}
+		changed = true
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, version, detector)
-	return err
+	if err != nil || !changed {
+		return err
+	}
+	return recordProcessedTx(ctx, tx, version, "")
 }

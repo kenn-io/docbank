@@ -66,7 +66,7 @@ func timeoutExempt(method, path string) bool {
 	if strings.HasPrefix(path, redactionPreviewsPath+"/") && method == http.MethodGet && (strings.Contains(path, "/pages/") || strings.HasSuffix(path, "/text") || strings.HasSuffix(path, "/bundle")) {
 		return true
 	}
-	if method == http.MethodGet && path == photoEventsPath || packageContainerTimeoutExempt(method, path) {
+	if method == http.MethodGet && (path == photoEventsPath || path == changesPath) || packageContainerTimeoutExempt(method, path) {
 		return true
 	}
 	switch path {

@@ -76,7 +76,11 @@ func (s *Store) discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx
 	if err := s.deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 		return err
 	}
-	if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, slices.Compact(slices.Clone(nodeIDs))); err != nil {
+	nodeIDs = slices.Compact(nodeIDs)
+	if err := recordVaultChangesTx(ctx, tx, "removed", nodeIDs...); err != nil {
+		return err
+	}
+	if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, nodeIDs); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(nodeIDs)

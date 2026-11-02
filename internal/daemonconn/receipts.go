@@ -493,7 +493,9 @@ func apiProblemError(e api.Error) error {
 	var cause error
 	detail := ""
 	observedScopeCount := 0
-	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
+	if e.Code == "changes_cursor_expired" && e.Status == http.StatusGone {
+		cause = &ChangeCursorExpiredError{Cursor: e.Cursor}
+	} else if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
 		observedScopeCount = e.ObservedScopeCount
 	} else if e.Code == "hidden_lockout" {
