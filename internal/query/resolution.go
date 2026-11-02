@@ -286,7 +286,7 @@ func (state *resolutionState) lookup(
 		return Reference{}, err
 	}
 	if state.resolver == nil {
-		return Reference{}, errors.New("query resolver is required for references")
+		return Reference{}, expressionError(start, end, "references are not supported here")
 	}
 	ref, err := state.resolver.Resolve(ctx, kind, key, byID)
 	if err != nil {

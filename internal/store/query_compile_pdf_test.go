@@ -93,6 +93,7 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 		text string
 		want string
 	}{
+		{"tag:urgent", "references are not supported here"},
 		{"name:report", "PDF filters require PDF fact fields"},
 		{"report", "PDF filters require PDF fact fields"},
 		{"pdf_encrypted:yes", "invalid pdf_encrypted operand"},
