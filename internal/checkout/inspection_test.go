@@ -85,7 +85,6 @@ func TestCheckoutSettlementStartsWhenEachFileIsObserved(t *testing.T) {
 }
 
 func TestCheckoutRestartAfterFinalizationPreservesCancellationRules(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		kind   string
@@ -98,106 +97,109 @@ func TestCheckoutRestartAfterFinalizationPreservesCancellationRules(t *testing.T
 		{"bound rebind", store.StorageOperationKindPhotoCheckoutRebind, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := checkoutService(t)
-			asset := checkoutPhoto(t, s, "photo.jpg", "original")
-			c, _ := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
-			destination := ""
-			if tc.bound {
-				destination = c.Destination
-				var snapshot bytes.Buffer
-				require.NoError(t, s.Store.ExportMetadata(t.Context(), &snapshot))
-				s = checkoutService(t)
-				require.NoError(t, s.Store.ImportMetadata(t.Context(), bytes.NewReader(snapshot.Bytes())))
-			}
-			c, op, err := s.PrepareOperation(t.Context(), c.ID, tc.kind, destination)
-			require.NoError(t, err)
-			if tc.bound {
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				interrupted := false
-				s.Mutate = func(ctx context.Context, fn func() error) error {
-					if err := fn(); err != nil {
+			synctest.Test(t, func(t *testing.T) {
+				s := checkoutService(t)
+				asset := checkoutPhoto(t, s, "photo.jpg", "original")
+				c, _ := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
+				destination := ""
+				if tc.bound {
+					destination = c.Destination
+					var snapshot bytes.Buffer
+					require.NoError(t, s.Store.ExportMetadata(t.Context(), &snapshot))
+					s = checkoutService(t)
+					require.NoError(t, s.Store.ImportMetadata(t.Context(), bytes.NewReader(snapshot.Bytes())))
+				}
+				c, op, err := s.PrepareOperation(t.Context(), c.ID, tc.kind, destination)
+				require.NoError(t, err)
+				if tc.bound {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					interrupted := false
+					s.Mutate = func(ctx context.Context, fn func() error) error {
+						if err := fn(); err != nil {
+							return err
+						}
+						current, err := s.Store.PhotoCheckout(ctx, c.ID)
+						if err == nil && current.DestinationReserved && !interrupted {
+							interrupted = true
+							cancel()
+						}
 						return err
 					}
-					current, err := s.Store.PhotoCheckout(ctx, c.ID)
-					if err == nil && current.DestinationReserved && !interrupted {
-						interrupted = true
-						cancel()
-					}
-					return err
-				}
-				require.ErrorIs(t, s.RunInspection(ctx, c), context.Canceled)
-				require.True(t, interrupted)
-				s.Mutate = nil
-			} else {
-				_, err = s.Store.ClaimStorageOperation(t.Context(), op.ID)
-				require.NoError(t, err)
-				cancelled, err := s.Store.FinalizeLocalOperation(t.Context(), op.ID)
-				require.NoError(t, err)
-				require.False(t, cancelled)
-			}
-			interrupted, err := s.Store.StorageOperation(t.Context(), op.ID)
-			require.NoError(t, err)
-			require.Equal(t, "@finalizing", interrupted.Cursor)
-			requested := false
-			if tc.paused {
-				_, err = s.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: "photo_checkout", Paused: true, Concurrency: 1}, 1)
-				require.NoError(t, err)
-			} else {
-				admissions := 0
-				s.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
-					admissions++
-					if admissions == 2 {
-						current, err := metadata.StorageOperation(ctx, id)
-						require.NoError(t, err)
-						require.Empty(t, current.Cursor, "claiming resumed verification must clear finalization")
-						require.NoError(t, metadata.RequestStorageOperationCancel(ctx, id), "resumed verification must accept cancellation without pausing")
-						requested = true
-					}
-					return jobs.AdmitStorageOperation(ctx, metadata, id)
-				}
-			}
-			supervisor := jobs.New(t.Context(), nil)
-			t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-			require.NoError(t, s.Resume(t.Context(), supervisor))
-			if tc.paused {
-				require.Eventually(t, func() bool {
-					current, err := s.Store.StorageOperation(t.Context(), op.ID)
-					return err == nil && current.State == store.StorageOperationQueued
-				}, 3*time.Second, 10*time.Millisecond)
-				cancelErr := s.Store.RequestStorageOperationCancel(t.Context(), op.ID)
-				if tc.bound {
-					require.ErrorIs(t, cancelErr, store.ErrStorageOperationTerminal)
-					control, err := s.Store.LaneControl(t.Context(), "photo_checkout")
+					require.ErrorIs(t, s.RunInspection(ctx, c), context.Canceled)
+					require.True(t, interrupted)
+					s.Mutate = nil
+				} else {
+					_, err = s.Store.ClaimStorageOperation(t.Context(), op.ID)
 					require.NoError(t, err)
-					control.Paused = false
-					_, err = s.Store.SetLaneControl(t.Context(), control, control.Revision)
+					cancelled, err := s.Store.FinalizeLocalOperation(t.Context(), op.ID)
+					require.NoError(t, err)
+					require.False(t, cancelled)
+				}
+				interrupted, err := s.Store.StorageOperation(t.Context(), op.ID)
+				require.NoError(t, err)
+				require.Equal(t, "@finalizing", interrupted.Cursor)
+				requested := false
+				if tc.paused {
+					_, err = s.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: "photo_checkout", Paused: true, Concurrency: 1}, 1)
 					require.NoError(t, err)
 				} else {
-					require.NoError(t, cancelErr, "resumed inspection must accept cancellation while paused")
+					admissions := 0
+					s.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
+						admissions++
+						if admissions == 2 {
+							current, err := metadata.StorageOperation(ctx, id)
+							require.NoError(t, err)
+							require.Empty(t, current.Cursor, "claiming resumed verification must clear finalization")
+							require.NoError(t, metadata.RequestStorageOperationCancel(ctx, id), "resumed verification must accept cancellation without pausing")
+							requested = true
+						}
+						return jobs.AdmitStorageOperation(ctx, metadata, id)
+					}
 				}
-			}
-			require.Eventually(t, func() bool {
-				registered := supervisor.Snapshot()
-				return len(registered) == 1 && registered[0].FinishedAt != nil
-			}, 5*time.Second, 10*time.Millisecond)
-			if !tc.paused {
-				require.True(t, requested)
-			}
-			final, err := s.Store.StorageOperation(t.Context(), op.ID)
-			require.NoError(t, err)
-			if tc.bound {
-				require.Equal(t, store.StorageOperationCompleted, final.State)
-				bound, err := s.Store.PhotoCheckout(t.Context(), c.ID)
+				supervisor := jobs.New(t.Context(), nil)
+				t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+				require.NoError(t, s.Resume(t.Context(), supervisor))
+				if tc.paused {
+					advanceUntil(t, func() bool {
+						current, err := s.Store.StorageOperation(t.Context(), op.ID)
+						require.NoError(t, err)
+						return current.State == store.StorageOperationQueued
+					})
+					cancelErr := s.Store.RequestStorageOperationCancel(t.Context(), op.ID)
+					if tc.bound {
+						require.ErrorIs(t, cancelErr, store.ErrStorageOperationTerminal)
+						control, err := s.Store.LaneControl(t.Context(), "photo_checkout")
+						require.NoError(t, err)
+						control.Paused = false
+						_, err = s.Store.SetLaneControl(t.Context(), control, control.Revision)
+						require.NoError(t, err)
+					} else {
+						require.NoError(t, cancelErr, "resumed inspection must accept cancellation while paused")
+					}
+				}
+				advanceUntil(t, func() bool {
+					registered := supervisor.Snapshot()
+					return len(registered) == 1 && registered[0].FinishedAt != nil
+				})
+				if !tc.paused {
+					require.True(t, requested)
+				}
+				final, err := s.Store.StorageOperation(t.Context(), op.ID)
 				require.NoError(t, err)
-				require.Equal(t, destination, bound.Destination)
-				require.True(t, bound.DestinationReserved)
-			} else {
-				require.Equal(t, store.StorageOperationCancelled, final.State)
-			}
-			_, total, err := s.Store.ContentVersions(t.Context(), asset.Files[0].NodeID, 100, 0)
-			require.NoError(t, err)
-			require.Equal(t, 1, total)
+				if tc.bound {
+					require.Equal(t, store.StorageOperationCompleted, final.State)
+					bound, err := s.Store.PhotoCheckout(t.Context(), c.ID)
+					require.NoError(t, err)
+					require.Equal(t, destination, bound.Destination)
+					require.True(t, bound.DestinationReserved)
+				} else {
+					require.Equal(t, store.StorageOperationCancelled, final.State)
+				}
+				_, total, err := s.Store.ContentVersions(t.Context(), asset.Files[0].NodeID, 100, 0)
+				require.NoError(t, err)
+				require.Equal(t, 1, total)
+			})
 		})
 	}
 }
