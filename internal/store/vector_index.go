@@ -485,7 +485,7 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		return VectorIndexReaderLease{}, err
 	}
 	lease := VectorIndexReaderLease{ID: leaseID, FencingToken: 1, ExpiresAt: at.UTC().Add(duration)}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		var generationID string
 		if err := tx.QueryRowContext(ctx, `SELECT generation_id FROM vector_index_heads
 			WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID); errors.Is(err, sql.ErrNoRows) {
@@ -514,7 +514,7 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 }
 
 func (s *Store) ReleaseVectorIndexGeneration(ctx context.Context, leaseID string, fencingToken int64, at time.Time) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		var token int64
 		var rawExpiry string
 		err := tx.QueryRowContext(ctx, `SELECT fencing_token,lease_expires_at
@@ -538,7 +538,7 @@ func (s *Store) ReleaseVectorIndexGeneration(ctx context.Context, leaseID string
 
 func (s *Store) ReclaimVectorIndexGenerations(ctx context.Context, at time.Time) (int, error) {
 	removed := 0
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err := s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vector_index_reader_leases
 			WHERE lease_expires_at<=?`, at.UTC().Format(timestampLayout)); err != nil {
 			return err

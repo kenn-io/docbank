@@ -306,7 +306,16 @@ func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.storageTx(ctx, true, fn)
+}
+
+// withBookkeepingTx keeps search reader leases from waking embedding discovery.
+func (s *Store) withBookkeepingTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.storageTx(ctx, false, fn)
+}
+
+func (s *Store) storageTx(ctx context.Context, counts bool, fn func(tx *sql.Tx) error) (retErr error) {
 	defer func() {
 		// Cancellation may roll back before the callback or Commit observes it.
 		// Preserve cancellation alongside ErrTxDone.
@@ -383,7 +392,7 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		dropped = s.photoEvents.dropPhotoCapture(ctx, tx)
 	}
 	var before int64
-	if s.postgresSchema == "" {
+	if counts && s.postgresSchema == "" {
 		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
 			return err
 		}
@@ -398,14 +407,16 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 		return errors.Join(err, tx.Rollback())
 	}
 	wrote := false
-	if s.postgresSchema == "" {
-		var after int64
-		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
+	if counts {
+		if s.postgresSchema == "" {
+			var after int64
+			if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
+				return err
+			}
+			wrote = after != before
+		} else if err := tx.QueryRowContext(ctx, `SELECT pg_catalog.pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&wrote); err != nil {
 			return err
 		}
-		wrote = after != before
-	} else if err := tx.QueryRowContext(ctx, `SELECT pg_catalog.pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&wrote); err != nil {
-		return err
 	}
 	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {

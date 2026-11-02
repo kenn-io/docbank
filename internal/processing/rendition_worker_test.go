@@ -1582,7 +1582,7 @@ func (writer *failOnceRenditionBlobWriter) WithMutation(
 	return writer.delegate.WithMutation(ctx, fn)
 }
 
-func newWorkerProvider(t *testing.T) *workerProvider {
+func newWorkerProvider(t testing.TB) *workerProvider {
 	t.Helper()
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.worker-v1", ContractVersion: document.RenditionProviderContractVersion,

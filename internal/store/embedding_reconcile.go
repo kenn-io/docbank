@@ -66,7 +66,6 @@ type EmbeddingReconcileResult struct {
 	Next             string
 	Examined         int
 	Enqueued         int
-	Skipped          int
 }
 
 type embeddingReconcileCandidate struct {
@@ -254,8 +253,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					return EmbeddingReconcileResult{}, ctx.Err()
 				}
 				// A damaged or temporarily unreadable candidate must not block
-				// later generations. Revisit it on a subsequent discovery pass.
-				result.Skipped++
+				// later generations. The caller tracks retryable hydration failures.
 				continue
 			}
 			candidate.request.InputGeneration = hydrated
@@ -469,12 +467,8 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			if preparation.Rejected && preparation.EvidenceFingerprint == target.checksum && request.ImageRejections != nil {
 				if len(request.ImageRejections) >= 1024 {
 					clear(request.ImageRejections)
-					// Evicted rejections need another sweep.
-					result.Skipped++
 				}
 				request.ImageRejections[ImagePreparationRejectionKey{target.profile.Fingerprint, target.binding.Name, target.version, target.checksum}] = struct{}{}
-			} else {
-				result.Skipped++
 			}
 			continue
 		}

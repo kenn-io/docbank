@@ -539,7 +539,7 @@ func TestEmbeddingRuntimeRegistryClassifiesPerProfileBinding(t *testing.T) {
 }
 
 type embeddingWorkerFixture struct {
-	t               *testing.T
+	t               testing.TB
 	now             time.Time
 	descriptor      document.EmbeddingDescriptor
 	profile         store.ProcessingProfileRecord
@@ -551,12 +551,12 @@ type embeddingWorkerFixture struct {
 	totalWait       time.Duration
 }
 
-func newEmbeddingWorkerFixture(t *testing.T) *embeddingWorkerFixture {
-	t.Helper()
-	descriptor := embeddingWorkerDescriptor(t)
-	profile := embeddingWorkerProfile(t, descriptor)
+func newEmbeddingWorkerFixture(tb testing.TB) *embeddingWorkerFixture {
+	tb.Helper()
+	descriptor := embeddingWorkerDescriptor(tb)
+	profile := embeddingWorkerProfile(tb, descriptor)
 	fixture := &embeddingWorkerFixture{
-		t: t, now: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC), descriptor: descriptor,
+		t: tb, now: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC), descriptor: descriptor,
 		profile: profile, catalog: newEmbeddingWorkerFakeCatalog(), blobs: &embeddingWorkerFakeBlobs{},
 		runtime: &embeddingWorkerFakeRuntime{failures: map[string][]error{}, capacityAbove: map[string]int{}, mutate: map[string]func(document.EmbeddingResult) document.EmbeddingResult{}, callsByBinding: map[string]int{}, preparesByBinding: map[string]int{}, batchesByBinding: map[string][]int{}},
 		gate:    newTestOperationGate(),
@@ -1020,16 +1020,21 @@ type embeddingWorkerFakeBlobs struct {
 
 type embeddingRuntimeTestBlobs struct {
 	data    []byte
+	byHash  map[string][]byte
 	openErr error
 	opens   int
 }
 
-func (blobs *embeddingRuntimeTestBlobs) OpenContext(context.Context, string) (io.ReadSeekCloser, error) {
+func (blobs *embeddingRuntimeTestBlobs) OpenContext(_ context.Context, hash string) (io.ReadSeekCloser, error) {
 	blobs.opens++
 	if blobs.openErr != nil {
 		return nil, blobs.openErr
 	}
-	return &embeddingRuntimeReadSeekCloser{Reader: bytes.NewReader(blobs.data)}, nil
+	data := blobs.data
+	if blobs.byHash != nil {
+		data = blobs.byHash[hash]
+	}
+	return &embeddingRuntimeReadSeekCloser{Reader: bytes.NewReader(data)}, nil
 }
 
 type embeddingRuntimeReadSeekCloser struct{ *bytes.Reader }
@@ -1102,7 +1107,7 @@ func headKeyParts(version, binding string, kind document.EmbeddingInputKind) str
 func workerHash(value string) string { return workerHashBytes([]byte(value)) }
 func workerHex(value string) string  { return workerHash(value) }
 
-func embeddingWorkerDescriptor(t *testing.T) document.EmbeddingDescriptor {
+func embeddingWorkerDescriptor(t testing.TB) document.EmbeddingDescriptor {
 	t.Helper()
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-space", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"}})
 	require.NoError(t, err)
@@ -1111,7 +1116,7 @@ func embeddingWorkerDescriptor(t *testing.T) document.EmbeddingDescriptor {
 	return descriptor
 }
 
-func embeddingWorkerProfile(t *testing.T, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
+func embeddingWorkerProfile(t testing.TB, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
 	t.Helper()
 	makeBinding := func(name string, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{Activation: document.EmbeddingOptional, AuthorizationFingerprint: workerHash("auth"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: workerHash("disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: kind, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, ModelInput: descriptor.ModelInput, Model: descriptor.Model, Name: name, Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}
@@ -1212,13 +1217,13 @@ func (embeddingIntegrationTokenizer) Tokenize(text string, limit int) ([]documen
 	return result, nil
 }
 
-func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
+func newRealEmbeddingWorker(t testing.TB, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
 	t.Helper()
 	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(t, kind, nil, additionalBindings...)
 	return fixture, fake, worker, request
 }
 
-func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
+func newRealEmbeddingWorkerWithDescriptor(t testing.TB, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
 	t.Helper()
 	fixture := newPublicationFixture(t)
 	fake := newEmbeddingWorkerFixture(t)
@@ -2463,11 +2468,6 @@ func TestEmbeddingWorkerCompletesUnalignedDiscoveryStreams(t *testing.T) {
 			_, err = worker.ScanOnce(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, 3, calls, "unchanged catalog stays settled")
-			worker.descriptorFingerprints = append(worker.descriptorFingerprints, workerHash("new-runtime"))
-			now = now.Add(time.Minute)
-			_, err = worker.ScanOnce(t.Context())
-			require.NoError(t, err)
-			require.Equal(t, 4, calls, "executable configuration changes restart discovery")
 		})
 	}
 }
@@ -2576,9 +2576,13 @@ func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
 				require.LessOrEqual(t, len(x.worker.imageRejections), limit)
 			}
 			require.Greater(t, x.calls, limit, "scans reach every rejected preview")
+			// Finish the active sweep before checking the idle gate.
+			for range 3 {
+				x.scan(t)
+			}
 			settled := x.calls
 			x.scan(t)
-			require.Greater(t, x.calls, settled, "evicted rejections are prepared again")
+			require.Equal(t, settled, x.calls, "permanent rejections permit settling even after eviction")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

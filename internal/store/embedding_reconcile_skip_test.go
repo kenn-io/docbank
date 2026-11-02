@@ -27,10 +27,11 @@ func TestEmbeddingReconciliationReportsTransientImagePreparation(t *testing.T) {
 			}
 			result, err := f.s.ReconcileEmbeddingJobs(t.Context(), request)
 			require.NoError(t, err)
+			require.Zero(t, result.Enqueued)
 			if remembered {
-				require.Zero(t, result.Skipped)
+				require.Len(t, request.ImageRejections, 2)
 			} else {
-				require.Equal(t, 2, result.Skipped)
+				require.Empty(t, request.ImageRejections)
 			}
 		})
 	}

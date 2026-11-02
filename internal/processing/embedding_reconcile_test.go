@@ -3,7 +3,6 @@ package processing
 import (
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 type countedReconcileCatalog struct {
@@ -43,7 +43,7 @@ func (c *countedReconcileCatalog) ReconcileEmbeddingJobs(ctx context.Context, re
 
 func TestEmbeddingWorkerSettlesUnchangedCatalog(t *testing.T) {
 	t.Parallel()
-	f, _, worker, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	f, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
 	catalog := &countedReconcileCatalog{Store: f.catalog}
 	worker.catalog = catalog
 	now := time.Now().UTC()
@@ -54,13 +54,31 @@ func TestEmbeddingWorkerSettlesUnchangedCatalog(t *testing.T) {
 		require.NoError(t, err)
 		now = now.Add(time.Minute)
 	}
+	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog, Owner: "idle-index", Mutate: worker.gate.MutateContext, BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+		return readExactEmbeddingBlob(ctx, f.blobs, member.PayloadBlobHash, member.PayloadSize)
+	}})
+	require.NoError(t, err)
+	_, err = indexer.Rebuild(t.Context(), spaces[0])
+	require.NoError(t, err)
+	_, err = worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	now = now.Add(time.Minute)
+	lease, err := f.catalog.AcquireVectorIndexGeneration(t.Context(), spaces[0], "search-reader", now, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, f.catalog.ReleaseVectorIndexGeneration(t.Context(), lease.ID, lease.FencingToken, now))
 	require.Positive(t, catalog.examined)
 	catalog.examined = 0
-	_, err := worker.ScanOnce(t.Context())
+	_, err = worker.ScanOnce(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, catalog.examined, "an unchanged vault stays idle after a clean sweep")
 	now = now.Add(time.Minute)
-	worker.descriptorFingerprints = append(worker.descriptorFingerprints, workerHash("added-runtime"))
+	_, err = f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+		Principal: request.Authorization.Principal, Scope: request.Authorization.Scope, ProfileFingerprint: f.profile.Fingerprint,
+		DisclosureFingerprint: request.Authorization.DisclosureFingerprint, InputClasses: request.Authorization.InputClasses, RetainedArtifactClasses: request.Authorization.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
 	catalog.failNext = true
 	_, err = worker.ScanOnce(t.Context())
 	require.ErrorIs(t, err, ErrEmbeddingPersistence)
@@ -93,9 +111,15 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 	scan()
 	scan()
 	require.Zero(t, catalog.examined)
+	old, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	claim, _, found, err := f.catalog.ClaimEmbeddingWork(t.Context(), old.ID, "old-worker", now, time.Minute, worker.descriptorFingerprints)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NoError(t, f.catalog.AbandonEmbeddingWork(t.Context(), claim, now))
 	expires := now.Add(5 * time.Minute)
 	consent := request.Authorization
-	_, err := f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+	_, err = f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
 		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
 		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
 		RetainedArtifactClasses: consent.RetainedArtifactClasses, ExpiresAt: &expires,
@@ -103,12 +127,20 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 	require.NoError(t, err)
 	scan()
 	require.Positive(t, catalog.enqueued, "a fresh grant creates its own authorized job")
-	scan() // Observe the enqueue write before settling.
+	newer, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
+	require.NoError(t, err)
+	require.NotEqual(t, old.ID, newer.ID)
+	claim, work, found, err := f.catalog.ClaimEmbeddingWork(t.Context(), newer.ID, "new-worker", now, time.Minute, worker.descriptorFingerprints)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NoError(t, f.catalog.FailEmbeddingWork(t.Context(), claim, work, store.EmbeddingFailureInputRejected, store.EmbeddingAttemptReceipt{}, now))
+	scan() // Observe the terminal job write before settling.
 	scan()
 	require.Zero(t, catalog.examined)
 	now = expires
 	scan()
-	require.Positive(t, catalog.examined, "expiry wakes discovery without another write")
+	require.Positive(t, catalog.enqueued, "expiry returns to the older grant and resumes its abandoned job")
+	scan() // Observe the resumed job write.
 	scan()
 	require.Zero(t, catalog.examined)
 	restarted, err := NewEmbeddingWorker(config)
@@ -119,13 +151,6 @@ func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 	_, err = restarted.ScanOnce(t.Context())
 	require.NoError(t, err)
 	require.Positive(t, catalog.examined, "restart always recovers durable authority")
-}
-
-type unavailableReconcileBlobs struct{ opens int }
-
-func (b *unavailableReconcileBlobs) OpenContext(context.Context, string) (io.ReadSeekCloser, error) {
-	b.opens++
-	return nil, errors.New("synthetic blob temporarily unavailable")
 }
 
 func TestEmbeddingWorkerRetriesSkippedHydration(t *testing.T) {
@@ -139,7 +164,7 @@ func TestEmbeddingWorkerRetriesSkippedHydration(t *testing.T) {
 	require.NoError(t, f.catalog.AbandonEmbeddingWork(t.Context(), claim, time.Now()))
 	catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
 	worker.catalog = catalog
-	unavailable := &unavailableReconcileBlobs{}
+	unavailable := &embeddingRuntimeTestBlobs{openErr: errors.New("synthetic blob temporarily unavailable")}
 	worker.generationBlobs = unavailable
 	now := time.Now().UTC()
 	worker.clock = func() time.Time { return now }
@@ -184,4 +209,41 @@ func TestEmbeddingWorkerKeepsWritesBehindCursorUnsettled(t *testing.T) {
 	_, err = worker.ScanOnce(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 1, catalog.examined, "a write during a sweep requires a fresh pass")
+}
+
+func TestEmbeddingWorkerSettlesRejectedHydration(t *testing.T) {
+	t.Parallel()
+	for _, oversized := range []bool{false, true} {
+		t.Run(map[bool]string{false: "checksum mismatch", true: "evidence over limit"}[oversized], func(t *testing.T) {
+			t.Parallel()
+			f, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)
+			job, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
+			require.NoError(t, err)
+			claim, _, found, err := f.catalog.ClaimEmbeddingWork(t.Context(), job.ID, "abandoned-worker", time.Now(), time.Minute, worker.descriptorFingerprints)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.NoError(t, f.catalog.AbandonEmbeddingWork(t.Context(), claim, time.Now()))
+			blobs := &embeddingRuntimeTestBlobs{data: request.InputGeneration.GenerationJSON}
+			if oversized {
+				blobs.byHash = map[string][]byte{
+					request.InputGeneration.GenerationBlobHash:  request.InputGeneration.GenerationJSON,
+					request.InputGeneration.EvidenceFingerprint: make([]byte, (64<<20)+1),
+				}
+			}
+			worker.generationBlobs = blobs
+			catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
+			worker.catalog = catalog
+			now := time.Now().UTC()
+			worker.clock = func() time.Time { return now }
+			_, err = worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Positive(t, catalog.examined)
+			require.Zero(t, catalog.enqueued)
+			now = now.Add(time.Minute)
+			catalog.examined = 0
+			_, err = worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Zero(t, catalog.examined, "permanently rejected input permits an idle vault")
+		})
+	}
 }

@@ -1871,7 +1871,7 @@ func checkEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T, 
 	}
 	first, err := s.ReconcileEmbeddingJobs(t.Context(), request)
 	require.NoError(t, err)
-	require.Positive(t, first.Skipped)
+	require.Zero(t, first.Enqueued)
 	require.NotEmpty(t, first.Next)
 	request.After = first.Next
 	second, err := s.ReconcileEmbeddingJobs(t.Context(), request)
