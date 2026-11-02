@@ -1356,7 +1356,7 @@ func (w *Watcher) scanDirectory(
 		if w.observeFile != nil {
 			observe = func(withChange bool) (watchFileState, error) { return w.observeFile(source, withChange) }
 		}
-		state, err := observe(true)
+		state, err := observe(w.process == nil || !w.immediate)
 		if err != nil {
 			if inventory != nil {
 				if retryableWatchCollectionError(err) {

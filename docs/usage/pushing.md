@@ -76,11 +76,11 @@ Use a new name when you want an independent push source.
 When it starts, the client reads the last hash the daemon accepted for every
 identity of the push name, a page at a time. This also checks the key and the
 push name before any file is read, so those mistakes fail immediately, even
-with `--watch`. A one-shot run hashes every local file. A periodic watch scan rechecks accepted
-file hashes; notification scans limit content rechecks to dirty or
-metadata-changed files. Push does not trust modification times, which some
-tools preserve across edits. Equal
-bytes require no upload. Changed bytes append a version
+with `--watch`. A one-shot run hashes every local file. Periodic watch scans
+compare file identity, size, modification time, and native change time. They
+reread changed files, or every file when the filesystem reports no change time.
+Notification scans also recheck files named by notifications. Equal bytes
+require no upload. Changed bytes append a version
 to the same node, even if you moved or renamed the archived node. An unchanged
 source leaves a later archive edit or revert intact. The daemon retains each
 source's accepted hash separately from the node's current content and retained
@@ -185,9 +185,12 @@ daemon connection is resolved.
 
 Periodic scans compare file identity, size, modification time, and native change
 time. Unchanged files keep their accepted hashes without rereading their bytes.
-An equal-length edit with a restored modification time changes the native change
-time, starts a new settle window in settled mode, and is then uploaded. In prompt
-mode, a notification hint can read that changed file sooner.
+An equal-length edit with a restored modification time starts a new settle
+window and uploads when the native change time reveals the edit. Some filesystems,
+including FAT/exFAT on Linux and rclone mounts, make change time follow
+modification time. On those filesystems, an edit that keeps the size and restores
+the modification time can go unseen while `push --watch` runs in settled mode.
+In prompt mode, a notification hint can read that changed file sooner.
 
 On filesystems that report no change time, periodic scans reread every file to
 detect these edits. Increase `--scan-interval` there to reduce disk activity for
@@ -206,8 +209,8 @@ requests a full scan. Native subscriptions use a 32,768-entry-unit budget:
 each admitted directory costs one plus its immediate entry count. A backend
 or budget failure closes subscriptions, reports degraded polling, and keeps
 periodic scans running. A directory that vanishes during enrollment is retried
-at the next periodic tick. Polling uses fingerprints and digest checks, so a later
-same-size, restored-mtime edit remains detectable while the client runs.
+at the next periodic tick. Polling uses the file metadata and digest checks
+described above, with the same change-time limits.
 
 Repeat `--exclude` for literal rules. A basename matches anywhere; a relative
 path excludes that entry and its descendants from the source root. These rules
