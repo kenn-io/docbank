@@ -168,14 +168,14 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 	opts SearchOptions, source SimilarSource, result *SimilarSearchResolution,
 ) error {
 	filter, args := searchFilterSQL(opts)
-	seenSets := make(map[string]struct{})
+	seenRows := make(map[semanticEligibilityKey]struct{})
 	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
-	byNode := make(map[int64]SemanticSearchCandidate)
+	byNode := make(map[int64]struct{})
 	groups := make(map[string]*SimilarSearchCandidate)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
 		members, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args,
-			semanticNeighborSetIDs(neighbors[walked:prefix], seenSets))
+			semanticNeighborKeys(neighbors[walked:prefix], seenRows))
 		if err != nil {
 			return err
 		}
@@ -189,10 +189,10 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 					continue
 				}
 				member.VaultID, member.VectorSpaceID, member.InputID, member.Score = s.vaultID, space, neighbor.InputKey, neighbor.Score
-				byNode[member.NodeID] = member
+				byNode[member.NodeID] = struct{}{}
 				group := groups[member.BlobHash]
 				if group == nil || member.Score > group.Score || (member.Score == group.Score &&
-					(member.modifiedAt < group.modifiedAt || (member.modifiedAt == group.modifiedAt && member.NodeID < group.NodeID))) {
+					compareDuplicateRepresentatives(member.modifiedAt, member.NodeID, group.modifiedAt, group.NodeID) < 0) {
 					groups[member.BlobHash] = &SimilarSearchCandidate{SemanticSearchCandidate: member}
 				}
 			}

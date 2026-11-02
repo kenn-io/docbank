@@ -61,6 +61,36 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	_, rows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
 	require.NoError(t, err)
 	assert.Len(t, rows, len(neighbors), "only scoring rows are deduplicated")
+	t.Run("many inputs load only requested identities", func(t *testing.T) {
+		tx, err := s.db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, tx.Rollback()) }()
+		// Extend the retained projections inside a rolled-back transaction.
+		for i := len(neighbors); i < 1000; i++ {
+			input := fmt.Sprintf("extra-%d", i)
+			_, err := tx.ExecContext(t.Context(), `INSERT INTO embedding_vector_rows VALUES (?,?,?,?,?,?)`, records[0].VectorSet.ID, input, i, input, 8, catalogSourceHash)
+			require.NoError(t, err)
+			for _, record := range records {
+				_, err := tx.ExecContext(t.Context(), `INSERT INTO embedding_generation_inputs VALUES (?,?,?,?)`, record.InputGeneration.ID, input, i, catalogSourceHash)
+				require.NoError(t, err)
+			}
+		}
+		seen := make(map[semanticEligibilityKey]struct{})
+		for i := range 2 {
+			keys := semanticNeighborKeys(neighbors[i:i+1], seen)
+			members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
+			require.NoError(t, err)
+			require.Len(t, members, 1, "a neighbor must not load the other inputs in its set")
+			require.Len(t, members[keys[0]], 3, "all document memberships of the requested row survive")
+		}
+		wrongChecksum := neighbors[0]
+		wrongChecksum.InputChecksum = catalogSourceHash
+		keys := semanticNeighborKeys([]vectorindex.Neighbor{wrongChecksum}, seen)
+		require.Len(t, keys, 1, "seen tracking includes the checksum")
+		members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
+		require.NoError(t, err)
+		require.Empty(t, members, "the checksum is part of row authority")
+	})
 	copyVersion, err := s.ContentVersionByID(t.Context(), versions[2])
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), copyVersion.NodeID, UnconditionalRev)
@@ -169,13 +199,15 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name          string
-		indexed       string
-		wantNodeNames []string
-		limit         int
+		name                  string
+		indexed               string
+		wantNodeNames         []string
+		limit                 int
+		excludeRepresentative bool
 	}{
 		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2},
 		{name: "representative past first prefix", indexed: "late", wantNodeNames: []string{"duplicate-a.jpg"}, limit: 1},
+		{name: "excluded representative past first prefix", indexed: "late", wantNodeNames: []string{"distinct.jpg"}, limit: 1, excludeRepresentative: true},
 		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,9 +291,13 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			}
 			assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
 
+			excluded := make(map[int64]struct{})
+			if tc.excludeRepresentative {
+				excluded[nodes[2].ID] = struct{}{}
+			}
 			resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
 				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
-				source.ManifestChecksum, neighbors, tc.limit, options, nil)
+				source.ManifestChecksum, neighbors, tc.limit, options, excluded)
 			require.NoError(t, err)
 			wantIDs := make([]int64, 0, len(tc.wantNodeNames))
 			for _, name := range tc.wantNodeNames {
@@ -277,8 +313,10 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 				gotIDs[index] = candidate.NodeID
 			}
 			assert.ElementsMatch(t, wantIDs, gotIDs)
-			assert.Equal(t, tc.indexed == "late", resolution.Truncated)
-			if tc.indexed == "late" {
+			assert.Equal(t, tc.indexed == "late" && !tc.excludeRepresentative, resolution.Truncated)
+			if tc.excludeRepresentative {
+				assert.Equal(t, 4, resolution.NextNeighbor)
+			} else if tc.indexed == "late" {
 				assert.Equal(t, 3, resolution.NextNeighbor)
 			}
 		})

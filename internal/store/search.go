@@ -921,12 +921,12 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 	var err error
 	filterSQL, filterArgs := searchFilterSQL(normalized)
 	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
-	seenSets := make(map[string]struct{})
+	seenRows := make(map[semanticEligibilityKey]struct{})
 	representatives := make(map[string]int64)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
 		members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-			filterSQL, filterArgs, semanticNeighborSetIDs(neighbors[walked:prefix], seenSets))
+			filterSQL, filterArgs, semanticNeighborKeys(neighbors[walked:prefix], seenRows))
 		if err != nil {
 			return err
 		}
@@ -1002,16 +1002,17 @@ type semanticEligibilityKey struct {
 	InputChecksum string
 }
 
-// semanticNeighborSetIDs returns only sets newly encountered in rank order.
-func semanticNeighborSetIDs(neighbors []vectorindex.Neighbor, seen map[string]struct{}) []string {
-	var ids []string
+// semanticNeighborKeys returns only rows newly encountered in rank order.
+func semanticNeighborKeys(neighbors []vectorindex.Neighbor, seen map[semanticEligibilityKey]struct{}) []semanticEligibilityKey {
+	var keys []semanticEligibilityKey
 	for _, neighbor := range neighbors {
-		if _, ok := seen[neighbor.SetID]; !ok {
-			seen[neighbor.SetID] = struct{}{}
-			ids = append(ids, neighbor.SetID)
+		key := semanticEligibilityKey{neighbor.SetID, neighbor.InputKey, neighbor.InputChecksum}
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			keys = append(keys, key)
 		}
 	}
-	return ids
+	return keys
 }
 
 // semanticMembershipSQL shares current-source and input authority across keyed
@@ -1059,9 +1060,9 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	args = append(args, filterArgs...)
 	order := ""
 	if representativeOrder {
-		order = " ORDER BY cv.blob_hash,n.modified_at,n.id"
+		order = " ORDER BY cv.blob_hash," + DuplicateRepresentativeOrder
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id,cv.blob_hash `+
+	rows, err := tx.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
 		semanticMembershipSQL(driver)+filterSQL+order, args...)
 	if err != nil {
 		return err
@@ -1080,9 +1081,9 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 }
 
 func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, vectorSetIDs []string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, keys []semanticEligibilityKey,
 ) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
-	encoded, err := json.Marshal(vectorSetIDs)
+	encoded, err := json.Marshal(keys)
 	if err != nil {
 		return nil, err
 	}
@@ -1093,7 +1094,8 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
 			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash,n.modified_at
-  `+semanticMembershipSQL(`FROM json_each(?) k CROSS JOIN embedding_sets es INDEXED BY embedding_sets_vector_set ON es.vector_set_id=k.value`)+
+  `+semanticMembershipSQL(`FROM json_each(?) k CROSS JOIN embedding_sets es INDEXED BY embedding_sets_vector_set ON es.vector_set_id=json_extract(k.value,'$.VectorSetID')`)+
+		` AND evr.input_id=json_extract(k.value,'$.InputID') AND evr.checksum=json_extract(k.value,'$.InputChecksum')`+
 		filterSQL+` ORDER BY es.vector_set_id,es.embedding_set_id`, args...)
 	if err != nil {
 		return nil, err
