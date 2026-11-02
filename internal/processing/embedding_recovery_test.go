@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/openaicompat"
+	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -31,12 +33,15 @@ type recoveryTextProvider struct {
 
 	endpoint  string
 	documents *atomic.Int64
+	calls     *atomic.Int64
 }
 
 func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) *recoveryTextProvider {
 	t.Helper()
 	var documents atomic.Int64
+	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		assert.Equal(t, "/v1/embeddings", r.URL.Path)
 		var input struct {
 			Input []string `json:"input"`
@@ -64,7 +69,7 @@ func newRecoveryProvider(t *testing.T, descriptor document.EmbeddingDescriptor) 
 	require.NoError(t, err)
 	provider, err := openaicompat.New(profile, nil, server.Client())
 	require.NoError(t, err)
-	return &recoveryTextProvider{recoveryEmbeddingProvider: provider, endpoint: server.URL, documents: &documents}
+	return &recoveryTextProvider{recoveryEmbeddingProvider: provider, endpoint: server.URL, documents: &documents, calls: &calls}
 }
 
 type embeddingRecoveryFixture struct {
@@ -445,4 +450,125 @@ func TestEmbeddingReuseRejectsInvalidRetainedEvidence(t *testing.T) {
 	require.Equal(t, "failed", status.State)
 	require.Equal(t, store.EmbeddingFailureInputRejected, status.FailureCode, "invalid retained evidence must fail like the provider path instead of retrying")
 	require.Zero(t, provider.documents.Load())
+}
+
+func TestSearchAllLiveEmptyScope(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"fresh without consent", "all trashed", "filter matches none", "populated without index"} {
+		t.Run(name, func(t *testing.T) {
+			f := newEmbeddingRecoveryFixture(t)
+			f.profile.Embeddings[0].Activation = document.EmbeddingRequired
+			if name != "all trashed" && name != "filter matches none" {
+				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+				f.catalog = catalog
+			} else if name == "all trashed" {
+				for _, path := range []string{"/source.pdf", "/document-0.pdf", "/document-1.pdf"} {
+					_, _, err := f.catalog.TrashPath(t.Context(), path)
+					require.NoError(t, err)
+				}
+			}
+			provider := newRecoveryProvider(t, f.request.Descriptor)
+			service := f.service(t, provider.Descriptor(), provider)
+			if name != "fresh without consent" {
+				f.grant(t, service, true)
+			}
+			if name == "populated without index" {
+				receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader("unprocessed synthetic text"))
+				require.NoError(t, err)
+				_, err = f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "unprocessed.txt", receipt.Hash, receipt.Size, "text/plain", processingBlobPhysical(t, receipt))
+				require.NoError(t, err)
+			}
+			filters := &store.SearchOptions{}
+			if name == "filter matches none" {
+				filters.MIMEType = "text/plain"
+			}
+			report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "hybrid", AllLive: filters})
+			if name == "populated without index" {
+				require.ErrorIs(t, err, store.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.Empty(t, report.Results)
+			assert.Empty(t, report.Degradations)
+			assert.Equal(t, retrieval.ModeHybrid, report.RequestedMode)
+			assert.Equal(t, retrieval.ModeHybrid, report.ActualMode)
+			assert.Equal(t, retrieval.Coverage{State: retrieval.CoverageComplete, BindingRequired: true}, report.Coverage)
+			assert.Zero(t, provider.calls.Load())
+		})
+	}
+	t.Run("without embedding bindings", func(t *testing.T) {
+		f := newEmbeddingRecoveryFixture(t)
+		f.profile.Embeddings = nil
+		for _, populated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("populated=%t", populated), func(t *testing.T) {
+				catalog := f.catalog
+				if !populated {
+					var err error
+					catalog, err = store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+				}
+				service, err := NewService(t.Context(), ServiceConfig{Catalog: catalog, Blobs: f.blobs,
+					Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(),
+					Profiles: map[string]ProfileConfig{"current": {Profile: f.profile, RenditionProvider: newWorkerProvider(t)}}})
+				require.NoError(t, err)
+				report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}})
+				require.ErrorContains(t, err, "semantic retrieval is not configured")
+				assert.Equal(t, retrieval.Report{}, report)
+				for _, mode := range []retrieval.Mode{retrieval.ModeLexical, retrieval.ModeAuto} {
+					t.Run(string(mode), func(t *testing.T) {
+						report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: string(mode), AllLive: &store.SearchOptions{}})
+						require.NoError(t, err)
+						assert.Equal(t, retrieval.ModeLexical, report.ActualMode)
+						assert.Equal(t, retrieval.Coverage{State: retrieval.CoverageUnknown}, report.Coverage)
+					})
+				}
+			})
+		}
+	})
+}
+
+func TestSearchAllLiveBeyondExplicitFenceLimit(t *testing.T) {
+	t.Parallel()
+	f := newEmbeddingRecoveryFixture(t)
+	f.profile.Embeddings[0].Activation = document.EmbeddingRequired
+	_, _, err := f.catalog.TrashPath(t.Context(), "/source.pdf")
+	require.NoError(t, err)
+	provider := newRecoveryProvider(t, f.request.Descriptor)
+	service := f.service(t, provider.Descriptor(), provider)
+	for _, id := range f.versions {
+		version, err := f.catalog.ContentVersionByID(t.Context(), id)
+		require.NoError(t, err)
+		selector := Selector{Profile: "current", NodeID: version.NodeID, ContentVersionID: id}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	f.grant(t, service, true)
+	receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader("unprocessed synthetic text"))
+	require.NoError(t, err)
+	for index := range 4097 {
+		_, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("extra-%d.txt", index), receipt.Hash, receipt.Size, "text/plain", processingBlobPhysical(t, receipt))
+		require.NoError(t, err)
+	}
+	request := SearchRequest{Profile: "current", Query: "synthetic", Mode: "semantic", AllLive: &store.SearchOptions{}}
+	report, err := service.Search(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	assert.Equal(t, 4099, report.Coverage.ScopedDocuments)
+	assert.Equal(t, 2, report.Coverage.CompleteDocuments)
+	assert.True(t, report.Coverage.BindingRequired)
+	assert.Equal(t, retrieval.CoverageState("incomplete"), report.Coverage.State)
+	for _, result := range report.Results {
+		assert.Contains(t, f.versions, result.Document.ContentVersionID)
+	}
+	request.AllLive = &store.SearchOptions{MIMEType: "application/pdf"}
+	report, err = service.Search(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 2, report.Coverage.ScopedDocuments)
+	assert.Equal(t, 2, report.Coverage.CompleteDocuments)
+	assert.Equal(t, retrieval.CoverageState("complete"), report.Coverage.State)
 }

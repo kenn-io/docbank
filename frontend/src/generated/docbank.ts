@@ -2301,6 +2301,29 @@ export interface DocumentSourceFence {
   vault_uid: string;
 }
 
+export interface DocumentSourceFenceFilters {
+  /** @maxLength 255 */
+  mime_type?: string;
+  modified_before?: string;
+  modified_since?: string;
+  source_present?: boolean;
+  tag_id?: string;
+  /** @minimum 1 */
+  under_node_id?: number;
+}
+
+export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
+
+
+export const DocumentSearchScopeKind = {
+  all_live: 'all_live',
+} as const;
+
+export interface DocumentSearchScope {
+  filters?: DocumentSourceFenceFilters;
+  kind: DocumentSearchScopeKind;
+}
+
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2308,7 +2331,7 @@ export interface DocumentSearchRequest {
   binding_id?: string;
   content_first?: boolean;
   explain?: boolean;
-  fence: DocumentSourceFence;
+  fence?: DocumentSourceFence;
   /**
      * @minimum 1
      * @maximum 100
@@ -2332,6 +2355,7 @@ export interface DocumentSearchRequest {
      */
   query: string;
   rerank?: boolean;
+  scope?: DocumentSearchScope;
 }
 
 export interface DocumentSearchValidation {
@@ -2452,17 +2476,6 @@ export interface DocumentSimilarRequest {
      */
   limit?: number;
   selector: ProcessingSelector;
-}
-
-export interface DocumentSourceFenceFilters {
-  /** @maxLength 255 */
-  mime_type?: string;
-  modified_before?: string;
-  modified_since?: string;
-  source_present?: boolean;
-  tag_id?: string;
-  /** @minimum 1 */
-  under_node_id?: number;
 }
 
 export interface ResolvedDocumentSourceFence {
@@ -19995,7 +20008,7 @@ export const getSearchDocumentsUrl = () => {
 }
 
 /**
- * @summary Search exact source-fenced document versions
+ * @summary Search document versions by fence or live scope
  */
 export const searchDocuments = async (documentSearchRequest: NonReadonly<DocumentSearchRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSearchReport> => {
 

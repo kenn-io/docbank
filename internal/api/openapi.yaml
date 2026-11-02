@@ -4516,11 +4516,12 @@ components:
           type: string
         rerank:
           type: boolean
+        scope:
+          $ref: "#/components/schemas/DocumentSearchScope"
       required:
         - query
         - mode
         - profile
-        - fence
       type: object
       x-go-type: api.DocumentSearchRequest
       x-go-type-import:
@@ -4594,6 +4595,22 @@ components:
         - evidence
       type: object
       x-go-type: api.DocumentSearchResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSearchScope:
+      additionalProperties: false
+      properties:
+        filters:
+          $ref: "#/components/schemas/DocumentSourceFenceFilters"
+        kind:
+          enum:
+            - all_live
+          type: string
+      required:
+        - kind
+      type: object
+      x-go-type: api.DocumentSearchScope
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -31310,7 +31327,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Search exact source-fenced document versions
+      summary: Search document versions by fence or live scope
   /api/v1/search-exports:
     get:
       operationId: listTermReportHistory

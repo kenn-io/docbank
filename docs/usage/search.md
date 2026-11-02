@@ -8,8 +8,8 @@ description: Choose automatic retrieval or an explicit profile and source-versio
 
 With no processing options, `docbank search renewal terms` tries hybrid
 search when a processing profile has a query embedding binding. The CLI
-resolves the current versions of all live files through the daemon; you do not
-need profile names or version UUIDs for this path. The daemon enforces query
+asks the daemon to search all live files; you do not need profile names or
+version UUIDs for this path. The daemon enforces query
 consent and index authority.
 
 The CLI runs ordinary lexical search after the hybrid attempt. Its results
@@ -23,16 +23,14 @@ full. The report is `truncated` when either search omitted a match.
 Profiles and query bindings are tried in ascending name order until one
 succeeds. A failure that could differ by binding moves on to the next pair:
 missing consent, `processing_failed`, `processing_profile_unavailable`,
-`stale_index`, or `not_found` from a binding whose vector index is not built. A failure of the whole source scope, such as
-`stale_version` or `scope_too_large`, stops at once. The CLI never silently
-truncates the semantic population; more than 4,096 live versions falls back
-with `scope_too_large`. When every pair fails, the command reports the first
-failure reason.
+`stale_index`, or `not_found` from a binding whose vector index is not built.
+A failure that applies to every binding stops at once. Automatic search uses
+the whole live population, subject to the vector generation size limit.
+When every pair fails, the command reports the first failure reason.
 
 Some requests never try hybrid search and report no degradation:
 
 - no profile has a query embedding binding, or processing is unavailable
-- the vault has no live files
 - a tag, directory, MIME, or modification filter, or `--fuzzy`
 - `--limit` above 100, the processing search maximum
 - query text longer than 8,192 Unicode characters, the processing maximum
@@ -160,6 +158,10 @@ for the fields and snapshot boundary. A direct-file-only embedding can produce
 a match without an excerpt, because Docbank kept no readable text to quote.
 
 ## Source-fenced consumer contract
+
+Callers may send `scope: {"kind":"all_live"}` with optional metadata filters
+instead of a source fence; Docbank selects the current live files on the server
+and applies that scope throughout retrieval and reranking.
 
 The source fence is the vault identity and content-version set the caller
 supplies. Docbank enforces it before retrieval, not as a filter on results. It

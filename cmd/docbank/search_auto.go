@@ -30,7 +30,7 @@ type automaticSearchOutcome struct {
 }
 
 // automaticSearchJSON adds folder name matches to the hybrid report, because
-// the hybrid source fence holds file content versions only.
+// hybrid search includes live files only.
 type automaticSearchJSON struct {
 	api.DocumentSearchReport `json:",inline"`
 
@@ -58,20 +58,10 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	if len(candidates) == 0 {
 		return automaticSearchOutcome{}, nil
 	}
-	scope, err := c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{
-		Filters: &api.DocumentSourceFenceFilters{},
-	})
-	if err != nil {
-		return automaticSearchFallback(ctx, err)
-	}
-	if len(scope.Fence.ContentVersionIDs) == 0 {
-		return automaticSearchOutcome{}, nil
-	}
-	fence := api.DocumentSourceFence{VaultUID: scope.Fence.VaultUID, ContentVersionIDs: scope.Fence.ContentVersionIDs}
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
+			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
 		}
@@ -131,8 +121,7 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 }
 
 // bindingSearchFailure reports whether another profile or binding could still
-// succeed. A binding without a built vector index reports not_found. Scope
-// failures such as stale_version repeat for every binding.
+// succeed. A binding without a built vector index reports not_found.
 func bindingSearchFailure(reason string) bool {
 	switch reason {
 	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found",
@@ -167,7 +156,7 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 	if searchAgent {
 		return writeDocumentSearchAgent(cmd, query, report, folders)
 	}
-	return writeDocumentSearchReport(cmd, report, false, folders)
+	return writeDocumentSearchReport(cmd, report, false, false, folders)
 }
 
 // writeSearchDegradation reports a failed hybrid attempt on stderr so stdout

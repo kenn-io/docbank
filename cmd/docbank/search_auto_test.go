@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,25 +17,25 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/processing"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 type automaticSearchCase struct {
-	name                                  string
-	query                                 string
-	profiles                              []api.ProcessingProfileSummary
-	profileError, scopeError, searchError string
-	empty, malformed, cold, mixed         bool
-	folderFirst, wantTruncated            bool
-	wantResults, wantFolders              int
-	jsonCLI, humanCLI, agentCLI           bool
-	limit                                 int
-	opts                                  daemonconn.SearchOptions
-	skipped, wantHybrid, wantDetail       bool
-	wantReason                            string
-	wantError                             bool
-	wantScope, wantSearch                 int
+	name                            string
+	query                           string
+	profiles                        []api.ProcessingProfileSummary
+	profileError, searchError       string
+	malformed, cold, mixed          bool
+	empty                           bool
+	folderFirst, wantTruncated      bool
+	wantResults, wantFolders        int
+	jsonCLI, humanCLI, agentCLI     bool
+	limit                           int
+	opts                            daemonconn.SearchOptions
+	skipped, wantHybrid, wantDetail bool
+	wantReason                      string
+	wantError                       bool
+	wantSearch                      int
 }
 
 func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
@@ -44,20 +45,21 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	}
 	cases := []automaticSearchCase{
 		{name: "source presence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{SourcePresent: true}, skipped: true},
-		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
-		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
-		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
-		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
-		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantTruncated: true},
-		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
-		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
-		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
+		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantSearch: 2, wantHybrid: true},
+		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
+		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
+		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
+		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantSearch: 1, wantHybrid: true, wantTruncated: true},
+		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
+		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true},
+		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
+		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
 		{name: "blank query", query: " ", profiles: profiles, limit: 50, skipped: true},
-		{name: "JSON fallback", profiles: profiles, limit: 50, jsonCLI: true, searchError: "processing_failed", wantScope: 1, wantSearch: 3, wantReason: "processing_failed"},
-		{name: "mixed fallback reasons", profiles: profiles, limit: 50, mixed: true, searchError: "processing_failed", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
-		{name: "human fallback", profiles: profiles, limit: 50, humanCLI: true, searchError: "processing_consent_required", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
-		{name: "agent fallback", profiles: profiles, limit: 50, agentCLI: true, searchError: "processing_consent_required", wantScope: 1, wantSearch: 3, wantReason: "processing_consent_required"},
+		{name: "JSON fallback", profiles: profiles, limit: 50, jsonCLI: true, searchError: "processing_failed", wantSearch: 3, wantReason: "processing_failed"},
+		{name: "mixed fallback reasons", profiles: profiles, limit: 50, mixed: true, searchError: "processing_failed", wantSearch: 3, wantReason: "processing_consent_required"},
+		{name: "human fallback", profiles: profiles, limit: 50, humanCLI: true, searchError: "processing_consent_required", wantSearch: 3, wantReason: "processing_consent_required"},
+		{name: "agent fallback", profiles: profiles, limit: 50, agentCLI: true, searchError: "processing_consent_required", wantSearch: 3, wantReason: "processing_consent_required"},
 		{name: "no profiles", limit: 50},
 		{name: "rendition only", profiles: []api.ProcessingProfileSummary{{Name: "text", Rendition: true}}, limit: 50},
 		{name: "processing disabled", profileError: "processing_unavailable", limit: 50},
@@ -70,23 +72,19 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "before", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{ModifiedBefore: "2026-01-01T00:00:00Z"}, skipped: true},
 		{name: "fuzzy", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{Fuzzy: true}, skipped: true},
 		{name: "large limit", profiles: profiles, limit: 101, skipped: true},
-		{name: "empty scope", profiles: profiles, limit: 50, empty: true, wantScope: 1},
-		{name: "large scope", profiles: profiles, limit: 50, scopeError: "scope_too_large", wantScope: 1, wantReason: "scope_too_large"},
-		{name: "source changed after resolution", profiles: profiles, limit: 50, searchError: "stale_version", wantScope: 1, wantSearch: 1, wantReason: "stale_version"},
-		{name: "foreign vault", profiles: profiles, limit: 50, searchError: "foreign_vault", wantScope: 1, wantSearch: 1, wantReason: "foreign_vault"},
-		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantScope: 1, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
-		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantScope: 1, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
+		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
+		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "auth discovery", profileError: "unauthorized", limit: 50, wantError: true},
-		{name: "auth search", profiles: profiles, limit: 50, searchError: "unauthorized", wantScope: 1, wantSearch: 1, wantError: true},
+		{name: "auth search", profiles: profiles, limit: 50, searchError: "unauthorized", wantSearch: 1, wantError: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.query == "" {
 				tc.query = "query words"
 			}
-			var profileCalls, scopeCalls, searchCalls int
+			var profileCalls, searchCalls int
 			var record kitdaemon.RuntimeRecord
-			server := httptest.NewServer(automaticSearchDaemon(t, tc, &record, &profileCalls, &scopeCalls, &searchCalls))
+			server := httptest.NewServer(automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls))
 			defer server.Close()
 			if tc.jsonCLI || tc.humanCLI || tc.agentCLI {
 				runAutomaticSearchCLI(t, tc, server.URL, &record)
@@ -109,20 +107,18 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 				}
 			}
 			assert.Equal(t, !tc.skipped, profileCalls == 1, "profile discovery")
-			assert.Equal(t, tc.wantScope, scopeCalls)
 			assert.Equal(t, tc.wantSearch, searchCalls)
 		})
 	}
 }
 
 func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaemon.RuntimeRecord,
-	profileCalls, scopeCalls, searchCalls *int,
+	profileCalls, searchCalls *int,
 ) http.HandlerFunc {
 	t.Helper()
 	const vault = "22222222-2222-4222-8222-222222222222"
 	problem := func(w http.ResponseWriter, code string) {
 		status := http.StatusInternalServerError
-		observed := 0
 		switch code {
 		case "unauthorized":
 			status = http.StatusUnauthorized
@@ -130,18 +126,11 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusServiceUnavailable
 		case "processing_consent_required":
 			status = http.StatusPreconditionRequired
-		case "stale_version":
-			status = http.StatusConflict
-		case "foreign_vault":
-			status = http.StatusUnprocessableEntity
 		case "not_found":
 			status = http.StatusNotFound
-		case "scope_too_large":
-			status = http.StatusUnprocessableEntity
-			observed = 4097
 		}
 		w.WriteHeader(status)
-		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private", ObservedScopeCount: observed}))
+		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private"}))
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -162,6 +151,9 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			if tc.folderFirst {
 				matches[0], matches[1] = matches[1], matches[0]
 			}
+			if tc.empty {
+				matches = nil
+			}
 			page := matches[:min(tc.limit, len(matches))]
 			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: tc.limit, Hits: page, Truncated: len(matches) > tc.limit}))
 		case "GET /api/v1/processing/profiles":
@@ -175,31 +167,15 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				listed[i].Fingerprint = strings.Repeat("a", 64)
 			}
 			assert.NoError(t, json.MarshalWrite(w, listed))
-		case "POST /api/v1/processing/source-fences/resolve":
-			*scopeCalls++
-			if tc.scopeError != "" {
-				problem(w, tc.scopeError)
-				return
-			}
-			var body api.DocumentSourceFenceResolveRequest
-			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
-			if !assert.NotNil(t, body.Filters) {
-				return
-			}
-			assert.Equal(t, api.DocumentSourceFenceFilters{}, *body.Filters)
-			assert.Empty(t, body.ContentVersionIDs)
-			ids := []string{processingTestVersionID}
-			if tc.empty {
-				ids = []string{}
-			}
-			fence := processing.SourceFence{VaultUID: vault, ContentVersionIDs: ids}
-			fp, err := processing.SourceFenceFingerprint(fence)
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: vault, ContentVersionIDs: ids}, FenceFingerprint: fp, ObservedScopeCount: len(ids)}))
 		case "POST /api/v1/search":
 			*searchCalls++
+			raw, err := io.ReadAll(r.Body)
+			assert.NoError(t, err)
+			var wire map[string]any
+			assert.NoError(t, json.Unmarshal(raw, &wire))
+			assert.NotContains(t, wire, "fence")
 			var body api.DocumentSearchRequest
-			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+			assert.NoError(t, json.Unmarshal(raw, &body))
 			assert.Equal(t, tc.query, body.Query)
 			assert.Equal(t, "hybrid", body.Mode)
 			expectedProfile, expectedBinding := "alpha", "a"
@@ -212,7 +188,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.Equal(t, expectedProfile, body.Profile)
 			assert.Equal(t, expectedBinding, body.BindingID)
 			assert.Equal(t, tc.limit, body.Limit)
-			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
+			assert.Equal(t, &api.DocumentSearchScope{Kind: "all_live"}, body.Scope)
 			switch {
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")
@@ -223,6 +199,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, tc.searchError)
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
+			case tc.empty:
+				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}))
 			default:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}
@@ -257,6 +235,9 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	defer rootCmd.SetArgs(nil)
 	require.NoError(t, rootCmd.ExecuteContext(context.Background()))
 	switch {
+	case tc.empty:
+		assert.Equal(t, "mode: hybrid\ncoverage: complete (0/0 source document(s) complete)\nno matches in the search scope\n", stdout.String())
+		assert.Empty(t, stderr.String())
 	case tc.agentCLI && tc.wantHybrid:
 		assert.Equal(t, "OK search count=2 query=\"query words\" mode=hybrid degraded=false truncated=false coverage=complete complete=1 scoped=1\n"+
 			"- selector=id:42 match=lexical score=0.75 path=/query.txt excerpt=\"query words\"\n"+
