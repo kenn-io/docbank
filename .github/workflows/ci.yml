@@ -8,13 +8,13 @@ permissions:
 
 jobs:
   push-stall:
-    name: Push stall ${{ matrix.load }} ${{ matrix.goarch }}
+    name: Push stall ${{ matrix.load }} temp ${{ matrix.tempdisk }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: windows-2025, goarch: amd64, load: quiet }
-          - { runner: windows-2025, goarch: amd64, load: loaded }
+          - { runner: windows-2025, goarch: amd64, load: loaded, tempdisk: C }
+          - { runner: windows-2025, goarch: amd64, load: loaded, tempdisk: D }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -36,6 +36,10 @@ jobs:
       - name: Run push test
         shell: pwsh
         run: |
+          if ('${{ matrix.tempdisk }}' -eq 'D') {
+            $env:TEMP = $env:RUNNER_TEMP
+            $env:TMP = $env:RUNNER_TEMP
+          }
           $load = $null
           if ('${{ matrix.load }}' -eq 'loaded') {
             $load = Start-Process -PassThru -NoNewWindow -FilePath go -ArgumentList @('test','-tags','fts5','-count=1','./internal/ingest/','./internal/mailbox/','./internal/pdfproduction/','./internal/checkout/') -RedirectStandardOutput load.out -RedirectStandardError load.err
