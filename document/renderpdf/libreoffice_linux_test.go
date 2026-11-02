@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
+
 	"go.kenn.io/docbank/document/internal/providerutil/sandbox"
 )
 
@@ -130,20 +132,6 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
-	hit := make(chan struct{}, 1)
-	go func() {
-		for {
-			connection, acceptErr := listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			select {
-			case hit <- struct{}{}:
-			default:
-			}
-			_ = connection.Close()
-		}
-	}()
 	httpTarget := "http://" + listener.Addr().String() + "/external.png"
 	fileTarget := "file://" + filepath.Join(t.TempDir(), "host-sentinel")
 	sentinelPath := strings.TrimPrefix(fileTarget, "file://")
@@ -153,11 +141,9 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 	policy.runner = runner
 	content := realDOCX(true, httpTarget, fileTarget)
 	result, err := Convert(t.Context(), testSource(t, content, docxMediaType), "docx", policy)
-	select {
-	case <-hit:
-		t.Fatal("LibreOffice reached the host listener")
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the sandbox keeps LibreOffice off the host listener
-	}
+	// Convert returns only after the sandbox's PID namespace is gone, so any
+	// connection LibreOffice made is already in the listener's accept queue.
+	assert.False(t, pendingConnection(t, listener), "LibreOffice reached the host listener")
 	contentAfter, readErr := os.ReadFile(sentinelPath)
 	require.NoError(t, readErr)
 	assert.Equal(t, []byte("host-only"), contentAfter)
@@ -202,8 +188,36 @@ func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
 	assert.Nil(t, result)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
-	waitForLibreOfficeExit(t, policy.renderer.Executable)
+	// The launcher is the sandbox's PID namespace init. The kernel kills and
+	// reaps every process in the namespace before Convert sees it exit.
 	assert.Empty(t, matchingLibreOfficePIDs(policy.renderer.Executable))
+}
+
+// pendingConnection reports, without blocking, whether a client connection is
+// waiting in the listener's accept queue.
+func pendingConnection(t *testing.T, listener net.Listener) bool {
+	t.Helper()
+	tcpListener, ok := listener.(*net.TCPListener)
+	require.True(t, ok)
+	raw, err := tcpListener.SyscallConn()
+	require.NoError(t, err)
+	pending := false
+	var acceptErr error
+	// Go keeps listener sockets non-blocking, so accept returns EAGAIN when
+	// the queue is empty.
+	require.NoError(t, raw.Control(func(fd uintptr) {
+		connection, _, err := unix.Accept4(int(fd), unix.SOCK_CLOEXEC)
+		if err != nil {
+			acceptErr = err
+			return
+		}
+		pending = true
+		_ = unix.Close(connection)
+	}))
+	if !pending {
+		require.ErrorIs(t, acceptErr, unix.EAGAIN)
+	}
+	return pending
 }
 
 func waitForLibreOfficeStart(t *testing.T, executable string) map[int]struct{} {
@@ -218,18 +232,6 @@ func waitForLibreOfficeStart(t *testing.T, executable string) map[int]struct{} {
 	}
 	t.Fatalf("LibreOffice did not start: executable=%s", executable)
 	return nil
-}
-
-func waitForLibreOfficeExit(t *testing.T, executable string) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(matchingLibreOfficePIDs(executable)) == 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond) //nolint:kennlint // sleeptest: polls /proc for a real LibreOffice process to exit
-	}
-	t.Fatalf("LibreOffice descendant survived cancellation: executable=%s pids=%v", executable, matchingLibreOfficePIDs(executable))
 }
 
 func matchingLibreOfficePIDs(executable string) map[int]struct{} {

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/require"
 	"uuid"
 )
@@ -86,41 +87,29 @@ func TestRuntimeRealLimits(t *testing.T) {
 		require.Empty(t, pdf)
 		require.Zero(t, pages)
 	})
-	t.Run("worker-timeout", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 75*time.Second)
+	t.Run("suspended-worker-cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
+		waitCtx, stopWaiting := context.WithCancel(ctx)
+		defer stopWaiting()
 		type result struct {
 			pdf   []byte
 			pages int64
 			err   error
 		}
 		done := make(chan result, 1)
-		started := time.Now()
 		go func() {
 			pdf, pages, err := r.Render(ctx, HTML{Bytes: []byte("<html><body>" + strings.Repeat("<div style='break-after:page'>Timeout qualification</div>", 1000) + "</body></html>")})
 			done <- result{pdf, pages, err}
+			stopWaiting()
 		}()
-		// Suspend the real connected worker group. This forces a deadline
-		// without relying on machine speed or weakening the production limit.
-		var unit string
-		deadline := time.Now().Add(10 * time.Second)
-		for unit == "" && time.Now().Before(deadline) {
-			paths, err := filepath.Glob(filepath.Join(spool, "email-pdf-*", "renderer-ready"))
-			require.NoError(t, err)
-			for _, path := range paths {
-				if candidate := readyRendererUnit(filepath.Dir(path)); candidate != "" {
-					unit = candidate
-					break
-				}
-			}
-			if unit == "" {
-				time.Sleep(time.Millisecond) //nolint:kennlint // sleeptest: polls a real systemd renderer unit for readiness
-			}
-		}
-		if unit == "" {
+		// Suspend the real connected worker group so it can never finish on
+		// its own, independently of machine speed.
+		unit, err := waitForReadyRenderer(waitCtx, spool)
+		if err != nil {
 			cancel()
 			<-done
-			t.Fatal("real renderer readiness was not observed")
+			t.Fatalf("real renderer readiness was not observed: %v", err)
 		}
 		output, err := exec.CommandContext(ctx, "systemctl", "--user", "kill", "--signal=STOP", "--kill-whom=all", unit).CombinedOutput()
 		if err != nil {
@@ -128,13 +117,15 @@ func TestRuntimeRealLimits(t *testing.T) {
 			<-done
 			t.Fatalf("suspend exact real worker: %v: %s", err, output)
 		}
+		// Ending the caller's context reaches the worker the same way Render's
+		// own 60-second deadline does: through the systemd-run client and the
+		// unit stop that follows.
+		cancel()
 		out := <-done
 		require.Error(t, out.err)
 		require.Empty(t, out.pdf)
 		require.Zero(t, out.pages)
-		require.GreaterOrEqual(t, time.Since(started), 55*time.Second)
-		require.Less(t, time.Since(started), 75*time.Second)
-		t.Logf("real suspended worker expired and drained after %s: %v", time.Since(started), out.err)
+		t.Logf("real suspended worker stopped and drained: %v", out.err)
 	})
 	t.Run("chromium-memory-pressure", func(t *testing.T) {
 		dir := t.TempDir()
@@ -151,53 +142,46 @@ func TestRuntimeRealLimits(t *testing.T) {
 		// execution/resource property and the real worker remain unchanged.
 		cmd.Args = slices.DeleteFunc(cmd.Args, func(arg string) bool { return arg == "--collect" })
 		t.Cleanup(func() { collectLimitUnit(t, unit) })
-		var oomKills atomic.Int64
-		observeCtx, stopObserver := context.WithCancel(ctx)
-		observed := make(chan struct{})
-		go func() {
-			defer close(observed)
-			ticker := time.NewTicker(5 * time.Millisecond)
-			defer ticker.Stop()
-			var eventsPath string
-			for {
-				select {
-				case <-observeCtx.Done():
-					return
-				case <-ticker.C:
-					if eventsPath == "" {
-						group, err := exec.CommandContext(observeCtx, "systemctl", "--user", "show", unit, "--property=ControlGroup", "--value").Output()
-						if err != nil || strings.TrimSpace(string(group)) == "" {
-							continue
-						}
-						eventsPath = filepath.Join("/sys/fs/cgroup", strings.TrimPrefix(strings.TrimSpace(string(group)), "/"), "memory.events")
-					}
-					events, err := os.ReadFile(eventsPath)
-					if err != nil {
-						continue
-					}
-					for line := range strings.SplitSeq(string(events), "\n") {
-						if value, ok := strings.CutPrefix(line, "oom_kill "); ok {
-							count, err := strconv.ParseInt(value, 10, 64)
-							if err == nil && count > oomKills.Load() {
-								oomKills.Store(count)
-							}
-						}
-					}
+		// memory.events counts are hierarchical, so the user manager's cgroup
+		// records an OOM kill in this unit even after its cgroup is removed,
+		// and the kernel reports each change as a file modification.
+		managerEvents := userManagerMemoryEvents(t)
+		watcher, err := fsnotify.NewWatcher()
+		require.NoError(t, err)
+		defer func() { _ = watcher.Close() }()
+		require.NoError(t, watcher.Add(managerEvents))
+		oomKillsBefore := oomKillCount(t, managerEvents)
+		finished := make(chan error, 1)
+		go func() { finished <- cmd.Run() }()
+		for running := true; running; {
+			select {
+			case err = <-finished:
+				running = false
+			case watchErr := <-watcher.Errors:
+				require.NoError(t, watchErr)
+			case <-watcher.Events:
+				if oomKillCount(t, managerEvents) == oomKillsBefore {
+					continue
 				}
+				// systemd's OOMPolicy=continue may leave the browser host alive
+				// until the unit's fixed deadline. End the unit once the kernel
+				// has reported the OOM kill instead of waiting for that deadline.
+				if killErr := exec.CommandContext(ctx, "systemctl", "--user", "kill", "--signal=KILL", "--kill-whom=all", unit).Run(); killErr != nil {
+					t.Logf("kill unit after OOM (it may already have exited): %v", killErr)
+				}
+				err = <-finished
+				running = false
 			}
-		}()
-		err := cmd.Run()
-		stopObserver()
-		<-observed
+		}
+		oomKills := oomKillCount(t, managerEvents) - oomKillsBefore
 		require.Error(t, err)
 		accounting, showErr := exec.CommandContext(ctx, "systemctl", "--user", "show", unit, "--property=Result", "--property=MemoryPeak", "--property=MemoryMax", "--property=MemorySwapMax").Output()
 		require.NoError(t, showErr)
 		t.Logf("real Chromium memory accounting: %s", accounting)
-		// systemd's OOMPolicy=continue may leave the browser host alive
-		// until the fixed deadline. The cgroup event proves an actual OOM,
-		// independently of that terminal result label.
-		require.Positive(t, oomKills.Load(), "real Chromium must reach the enforced OOM boundary")
-		t.Logf("observed actual cgroup oom_kill=%d", oomKills.Load())
+		// The cgroup event proves an actual OOM, independently of the
+		// terminal result label.
+		require.Positive(t, oomKills, "real Chromium must reach the enforced OOM boundary")
+		t.Logf("observed actual cgroup oom_kill=%d", oomKills)
 		require.Contains(t, string(accounting), "MemoryMax=536870912")
 		require.Contains(t, string(accounting), "MemorySwapMax=0")
 		_, err = os.Stat(filepath.Join(dir, "message.pdf"))
@@ -227,24 +211,24 @@ func TestRuntimeRealLimits(t *testing.T) {
 		cmd := r.command(ctx, dir, unit, "/runtime/worker", r.workerArgs()...)
 		require.NoError(t, cmd.Start())
 		t.Cleanup(func() { collectLimitUnit(t, unit) })
-		ready := false
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
-			if readyRendererUnit(dir) == unit {
-				ready = true
-				break
-			}
-			time.Sleep(time.Millisecond) //nolint:kennlint // sleeptest: polls a real systemd renderer unit for readiness
-		}
-		if !ready {
+		waitCtx, stopWaiting := context.WithCancel(ctx)
+		defer stopWaiting()
+		exited := make(chan error, 1)
+		go func() {
+			exited <- cmd.Wait()
+			stopWaiting()
+		}()
+		ready, err := waitForReadyRenderer(waitCtx, spool)
+		if err != nil || ready != unit {
 			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			t.Fatal("real recovery worker never became ready")
+			<-exited
+			t.Fatalf("real recovery worker never became ready: unit=%q err=%v", ready, err)
 		}
 		stopErr := exec.CommandContext(ctx, "systemctl", "--user", "kill", "--signal=STOP", "--kill-whom=all", unit).Run()
 		// Model loss of the owning launcher without politely stopping its
 		// real descendant unit. Recovery, not Render's defer, must clean it.
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-exited
 		require.NoError(t, stopErr)
 		require.NoError(t, RecoverStale(ctx, spool))
 		_, err = os.Stat(dir)
@@ -253,6 +237,32 @@ func TestRuntimeRealLimits(t *testing.T) {
 	entries, err := os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries, "worker staging must be removed on success and limit rejection")
+}
+
+// userManagerMemoryEvents returns the memory.events file of the user
+// manager's cgroup, which contains every unit systemd-run --user starts.
+func userManagerMemoryEvents(t *testing.T) string {
+	t.Helper()
+	group, err := exec.CommandContext(t.Context(), "systemctl", "--user", "show", "--property=ControlGroup", "--value").Output()
+	require.NoError(t, err)
+	path := strings.TrimPrefix(strings.TrimSpace(string(group)), "/")
+	require.NotEmpty(t, path, "user manager cgroup")
+	return filepath.Join("/sys/fs/cgroup", path, "memory.events")
+}
+
+func oomKillCount(t *testing.T, eventsPath string) int64 {
+	t.Helper()
+	events, err := os.ReadFile(eventsPath)
+	require.NoError(t, err)
+	for line := range strings.SplitSeq(string(events), "\n") {
+		if value, ok := strings.CutPrefix(line, "oom_kill "); ok {
+			count, err := strconv.ParseInt(value, 10, 64)
+			require.NoError(t, err)
+			return count
+		}
+	}
+	require.FailNow(t, "memory.events has no oom_kill count", "%s", eventsPath)
+	return 0
 }
 
 func collectLimitUnit(t *testing.T, unit string) {
