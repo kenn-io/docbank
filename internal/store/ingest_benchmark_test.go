@@ -28,7 +28,7 @@ func BenchmarkResolveIngestName(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				name, _, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), "new.bin",
-					fmt.Sprintf("%064x", siblings+1), "cli")
+					fmt.Sprintf("%064x", siblings+1), "cli", "new.bin")
 				require.NoError(b, err)
 				require.False(b, skipped)
 				require.Equal(b, "new.bin", name)
@@ -72,7 +72,7 @@ func BenchmarkResolveIngestNameSharedContent(b *testing.B) {
 				b.Run(tc.label, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						name, id, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), tc.name, fakeHash("a1"), "cli")
+						name, id, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), tc.name, fakeHash("a1"), "cli", tc.name)
 						if err != nil || id != tc.existingID || skipped != (tc.existingID != 0) ||
 							(!skipped && name != tc.name) {
 							b.Fatalf("resolved name=%q id=%d skipped=%v err=%v", name, id, skipped, err)
