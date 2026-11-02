@@ -202,20 +202,19 @@ func TestParkOutsideAWorkerNeverWakes(t *testing.T) {
 	resume()
 }
 
-func TestSettleCountsReportedBusyWorkAsFound(t *testing.T) {
+func TestSettleCountsReportedFoundWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := New(t.Context(), discardLogger())
 		var queued, handled, handedOff atomic.Int64
 		require.NoError(t, s.StartWorker("reporter", func(ctx context.Context) error {
 			for {
 				if pending := queued.Load() - handled.Load(); pending > 0 {
-					ReportBusy(ctx, true)
 					time.Sleep(time.Second)
 					handled.Add(pending)
 					handedOff.Add(pending)
-					ReportBusy(ctx, false)
+					ReportFound(ctx)
 				}
-				// The worker never passes found; ReportBusy carries it.
+				// The worker never passes found; ReportFound carries it.
 				if err := Idle(ctx, time.Hour, false); err != nil {
 					return err
 				}
@@ -235,6 +234,25 @@ func TestSettleCountsReportedBusyWorkAsFound(t *testing.T) {
 		queued.Add(1)
 		require.NoError(t, s.Settle(t.Context()))
 		assert.Equal(t, int64(1), received.Load())
+		require.NoError(t, s.Shutdown(t.Context()))
+	})
+}
+
+func TestSettleIgnoresBusyReportsWithoutWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := New(t.Context(), discardLogger())
+		require.NoError(t, s.StartWorker("always-busy", func(ctx context.Context) error {
+			for {
+				// A pass that reports busy but finds nothing must not keep
+				// Settle running forever.
+				ReportBusy(ctx, true)
+				ReportBusy(ctx, false)
+				if err := Idle(ctx, time.Hour, false); err != nil {
+					return err
+				}
+			}
+		}))
+		require.NoError(t, s.Settle(t.Context()))
 		require.NoError(t, s.Shutdown(t.Context()))
 	})
 }

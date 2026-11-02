@@ -56,6 +56,16 @@ type state struct {
 type reportErrorKey struct{}
 type reportBusyKey struct{}
 type idleKey struct{}
+type reportFoundKey struct{}
+
+// ReportFound records that a worker did work, for a worker whose waits are far
+// from the work, so it parks with found set to false. Settle then runs another
+// round. Calls outside a job started with StartWorker have no effect.
+func ReportFound(ctx context.Context) {
+	if report, ok := ctx.Value(reportFoundKey{}).(func()); ok {
+		report()
+	}
+}
 
 // Idle waits delay before a polling worker polls again, or until ctx ends.
 // found reports whether the polls since the worker last waited did any work.
@@ -150,8 +160,7 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 }
 
 // StartWorker starts a long-lived polling worker that waits in Idle or Park
-// between polls. Settle waits until every such worker finds no more work. A
-// worker that reports busy with ReportBusy counts as having found work.
+// between polls. Settle waits until every such worker finds no more work.
 func (s *Supervisor) StartWorker(name string, run func(context.Context) error) error {
 	return s.start(name, run, false, true)
 }
@@ -205,14 +214,15 @@ func (s *Supervisor) run(job *state, run func(context.Context) error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		job.Busy = busy
-		if busy && job.worker {
-			// Work reported between parks keeps Settle going for another round.
-			s.roundFound = true
-		}
 	})
 	if job.worker {
 		ctx = context.WithValue(ctx, idleKey{}, func(found bool) (<-chan struct{}, func()) {
 			return s.park(job, found)
+		})
+		ctx = context.WithValue(ctx, reportFoundKey{}, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.roundFound = true
 		})
 	}
 	runErr = run(ctx)

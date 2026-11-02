@@ -127,6 +127,9 @@ func runBackupSchedule(ctx context.Context, d Deps, schedule *backupSchedule) er
 		jobs.ReportBusy(ctx, true)
 		deadline, attempted, err := schedule.capture(ctx, d, d.Logger, cfg, captureDue)
 		jobs.ReportBusy(ctx, false)
+		if attempted {
+			jobs.ReportFound(ctx)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -192,7 +195,7 @@ func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time
 }
 
 func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
-	// A capture reports busy, so Settle learns about it without a found flag.
+	// runBackupSchedule reports each capture with jobs.ReportFound.
 	settle, resume := jobs.Park(ctx, false)
 	defer resume()
 	timer := time.NewTimer(delay)
