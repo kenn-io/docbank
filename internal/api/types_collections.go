@@ -1,6 +1,9 @@
 package api
 
-import "go.kenn.io/docbank/internal/store"
+import (
+	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/store"
+)
 
 // Collection is one document-bearing ingest run and its current live summary.
 // LabelRevision advances independently of member observations.
@@ -14,6 +17,8 @@ type Collection struct {
 	Label             *string `json:"label"`
 	LabelRevision     int64   `json:"label_revision" minimum:"1"`
 	LabelUpdatedAt    string  `json:"label_updated_at" format:"date-time"`
+
+	URLFetch *ingest.URLFetch `json:"url_fetch,omitempty"`
 }
 
 // CollectionPage is one bounded, newest-first page of nonempty collections.
@@ -45,7 +50,8 @@ type CollectionLabel struct {
 
 func fromStoreCollection(collection store.Collection) Collection {
 	return Collection{
-		ID: collection.ID, SourceKind: collection.SourceKind,
+		URLFetch: ingest.ParseURLFetch(collection.SourceKind, collection.SourceDescription),
+		ID:       collection.ID, SourceKind: collection.SourceKind,
 		SourceDescription: collection.SourceDescription, StartedAt: collection.StartedAt,
 		FileCount: collection.FileCount, TotalBytes: collection.TotalBytes,
 		Label: collection.Label, LabelRevision: collection.LabelRevision,

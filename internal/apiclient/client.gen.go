@@ -16,6 +16,7 @@ import (
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
+	ingest "go.kenn.io/docbank/internal/ingest"
 	kataclient "go.kenn.io/docbank/internal/kataclient"
 	kataevidence "go.kenn.io/docbank/internal/kataevidence"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
@@ -26686,6 +26687,9 @@ type RenameTagHeaders struct {
 }
 
 type UploadFileHeaders struct {
+	// XDocbankURLFetch JSON URL fetch evidence
+	XDocbankURLFetch *string `json:"X-Docbank-URL-Fetch,omitempty"`
+
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 
@@ -28090,8 +28094,11 @@ type ListTrashQuery struct {
 }
 
 type UploadFileQuery struct {
+	// ParentPath Absolute destination directory path; creates missing parents; exclusive with parent_id
+	ParentPath *string `json:"parent_path,omitempty"`
+
 	// ParentID Stable destination directory node ID
-	ParentID int64 `json:"parent_id"`
+	ParentID *int64 `json:"parent_id,omitempty"`
 
 	// Name Virtual filename; must equal the multipart filename
 	Name string `json:"name"`
@@ -31309,6 +31316,8 @@ type TrashPathRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Path   string  `json:"path"`
 }
+
+type URLFetch = ingest.URLFetch
 
 type UnassignTagPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.

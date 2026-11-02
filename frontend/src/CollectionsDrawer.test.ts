@@ -387,19 +387,40 @@ describe("collections drawer", () => {
   });
 });
 
+const urlFetch = {
+  version: 1,
+  requested_url: "https://example.com/filing.pdf?edition=1",
+  final_url: "https://example.com/filing.pdf",
+  fetched_at: "2026-10-01T12:34:56Z",
+};
 it.each([
-  String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
-  String.raw`["/synthetic/reports", "/synthetic/reports"]`,
-])("shows the source description verbatim: %s", async (description) => {
+  {
+    source: {
+      ...collection,
+      source_description: String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
+    },
+    display: String.raw`["/synthetic/\a", "/synthetic/\\U0001f4c4"]`,
+  },
+  {
+    source: {
+      ...collection,
+      source_description: String.raw`["/synthetic/reports", "/synthetic/reports"]`,
+    },
+    display: String.raw`["/synthetic/reports", "/synthetic/reports"]`,
+  },
+  {
+    source: {
+      ...collection,
+      source_kind: "url",
+      source_description: JSON.stringify(urlFetch),
+      url_fetch: urlFetch,
+    },
+    display: urlFetch.requested_url,
+  },
+])("shows the source description: $display", async ({ source, display }) => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (String(input).includes("/members?"))
-      return json({
-        collection: { ...collection, source_description: description },
-        items: [],
-        total: 0,
-        limit: 100,
-        offset: 0,
-      });
+      return json({ collection: source, items: [], total: 0, limit: 100, offset: 0 });
     if (String(input).endsWith("/label"))
       return json(
         {
@@ -410,12 +431,7 @@ it.each([
         },
         '"3"',
       );
-    return json({
-      items: [{ ...collection, source_description: description }],
-      total: 1,
-      limit: 100,
-      offset: 0,
-    });
+    return json({ items: [source], total: 1, limit: 100, offset: 0 });
   });
   render(CollectionsDrawer, {
     session: "synthetic",
@@ -423,8 +439,8 @@ it.each([
     onauthfailure: vi.fn(),
     onopenmember: vi.fn(),
   });
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Browse import Discovery batch" }),
-  );
-  expect(await screen.findByText(description)).toBeTruthy();
+  const row = await screen.findByRole("button", { name: "Browse import Discovery batch" });
+  expect(row.getAttribute("title")).toBe(display);
+  await fireEvent.click(row);
+  expect(await screen.findByText(display)).toBeTruthy();
 });

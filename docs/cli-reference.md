@@ -380,6 +380,7 @@ than translating process exits back into HTTP status.
 ```
 docbank document add <path>... [--dest <virtual-dir>] [--include <pattern>]... [--exclude <pattern>]... [--replace] [--progress auto|bar|plain] [--json]
 docbank document add <path>... --preflight [--include <pattern>]... [--exclude <pattern>]... [--json]
+docbank document add <https-url> [--dest <virtual-dir>] [--allow-http] [--max-bytes <bytes>] [--progress auto|bar|plain] [--json]
 ```
 
 Imports files or directory trees into the vault. Sources are copied,
@@ -394,6 +395,10 @@ never modified or deleted.
 | `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
 | `--json` | false | Emit only the terminal preflight or ingest report as JSON; suppress progress |
 | `--progress` | `auto` | Human ingest progress: `auto`, `bar`, or durable `plain` lines |
+| `--allow-http` | false | Permit HTTP for a URL download and its redirects |
+| `--max-bytes` | `100000000` | URL download byte cap; positive and at most the ingest limit |
+
+URL imports accept one HTTP(S) URL, with HTTPS required unless `--allow-http` is set. The same rule applies to every redirect, with a ten-redirect ceiling. Downloads have no total timeout and honor cancellation. Responses must be HTTP 200 and fit within the cap before import. Filters, `--preflight`, and `--replace` are local-only. See [URL imports](usage/importing.md#import-from-a-url) for naming, skips, and fetch provenance.
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.

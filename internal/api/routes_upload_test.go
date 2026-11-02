@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -20,10 +22,12 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
 type uploadRequest struct {
+	urlFetch     string
 	name         string
 	filename     string
 	content      []byte
@@ -58,6 +62,10 @@ func sendUpload(
 	require.NoError(t, writer.Close())
 
 	query := url.Values{"parent_id": {strconv.FormatInt(parentID, 10)}, "name": {in.name}}
+	if in.parentPath != "" {
+		query.Del("parent_id")
+		query.Set("parent_path", in.parentPath)
+	}
 	route := "/api/v1/uploads"
 	if in.pushName != "" {
 		route = "/api/v1/push/uploads"
@@ -76,6 +84,9 @@ func sendUpload(
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if in.urlFetch != "" {
+		req.Header.Set("X-Docbank-Url-Fetch", in.urlFetch)
+	}
 	req.Header.Set(api.BlobHashHeader, in.expectedHash)
 	req.Header.Set(api.BlobSizeHeader, strconv.FormatInt(in.expectedSize, 10))
 	resp, err := client.Do(req)
@@ -105,7 +116,7 @@ func TestUploadCreatesReceiptAndIdempotentRetry(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var added api.UploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &added))
-	assert.NotContains(t, body, `"ingest_id"`)
+	assert.NotEmpty(t, added.IngestID)
 	assert.Equal(t, "added", added.Status)
 	assert.Equal(t, in.expectedHash, added.ComputedHash)
 	assert.Equal(t, in.expectedSize, added.ComputedSize)
@@ -171,7 +182,10 @@ func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		{name: "digest", mutate: func(in *uploadRequest) { in.expectedHash = uploadIdentity([]byte("other")) },
+		{name: "digest", mutate: func(in *uploadRequest) {
+			in.expectedHash = uploadIdentity([]byte("other"))
+			in.parentPath = "/missing/nested"
+		},
 			wantCode: "digest_mismatch", wantStatus: http.StatusUnprocessableEntity},
 		{name: "short size", mutate: func(in *uploadRequest) { in.expectedSize-- },
 			wantCode: "size_mismatch", wantStatus: http.StatusUnprocessableEntity},
@@ -194,6 +208,10 @@ func TestUploadRejectsMismatchedEvidenceWithoutAuthority(t *testing.T) {
 			assert.Contains(t, body, fmt.Sprintf(`"code":%q`, tt.wantCode))
 			_, err := s.NodeByPath(t.Context(), "/rejected.txt")
 			require.ErrorIs(t, err, store.ErrNotFound)
+			if in.parentPath != "" {
+				_, err := s.NodeByPath(t.Context(), "/missing")
+				require.ErrorIs(t, err, store.ErrNotFound)
+			}
 			blobs, err := s.AllBlobs(t.Context())
 			require.NoError(t, err)
 			assert.Empty(t, blobs, "failed upload must grant no blob authority")
@@ -395,4 +413,57 @@ func TestPushRoutesRefuseTheNameOfAConfiguredWatch(t *testing.T) {
 	blobs, err := s.AllBlobs(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, blobs)
+}
+
+func TestUploadURLMapsFetchEvidence(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	content := []byte("URL evidence")
+	fetch := `{"version":1,"requested_url":"https://example.com/download?q=1","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56.123Z","etag":"V/8=","last_modified":"c2VydmVyIHN1cHBsaWVkIHRleHQ="}`
+	in := uploadRequest{name: "filing.txt", content: content, expectedHash: uploadIdentity(content), expectedSize: int64(len(content)), urlFetch: fetch, parentPath: "/missing/nested"}
+	rejected := in
+	rejected.urlFetch = strings.Replace(fetch, `"version":1`, `"version":2`, 1)
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), rejected)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var receipt api.UploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	resp, body = get(t, ts, fmt.Sprintf("/api/v1/nodes/%d/provenance", receipt.Node.ID), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.ProvenancePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, fetch, page.Items[0].SourceDescription)
+	expected := &ingest.URLFetch{Version: 1, RequestedURL: "https://example.com/download?q=1", FinalURL: "https://example.com/filing.txt", FetchedAt: "2026-10-01T12:34:56.123Z", ETag: []byte{'W', 0xff}, LastModified: []byte("server supplied text")}
+	assert.Equal(t, expected.RequestedURL, page.Items[0].OriginalPath)
+	assert.Equal(t, expected, page.Items[0].URLFetch)
+	resp, body = get(t, ts, "/api/v1/collections", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var collections api.CollectionPage
+	require.NoError(t, json.Unmarshal([]byte(body), &collections))
+	require.Len(t, collections.Items, 1)
+	assert.Equal(t, fetch, collections.Items[0].SourceDescription)
+	assert.Equal(t, expected, collections.Items[0].URLFetch)
+	assert.Equal(t, receipt.IngestID, collections.Items[0].ID)
+}
+
+func TestUploadRequiresOneDestination(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	for _, query := range []string{"parent_id=1&parent_path=/", "parent_path=relative", "parent_id=0", ""} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/uploads?name=filing.txt&"+query, strings.NewReader(""))
+		require.NoError(t, err)
+		req.Header.Set(api.BlobHashHeader, uploadIdentity(nil))
+		req.Header.Set(api.BlobSizeHeader, "0")
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, query)
+		if query == "parent_path=relative" {
+			assert.Contains(t, string(body), "valid absolute virtual path without dot segments")
+		}
+	}
 }

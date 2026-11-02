@@ -45,6 +45,8 @@ Key assumptions reviewers MUST account for:
    multi-tenant concerns. DO flag any path that would serve without an
    effective key, accept a non-loopback bind without an explicit key, or
    treat a wildcard bind as an arbitrary-Host allowance.
+   Vault data and provenance share the owner's authority; retaining
+   owner-supplied values grants no additional reader access.
 
 5. DAEMON COMPATIBILITY: data commands accept only a daemon runtime
    record carrying this binary's protocol revision and an effective API
