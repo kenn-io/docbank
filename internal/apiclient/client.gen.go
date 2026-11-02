@@ -2282,6 +2282,46 @@ func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequ
 	return responseParser(ctx, resp)
 }
 
+// VaultChanges Read resumable vault changes
+func (c *Client) VaultChanges(ctx context.Context, options *VaultChangesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VaultChangesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/changes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VaultChangesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VaultChangesResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[VaultChangesErrorResponse](resp, "VaultChangesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/changes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListCollections List document-bearing ingest runs, newest first
 func (c *Client) ListCollections(ctx context.Context, options *ListCollectionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCollectionsResponse, error) {
 	var err error
@@ -17315,6 +17355,37 @@ func (o *PlanBatesStampRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// VaultChangesRequestOptions is the options needed to make a request to VaultChanges.
+type VaultChangesRequestOptions struct {
+	Query *VaultChangesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *VaultChangesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *VaultChangesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *VaultChangesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *VaultChangesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListCollectionsRequestOptions is the options needed to make a request to ListCollections.
 type ListCollectionsRequestOptions struct {
 	Query *ListCollectionsQuery
@@ -27773,6 +27844,11 @@ type ListBatesNamespacesQuery struct {
 	Limit  *int64  `json:"limit,omitempty"`
 }
 
+type VaultChangesQuery struct {
+	After  *string `json:"after,omitempty"`
+	Follow *bool   `json:"follow,omitempty"`
+}
+
 type ListCollectionsQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
@@ -28267,6 +28343,12 @@ type PlanBatesStampResponse = api.BatesPlan
 
 type PlanBatesStampErrorResponse = Error
 
+type VaultChangesResponse = []byte
+
+type VaultChangesErrorResponse api.Error
+
+type VaultChangesErrorResponseApplicationProblemPlusJSON api.Error
+
 type ListCollectionsResponse = api.CollectionPage
 
 type ListCollectionsErrorResponse = Error
@@ -28389,6 +28471,7 @@ type GetExportJobEventsErrorResponse struct {
 	BackupForget *BackupForgetReport `json:"backup_forget,omitempty"`
 	BackupPrune  *BackupPruneReport  `json:"backup_prune,omitempty"`
 	Code         *string             `json:"code,omitempty"`
+	Cursor       *string             `json:"cursor,omitempty"`
 	Detail       *string             `json:"detail,omitempty"`
 	Errors       []string            `json:"errors,omitempty"`
 	FaceIds      []string            `json:"face_ids,omitempty"`

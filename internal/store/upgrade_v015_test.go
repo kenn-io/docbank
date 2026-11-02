@@ -50,6 +50,11 @@ func newReleasedFixtureStore(t *testing.T, path string, driver docsqlite.Driver,
 	db, err := driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// Current writers need a feed scratch table. Keep it connection-local so
+	// closing the builder leaves only the exact released schema on disk.
+	db.SetMaxOpenConns(1)
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE vault_changes(seq INTEGER PRIMARY KEY,kind TEXT,node_id INTEGER,node_revision INTEGER)`)
+	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,?)`, releasedFixtureVaultID, version)

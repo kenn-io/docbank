@@ -2064,16 +2064,13 @@ func insertRenditionAttachmentAndHeadTx(
 	if binding, err := emailPDFBinding(normalized.Profile); err != nil {
 		return err
 	} else if binding != nil {
+		if inserted != 0 {
+			return recordProcessedTx(ctx, tx, normalized.ContentVersionID, "")
+		}
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-		VALUES(?,?,?,?)
-		ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-			attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
-		head.ContentVersionID, head.ProcessingProfileFingerprint,
-		head.AttachmentID, head.PublishedAt); err != nil {
-		return fmt.Errorf("publishing rendition head: %w", err)
+	if err := publishRenditionHeadTx(ctx, tx, head); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
 		WHERE content_version_id=? AND profile_fingerprint=? AND EXISTS (

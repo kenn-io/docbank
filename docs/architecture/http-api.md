@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-01
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -22,6 +22,14 @@ starting point.
 | When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
 | Which credentials does a request need? | [Authentication](#auth) |
 | How do I handle a failed request? | [Error mapping](#error-mapping) |
+
+## Vault change feed
+
+`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`. Each change record is `{"type":"change","change":{"cursor":"…","kind":"created","node_id":2,"revision":1}}`. A finite drain ends with `{"type":"result","cursor":"…"}`; EOF before that record means the drain was interrupted. The result cursor marks the final snapshot head, including an empty drain. Both parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown. Cancellation interrupts blocked writes; ordinary slow readers have no write timeout.
+
+The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
+
+A `processed` event announces completed publication for a current live document. Timeline and attribution first publications and changed checksums or states emit; identical results and freshness-only refreshes stay silent. Invalidation and explicit derivative purge stay silent; a later successful republication emits when its prior head is absent. Email inventory head changes and new terminal body results each emit an event. A body changing from pending to unavailable counts. Source-metadata publication compares evidence checksums; an extractor fingerprint change with identical facts stays silent. Dismissed or fully filtered photo descriptions and unchanged or fully protected face results stay silent.
 
 ## Mailbox imports and explicit EML transfers
 
