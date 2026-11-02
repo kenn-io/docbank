@@ -41,7 +41,8 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 			// Bulk inserts keep setup bounded without disabling foreign keys.
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				_, err := tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
-					INSERT INTO content_versions
+					INSERT INTO content_versions (version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
+					introduced_operation_id,transition_kind,source_version_id)
 					SELECT printf('%064x',i),node_id,blob_hash,size,mime_type,recorded_at,i+1,
 					printf('%064x',i),'content_replace',NULL
 					FROM seq CROSS JOIN content_versions WHERE version_id=$2`, sets-1, retained.CurrentVersionID)
@@ -49,7 +50,9 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 					return err
 				}
 				_, err = tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
-					INSERT INTO embedding_input_generations
+					INSERT INTO embedding_input_generations (generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,
+					source_version_id,profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
+					chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at)
 					SELECT printf('%064x',i),generation_blob_hash,generation_encoded_size,generation_checksum,
 					printf('%064x',i),profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
 					chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at
@@ -57,14 +60,15 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 				if err != nil {
 					return err
 				}
-				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_generation_inputs
+				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_generation_inputs (generation_id,input_id,input_order,rendered_checksum)
 					SELECT g.generation_id,i.input_id,i.input_order,i.rendered_checksum
 					FROM embedding_input_generations g CROSS JOIN embedding_generation_inputs i
 					WHERE g.generation_id<>$1 AND i.generation_id=$1`, record.InputGeneration.ID)
 				if err != nil {
 					return err
 				}
-				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_sets
+				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_sets (embedding_set_id,vault_uid,binding_id,input_kind,content_version_id,
+					profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,vector_set_id,created_at)
 					SELECT g.generation_id,s.vault_uid,s.binding_id,s.input_kind,g.source_version_id,
 					s.profile_fingerprint,s.embedding_input_fingerprint,s.vector_space_id,g.generation_id,s.vector_set_id,s.created_at
 					FROM embedding_input_generations g CROSS JOIN embedding_sets s
@@ -72,7 +76,8 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 				if err != nil {
 					return err
 				}
-				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_heads
+				_, err = tx.ExecContext(ctx, `INSERT INTO embedding_heads (content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
+					profile_fingerprint,published_at,fencing_token)
 					SELECT content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
 					profile_fingerprint,created_at,1 FROM embedding_sets`)
 				return err
