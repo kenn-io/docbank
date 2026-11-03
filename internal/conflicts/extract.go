@@ -856,9 +856,15 @@ var estimatedLabelRE = regexp.MustCompile(`(?i)(?:^|,|\b(?:and|but|while)\s+|\bf
 var estimatedSubjectRE = regexp.MustCompile(`(?i)(?:^|,|\b(?:and|but|while)\s+|\bfor\s+[\p{L}]+(?:\s+[\p{L}]+)*\s+)[\s(["'‘’“”]*(?:(?:the|a|an|your|our|their|his|her|its|my)\s+)?estimated\s+([\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*)\s+(?:is|are|was|were|will\s+be)\s*$`)
 
 var independentNominalRE = regexp.MustCompile(`(?i)\b(?:changed|applies|increased|decreased|expired|ended|is|are|was|were)\s+and\b|\band\s+(?:the|a|an)\s+`)
+var independentFigureAssertionRE = regexp.MustCompile(`(?i)\band\s+(?:(?:the|a|an)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|will\s+be)\b`)
 
 func nominalSubjectMatches(re *regexp.Regexp, s string) bool {
 	match := re.FindString(s)
+	if re == nominalBoundSubjectRE {
+		if figure := figureAssertionRE.FindStringIndex(match); figure != nil && independentFigureAssertionRE.MatchString(match[figure[1]:]) {
+			return false
+		}
+	}
 	seen := false
 	for word := range strings.FieldsSeq(strings.ToLower(match)) {
 		if seen && (slices.Contains([]string{"but", "while", "or"}, word) || word == andWord && independentNominalRE.MatchString(match)) {
@@ -979,13 +985,13 @@ func splitClauses(s string) []clause {
 	}
 	for i := 0; i < len(s); {
 		r, n := utf8.DecodeRuneInString(s[i:])
-		if strings.HasPrefix(s[i:], "...") {
-			emit(i, true)
-			for i < len(s) && s[i] == '.' {
-				i++
+		if normalizedPunctuation(r) == '.' {
+			if end, ok := ellipsisRunEnd(s, i); ok {
+				emit(i, true)
+				i = end
+				start = i
+				continue
 			}
-			start = i
-			continue
 		}
 		if r == '…' {
 			emit(i, true)
@@ -1030,6 +1036,19 @@ func splitClauses(s string) []clause {
 	}
 	emit(len(s), false)
 	return out
+}
+
+func ellipsisRunEnd(s string, start int) (int, bool) {
+	end, dots := start, 0
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if normalizedPunctuation(r) != '.' {
+			break
+		}
+		end += size
+		dots++
+	}
+	return end, dots >= 3
 }
 
 func sentenceEndPunctuation(r rune) bool {
@@ -1475,7 +1494,7 @@ func unsafeCandidates(s string, checks, cs []candidate) bool {
 	})
 }
 
-var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:` + number + `)\b`)
+var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:` + number + `)\b`)
 
 var comparativeRE = regexp.MustCompile(`(?i)^[\s()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+)[\s(["'‘’“”«»]*$`)
 

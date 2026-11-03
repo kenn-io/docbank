@@ -469,6 +469,8 @@ func TestExtractEllipses(t *testing.T) {
 		{"last fragment", "...The period is 7 days.", []bool{true}},
 		{"joined fragments", "The period is 7 days... The fee is $5.", []bool{true, true}},
 		{"longer dot run", "The period is 7 days.... The fee is $5.", []bool{true, true}},
+		{"fullwidth trailing dots", "The fee is $5．．．", []bool{true}},
+		{"fullwidth joined fragments", "The period is 7 days．．． The fee is $5.", []bool{true, true}},
 		{"complete surrounding clauses", "The wait is 1 day. ... The period is 7 days. The fee is $5.", []bool{false, true, false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -485,6 +487,30 @@ func TestExtractEllipses(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractOmitsRateComparisonsWithCurrencyOperands(t *testing.T) {
+	for _, text := range []string{
+		"The fee is $5/month < $10/month.",
+		"The fee is $5/month < EUR 10/month.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("unsupported comparison produced exact figures: %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractNominalBoundsPreserveIndependentAmounts(t *testing.T) {
+	for _, text := range []string{
+		"The minimum fee is five dollars and shipping is $7.",
+		"The maximum fee is five dollars and shipping is $7.",
+	} {
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Qualifier != "" {
+			t.Errorf("nominal bound swallowed independent amount %q: %+v", text, got)
+		}
+	}
+}
+
 func FuzzExtract(f *testing.F) {
 	f.Add("The wait is " + strings.Repeat("9", 128) + " weeks.")
 	f.Add("The wait is 7 days - 10 days.")
@@ -494,6 +520,8 @@ func FuzzExtract(f *testing.F) {
 		"Wait is twenty-one days.", "Wait is thirty-one days.", "Wait is 10-7 days.",
 		"Wait is 20-1 days.", "Wait is 7-10 days.", "The period isn’t 7 days.", "The period is 7 days...", "...The period is 7 days.", "From １ July ２０２６ the fee is $5 per 2 months.", "Wait is ½ day.", "Cost is $1/2.", "The wait cannot be 7 days.", "Wait is 7 days approximately.", "Account number: 1234 5678.", "The fee is $7 and 2 devices are included.", "Policy: USD1234A.", "The fee is $fourteen.",
 		"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", "From 1 July 2026 the fee is $5． The deposit is $7.", "The fee is $5 approximately per 2 devices.",
+		"The fee is $5/month < $10/month.", "The fee is $5/month < EUR 10/month.", "The fee is $5．．．",
+		"The minimum fee is five dollars and shipping is $7.", "The maximum fee is five dollars and shipping is $7.",
 		"The wait is max. ７ days.", "Policy Ｎｏ. is $1234.", "The fee is $5 more or less per 2 devices.", "The fee is $5 (approximately) per 2 devices.", "The fee is 5% of $100 per month and $200 per year."} {
 		f.Add(s)
 	}
