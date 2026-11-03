@@ -27,8 +27,11 @@
     <span class="title">{name}</span>
     {#if folder}<span class="folder"><bdi>{folder}</bdi></span>{/if}
     {#if excerpt}<span class="excerpt">{excerpt}</span>{/if}
-    {#if validityReason}<span class="validity-reason" title={validityReasonTitle}
-        >{validityReason}</span
+    {#if validityReason}<span
+        class="validity-reason"
+        title={validityReasonTitle && validityReasonTitle !== validityReason
+          ? validityReasonTitle
+          : undefined}>{validityReason}</span
       >{/if}
   </span>
 </span>
