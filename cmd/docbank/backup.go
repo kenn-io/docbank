@@ -19,6 +19,8 @@ import (
 )
 
 var backupCmd = &cobra.Command{
+	Example: `  docbank backup init --repo ~/backup
+  docbank backup create --repo ~/backup`,
 	Long: `Snapshots go to a backup repository directory, given by --repo on every
 subcommand or once in $DOCBANK_HOME/config.toml ([backup] repo = "/path").
 Typical flow: backup init -> backup create -> backup list -> backup verify;
@@ -219,7 +221,7 @@ var (
 
 var backupListCmd = &cobra.Command{
 	Example: `  docbank backup list --repo ~/docbank-backup --json`,
-	Use:     "list",
+	Use:     listCommand,
 	Short:   "List backup snapshots",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -326,7 +328,7 @@ var (
 
 var backupRestoreCmd = &cobra.Command{
 	Example: `  docbank backup restore --repo ~/docbank-backup --target ~/restored-vault
-  DOCBANK_HOME=~/restored-vault docbank info`,
+  DOCBANK_HOME=~/restored-vault docbank vault info`,
 	Long: `Restores the latest snapshot unless <snapshot> (from backup list) is given.
 The target must be empty unless --overwrite.`,
 	Use:   "restore [<snapshot>]",

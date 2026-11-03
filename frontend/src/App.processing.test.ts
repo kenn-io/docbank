@@ -205,6 +205,8 @@ it.each(["header", "text"] as const)("opens exact-version processing from %s", a
   expect(enter.defaultPrevented).toBe(false);
   await fireEvent.click(similarButton);
   expect(await screen.findByRole("region", { name: "Similar documents" })).toBeTruthy();
+  await fireEvent.doubleClick(similarButton);
+  expect(screen.queryByRole("dialog", { name: "Read report.pdf" })).toBeNull();
 });
 
 it.each([false, true])(

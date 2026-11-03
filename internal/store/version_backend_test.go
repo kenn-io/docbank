@@ -20,12 +20,14 @@ const (
 	historyTime    = "2026-01-01T00:00:00.000000000Z"
 )
 
-func TestContentVersionQueriesSQLite(t *testing.T) {
+func checkContentVersionQueriesSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkContentVersionQueries(t, newTestStore(t))
 }
 
-func TestContentVersionQueriesPostgres(t *testing.T) {
+func checkContentVersionQueriesPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkContentVersionQueries(t, newPostgresQueryStore(t))
 }
@@ -122,7 +124,8 @@ func checkContentVersionQueries(t *testing.T, s *Store) {
 	require.Equal(t, historyFirst, view.Version.ID)
 }
 
-func TestContentVersionSnapshotPostgres(t *testing.T) {
+func checkContentVersionSnapshotPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	s := newPostgresQueryStore(t)

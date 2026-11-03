@@ -25,7 +25,7 @@ func TestStartProcessingJobsRegistersEmailWithoutRenditionRuntime(t *testing.T) 
 	require.NoError(t, err)
 	layout := home.Layout{Root: root}
 	require.NoError(t, layout.Ensure())
-	catalog, err := store.Open(layout.DBPath())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())

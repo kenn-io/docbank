@@ -42,8 +42,8 @@ are crashes, stale process state, PID reuse, accidental damage, and serving an
 object whose identity is false—not an adversary already able to rewrite the
 user's vault.
 
-The runtime record contains PID, process create-time, endpoint, build version,
-protocol revision, shutdown token, and effective API key. Create-time prevents
+The runtime record contains PID, Kit process identity, endpoint, build version,
+protocol revision, shutdown token, and effective API key. Process identity prevents
 a stale record from targeting a reused PID. The record is runtime state, not
 archive state.
 
@@ -266,7 +266,7 @@ the index to existing vaults on open; query results and job history are unchange
 
 ### Content-hash references
 
-`GET /api/v1/content-references` and `docbank refs` return retained logical
+`GET /api/v1/content-references` and `docbank document refs` return retained logical
 versions of the selected content, including history and trash. The lookup
 counts and orders matching version identities before loading full metadata,
 checksums, and live paths for the selected page. Both the total and page come
@@ -307,13 +307,15 @@ and client limits.
 
 ### Photo browsing and preview reads
 
-`POST /api/v1/photos/assets/query` accepts raw strict QueryV1 JSON, coverage selection, a page size, optional signed cursor, `projection` and `hidden` flag. Ordinary pages allow up to 250 rows. `projection: "map"` allows up to 1,000 rows per page. Hidden queries require a current unlock and bind that visibility in the cursor. The shared query resolver and compiler evaluate ordinary predicates against each current live member and photo metadata predicates against the selected display file. Store projects those matches to included assets with a live display member. The first page counts the entire population in the same lexical-generation read snapshot; signed cursors retain that total for later live pages. Sorting starts from indexed capture, import, name, modification, size or media-type keys, then checks only each candidate asset's members. Capture sort keys and local capture dates are projected once from validated source metadata. Optional content duplicate collapse runs after photo scoping and before asset projection.
+`POST /api/v1/photos/assets/query` accepts a strict QueryV1 `query`, coverage selection, a page size, optional `cursor`, `snapshot_id`, `stacks`, `projection`, and `hidden` flag. Ordinary pages allow up to 250 rows. `projection: "map"` allows up to 1,000 rows per page. Hidden queries require a current unlock and bind that visibility in the cursor. The shared query resolver and compiler evaluate ordinary predicates against each current live member and photo metadata predicates against the selected display file. Store projects those matches to included assets with a live display member. The first live page counts the entire population in the same lexical-generation read snapshot; signed cursors retain that total for later live pages. Sorting starts from indexed capture, import, name, modification, size or media-type keys, then checks only each candidate asset's members. Capture sort keys and local capture dates are projected once from validated source metadata. Optional content duplicate collapse runs after photo scoping and before asset projection.
 
 `POST /api/v1/photos/assets/flags` accepts up to 20,000 asset IDs and returns one flag row per live, visible, included asset. A missing ID means the asset is unavailable.
 
 Display facts come from the persisted display file. Capture keys call `document.EventAxisKey` through the shared query adapter registered in both SQLite drivers. Capture evidence retains its precision and explicit or omitted timezone. Missing, unreadable or out-of-domain capture keys sort last. Asset UUID breaks equal keys in ascending order. Keyset cursors bind canonical intent, dependency revisions, coverage and page size through the existing document cursor signing service.
 
-Relevance builds one ordered asset snapshot through `QuerySnapshotService`, with its shared admission limits, thirty-second build deadline and session ownership. Filename matches precede metadata matches, then content-only matches; each group uses its own score. Facets count the complete photo scope in the same build. Signed photo cursors wrap the snapshot ID and signed offset, bind the query, coverage, hidden flag, facets and page size, and hydrate current display facts in frozen asset order. Every hidden page checks the current unlock. Expired or revoked snapshots return `cursor_expired` so clients can replay the search. Other sorts keep live keyset paging.
+Lexical relevance returns one bounded page without a continuation cursor. Semantic and hybrid retrieval freeze ranked membership through `QuerySnapshotService`, with shared admission limits, a thirty-second build deadline, and session ownership. These searches use relevance descending. Responses carry `snapshot_id`, `member_hash`, and an optional offset cursor. Continuation sends both `snapshot_id` and `cursor`; the service checks the query fingerprint, coverage, page size, and projection, then hydrates current display facts in frozen asset order. An empty cursor with a snapshot ID reopens its first page. Missing, expired, or revoked snapshots return `snapshot_gone`. Responses report `requested_mode`, `actual_mode`, `fallback_reason`, `truncated`, and `coverage_incomplete`. Visible metadata fallback also freezes matching membership in a snapshot under the shared admission limits, with up to 250 ranked matches per page before whole-stack expansion. Selection, export, albums, and Cull use the captured asset IDs whenever the view holds a snapshot. Hidden always uses live lexical fallback with `hidden_photos`. Other live sorts keep signed keyset paging.
+
+With `stacks: true`, capture-time pages include whole bursts and may exceed the page size by 499 frames. Relevance groups returned matches at each burst's best-ranked member. Ranked snapshot pages hydrate every live display row of each intersecting captured stack, with its chosen representative first at that position. Continuations can repeat member IDs; the browser deduplicates them. Map ignores stacks.
 
 `GET /api/v1/photos/assets/{asset_id}/previews/{generation_id}` checks included live display membership and the exact retained generation in one read transaction, then either returns `304` for a matching generation validator or reads and verifies the complete bounded JPEG bytes. Both success responses use the generation ETag. Visible previews use `private, no-cache`; hidden previews require a current unlock before ETag handling and use `no-store`. Responses vary by Cookie and credential headers. A byte response also includes Content-Digest, exact length and `nosniff`. Recipe discovery reads recorded outcomes without generating derivatives. Missing is absence; ready, unsupported and failed remain separate states.
 
@@ -449,9 +451,12 @@ codes and never include provider bodies, credentials, query text, or excerpts.
 The browser offers Plain words and Query syntax. The TUI exposes Names and
 text, Auto, Lexical, Semantic, and Hybrid as processing choices. TUI Auto maps
 to Hybrid only when an embedding binding is present; API Auto remains lexical.
-Semantic and Hybrid requests require a binding. Every processing search resolves one complete live source fence,
-validates its sorted UUIDv4 IDs, observed count, and vault-bound fingerprint,
-then hydrates only live nodes whose current content version matches the result.
+Semantic and Hybrid requests require a binding. TUI and web natural searches
+send `scope: {"kind":"all_live"}` to select live files on the server using
+optional metadata filters. Explicit fenced searches keep their live source
+fence with sorted UUIDv4 IDs, an observed count, and a vault-bound fingerprint.
+Both paths hydrate only live nodes whose current content version matches the
+result.
 Clients may send `rerank: true` after base results are available; the daemon
 returns a bounded reranking receipt for that opt-in request.
 

@@ -1,68 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import type { DocumentSearchRequest } from "./generated/docbank.js";
-import { validateDocumentSearchReport, validateDocumentSourceFenceResolution } from "./receipts.js";
+import type { DocumentSearchReport, DocumentSearchRequest } from "./generated/docbank.js";
+import { validateDocumentSearchReport } from "./receipts.js";
 
 const vault = "11111111-1111-4111-8111-111111111111";
 const versions = ["22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"];
-const crossLanguageFingerprint =
-  "sha256:3c2a6756783fd03230bb89fe15de79ba10b3a6c1511d56be4042994e66d707cc";
-const emptyFenceFingerprint =
-  "sha256:460b958d02d96944be00a74a720c0b8af0248239d91c4351141b65d4b9551700";
-
-function fenceFingerprint(vaultID: string, ids: string[]): string {
-  const bytes = [...utf8ToBytes("docbank-document-source-fence/v1")];
-  const add = (value: number) =>
-    bytes.push((value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255);
-  add(vaultID.length);
-  bytes.push(...utf8ToBytes(vaultID));
-  add(ids.length);
-  for (const id of [...ids].sort()) {
-    add(id.length);
-    bytes.push(...utf8ToBytes(id));
-  }
-  return `sha256:${bytesToHex(sha256(new Uint8Array(bytes)))}`;
-}
-
 describe("processing receipts", () => {
-  it("accepts sorted IDs and the empty fence", () => {
-    expect(
-      validateDocumentSourceFenceResolution({
-        fence: { vault_uid: vault, content_version_ids: versions },
-        observed_scope_count: 2,
-        fence_fingerprint: crossLanguageFingerprint,
-      }).fence.content_version_ids,
-    ).toEqual(versions);
-    expect(
-      validateDocumentSourceFenceResolution({
-        fence: { vault_uid: vault, content_version_ids: [] },
-        observed_scope_count: 0,
-        fence_fingerprint: emptyFenceFingerprint,
-      }).fence.content_version_ids,
-    ).toEqual([]);
-  });
-
-  it("rejects unsorted IDs and a fingerprint for another version set", () => {
-    const valid = {
-      fence: { vault_uid: vault, content_version_ids: versions },
-      observed_scope_count: 2,
-      fence_fingerprint: crossLanguageFingerprint,
-    };
-    expect(() =>
-      validateDocumentSourceFenceResolution({
-        ...valid,
-        fence: { ...valid.fence, content_version_ids: [...versions].reverse() },
-      }),
-    ).toThrow(/The daemon returned an invalid source fence/);
-    expect(() =>
-      validateDocumentSourceFenceResolution({
-        ...valid,
-        fence_fingerprint: emptyFenceFingerprint,
-      }),
-    ).toThrow(/The daemon returned an invalid source fence/);
-  });
-
   it("requires a valid reranking receipt only for opted-in requests", () => {
     const request: DocumentSearchRequest = {
       query: "synthetic description",
@@ -157,33 +99,6 @@ describe("processing receipts", () => {
     const { media_sources: _, ...ordinary } = request;
     expect(() => validateDocumentSearchReport(report("b".repeat(64)), ordinary)).toThrow();
   });
-
-  it("accepts the 4096-ID fence and rejects the 4097-ID boundary", () => {
-    const ids = Array.from(
-      { length: 4096 },
-      (_, index) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
-    );
-    const valid = {
-      fence: { vault_uid: vault, content_version_ids: ids },
-      observed_scope_count: 4096,
-      fence_fingerprint: "sha256:cbf7dadb0ffdefd1c5024235dfdfdfe835766bc44fa5bc6654ec561df8b11872",
-    };
-    expect(validateDocumentSourceFenceResolution(valid).fence.content_version_ids).toHaveLength(
-      4096,
-    );
-    const oversizedIDs = [...ids, "00000000-0000-4000-8000-000000001000"];
-    expect(() =>
-      validateDocumentSourceFenceResolution({
-        ...valid,
-        fence: {
-          ...valid.fence,
-          content_version_ids: oversizedIDs,
-        },
-        observed_scope_count: 4097,
-        fence_fingerprint: fenceFingerprint(vault, oversizedIDs),
-      }),
-    ).toThrow(/The daemon returned an invalid source fence/);
-  });
 });
 
 describe("search result authority", () => {
@@ -197,7 +112,7 @@ describe("search result authority", () => {
     profile: "private",
     fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
   };
-  const valid = () => ({
+  const valid = (): DocumentSearchReport => ({
     requested_mode: "semantic",
     actual_mode: "semantic",
     coverage: {
@@ -234,6 +149,18 @@ describe("search result authority", () => {
       },
     ],
   });
+  it("accepts scoped hits and coverage beyond the version-list bound", () => {
+    const scoped = { ...request, fence: undefined, scope: { kind: "all_live" as const } };
+    const report = valid();
+    report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
+    report.results[0]!.vault_uid = "66666666-6666-4666-8666-666666666666";
+    report.coverage.scoped_documents = 5000;
+    report.coverage.complete_documents = 5000;
+    expect(validateDocumentSearchReport(report, scoped).results).toHaveLength(1);
+    report.results[0]!.vault_uid = "invalid";
+    expect(() => validateDocumentSearchReport(report, scoped)).toThrow();
+  });
+
   it.each([
     [
       "foreign vault",
@@ -310,12 +237,42 @@ describe("search result authority", () => {
     });
   });
 
+  it("accepts image evidence while rejecting rendition fields", () => {
+    const report = valid();
+    const evidence = report.results[0]!.evidence[0]!;
+    evidence.input_kind = "image";
+    evidence.build_id = "";
+    expect(validateDocumentSearchReport(report, request).results[0]!.evidence[0]!.input_kind).toBe(
+      "image",
+    );
+    evidence.build_id = "f".repeat(64);
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+    evidence.build_id = "";
+    Object.assign(evidence, { time_span: { start_ms: 0, end_ms: 1000 } });
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(/invalid search response/);
+  });
+
   it("accepts rendition-chunk embedding evidence with a build and time span", () => {
     const report = valid();
     const mediaIdentity = { build_id: "f".repeat(64), time_span: { start_ms: 1000, end_ms: 2000 } };
     Object.assign(report.results[0]!.evidence[0]!, mediaIdentity);
     expect(validateDocumentSearchReport(report, request)).toMatchObject({
       results: [{ evidence: [mediaIdentity] }],
+    });
+  });
+
+  it("accepts lexical fallback for a hybrid request with an image-only profile", () => {
+    const hybridRequest = { ...request, mode: "hybrid" as const, profile: "images" };
+    const report = valid();
+    report.requested_mode = "hybrid";
+    report.actual_mode = "lexical";
+    report.results[0]!.semantic_rank = 0;
+    report.results[0]!.lexical_rank = 1;
+    report.results[0]!.evidence = [{ kind: "node_name" }];
+    expect(validateDocumentSearchReport(report, hybridRequest)).toMatchObject({
+      requested_mode: "hybrid",
+      actual_mode: "lexical",
+      results: [{ lexical_rank: 1, path: "/visible.pdf" }],
     });
   });
 });

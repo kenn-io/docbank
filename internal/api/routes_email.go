@@ -84,7 +84,7 @@ func handleEnsureEmailMetadata(w http.ResponseWriter, r *http.Request, d Deps, g
 		return
 	}
 	var view store.EmailMetadataView
-	err = g.mutate(func() error {
+	err = g.mutate(r.Context(), func() error {
 		if d.EnsureEmail == nil {
 			return errors.New("email processing is not configured")
 		}

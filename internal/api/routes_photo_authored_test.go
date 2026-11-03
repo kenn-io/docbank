@@ -26,7 +26,7 @@ func photoXMPResolveFixture(t *testing.T, caption string) (*httptest.Server, str
 	if caption != "" {
 		packet = strings.Replace(packet, `/>`, ` xmlns:dc="http://purl.org/dc/elements/1.1/" dc:description="Outside"/>`, 1)
 	}
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic JPEG"))
 	require.NoError(t, err)
 	photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func photoXMPResolveFixture(t *testing.T, caption string) (*httptest.Server, str
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, hash, processing.SourceMetadataExtractorFingerprint, canonical)
 	require.NoError(t, err)
-	hash, size, err = s.Blobs.Write(strings.NewReader(packet))
+	hash, size, err = s.Blobs.WriteContext(t.Context(), strings.NewReader(packet))
 	require.NoError(t, err)
 	sidecar, err := s.CreateFile(ctx, s.RootID(), "photo.jpg.xmp", hash, size, "application/rdf+xml")
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestPhotoAuthoredRoutes(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic JPEG"))
 	require.NoError(t, err)
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestPhotoStackDecisionBounds(t *testing.T) {
 	// the store without creating 2,000 live targets.
 	for _, tc := range []struct{ size, status int }{{576 << 10, http.StatusConflict}, {(576 << 10) + 1, http.StatusRequestEntityTooLarge}} {
 		payload := string(encoded) + strings.Repeat(" ", tc.size-len(encoded))
-		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		res, err := ts.Client().Do(req)

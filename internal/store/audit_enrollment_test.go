@@ -12,7 +12,7 @@ import (
 
 func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -33,7 +33,7 @@ func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
 	assert.Equal(t, [5]int64{1, 1, 1, 3, 8}, counts)
 
 	var raw string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT record_json FROM audit_records WHERE kind='canonical_mutation'`,
 	).Scan(&raw))
 	mutation, err := audit.UnmarshalJSONRecord([]byte(raw))
@@ -53,13 +53,13 @@ func TestInitializeAuditAuthorityCreatesValidatedClosedSet(t *testing.T) {
 
 func TestInitializeAuditAuthorityRollsBackPartialWrite(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
 	target, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_membership
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_membership
 		BEFORE INSERT ON audit_memberships BEGIN
 		SELECT RAISE(ABORT, 'forced enrollment failure'); END`)
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestInitializeAuditAuthorityRollsBackPartialWrite(t *testing.T) {
 
 func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -89,13 +89,13 @@ func TestInitializeAuditAuthorityRejectsInvalidTargetsWithoutAuthority(t *testin
 
 func TestInitializeAuditAuthorityRejectsInvalidMetadataAndRollsBack(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
 	target, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE sqlite_sequence SET seq=5 WHERE name='nodes'`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE sqlite_sequence SET seq=5 WHERE name='nodes'`)
 	require.NoError(t, err)
 
 	_, err = s.initializeAuditAuthority(t.Context(), target.ID, "cli", nil)

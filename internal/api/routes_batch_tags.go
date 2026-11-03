@@ -59,7 +59,7 @@ func registerBatchTagRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Assign or remove one tag across an atomic selected set", MaxBodyBytes: 1 << 20,
 	}, func(ctx context.Context, in *struct{ Body BatchTagRequest }) (*struct{ Body BatchTagReceipt }, error) {
 		var receipt store.BatchTagReceiptV1
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			receipt, err = d.Store.BatchTags(ctx, store.BatchTagRequest{
 				OperationID: in.Body.OperationID, TagID: in.Body.TagID, Assign: in.Body.Assign,

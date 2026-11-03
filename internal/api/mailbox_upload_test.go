@@ -107,7 +107,7 @@ func TestMailboxUploadsOutliveRequestTimeout(t *testing.T) {
 					_, err := stream.Write([]byte(raw))
 					_ = stream.CloseWithError(err)
 				}()
-				request := httptest.NewRequest(method, "http://localhost"+endpoint, reader)
+				request := httptest.NewRequestWithContext(t.Context(), method, "http://localhost"+endpoint, reader)
 				request.Header = headers
 				response := httptest.NewRecorder()
 				catalog.Server.Handler().ServeHTTP(response, request)

@@ -17,8 +17,8 @@ func init() {
 	var paper string
 	var overwrite bool
 	command := &cobra.Command{
-		Example: `  docbank stat /cases/acme/message.eml --json
-  docbank email-pdf <version-uuid> ./message.pdf`,
+		Example: `  docbank document stat /cases/acme/message.eml --json
+  docbank email pdf <version-uuid> ./message.pdf`,
 		Long: `Render one exact EML content version as a PDF. Get <version-uuid> from
 stat --json on the stored EML (current_version_id).
 Output: path, page count and SHA-256.`,
@@ -93,5 +93,5 @@ Output: path, page count and SHA-256.`,
 		}
 		return nil
 	}
-	rootCmd.AddCommand(command)
+	registerGroupedCommand(emailCmd, command, "pdf")
 }

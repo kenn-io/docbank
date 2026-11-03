@@ -33,7 +33,7 @@ func TestMCPNativeExportWorkflow(t *testing.T) {
 	f.addFile(t, "unselected.txt", "unselected bytes")
 	node, err := f.catalog.NodeByID(t.Context(), old.NodeID)
 	require.NoError(t, err)
-	newHash, newSize, err := f.blobs.Write(strings.NewReader("replacement original\n"))
+	newHash, newSize, err := f.blobs.WriteContext(t.Context(), strings.NewReader("replacement original\n"))
 	require.NoError(t, err)
 	_, _, err = f.catalog.ReplaceContent(t.Context(), old.NodeID, node.Revision,
 		newHash, newSize, "text/plain")
@@ -58,7 +58,7 @@ func TestMCPNativeExportWorkflow(t *testing.T) {
 	// A newer head after selection must not substitute either retained version.
 	node, err = f.catalog.NodeByID(t.Context(), old.NodeID)
 	require.NoError(t, err)
-	newHash, newSize, err = f.blobs.Write(strings.NewReader("unselected newer head\n"))
+	newHash, newSize, err = f.blobs.WriteContext(t.Context(), strings.NewReader("unselected newer head\n"))
 	require.NoError(t, err)
 	_, _, err = f.catalog.ReplaceContent(t.Context(), old.NodeID, node.Revision,
 		newHash, newSize, "text/plain")

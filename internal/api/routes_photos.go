@@ -22,7 +22,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, err := d.Store.TrashPhotoAsset(ctx, in.AssetID, revision)
 			if err != nil {
 				return FromStoreError(err)
@@ -39,7 +39,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		DefaultStatus: http.StatusCreated,
 	}, func(ctx context.Context, in *struct{ Body CreatePhotoAssetRequest }) (*photoAssetOutput, error) {
 		var out *photoAssetOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			asset, err := d.Store.CreatePhotoAsset(ctx, in.Body.NodeID, in.Body.Role, in.Body.Kind)
 			if err != nil {
 				return FromStoreError(err)
@@ -89,7 +89,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.AttachPhotoFile(ctx, in.AssetID, revision, in.Body.NodeID, in.Body.Role, in.Body.SidecarOfID)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -114,7 +114,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.DetachPhotoFile(ctx, in.AssetID, revision, in.FileID, store.PhotoDetachOptions{ClearDependentSidecars: in.ClearDependentSidecars})
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -138,7 +138,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.SetPhotoAssetExcluded(ctx, in.AssetID, revision, in.Body.Excluded)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -169,7 +169,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			expectedRevision = &revision
 		}
 		var out *photoAssetOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			asset, callErr := d.Store.PromotePhotoNode(ctx, in.NodeID, expectedRevision, in.Body.Role, in.Body.Kind)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -193,7 +193,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoAssetOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			asset, callErr := d.Store.SetPhotoDisplay(ctx, in.AssetID, revision, in.Body.FileID)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -227,7 +227,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *photoSettingsOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, update)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -239,9 +239,11 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	})
 	// A Cull run can hold 250,000 photos. The body limit applies before
 	// parsing; the response stays below it because each submitted ID appears once.
+	// Reading a body that size can outlast Huma's five-second default on a
+	// slow link, so the read shares the handler's request timeout.
 	huma.Register(api, huma.Operation{
 		OperationID: "groupPhotoStacks", Method: http.MethodPost, Path: "/api/v1/photos/stacks/group",
-		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20,
+		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20, BodyReadTimeout: requestTimeout,
 	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
 		groups, unavailable, gap, incomplete, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden, processing.SourceMetadataExtractorFingerprint)
 		if err != nil {

@@ -136,7 +136,7 @@ func TestPhotoImportRetriesAdmissionFailure(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			home := t.TempDir()
 			path := filepath.Join(home, "vault.db")
-			s, err := store.Open(path)
+			s, err := store.Open(t.Context(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
 			blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(home, "blobs"))

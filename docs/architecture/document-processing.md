@@ -236,11 +236,16 @@ and [vector-index catalog](https://github.com/kenn-io/docbank/blob/main/internal
 
 The internal searcher treats omitted and `auto` modes as lexical. Explicit
 semantic and hybrid modes require compatible active vector authority and a
-query encoder. The source-version fence selects eligible vectors from current,
-live attachments before scoring. Missing vector-row authority stops the search.
+query encoder. A source-version fence selects eligible vectors from current,
+live attachments before scoring. Unscoped searches score the whole leased
+generation and recheck each inspected neighbor against current vault authority.
+Missing vector-row authority stops the search.
 Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
+
+SQLite maintains a derived membership revision for each vector space as embedding heads, rendition heads, content versions, previews, and photo eligibility change.
+Search checkpoints reuse an in-process checksum memo while the snapshot's revision matches; the first checkpoint after a membership change or restart captures the source again without writing bookkeeping.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact
@@ -468,7 +473,7 @@ A vision profile runs through the shared rendition queue as a `derived_upload` j
 
 Planning checks preview readiness before estimating upload bytes and sealing the plan fingerprint. Each ready preview is immutable, so a preview that finishes during planning cannot leave an eligible plan with a stale byte estimate.
 
-Publication writes one `photo_suggestions` row per content version instead of a rendition artifact. Parsing drops an invalid caption or an oversized tag alone and clips visible text at 16 KB. Automatic backfill treats a version with a row as settled, except a restored row that still awaits regeneration, and an explicit run replaces only a dismissal. When a shared job has an explicit waiter, publication applies the explicit rule. Accepting fields goes through the authored edit transaction and clears them from the row in the same transaction. Suggested text lives in `photo_suggestion_fts` and tag names in `tag_fts`, so search needs no provenance state. Metadata JSONL keeps dismissals, per-field resolution, and whether a row still awaits regeneration, without text. A row with pending text restores as awaiting and regenerates, filling only the open fields; a row with nothing pending restores settled. Derived-upload jobs rebuild after restore. See [suggested metadata](../usage/photos.md#suggested-metadata).
+Publication writes one `photo_suggestions` row per content version instead of a rendition artifact. Parsing drops an invalid caption or an oversized tag alone and clips visible text at 16 KB. Automatic backfill treats a version with a row as settled, except a restored row that still awaits regeneration, while an explicit run under a new producer fingerprint refreshes rotation for an already described photo. Publication preserves existing caption, tag, and dismissal decisions and keeps the text producer fingerprint. A repeated explicit request under a different fingerprint can ask for rotation again, including after an uncertain answer. Accepting fields goes through the authored edit transaction and clears them from the row in the same transaction. Suggested text lives in `photo_suggestion_fts` and tag names in `tag_fts`, so search needs no provenance state. Metadata JSONL keeps dismissals, per-field resolution, and whether a row still awaits regeneration, without generated text or angles. An unconfirmed rotation proposal also sets the awaiting marker, even when caption text was dismissed; regeneration keeps that dismissal. A row with pending text or rotation restores as awaiting and regenerates, filling only the open fields; a row with nothing pending restores settled. Derived-upload jobs rebuild after restore. See [suggested metadata](../usage/photos.md#suggested-metadata).
 
 ### Photo best-shot reports and responses
 

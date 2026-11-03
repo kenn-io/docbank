@@ -18,7 +18,27 @@ export default defineConfig({
     timeout: 15_000,
   },
   outputDir: path.join(repositoryRoot, ".superpowers", "playwright"),
-  reporter: "line",
+  // CI retries a failed test and records every result as JSON, which CI
+  // uploads so a test that passed only on a retry stays visible. Each CI run
+  // names its suite so its report has its own file.
+  retries: process.env.CI ? 2 : 0,
+  reporter: process.env.CI
+    ? [
+        ["line"],
+        [
+          "json",
+          {
+            outputFile: path.join(
+              here,
+              "..",
+              "test-results",
+              "playwright",
+              `${process.env.DOCBANK_PLAYWRIGHT_SUITE ?? "screenshots"}.json`,
+            ),
+          },
+        ],
+      ]
+    : "line",
   use: {
     ...devices["Desktop Chrome"],
     viewport: { width: 1440, height: 960 },

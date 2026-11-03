@@ -168,9 +168,9 @@ func runInstaller(t *testing.T, baseURL, installDir string) (string, error) {
 	t.Helper()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "install.ps1")
+		cmd = exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "install.ps1")
 	} else {
-		cmd = exec.Command("sh", "install.sh")
+		cmd = exec.CommandContext(t.Context(), "sh", "install.sh")
 	}
 	cmd.Env = append(os.Environ(),
 		"DOCBANK_VERSION=v9.9.9",

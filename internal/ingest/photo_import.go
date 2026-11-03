@@ -199,7 +199,7 @@ func (ing *Ingester) readPhotoImportMember(ctx context.Context, candidate PhotoI
 		return store.PhotoImportMember{}, photoSourceGone(candidate.Path, err)
 	}
 	if content.hash != observation.hash || content.size != observation.fingerprint.size {
-		return store.PhotoImportMember{}, errors.Join(ErrSourceChanged, ing.cleanupLoose(content.hash))
+		return store.PhotoImportMember{}, errors.Join(ErrSourceChanged, ing.cleanupLoose(ctx, content.hash))
 	}
 	source := store.ClassifyPhotoSource(candidate.Path)
 	return store.PhotoImportMember{
@@ -416,7 +416,7 @@ func (ing *Ingester) importPhotoGroup(
 			members := make([]store.PhotoImportMember, 0, len(group.Members))
 			defer func() {
 				for _, member := range members {
-					retErr = mutationCleanupResult(retErr, ing.cleanupLoose(member.BlobHash))
+					retErr = mutationCleanupResult(retErr, ing.cleanupLoose(ctx, member.BlobHash))
 				}
 			}()
 			for _, candidate := range group.Members {
@@ -602,7 +602,7 @@ func (ing *Ingester) CommitPhotoGroup(
 ) (result store.PhotoImportResult, retErr error) {
 	defer func() {
 		for _, member := range prepared {
-			retErr = mutationCleanupResult(retErr, member.Discard())
+			retErr = mutationCleanupResult(retErr, member.Discard(ctx))
 		}
 	}()
 	members := make([]store.PhotoImportMember, len(prepared))

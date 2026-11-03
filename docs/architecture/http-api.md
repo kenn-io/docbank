@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-11-01
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -22,6 +22,14 @@ starting point.
 | When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
 | Which credentials does a request need? | [Authentication](#auth) |
 | How do I handle a failed request? | [Error mapping](#error-mapping) |
+
+## Vault change feed
+
+`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`. Each change record is `{"type":"change","change":{"cursor":"…","kind":"created","node_id":2,"revision":1}}`. A finite drain ends with `{"type":"result","cursor":"…"}`; EOF before that record means the drain was interrupted. The result cursor marks the final snapshot head, including an empty drain. Both parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown. Cancellation interrupts blocked writes; ordinary slow readers have no write timeout.
+
+The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
+
+A `processed` event announces completed publication for a current live document. Timeline and attribution first publications and changed checksums or states emit; identical results and freshness-only refreshes stay silent. Invalidation and explicit derivative purge stay silent; a later successful republication emits when its prior head is absent. Email inventory head changes and new terminal body results each emit an event. A body changing from pending to unavailable counts. Source-metadata publication compares evidence checksums; an extractor fingerprint change with identical facts stays silent. Dismissed or fully filtered photo descriptions and unchanged or fully protected face results stay silent.
 
 ## Mailbox imports and explicit EML transfers
 
@@ -91,9 +99,9 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /photos/events` | stream committed photo changes as server-sent events | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
 | `POST /photos/assets/flags` | read current display flags for up to 20,000 visible assets | Implemented |
-| `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
+| `POST /photos/assets/query` | browse matching assets with live keyset pages or frozen semantic and hybrid pages | Implemented |
 | `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` · `POST /photos/authored/{file_id}/xmp` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences and optional `content_version_id` fencing the asset's displayed version, undo if revisions match, and resolve an XMP sync conflict by choosing the catalog or the sidecar | Implemented |
-| `POST /photos/suggestions/{suggestion_id}/response` | accept selected caption or tags of a photo suggestion with asset, source, and node revision fences, or dismiss the rest | Implemented |
+| `POST /photos/suggestions/{suggestion_id}/response` | accept selected caption or tags, or answer a rotation proposal with the displayed `rotation` angle and asset, source, and node revision fences; rotation requires a current nonzero proposal, accepts the displayed angle even if the live angle changed, and dismisses by confirming the current authored angle | Implemented |
 | `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
@@ -792,6 +800,21 @@ versions the request is authorized to read. Use the actual vault UUID and
 1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
 foreign vault or invalid source fence is rejected. `/api/v1/search` request
 bodies are bounded to 16 MiB.
+
+Search accepts exactly one of `fence` or `scope`. Send
+`"scope": {"kind": "all_live", "filters": {...}}` to search all live files
+without listing versions. Optional filters are `source_present`, `tag_id`,
+`mime_type`, `under_node_id`, `modified_since`, and `modified_before`, with
+the same semantics as source-fence resolution. Semantic and hybrid coverage
+reports `scoped_documents` and `complete_documents` over that population.
+A scope cannot be combined with `media_sources`. Explicit fences retain the
+4,096-version limit.
+A scope with no live files returns an empty report with complete 0/0 coverage
+for semantic and hybrid modes, or unknown coverage for lexical and auto modes.
+
+The CLI's automatic search, web app, TUI, and MCP filter searches send a scope.
+The Go library and MCP version lists send fences.
+
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
@@ -873,6 +896,7 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
+| 409 | `stale_index` | The vector index source changed and the index is stale |
 | 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
@@ -922,6 +946,7 @@ display-file row per matching asset, an `asset_id`, and its frozen display-file 
 uses Photos filters and sorts and requires an empty facet list. It uses the
 same snapshot paging and expiry rules below. When `profile` is omitted, photo
 snapshots skip profile selection and use `unconfigured` processing coverage.
+The request requires `query` and rejects `snapshot_id`. A semantic or hybrid `mode` returns `422 invalid_query`; use a saved photo query run to capture those modes.
 
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
@@ -985,8 +1010,9 @@ query and execution mode, even when concurrent runs materialize out of order. Th
 lookup uses the saved-query index and reads only that definition's run history.
 
 Snapshot execution supports duplicate and text-coverage constraints.
-Text-coverage predicates require a configured processing profile. Semantic and
-hybrid modes remain unsupported and return positioned `422 invalid_query` errors.
+Text-coverage predicates require a configured processing profile. Documents reject
+semantic and hybrid modes with positioned `422 invalid_query` errors. Photos saved-query
+runs support both modes and return retrieval status directly on `snapshot` through `requested_mode`, `actual_mode`, `truncated`, `coverage_incomplete`, and an optional `fallback_reason`.
 Relevance ordering is supported for Photos and rejected for Documents snapshots. A Photos snapshot executes a saved
 `path` sort as `name asc`, retaining the original definition and query fingerprint.
 
@@ -1219,7 +1245,7 @@ such as `app_opened` or `session_ended`, from a browser session or the API key. 
 `session_ended` accepts optional `surface` and `duration_bucket` properties; missing or invalid duration values are omitted from capture.
 `screen_viewed` requires a fixed `screen` name and `surface` of `web` or `tui`, and answers 400 for any other value. A daily duplicate returns the accepted receipt without capture. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
 Core actions `document_added`, `search_run`, and `document_opened` require `surface` of `web`, `tui`, or `cli`. `search_run` also requires `search_type` of `text`, `semantic`, or `hybrid`. Missing or unsupported required properties return 400, including when reporting is disabled. The daemon forwards each valid report without counting state; PostHog queries count installs per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs. CLI and TUI actions omit runs under `CLAUDECODE` or `CODEX_THREAD_ID`.
-`search_empty` is sent when a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, except a valid submitted search that ends on an empty source fence, which sends only `search_empty`, with the requested mode as `search_type`. The CLI falls back to text search and sends both. `error_shown` requires `surface` of `web`, `tui`, or `cli` and a string `kind`; `search`, `add`, and `open` are sent as given and any other string is sent as `other`. A missing or non-string `kind` returns 400. Interfaces send it from the code that runs a search, add, or open the person started, once per failed run. Rejected input counts as a failed search or add like any other failure. Sign-in prompts, cancels, passive loads, refreshes, other drawers and dialogs, and CLI usage errors before connecting stay silent. A Photos open whose detail load fails counts as a failed `open`. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
+`search_empty` is sent when a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, including when the search scope is empty. `error_shown` requires `surface` of `web`, `tui`, or `cli` and a string `kind`; `search`, `add`, and `open` are sent as given and any other string is sent as `other`. A missing or non-string `kind` returns 400. Interfaces send it from the code that runs a search, add, or open the person started, once per failed run. Rejected input counts as a failed search or add like any other failure. Sign-in prompts, cancels, passive loads, refreshes, other drawers and dialogs, and CLI usage errors before connecting stay silent. A Photos open whose detail load fails counts as a failed `open`. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
 Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 
@@ -1598,13 +1624,17 @@ Released folders, including retired ones, remain protected from watches and stor
 
 `POST /photos/assets/flags` accepts `{asset_ids}` with 1 through 20,000 UUIDs and a 1 MiB body limit. It returns `{items:[{asset_id, flag}]}` in asset-ID order, with one row per live, visible, included asset. Missing IDs mean the asset is unavailable, including hidden, trashed, excluded, and deleted assets. Flags reflect the current display file.
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or `label` facets on the first page, and `relevance_available`. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, `snapshot_id`, `stacks`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or `label` facets on the first page, and `relevance_available`. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
 
-The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Relevance returns one page of up to `page_size` matches with no `next_cursor`. It orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Descending relevance places filename evidence first, authored text second, technical metadata third, and retained content-only evidence fourth. Scores are compared within each tier. Operands keep their field, prefix, phrase and NEAR meaning. Relevance has no snapshot row limit or build deadline. Passing a cursor with relevance returns `invalid_photo_cursor`.
+The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size`, and `media_type`; default ordering is name ascending. Lexical relevance returns one page of up to `page_size` matches with no `next_cursor`. It orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Descending relevance places filename evidence first, authored text second, technical metadata third, and retained content-only evidence fourth. Scores are compared within each tier. Operands keep their field, prefix, phrase, and NEAR meaning. Lexical relevance has no snapshot row limit or build deadline. Passing a live cursor with lexical relevance returns `invalid_photo_cursor`.
 
-Other sorts return an optional forward `next_cursor`. Capture keys fall back to the recorded modified time of the displayed bytes, and sort photos with neither last in both directions, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Album-by-query membership ignores sort and selects the complete matching population. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos.
+Semantic and hybrid searches freeze ranked membership through `QuerySnapshotService` and use relevance descending. Responses include `snapshot_id`, `member_hash`, and an optional `next_cursor`. Continue by sending both `snapshot_id` and `cursor` with the same query, coverage, page size, and projection. An empty cursor with `snapshot_id` reopens the first page. Pages retain accepted membership and order while hydrating current display facts. With `stacks: true`, pages include every live display row for each intersecting stack among captured members, so responses can exceed `page_size`. Each stack occupies its highest-ranked member's position, representative first. Continuations can repeat asset IDs; clients deduplicate them. Filter counts and the date timeline stay unavailable. These snapshots share cache admission limits and the 30-second build deadline. Missing, expired, or revoked snapshots return `snapshot_gone`.
 
-Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire 15 minutes after issuance and bind resolved saved-query revisions, effective coverage, canonical query, hidden scope, requested facet dimensions, and page size. Photo facets share a 30-second budget. Time, member, or byte limits return an unavailable reason. Timed-out counts can be retried; member or byte limits require a narrower query. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
+Search status fields are `requested_mode`, `actual_mode`, `fallback_reason`, `truncated`, and `coverage_incomplete`. An image binding without `min_query_similarity` returns `similarity_floor_unset`; a missing or failed provider returns `provider_unavailable`. Metadata fallback freezes up to 1,000 matches in a snapshot, matching the ranked limit. Continue with the original requested query and the returned `snapshot_id` and cursor. Snapshot pages use the same stack grouping and omit filter counts and the date timeline. Hidden searches use live metadata results and fall back with `hidden_photos`. `truncated` reports that ranked or metadata fallback matches exceeded the captured limit, and `coverage_incomplete` reports incomplete retrieval coverage.
+
+Live sorts other than relevance return an optional forward `next_cursor`. Capture keys fall back to the recorded modified time of the displayed bytes, and sort photos with neither last in both directions, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Album-by-query membership ignores sort and selects the complete matching population. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos.
+
+Later live pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire 15 minutes after issuance and bind resolved saved-query revisions, effective coverage, canonical query, hidden scope, requested facet dimensions, and page size. Photo facets share a 30-second budget. Time, member, or byte limits return an unavailable reason. Timed-out counts can be retried; member or byte limits require a narrower query. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
 
 `POST /photos/authored/edit` targets accept optional `content_version_id`, which fences the asset's displayed version whichever member is edited. If that version has been replaced or the asset now displays a different file, the edit returns HTTP 412 `stale_revision`.
 
@@ -1616,7 +1646,7 @@ The endpoint returns an empty `receipt_id` and empty `before` and `after` arrays
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version, or an assigned source grid version when `person_id` is supplied. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, `POST /photos/assets/flags`, `POST /photos/authored/prepare`, `POST /photos/authored/edit`, `POST /photos/authored/{receipt_id}/undo`, `POST /photos/authored/{file_id}/xmp`, preview GET with an optional `person_id`, `GET /photos/events`, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
-Optional `projection: "map"` returns compact `map_items` with asset ID, revision, name, capture time, file modified time (set only when it, not a capture date, placed the photo), dimensions, display rotation, coordinates and the grid preview state/generation/dimensions; `items` is empty and `map_items` is omitted when empty. It uses the same query, total and cursor contract. Omit the projection for viewer metadata and fit/large previews.
+Optional `projection: "map"` returns compact `map_items` with asset ID, display file ID, revision, name, capture time, file modified time (set only when it, not a capture date, placed the photo), dimensions, display rotation, coordinates and the grid preview state/generation/dimensions; `items` is empty and `map_items` is omitted when empty. It uses the same query, total and cursor contract. Omit the projection for viewer metadata and fit/large previews.
 
 Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length, orientation, `rotation` (0, 90, 180, or 270 degrees), `rating` (0–5), and `flag` (`""`, `"pick"`, or `"reject"`). Album summaries include `cover_rotation` with the same values; absent metadata fields serialize as JSON null. Compact Map rows alone include `latitude` and `longitude`, decimal-degree numbers from the selected display file or JSON null when absent. Browser-session requests receive null for both unless `[web.map_tiles]` is configured; API-key responses are independent of tile configuration.
 
@@ -1648,7 +1678,6 @@ returns `429 snapshot_capacity` only when nothing can be evicted. Invalid
 queries return `422 invalid_query`, and invalid coverage returns
 `422 invalid_profile`. Workspace snapshots and saved-query runs reject the
 `capture_day` facet.
-
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and
@@ -1877,10 +1906,10 @@ failure, while selected non-regular entries are reported as skipped findings.
 dest: "/inbox", include: [...], exclude: [...], replace: false,
 collection_label: "Review set"}`. It returns an `IngestReport` (`ingest_id`,
 `added`, `skipped`, `excluded`, per-path `failed` entries) and backs
-`docbank add`. `collection_label` is optional. Paths must be
+`docbank document add`. `collection_label` is optional. Paths must be
 **absolute**: the long-lived daemon's working directory is meaningless,
 so a relative path is rejected with `422`. The CLI resolves
-`docbank add`'s arguments to absolute paths before calling, so the command-line
+`docbank document add`'s arguments to absolute paths before calling, so the command-line
 UX still accepts relative and `cwd`-relative sources. Collisions resolve by the
 same suffixing rules as other imports when `replace` is false or omitted.
 
@@ -2063,8 +2092,7 @@ authority instead of silently dropping it.
 ## Addendum: `POST /uploads`
 
 `POST /uploads?parent_id=<id>&name=<filename>` accepts exactly one
-`multipart/form-data` file field named `file`. The query uses a stable
-destination directory ID rather than a mutable path. The multipart filename
+`multipart/form-data` file field named `file`. Supply exactly one destination selector: stable `parent_id` or absolute `parent_path`. Missing path directories publish in the document's content transaction after the complete upload is verified. A rejected upload leaves no destination directories or ingest record. The multipart filename
 must equal the normalized `name` query value, preventing the envelope and
 requested tree entry from describing different files.
 
@@ -2084,6 +2112,8 @@ version. Repeating the same name, hash, and parent converges to that stable
 node with `200` and `status: "skipped"`. The receipt always includes the
 server's `computed_hash`, `computed_size`, and the node's ID and revision.
 Clients compare the values themselves.
+
+URL imports may supply `X-Docbank-URL-Fetch`, a version-1 JSON descriptor containing `version`, `requested_url`, `final_url`, and UTC `fetched_at`; optional `etag` and `last_modified` carry base64-encoded header bytes. Unsupported versions, unknown fields, and invalid descriptors are rejected before content preparation. The daemon consumes the supplied bytes and evidence; it does not fetch the URL. Content, missing directories, the ingest run, and its URL origin publish together after envelope verification. URL retries match the exact requested URL and equal current bytes within the destination, including after a rename. Distinct requested URLs retain separate documents even when their bytes match. A skip adds no ingest record or provenance. Readers expose supported evidence as `url_fetch` on provenance and collections, while retaining the raw source description for metadata export and unsupported stored formats.
 
 Uploads are file-granular. A caller sending many files issues independent
 requests (concurrently when useful), so one failure never makes the success of

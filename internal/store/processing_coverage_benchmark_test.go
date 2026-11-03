@@ -14,14 +14,14 @@ import (
 func BenchmarkProcessingCoverage(b *testing.B) {
 	for _, tc := range []struct{ versions, builds int }{{1, 0}, {1, 1}, {100, 0}, {100, 1}, {100, 100}} {
 		b.Run(fmt.Sprintf("versions=%d/builds=%d", tc.versions, tc.builds), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			profile := catalogProcessingProfile(b, false)
 			var versions []string
 			require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
 				for hash, content := range catalogBlobContents {
-					if err := s.EnsureBlobTx(tx, hash, int64(len(content))); err != nil {
+					if err := s.EnsureBlobTx(b.Context(), tx, hash, int64(len(content))); err != nil {
 						return err
 					}
 				}

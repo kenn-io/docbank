@@ -32,7 +32,8 @@ func NewDatabase(t *testing.T) (*sql.DB, string) {
 	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, err := admin.ExecContext(context.Background(), "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
+		// t.Context is already canceled when cleanup runs.
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
 		require.NoError(t, err)
 	})
 	c.Database = name

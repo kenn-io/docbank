@@ -281,9 +281,9 @@ func TestPhotoTechnicalMetadataPublication(t *testing.T) {
 	assert.Zero(t, generations, "projection failure must roll back source publication")
 }
 
-func TestPhotoTechnicalMetadataRepublication(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoTechnicalMetadataRepublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "republication.jpg", fakeHash("ac"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestPhotoTechnicalMetadataRepublication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, generationA.GenerationID, projection.GenerationID)
 	assert.Equal(t, "A", *projection.Fields.CameraModel)
-	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=?`, generationA.GenerationID)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=$1`, generationA.GenerationID)
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("fc"), canonicalA)
 	require.NoError(t, err)
@@ -312,9 +312,9 @@ func TestPhotoTechnicalMetadataRepublication(t *testing.T) {
 	assert.Equal(t, generationA.GenerationID, projection.GenerationID)
 }
 
-func TestPhotoTechnicalMetadataVersionBinding(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoTechnicalMetadataVersionBinding(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "versioned.jpg", fakeHash("a6"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -382,7 +382,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	stale, err := s.CreateFile(ctx, s.RootID(), "stale.jpg", fakeHash("b2"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -409,7 +409,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	reopened, err := Open(path)
+	reopened, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	for versionID, want := range map[string]string{stale.CurrentVersionID: "Current", gained.CurrentVersionID: "Gained"} {
@@ -582,7 +582,7 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	assert.Zero(t, projections)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	require.Zero(t, projections)
 }
 
@@ -621,7 +621,7 @@ func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	require.NoError(t, refreshPhotoTechnicalMetadataTx(ctx, tx), "corrupt evidence must not block re-projection")
+	require.NoError(t, s.refreshPhotoTechnicalMetadataTx(ctx, tx), "corrupt evidence must not block re-projection")
 	var projected int
 	require.NoError(t, tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, healthy.generation).Scan(&projected))

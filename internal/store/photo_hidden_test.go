@@ -145,7 +145,7 @@ func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	_, err = s.writeDB.Exec(`CREATE TRIGGER deny_unhide BEFORE UPDATE OF hidden_at ON photo_assets BEGIN SELECT RAISE(ABORT,'synthetic refusal'); END`)
+	_, err = s.writeDB.ExecContext(t.Context(), `CREATE TRIGGER deny_unhide BEFORE UPDATE OF hidden_at ON photo_assets BEGIN SELECT RAISE(ABORT,'synthetic refusal'); END`)
 	require.NoError(t, err)
 	require.Error(t, s.DisablePhotoHidden(ctx, "replacement"))
 	state, err = s.PhotoHiddenState(ctx)
@@ -258,7 +258,7 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	reopen := func() {
 		path, driver := s.path, s.driver
 		require.NoError(t, s.Close())
-		s, err = Open(path, driver)
+		s, err = Open(t.Context(), path, driver)
 		require.NoError(t, err)
 		s.photoHiddenNow = func() time.Time { return now }
 	}
@@ -394,7 +394,7 @@ func TestPhotoHiddenLockoutMetadata(t *testing.T) {
 			target := newTestStore(t)
 			require.NoError(t, target.ImportMetadata(ctx, &backup))
 			var count int
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM photo_hidden_failures`).Scan(&count))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_hidden_failures`).Scan(&count))
 			require.Equal(t, failures, count)
 			var lockout *HiddenLockoutError
 			_, _, err := target.UnlockPhotoHidden(ctx, "wrong")
@@ -413,12 +413,12 @@ func TestPhotoHiddenDisableRecordsEveryAsset(t *testing.T) {
 	for i := range 3 {
 		albumAsset(t, s, fmt.Sprintf("synthetic-%d.jpg", i))
 	}
-	_, err := s.db.Exec(`UPDATE photo_assets SET hidden_at=?`, time.Now().UTC().Format(timestampLayout))
+	_, err := s.db.ExecContext(t.Context(), `UPDATE photo_assets SET hidden_at=?`, time.Now().UTC().Format(timestampLayout))
 	require.NoError(t, err)
 	require.NoError(t, s.DisablePhotoHidden(ctx, "correct"))
 	var hidden, receipts int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets WHERE hidden_at IS NOT NULL`).Scan(&hidden))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts WHERE operation='unhide'`).Scan(&receipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_assets WHERE hidden_at IS NOT NULL`).Scan(&hidden))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE operation='unhide'`).Scan(&receipts))
 	require.Zero(t, hidden)
 	require.Equal(t, 3, receipts)
 }
@@ -432,7 +432,7 @@ func TestPhotoHiddenMutationGate(t *testing.T) {
 	asset, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	var receipts int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts`).Scan(&receipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts`).Scan(&receipts))
 	mutations := []func() (PhotoAsset, error){
 		func() (PhotoAsset, error) { return s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false) },
 		func() (PhotoAsset, error) { return s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true) },
@@ -447,7 +447,7 @@ func TestPhotoHiddenMutationGate(t *testing.T) {
 		require.ErrorIs(t, err, ErrHiddenLocked)
 	}
 	var afterReceipts int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts`).Scan(&afterReceipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts`).Scan(&afterReceipts))
 	require.Equal(t, receipts, afterReceipts)
 	stored, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
 	require.NoError(t, err)

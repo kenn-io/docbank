@@ -20,7 +20,7 @@ func BenchmarkPhotoBrowse100K(b *testing.B) { benchmarkPhotoBrowse(b, 100000) }
 func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 	b.Helper()
 	b.StopTimer()
-	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()
@@ -143,7 +143,7 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 // with interleaved two-frame bursts in healthy and stale source folders.
 func BenchmarkPhotoStackMixed100K(b *testing.B) {
 	b.StopTimer()
-	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()
@@ -179,7 +179,7 @@ func BenchmarkPhotoStackMixed100K(b *testing.B) {
 			if err != nil {
 				return err
 			}
-			if err := insertPhotoTechnicalMetadataTx(ctx, tx, generation, fields); err != nil {
+			if _, err := insertPhotoTechnicalMetadataTx(ctx, tx, generation, fields); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) VALUES(?,?,?)`, hash, generation, stamp); err != nil {

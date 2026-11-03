@@ -38,7 +38,7 @@ func daemonMCPEnvironment(t *testing.T) string {
 
 func unusedMCPAddress(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
@@ -48,7 +48,7 @@ func unusedMCPAddress(t *testing.T) string {
 func assertDaemonMCPCleanedUp(t *testing.T, root string, addresses ...string) {
 	t.Helper()
 	for _, address := range addresses {
-		listener, err := net.Listen("tcp", address)
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", address)
 		require.NoError(t, err, "released listener %s", address)
 		require.NoError(t, listener.Close())
 	}
@@ -161,7 +161,7 @@ func TestDaemonMCPHTTPStartupFailuresReleaseOwnership(t *testing.T) {
 			t.Setenv("DOCBANK_API_KEY", "synthetic-api-key")
 			t.Setenv("DOCBANK_MCP_HTTP_ENABLED", "true")
 			if test.name == "occupied port" {
-				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = listener.Close() })
 				_, test.port, err = net.SplitHostPort(listener.Addr().String())
@@ -233,10 +233,10 @@ func TestDaemonMCPHTTPDisablesBackgroundIdleTimeout(t *testing.T) {
 }
 
 func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
-	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
+	apiListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })}
-	mcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	mcpListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	started, release := make(chan struct{}), make(chan struct{})
 	releaseRead := sync.OnceFunc(func() { close(release) })
@@ -266,8 +266,10 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 	}()
 	t.Cleanup(func() { _ = mcpHTTP.Close(); _ = apiHTTP.Close() })
 	result := make(chan string, 1)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+mcpListener.Addr().String(), nil)
+	require.NoError(t, err)
 	go func() {
-		response, err := http.Get("http://" + mcpListener.Addr().String())
+		response, err := http.DefaultClient.Do(request)
 		if err != nil {
 			result <- err.Error()
 			return
@@ -280,7 +282,7 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 	close(stop)
 	// Once Shutdown closes the MCP listener, the pending read can use the API.
 	require.Eventually(t, func() bool {
-		connection, err := net.DialTimeout("tcp", mcpListener.Addr().String(), time.Second)
+		connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", mcpListener.Addr().String())
 		if err != nil {
 			return true
 		}
@@ -293,7 +295,7 @@ func TestDaemonMCPHTTPDrainKeepsAPIAvailable(t *testing.T) {
 }
 
 func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	base := "http://" + listener.Addr().String()
 	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("synthetic-vault")) })
@@ -332,8 +334,11 @@ func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
 			gate.Shutdown, func() {}, func(context.Context) error { return nil })
 	}()
 	result := make(chan string, 1)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/mcp", strings.NewReader("{}"))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
 	go func() {
-		response, err := http.Post(base+"/mcp", "application/json", strings.NewReader("{}"))
+		response, err := http.DefaultClient.Do(request)
 		if err != nil {
 			result <- err.Error()
 			return
@@ -347,7 +352,12 @@ func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
 	// Once the drain starts, new MCP requests are refused on the shared port.
 	probe := &http.Client{Timeout: time.Second}
 	require.Eventually(t, func() bool {
-		response, err := probe.Post(base+"/mcp", "application/json", strings.NewReader("{}"))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/mcp", strings.NewReader("{}"))
+		if err != nil {
+			return false
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := probe.Do(request)
 		if err != nil {
 			return false
 		}
@@ -360,7 +370,7 @@ func TestDaemonMCPHTTPSharedDrainKeepsAPIAvailable(t *testing.T) {
 }
 
 func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	started, canceled := make(chan struct{}), make(chan struct{})
 	gate := docmcp.NewRequestGate()
@@ -386,9 +396,12 @@ func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
 			})
 	}()
 	requestDone := make(chan struct{})
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+listener.Addr().String()+"/mcp", strings.NewReader("{}"))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
 	go func() {
 		defer close(requestDone)
-		response, err := http.Post("http://"+listener.Addr().String()+"/mcp", "application/json", strings.NewReader("{}"))
+		response, err := http.DefaultClient.Do(request)
 		if err == nil {
 			_ = response.Body.Close()
 		}
@@ -403,7 +416,7 @@ func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
 }
 
 func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	started, canceled, jobsStopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	jobsStoppedBeforeCancel := false
@@ -427,9 +440,11 @@ func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 			func(ctx context.Context) error { apiShutdownErr = ctx.Err(); return nil })
 	}()
 	requestDone := make(chan struct{})
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listener.Addr().String(), nil)
+	require.NoError(t, err)
 	go func() {
 		defer close(requestDone)
-		response, err := http.Get("http://" + listener.Addr().String())
+		response, err := http.DefaultClient.Do(request)
 		if err == nil {
 			_ = response.Body.Close()
 		}
@@ -445,10 +460,10 @@ func TestDaemonMCPHTTPDrainIsBoundedAndClosesActiveRequests(t *testing.T) {
 }
 
 func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NoError(t, listener.Close())
-	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
+	apiListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = apiListener.Close() })
 	mcpHTTP, apiHTTP := &http.Server{ReadHeaderTimeout: 10 * time.Second}, &http.Server{ReadHeaderTimeout: 10 * time.Second}
@@ -460,7 +475,7 @@ func TestDaemonMCPHTTPServeFailurePropagatesAndDrainsAPI(t *testing.T) {
 	require.ErrorContains(t, err, "daemon MCP HTTP server")
 	// Shutdown can precede the API goroutine's entry into Serve.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		rebound, bindErr := net.Listen("tcp", apiListener.Addr().String())
+		rebound, bindErr := (&net.ListenConfig{}).Listen(t.Context(), "tcp", apiListener.Addr().String())
 		if assert.NoError(c, bindErr) {
 			assert.NoError(c, rebound.Close())
 		}

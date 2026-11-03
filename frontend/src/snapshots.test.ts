@@ -582,3 +582,43 @@ it("decodes photo timeline counts without accepting snapshot authority", async (
     ),
   ).rejects.toThrow("values exceeds its bound");
 });
+
+it("retains photo ranking status on snapshot continuation pages", async () => {
+  const meaning = parseQuery(
+    '{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}',
+  );
+  const status = {
+    requested_mode: "semantic",
+    actual_mode: "semantic",
+    truncated: true,
+    coverage_incomplete: true,
+  };
+  const first = (await page({
+    query: meaning,
+    query_fingerprint: await queryFingerprint(meaning),
+    total: 2,
+    total_bytes: 30,
+    rows: [{ ...row(2, version2, blob2, 20), asset_id: tagID, flag: "" }],
+    facets: [],
+    next_cursor: "next-1",
+    ...status,
+  })) as unknown as SnapshotPage;
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  fetcher.mockResolvedValue(
+    jsonResponse(
+      await page({
+        query: meaning,
+        query_fingerprint: await queryFingerprint(meaning),
+        total: 2,
+        total_bytes: 30,
+        rows: [{ ...row(10, version10, blob10, 10), asset_id: version10, flag: "" }],
+        facets: [],
+        previous_cursor: "previous-1",
+        ...status,
+      }),
+    ),
+  );
+  const result = await readSnapshotPage("session", first, "next-1", new AbortController().signal);
+  expect(result).toMatchObject(status);
+  expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/v1/workspace/queries/${snapshotID}/pages`);
+});

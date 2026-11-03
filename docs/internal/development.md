@@ -47,6 +47,25 @@ and needs no running vault. The rendition and embedding bridge schemas remain
 with their independent contracts in `document/bridge/` and
 `document/embeddingbridge/`.
 
+### PDF reader dependency corrections
+
+`npm ci` runs `frontend/scripts/patch-embedpdf.mjs` against EmbedPDF 2.15.1.
+It confines keyboard shortcuts to the viewer element and destroys an
+engine that finishes initializing after the viewer unmounts. Without these
+corrections, a hidden preview can replace copied text with an empty string,
+and switching documents during initialization can leave three workers running.
+The patch rejects an unexpected package version or bundle. Remove it when an
+upstream release supplies both fixes, and rerun the document-reader browser
+proof before changing the pin. The container frontend stage includes the patch
+script and the bundled fallback font.
+
+The PDF rendering CI lane runs `frontend/screenshots/redaction-review.run.mjs`
+against both SQLite builds. It executes the document-reader and redaction-review
+browser cases with synthetic vaults and the built application. Reader cases cover
+activation, clipboard shortcuts, worker cleanup, Markdown form removal, link
+isolation, failed module loading and delayed file details. Selecting PDFs in the
+inspector must not prepare original-file downloads or start PDF workers.
+
 ## Share the Go build cache across worktrees
 
 Make targets and CI compile Go with `-trimpath`, so binaries record
@@ -129,12 +148,13 @@ runnable leaves and parents that perform work 1–4 synthetic example commands.
 Add working parents to `workParents` in `cmd/docbank/help_lint_test.go`.
 Prerequisite examples may invoke siblings; every line must parse and at least
 one must invoke the owning command. The lint clones flag values and checks
-syntax and arity without executing examples.
+syntax and arity without executing examples. Indented command lines in Long
+text, root workflow steps, and quoted recovery commands are checked too.
 
 Use a command group at the root, source each ID, and mark required flags.
 Keep descriptions short: at most 12 Long lines for leaves and 20 for parents;
 root help and the TUI key table have explicit exceptions. Root help is limited
-to 4,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
+to 6,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
 so command examples can improve without maintaining hundreds of snapshots.
 After an intentional root change, review and regenerate it from the repository
 root:
@@ -144,7 +164,37 @@ go test -tags fts5 ./cmd/docbank -run TestRootHelpGolden -update
 ```
 
 Keep the CLI reference and guide examples in sync. Error next-step hints belong
-at the CLI process boundary; preserve error prefixes and daemon problem text.
+at the CLI process boundary. Keep underlying error identity and daemon problem
+text intact; strip only generated transport wrappers from CLI presentation.
+Initialize Cobra's default help and completion commands before configuring
+group argument checks. Diagnostic writers preserve terminal file descriptors
+so automatic progress and action reporting still recognize stderr terminals.
+Failed output-mode assignments preserve the last successfully parsed value.
+Missing repository configuration gets a narrow internal typed cause when the
+client decodes its exact problem code/detail pair. Do not classify every
+`backup_repository` problem as invalid usage: that code also covers I/O failures.
+
+The CLI property tests use Hegel alongside deterministic regressions. Keep its
+Go module current with `go get hegel.dev/go/hegel@latest`. Hegel currently ships
+engines for Linux and Windows amd64/arm64 and macOS arm64; the property file
+excludes macOS amd64 until an engine is available. Deterministic CLI tests keep
+running on every supported platform. Remove that exception when Hegel supports
+the remaining architecture.
+
+Register file/tree commands under `document`, vault identity and maintenance
+under `vault`, and email operations under `email`. `report` owns search-count
+evidence; leave `search` arguments available for arbitrary query words. Existing
+domain groups keep their names. Use `registerGroupedCommand` after installing
+the command's flags and children when moving another command. It retains a
+hidden root definition for at least one release, with separate Cobra state and
+shared handler flag values. Deprecation notices go to stderr at the process
+boundary before argument parsing, including errors and help; Cobra's built-in
+`Deprecated` field writes to stdout and breaks JSON and raw byte output.
+Recovery hints use the canonical path from the compatibility annotation,
+including argument and flag errors. Keep nested compatibility definitions
+covered by `command_groups_test.go` and update the CLI reference mapping.
+Report text chooses its next-step command from the invoked spelling so the
+canonical path stays discoverable and legacy successful stdout stays compatible.
 
 ### Add a data operation
 
@@ -198,6 +248,78 @@ in `releasedSchemaFixtures`. Three checks enforce this:
   binary, so bumping the schema fails until the released version has a cutover
   adapter.
 
+### Backend support and drift checks
+
+`store.Store` is the database API boundary. Operations keep their validation,
+transactions, result assembly and catalog maintenance together. Backend-specific
+helpers handle concrete SQL and driver differences. The coverage machinery is
+compiled only into tests: it adds no interface dispatch, capability lookup or
+extra query to application requests.
+
+From the repository root, inspect the current evidence without opening a database:
+
+```sh
+make backend-coverage
+```
+
+The report distinguishes native PostgreSQL operations, retained-data validation
+and unqualified operations. A copied SQLite catalog can prove that PostgreSQL
+reads and validates it; it cannot qualify the worker that would produce it.
+Scenario counts describe the tests, not a completeness percentage or a
+performance guarantee. Unlisted operations remain unqualified. The public vault
+still opens SQLite.
+
+These test files own the inventory:
+
+- `internal/store/backend_contract_test.go` registers the executable scenarios
+  and their scope. Existing cases run once per backend. Shared cases use the same
+  assertions with each backend's fixture; PostgreSQL-specific cases cover its
+  snapshots, locks and native mutations. SQLite also keeps its full existing suite.
+- `internal/store/backend_schema_test.go` compares freshly installed canonical
+  catalogs: tables, logical column types, nullability, primary-key order,
+  foreign-key columns and actions, and index key columns, order, uniqueness and
+  partial status. It also checks PostgreSQL's byte-order text collation.
+  `backend_schema_exceptions_test.go` names each intentional or deferred
+  difference. Unlisted differences fail; resolved or stale exceptions fail too.
+- `internal/store/backend_maintenance_test.go` describes SQLite catalog effects
+  and their PostgreSQL owners or unqualified operations for the report. Keep
+  this inventory current when porting an effect. Operation tests establish
+  behavioral equivalence by exercising the writes and checking their results.
+
+The schema comparison deliberately normalizes integer widths, UUID/text storage
+and SQLite's nullable primary-key metadata. It excludes FTS virtual/shadow
+tables, engine allocation machinery and SQLite's released version field. It
+does not compare defaults, views, trigger bodies, expression/predicate SQL or
+foreign-key deferral timing. Those need operation tests. Matching index shapes
+also do not prove matching query plans: keep expressions aligned with their
+indexes and check plans on representative data when porting a query. Deferred
+indexes remain a performance qualification gap, including on tables that native
+operations already use.
+
+Run the shared SQLite contracts in both supported builds:
+
+```sh
+go test -race -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$'
+CGO_ENABLED=0 go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$'
+```
+
+With `DOCBANK_TEST_POSTGRES_DSN` set to a disposable PostgreSQL server, run
+`make test-pg` for setup, permissions and the complete PostgreSQL contract suite.
+CI runs that lane on PostgreSQL 16 and 18. To focus on one operation or the schema:
+
+```sh
+go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/documents/'
+go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/schema/Schema$'
+```
+
+Add new PostgreSQL cases to the registry so the report and CI select the same
+functions. Prefer one shared scenario where both backends have the same contract;
+keep backend-specific failure and concurrency evidence where it adds coverage.
+Do not repeat shared Go rejection cases on both databases merely to increase
+counts. Port a complete operation with its access indexes, validation, catalog
+effects and rollback behavior, then remove the relevant exceptions. Keep
+remaining implementation work in Kata rather than adding task lists to this guide.
+
 ### PostgreSQL schema lifecycle
 
 `internal/store/pgschema` owns canonical PostgreSQL catalogs for internal
@@ -212,12 +334,25 @@ folder trash, whole photo groups, trash browsing and restore, including audited
 mutations and photo sidecar decisions. Permanent trash emptying and content-version
 pruning preserve retention holds and related catalog state. Derivative cleanup
 covers purge previews, rendition and embedding collection, extracted-text and
-email cleanup, and explicit rebuild authorization.
+email cleanup, and explicit rebuild authorization. Primary blob packing,
+repacking, bounded GC catalog selection and exact physical cleanup receipts
+also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved query
+definition management use the native Store operations on both databases.
+Extracted source metadata, typed photo facts, and document-event evidence,
+publication, terminal attempts and rebuild receipts also use shared operations.
+Original-file rendition jobs include consent, resumable claims, artifact staging
+and atomic head publication through the same Store. Document embedding jobs
+include reconciliation, consent-bound claims, immutable vector staging, atomic
+publication and coverage reads. Email MIME inventories, body renditions,
+attachment child documents, and page-render job publication also use shared
+Store operations.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-processing workers, search, transfer, backup recovery and the complete
-physical-storage lifecycle remain unqualified.
+photo-derived processing, extraction, image embedding preparation, email PDF
+rendering and other media workers, search,
+transfer, backup recovery, multi-store placement and storage-operation jobs
+remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
@@ -292,8 +427,13 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
     ON documents.audit_authority TO docbank_runtime;
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
+GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
-GRANT INSERT, UPDATE ON documents.blob_locations TO docbank_runtime;
+GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
+GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(scan_hash) ON documents.blob_packs TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.gc_loose_retirements,
+    documents.derivative_pack_purge_pending TO docbank_runtime;
 GRANT DELETE ON documents.blob_pack_entries, documents.rendition_blob_staging,
     documents.derivative_blob_purge_pending TO docbank_runtime;
 GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
@@ -338,8 +478,57 @@ GRANT UPDATE(state, failure_code, updated_at)
 GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
     recorded_at, expires_at, active, released_at)
     ON documents.current_rendition_roots TO docbank_runtime;
-GRANT UPDATE(revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
+GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
+    ON documents.saved_queries TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
+GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
+    documents.document_events, documents.document_event_actors, documents.document_event_primaries
+    TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, published_at)
+    ON documents.source_metadata_heads TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_technical_metadata TO docbank_runtime;
+GRANT INSERT, UPDATE(projection_recipe)
+    ON documents.photo_technical_metadata_state TO docbank_runtime;
+GRANT INSERT, UPDATE(deriver_fingerprint, input_epoch)
+    ON documents.document_event_state TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, input_epoch, published_at)
+    ON documents.document_event_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnostic_json, attempted_at)
+    ON documents.document_event_attempts TO docbank_runtime;
+GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
+    ON documents.document_event_builds TO docbank_runtime;
+GRANT INSERT ON documents.processing_consent_grants, documents.processing_consent_revocations,
+    documents.processing_profiles, documents.rendition_builds, documents.rendition_artifacts,
+    documents.rendition_units, documents.rendition_lexical_segments,
+    documents.rendition_attachments, documents.rendition_jobs, documents.rendition_job_waiters,
+    documents.rendition_lexical_heads, documents.rendition_lexical_superseded TO docbank_runtime;
+GRANT INSERT ON documents.rendition_blob_staging TO docbank_runtime;
+GRANT INSERT, UPDATE(attachment_id, published_at) ON documents.rendition_heads TO docbank_runtime;
+GRANT UPDATE(provider_attempts) ON documents.rendition_jobs TO docbank_runtime;
+GRANT UPDATE(attachment_id) ON documents.rendition_job_waiters TO docbank_runtime;
+GRANT INSERT ON documents.embedding_vector_spaces, documents.embedding_input_generations,
+    documents.embedding_generation_inputs, documents.embedding_vector_sets,
+    documents.embedding_vector_rows, documents.embedding_sets TO docbank_runtime;
+GRANT INSERT, UPDATE(embedding_set_id, vector_space_id, profile_fingerprint,
+    published_at, fencing_token) ON documents.embedding_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(failure_code, failed_at, fencing_token, attachment_id)
+    ON documents.embedding_failures TO docbank_runtime;
+GRANT INSERT, UPDATE(state, claim_owner, claim_epoch, claim_count, lease_expires_at,
+    available_at, failure_code, receipt_json, updated_at)
+    ON documents.embedding_jobs TO docbank_runtime;
+GRANT INSERT ON documents.page_documents, documents.page_frames,
+    documents.page_recipes, documents.page_images, documents.email_generations,
+    documents.email_part_artifacts, documents.email_attachments,
+    documents.email_body_results, documents.email_document_publications,
+    documents.email_document_relations TO docbank_runtime;
+GRANT INSERT, UPDATE(state, results_json, failure_code, epoch, token, updated_at)
+    ON documents.page_render_jobs TO docbank_runtime;
+GRANT INSERT, UPDATE(attachment_id, published_at)
+    ON documents.email_heads TO docbank_runtime;
+GRANT DELETE ON documents.email_document_publications TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -498,8 +687,7 @@ rejects a conflicting checksum without changing the retained value. The runtime
 role needs only `SELECT` and `INSERT` on `blob_checksums`. SHA-256 remains the
 blob identity; MD5 is auxiliary metadata. This qualifies checksum recording and
 readback. Native document writes also record physical receipts as described
-below; checksum backfill and the complete physical-storage lifecycle remain
-unqualified.
+below. Checksum backfill remains unqualified.
 
 !!! info "Planned"
 
@@ -537,49 +725,23 @@ receipts, repairs the surviving assets, and refreshes paired sidecar work after
 node deletion. These effects share the deletion transaction; a failure retains
 the original versions, jobs, receipts, epochs and node revisions.
 
-!!! info "Planned"
+`make backend-coverage` reports the recorded SQLite catalog effects,
+their PostgreSQL owners and their remaining boundaries. Audit enrollment already
+queues affected photos through `queueAuditPhotosTx`. Deleting authority or
+memberships during import/restore still needs that effect. XMP publication,
+people candidates and search also have unported effects; their
+retained tables do not establish write support.
 
-    Preserve these effects as the remaining mutation, import, restore and
-    maintenance operations are ported. PostgreSQL does not use maintenance
-    triggers; the Go operation owns the related changes.
+For each remaining port, capture affected identities before cascades remove the
+rows that identify them. Validate values and immutable-record rules in the Go
+write path, including imports and restores, and verify commit and rollback
+through the native operation. PostgreSQL does not use maintenance triggers.
 
-    SQLite currently owns these effects in triggers. They are separate from
-    value validation and must not disappear when a write is ported:
-
-    | Change | Required catalog effect |
-    | --- | --- |
-    | Insert a content version | Remove its blob from `rendition_blob_staging` and `derivative_blob_purge_pending` |
-    | Change a photo node's current version | Queue its node when the version changes |
-    | Add or remove an audit membership | Queue eligible photo assets associated with that node in `photo_xmp_unsettled` |
-    | Add or remove audit authority | Queue every eligible photo asset in `photo_xmp_unsettled` |
-    | Record a checksum | Keep the existing value immutable; reject a conflicting value in Go and omit runtime `UPDATE` privileges |
-
-    Initial and additional enrollment persistence already queue affected assets
-    on PostgreSQL through the shared audit writers, as described under
-    [shared query qualification](#shared-query-qualification). The remaining
-    mutation, cascading deletion and restore paths must preserve these effects
-    too; the presence of photo tables does not qualify those operations.
-
-    Shared Go validation must also enforce the audit invariants currently
-    covered by SQLite checks: one active authority row at `singleton=1`, known
-    record kinds, and positive stored operation sequences and entry counts
-    wherever present. Validate records before insertion and the complete
-    authority within the transaction, including imports and restores. The
-    PostgreSQL write paths must not rely on SQLite constraints for these rules.
-
-    This table identifies the immediate dependencies of the core catalogs,
-    not the complete trigger inventory. Bulk and cascading deletions must
-    capture affected identities before deleting the rows that identify them.
-    Each port must cover normal and audited writes, imports, restores and
-    maintenance paths, and verify both commit and rollback effects on both
-    backends. Engine-specific index maintenance, such as SQLite FTS5, remains
-    part of that engine's search implementation.
-
-    Preserve released SQLite schemas and their triggers. Replace each trigger
-    through the supported SQLite layout cutover only when its shared Go owner
-    is present. Do not run both owners for an effect such as advancing a binding
-    epoch. Successful SQL alone does not qualify a write; its related catalog
-    effects must be implemented too.
+Preserve released SQLite schemas and their triggers. Replace each trigger
+through the supported SQLite layout cutover only when its Go owner is present.
+Do not run both owners for an effect such as advancing a binding epoch.
+Engine-specific index maintenance, such as SQLite FTS5, remains part of that
+engine's search implementation.
 
 #### Native document writes
 
@@ -606,6 +768,149 @@ technical metadata and sidecar receipts. Physical cases cover compressed
 receipts, missing authority and dead pack mappings surviving logical collection.
 These are internal Store capabilities; they do not expose a public PostgreSQL
 vault or qualify the remaining storage and recovery lifecycle.
+
+#### Source metadata and document events
+
+Publishing source metadata atomically records immutable evidence, its photo
+technical projection, and the selected generation. Replaying an extractor's
+identical evidence selects that recorded generation; conflicting bytes fail.
+A changed head invalidates event and people projections for every retained
+version of the source bytes. Republishing the unchanged head does not dirty
+those versions again.
+
+PostgreSQL refreshes the affected photo timelines and export queue in that same
+transaction. It visits each photo and asset once even when retained versions
+share the source bytes. Rebuilding technical projections from retained evidence
+refreshes affected photos after the full replacement. SQLite retains its
+existing triggers, including FTS maintenance; PostgreSQL search remains
+unqualified.
+
+Document-event publication captures source and provenance evidence, then checks
+its digest, recipe, epoch and dirty revision under the writer lock. A stale
+result cannot become a head or a terminal attempt. Generation bytes, events,
+actors and primary selections are inserted together and cannot be updated by
+the runtime role. Head selection and terminal-attempt recording share the same
+transaction. Replaying the current publication preserves its epoch; failed
+writes retain the previous evidence and progress.
+
+Coverage, missing-work pages, metadata views and event evidence use repeatable-read
+snapshots when several queries assemble one result. Coverage uses the indexed
+event and primary-selection rows instead of expanding canonical JSON. Canonical
+source payloads remain bytes on both engines, including when checking size and
+corruption. Rebuild requests atomically advance the input epoch and record an
+idempotent receipt; refresh counts only current terminal attempts, and completed
+receipts remain immutable.
+
+#### Rendition jobs and publication
+
+Original-file rendition jobs run through the same Store operations on both
+backends. Consent grants bind the exact profile, disclosure, input classes and
+retained artifacts to the current processing incarnation. Revocations append a
+new fence. A new grant cannot replace the authorization used by an earlier
+provider call; publication rechecks that authorization inside its writer
+transaction. Runtime can insert grants and revocations but cannot update or
+delete their history. Incarnation replacement during restore remains unqualified.
+
+Jobs share a build only when source bytes, execution identity and captured output
+policy agree. Each version/profile waiter keeps its own consent. Claims,
+renewals, scheduled retries and resumable provider handles keep the existing
+lease and fencing rules. An expired provider call without a durable handle
+requires operator resolution. Worker error classification recognizes PostgreSQL
+serialization failures, deadlocks and lock unavailability. It also retries
+pgx-confirmed safe connection failures before commit, so a disconnected claim
+can resume on a fresh connection. A lost commit response remains fatal unless
+PostgreSQL explicitly reports an aborted transaction. Reusing a staged
+build or restoring a superseded head does not repeat provider work.
+
+Builds, artifacts, evidence units and text segments are immutable records. The
+runtime role may insert them; cleanup may delete them, but no update grant
+permits rewriting evidence. Job staging creates retention roots in the same
+transaction. Publication validates the source, retained policy, consent and
+complete lexical manifest, then moves rendition and lexical heads together.
+A failed replacement leaves the old heads and waiting job intact. Successful
+replacement removes stale chunk-embedding heads and failures, and collects
+superseded lexical generations only when no root or reader still needs them.
+
+Build reads, active rendition views and exact text resolution use repeatable-read
+snapshots. A purge committed during a read affects the next request. PostgreSQL
+stores the relational lexical projection and manifests; SQLite additionally
+maintains FTS through its existing triggers. PostgreSQL ranked search is not
+qualified by publication tests.
+
+The `renditions` backend suite covers this native lifecycle, including provider
+resume, revocation, lease theft, staged-build reuse, failed publication and
+concurrent purge. It does not qualify photo-description or face-detection jobs,
+media producers, extraction workers, or public PostgreSQL vault opening.
+The email and page suites below qualify their own native producers.
+
+#### Document embedding jobs and publication
+
+Original-file and rendition-chunk embeddings use the same Store operations on
+both backends. Jobs retain their exact consent grant, processing incarnation and
+revocation fence. Replacement consent creates a successor job; it cannot adopt
+an earlier job or its provider calls. Claims exclude live leases, renew under
+the same epoch, and preserve retry counts when another worker resumes them.
+Reconciliation checks current source and rendition authority, purge suppression,
+executable providers and current consent before scheduling retained inputs.
+
+Vector spaces, input generations, vector sets and their ordered row manifests
+are immutable. Vector values and rendered inputs stay in blob artifacts; the
+database retains their checksums, references and bounded projections. Runtime
+credentials may insert those records but cannot update them. Exact duplicates
+reuse the existing authority; a conflicting record fails the transaction.
+Publication advances the serving head and completes the job in one writer
+transaction. Failed staging retains no partial set, and failed completion
+leaves the previous serving state and live claim unchanged. Purge and source
+replacement fence older attempts, including failures arriving after publication.
+
+Processing coverage uses one repeatable-read snapshot for source visibility,
+rendition and embedding heads, and pending replacements. It shares current-head
+eligibility with semantic retrieval. A replacement can be rebuilding while its
+previous complete generation remains available. These metadata counts do not
+establish that a vector search index is built or that its payloads are readable.
+
+The `embeddings` backend suite covers native document jobs, artifact publication,
+consent, leases, reconciliation, cleanup and coverage. Image preparation, vector
+index construction, ranked retrieval and public PostgreSQL vault opening remain
+unqualified.
+
+#### Email and rendered-page publication
+
+MIME inventory publication retains decoded artifacts, shares a generation across
+identical source bytes, and selects an exact version's inventory in one writer
+transaction. Body publication uses the ordinary rendition publisher: the selected
+MIME body, rendition head and complete lexical generation become visible together.
+A failed publication preserves staging and the prior serving state. Re-observing a
+body build preserves its first completion time; purge suppression prevents a late
+attempt from restoring deleted authority.
+
+Attachment publication creates ordinary child documents and their exact parent
+relations together. It preserves audit history, rejects stale destinations, and
+replays an operation's original receipt. Retained publication receipts protect
+versions from pruning and inventories from purging. Releasing a receipt checks
+mailbox and export references before deleting it. Relation pages report processing
+status for the retained child version, even after the current child changes.
+They use the same rendition-coverage rules as collection queries.
+
+Page jobs keep their operation identity, source revision and claim epoch through
+queueing, restart, cancellation and completion. Frame, recipe and image records
+are immutable. Publishing an image records its physical blob and job result in
+the same transaction; failed result publication leaves neither behind. Completion
+requires every requested page receipt. Canceling a job preserves already published
+pages but fences further writes by its old claim.
+
+Email metadata, target selection, relation pages, page inventories, image reads
+and job views use repeatable-read snapshots. A publication or receipt release
+committed during a read affects the next request. Email target selection retains
+SQLite's exact MIME partial-index expression; PostgreSQL uses its equivalent
+`strpos` predicate and index. No new per-row queries or runtime backend interface
+are introduced.
+
+The `email` and `pages` backend suites exercise these native operations, including
+late-write rollback and concurrent publication. Plain-text extraction, email PDF
+rendering, rendering subprocesses and metadata recovery remain outside these
+suites. They do not enable a public PostgreSQL-backed vault or qualify ranked
+search.
 
 #### Recoverable deletion
 
@@ -663,8 +968,8 @@ JSON values alone do not preserve indexed lookup plans.
 
 Both destructive operations retain the existing refusal while audit authority
 is active. Dry runs can inspect candidates but do not authorize deletion.
-Physical byte deletion and processing workers remain separate, unqualified
-PostgreSQL operations.
+Physical reclamation uses the separate catalog operations described below;
+other processing producers remain unqualified.
 
 #### Derivative cleanup
 
@@ -697,6 +1002,40 @@ writes allocate their rebuildable row IDs under the store writer lock. SQLite
 continues to maintain its FTS shadow tables through its released triggers;
 PostgreSQL has only the retained lexical catalogs at this stage. Cleanup does
 not qualify PostgreSQL search or processing publication.
+
+#### Physical packing and collection
+
+The native `PackCatalog` supports Kit's primary-store pack and repack lifecycle
+with PostgreSQL metadata. Kit still writes and verifies the physical files;
+Docbank supplies logical membership, read locations, mappings and pack summaries.
+Packing replaces loose authority with verified packed authority. Repacking
+checks the complete live mapping set before publishing replacements. A failed
+transaction retains the original authority and mappings.
+
+PostgreSQL mutation helpers refresh affected pack summaries once per pack inside
+the writer transaction. This includes adoption, replacement, index removal,
+loose repair, logical collection and re-ingest. SQLite keeps its released
+summary triggers. Counts, totals and maxima describe only live members; dead
+mappings remain until physical retirement. A pack's scan key stays stable after
+publication, even when its lowest member disappears. Bounded GC and repack scans
+count examined rows, including ineligible entries, and retain byte-order cursors
+and SQLite's existing index hints.
+
+Logical blob deletion and exact cleanup receipts commit together. Receipts name
+the store and loose encoding or immutable pack, survive a failed physical cleanup,
+and can be retried. Before retiring a loose object, the caller checks its receipt
+again: renewed location authority consumes stale work without authorizing byte
+deletion. Completion removes only that exact receipt. Pack retirement removes
+its pending receipt through the catalog's foreign key. The caller must still
+hold exclusive vault/blob-root ownership across physical maintenance; the SQL
+writer lock alone cannot serialize filesystem publication.
+
+PostgreSQL tests run Kit's existing catalog contract against setup-owned DDL and
+a separate runtime role. A real-file lifecycle packs documents, revokes collected
+members, repacks the survivor and reads its original bytes. Additional cases
+cover bounded scans, summary changes, rollback and cleanup replay after content
+is reauthorized. This qualifies the primary catalog and cleanup protocol, not
+public PostgreSQL vault opening, multi-store placement, storage jobs or recovery.
 
 #### Imports and source history
 
@@ -735,7 +1074,8 @@ correcting evidence invalidates derived events and people, schedules event
 recomputation, and advances the publication epochs for removed projections.
 SQLite retains its released trigger ownership, including the event epoch's
 per-head increment. Canonical event tables support this invalidation and its
-cascades; event publication and derivation workers remain unqualified.
+cascades; [event publication](#source-metadata-and-document-events) uses the
+shared Store. People publication remains unqualified.
 
 Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
@@ -744,6 +1084,34 @@ writes during history reads to verify snapshot consistency. These capabilities
 do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
 sidecar writing, portable metadata import, collection snapshots, reporting,
 backup or restore.
+
+#### Tags and saved definitions
+
+Tag creation, assignment, rename and deletion use the same Store methods on
+both databases, including audited operations and path-based assignment. Tag
+pages retain byte-order sorting, current assignment counts and trash filtering.
+Bulk edits preserve revision fences, atomic changes and immutable replay
+receipts, including replay after a tag is deleted. A bulk preview reads the tag
+and selected nodes from one repeatable-read snapshot.
+
+On PostgreSQL, tag writes refresh affected photo export work in their write
+transaction. Bulk edits and definition changes collect affected assets as a set,
+including sidecars belonging to those photos; SQLite retains its released
+triggers. Tag deletion still refuses definitions referenced by queued or running
+mailbox jobs.
+The job-state index supports that check. Runtime credentials can insert batch
+receipts but cannot update or delete them.
+
+Saved query and highlight definitions retain canonical payloads, optimistic
+revisions, idempotent edits, filtered pages and photo-only selectors. These
+mutations remain unavailable after audit enrollment, as on SQLite. Deleting a
+definition cascades retained run receipts through the definition index; this
+does not qualify saved-query execution or run publication on PostgreSQL.
+
+The `organization` backend scenarios cover native mutations, bulk replay and
+rollback, concurrent saved-definition edits, snapshot consistency and photo
+export effects. Mailbox jobs and settled photo receipts are retained fixtures;
+their producers remain outside this qualification.
 
 #### Shared query qualification
 
@@ -1076,9 +1444,27 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
+Go test jobs run `go test` through gotestsum, which the module pins as a Go
+tool. gotestsum reruns each failed test up to two more times. A test that passes
+on a rerun lets the job pass, and gotestsum lists it in
+`gotestsum/<suite>-reruns.txt`. When a test fails or is rerun, or the job itself
+is a rerun attempt, the job uploads the `gotestsum/*.json` reports as the
+`gotestsum-<suite>-attempt-<n>` artifact for 14 days. A flaky test therefore
+stays visible after the job passes, and a passing rerun attempt can be matched
+with the earlier failure. A clean first attempt uploads nothing.
+
+In CI, Vitest and Playwright also retry a failed test up to two more times and
+write JSON reports under `frontend/test-results/`. Each test step uploads its
+report as the `vitest-<suite>-attempt-<n>` or `playwright-<suite>-attempt-<n>`
+artifact for 14 days, whatever the result. A test that passed only on a retry
+has Vitest status `passed` with failure messages, or Playwright status `flaky`.
+The report-export browser check still requires one unretried pass.
+
 Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
 
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
+
+The native PDF engine reclaims retired runtime memory after each page while holding its exclusive backing lease. This keeps decoded module metadata from accumulating between pages under the same RSS ceiling.
 
 Documentation browser checks use Microsoft's public Playwright image matching the installed `@playwright/test` version.
 The LibreOffice PDF proof runs in a GHCR image built from `.github/docker/render-pdf/Dockerfile` and tagged by that file's hash.
@@ -1100,6 +1486,16 @@ missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`
 disk and mounts it as D:. A setup failure logs a warning and keeps both Go cache
 paths unchanged. Changing cache paths creates a new cache version, so the first
 restore at the new location misses until a `main` push saves it.
+
+Windows jobs also set `TEMP` and `TMP` to `D:\a\_temp\tmp`, so `t.TempDir`
+and every test vault use the local disk. The default `TEMP` is on C:, the
+runner's network-attached OS disk. While other test packages write, its flushes
+average tens of milliseconds and sometimes stall for several seconds. Durable
+vault writes flush on every upload and commit, so those stalls add up and fail
+tests on timeouts. Setup grants that directory only the user, SYSTEM and
+Administrators, as the default `TEMP` does, because private-file checks reject
+files that inherit D:'s broader access. Without D:, the job logs a warning and
+keeps the default.
 
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:

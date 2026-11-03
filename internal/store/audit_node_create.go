@@ -64,7 +64,7 @@ func (s *Store) persistAuditedNodeCreation(
 		return err
 	}
 	baseline, err := buildAuditedCreationBaseline(
-		tx, values, scopes[0], created, version, createdTopology, metadata,
+		ctx, tx, values, scopes[0], created, version, createdTopology, metadata,
 	)
 	if err != nil {
 		return err
@@ -192,6 +192,7 @@ func sortAuditTopologyRecords(records []audit.Record) error {
 }
 
 func buildAuditedCreationBaseline(
+	ctx context.Context,
 	tx *sql.Tx, values auditedMutationValues,
 	scope auditScopeState, created Node, version ContentVersion,
 	createdTopology audit.Record, metadata *auditedCreationMetadata,
@@ -214,7 +215,7 @@ func buildAuditedCreationBaseline(
 		versions = []audit.Record{record}
 		versionRecord = &versions[0]
 	}
-	nodes, witnesses, err := auditCreationBaselineTopology(tx, created.ID, values.operationID)
+	nodes, witnesses, err := auditCreationBaselineTopology(ctx, tx, created.ID, values.operationID)
 	if err != nil {
 		return auditedCreationBaseline{}, err
 	}
@@ -276,12 +277,13 @@ func auditMemberStateForNode(node Node) (audit.Record, error) {
 }
 
 func auditCreationBaselineTopology(
+	ctx context.Context,
 	tx *sql.Tx, nodeID int64, operationID audit.Value,
 ) ([]audit.Record, []audit.Record, error) {
 	var nodes []audit.Record
 	current := nodeID
 	for {
-		node, err := nodeByIDTx(tx, current)
+		node, err := nodeByIDTx(ctx, tx, current)
 		if err != nil {
 			return nil, nil, err
 		}

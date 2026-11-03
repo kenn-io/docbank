@@ -69,7 +69,7 @@ func TestSealCollectionSnapshotFreezesExactVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, request.Members, members)
 
-	_, err = s.db.Exec(`UPDATE collection_snapshot_members SET size=99 WHERE snapshot_id=?`, id)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE collection_snapshot_members SET size=99 WHERE snapshot_id=?`, id)
 	require.ErrorContains(t, err, "collection snapshot members are immutable")
 	again, err := s.SealCollectionSnapshot(t.Context(), request)
 	require.NoError(t, err)
@@ -104,12 +104,12 @@ func TestSnapshotSourceCollectionsFreezeMembership(t *testing.T) {
 	second, err := newUUIDv4()
 	require.NoError(t, err)
 	for _, collectionID := range []string{first, second} {
-		_, err = s.db.Exec(`INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`,
 			collectionID, nowRFC3339(), "file", "Synthetic collection")
 		require.NoError(t, err)
 		provenanceID, idErr := newUUIDv4()
 		require.NoError(t, idErr)
-		_, err = s.db.Exec(`INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`,
 			provenanceID, node.ID, collectionID, "source.txt")
 		require.NoError(t, err)
 	}

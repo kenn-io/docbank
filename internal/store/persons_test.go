@@ -66,11 +66,11 @@ func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
 	var before int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
 	person, err = s.UpdatePerson(ctx, person.PersonID, person.Revision, "Ada L.")
 	require.NoError(t, err)
 	var after int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
 	require.Equal(t, before+1, after)
 	retired, err := s.RetirePerson(ctx, person.PersonID, person.Revision)
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func TestRetirePersonTombstonesResolution(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	var survivor, reason string
 	var survivorValid bool
-	require.NoError(t, s.db.QueryRow(`SELECT COALESCE(surviving_person_id,''),surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, person.PersonID).Scan(&survivor, &survivorValid, &reason))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE(surviving_person_id,''),surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, person.PersonID).Scan(&survivor, &survivorValid, &reason))
 	require.Empty(t, survivor)
 	require.False(t, survivorValid)
 	require.Equal(t, "deleted", reason)
@@ -239,7 +239,7 @@ func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	var survivorValid bool
 	var reason string
-	require.NoError(t, s.db.QueryRow(`SELECT surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, first.PersonID).Scan(&survivorValid, &reason))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, first.PersonID).Scan(&survivorValid, &reason))
 	require.False(t, survivorValid)
 	require.Equal(t, "deleted", reason)
 }

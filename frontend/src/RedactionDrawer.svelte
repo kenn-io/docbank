@@ -153,7 +153,8 @@
     dispose();
     onclose();
   }
-  function requestClose() {
+  // A containing reader delegates dismissal here when this review is open.
+  export function requestClose() {
     if (masks.length || busy || preview) dialog = "discard";
     else close();
   }
@@ -532,7 +533,9 @@
                   : "Verifying original page…"}
               </p>
             {:else}
-              <p role="status">{original.message || "This original page has not been rendered."}</p>
+              <p role="status">
+                {original.message || "This original page has not been rendered."}
+              </p>
               {#if original.inventory?.runtime_available}<Button
                   disabled={busy}
                   onclick={() => void showPage(true)}>Render page {page}</Button

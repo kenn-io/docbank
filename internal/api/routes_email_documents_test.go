@@ -74,7 +74,7 @@ func TestEmailDocumentRequestBoundaries(t *testing.T) {
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}
 	postRaw := func(body string) (*http.Response, string) {
-		r, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/email-document-publications", strings.NewReader(body))
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/email-document-publications", strings.NewReader(body))
 		require.NoError(t, err)
 		r.Header.Set("Content-Type", "application/json")
 		resp, err := ts.Client().Do(r)

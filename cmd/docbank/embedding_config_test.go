@@ -21,6 +21,25 @@ import (
 	"go.kenn.io/kit/secretref"
 )
 
+func TestImageBridgeDescriptorSupportsTextQuery(t *testing.T) {
+	cfg, _ := syntheticLoopbackOpenAIConfig(t, "http://embedding.invalid", "DOCBANK_TEST_IMAGE_KEY")
+	profile := cfg.EmbeddingProfiles["semantic"]
+	profile.InputKind = string(document.EmbeddingInputImage)
+	profile.MaxInputTokens = 0
+	profile.Chunk = config.EmbeddingChunkConfig{}
+	profile.Runtime.AdapterContract = bridgeEmbeddingAdapterV2
+	profile.Runtime.DeploymentEpoch = ""
+	cfg.EmbeddingProfiles["semantic"] = profile
+	require.NoError(t, cfg.Validate())
+	profile = cfg.EmbeddingProfiles["semantic"]
+	modelInput, err := cfg.EmbeddingModelInput("semantic")
+	require.NoError(t, err)
+
+	descriptor := configuredEmbeddingDescriptor(profile, modelInput)
+	assert.True(t, descriptor.SupportsTextQuery)
+	assert.Equal(t, []document.EmbeddingInputKind{document.EmbeddingInputImage}, descriptor.InputKinds)
+}
+
 func TestKitEmbeddingConfigCredentialsPreserveDescriptorAndRequests(t *testing.T) {
 	for _, source := range []string{"inline", "env", "file"} {
 		t.Run(source, func(t *testing.T) {
@@ -70,7 +89,7 @@ api_key = %s
 			cfg.EmbeddingProfiles["semantic"] = p
 			cfg.CredentialBindings = nil
 			require.NoError(t, cfg.Validate())
-			bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+			bundle, err := configureEmbeddingRuntimeBundle(cfg)
 			require.NoError(t, err, "startup must not resolve file or environment secrets")
 			provider := bundle.providers["semantic"]
 			assert.Equal(t, descriptor, provider.Descriptor())
@@ -116,7 +135,7 @@ api_key = %s
 					changed.Embedder.FingerprintSalt = "different-weights"
 				}
 				cfg.EmbeddingProfiles["semantic"] = changed
-				_, err = configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+				_, err = configureEmbeddingRuntimeBundle(cfg)
 				require.ErrorContains(t, err, "descriptor differs from portable binding")
 			}
 		})
@@ -135,7 +154,7 @@ func TestKitEmbeddingConfigRequiresCredentialSource(t *testing.T) {
 	cfg.EmbeddingProfiles["semantic"] = p
 	cfg.CredentialBindings = nil
 	require.ErrorContains(t, cfg.Validate(), "runtime credential binding \"credential:semantic\" is not defined")
-	_, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	_, err := configureEmbeddingRuntimeBundle(cfg)
 	require.EqualError(t, err, "configuring embedding runtime \"semantic\": credential source is not configured")
 	assert.Equal(t, "credential:semantic", cfg.EmbeddingProfiles["semantic"].CredentialBinding)
 
@@ -143,7 +162,7 @@ func TestKitEmbeddingConfigRequiresCredentialSource(t *testing.T) {
 	// the unavailable secret during startup.
 	p.Embedder.APIKey = secretref.Ref{Env: variable}
 	require.NoError(t, cfg.Validate())
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
 	assert.Equal(t, descriptor, bundle.providers["semantic"].Descriptor())
 }

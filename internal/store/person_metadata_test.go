@@ -343,7 +343,7 @@ func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
 		evidence, err := canonical.Marshal(occurrences)
 		require.NoError(t, err)
 		digest := fakeSHA256(evidence)
-		_, err = s.db.Exec(`WITH RECURSIVE seq(value) AS (
+		_, err = s.db.ExecContext(t.Context(), `WITH RECURSIVE seq(value) AS (
 			VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
 		) INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at)
 		SELECT printf('80000000-0000-4000-8000-%012x',value),printf('name_alias:synthetic-%d',value),'Synthetic','name_only',?,?,1,1,'open',? FROM seq`,
@@ -354,7 +354,7 @@ func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
 
 	t.Run("external UID alias hop limit", func(t *testing.T) {
 		s := newTestStore(t)
-		_, err := s.db.Exec(`WITH RECURSIVE seq(value) AS (
+		_, err := s.db.ExecContext(t.Context(), `WITH RECURSIVE seq(value) AS (
 			VALUES(0) UNION ALL SELECT value+1 FROM seq WHERE value<32
 		) INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
 		SELECT 'msgvault','synthetic',printf('uid-%02d',value),printf('uid-%02d',value+1),? FROM seq`, nowRFC3339())

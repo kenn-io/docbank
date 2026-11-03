@@ -99,7 +99,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 	second, err := s.CreateFile(ctx, s.RootID(), "second.wav", fakeHash("b2"), 12, "audio/wav")
 	require.NoError(t, err)
 	sourceID := strings.Repeat("a", 64)
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES(?,?,?,?,?,?)`, sourceID, "supplied_media", "", "", sourceID, nowRFC3339())
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES(?,?,?,?,?,?)`, sourceID, "supplied_media", "", "", sourceID, nowRFC3339())
 	require.NoError(t, err)
 	require.NoError(t, declareTestOccurrence(ctx, s, MediaOccurrenceInput{
 		ID: "occurrence-a", SourceID: sourceID, Principal: "operator:test", Ref: "call-a", Revision: "1", MessageJSON: "{}",
@@ -128,7 +128,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 			OperationState: "succeeded", CoverageState: "unprocessed"}
 		raw, err := canonical.Marshal(publication)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
 			receipt.operationID, "operator:test", "submit_supplied_media", receipt.requestHash, sourceID, string(raw), receipt.createdAt, receipt.createdAt)
 		require.NoError(t, err)
 	}
@@ -164,7 +164,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 			raw, err := canonical.Marshal(receipt)
 			require.NoError(t, err)
 			historical := strings.TrimSuffix(string(raw), "}") + `,"unrelated_historical_field":true}`
-			_, err = s.db.Exec(`INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, operationID, "operator:test", verb, fakeHash("c3"), sourceID, historical, "2022-01-01T00:00:00Z", "2022-01-01T00:00:00Z")
+			_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, operationID, "operator:test", verb, fakeHash("c3"), sourceID, historical, "2022-01-01T00:00:00Z", "2022-01-01T00:00:00Z")
 			require.NoError(t, err)
 		}
 	}
@@ -173,7 +173,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 		_, err = s.QueueMediaRetry(ctx, MediaOperation{ID: operationID, Principal: "operator:test", Verb: "retry_media", RequestSHA256: fakeHash("d4"), SourceID: sourceID}, MediaPublicationReceipt{VaultUID: s.VaultID(), SourceID: sourceID, SourceVersionID: version, OperationID: operationID, ProcessingProfile: "speech"})
 		require.NoError(t, err)
 	}
-	_, err = s.db.Exec(`UPDATE media_operations SET updated_at='2030-01-01T00:00:00Z' WHERE operation_id='operation-retention'`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE media_operations SET updated_at='2030-01-01T00:00:00Z' WHERE operation_id='operation-retention'`)
 	require.NoError(t, err)
 	latest, err = s.MediaSource(ctx, "operator:test", sourceID)
 	require.NoError(t, err, "unrelated historical receipts are excluded before decoding")

@@ -44,10 +44,11 @@ interface DownloadAuthority {
 export type DownloadPurpose = "native" | "preview";
 export type VerifiedPreview =
   | { kind: "text"; text: string; mediaType: string }
-  | { kind: "image"; url: string; mediaType: string };
+  | { kind: "image" | "pdf"; url: string; mediaType: string };
 
 const previewTextMaxBytes = 16 * 1024 * 1024;
 const previewImageMaxBytes = 32 * 1024 * 1024;
+const previewPDFMaxBytes = 64 * 1024 * 1024;
 
 export async function prepareEmailPDFDownload(
   session: string,
@@ -314,7 +315,7 @@ export async function readVerifiedPreview(
         type: eligibility.mediaType,
       }),
     );
-    return { kind: "image", url, mediaType: eligibility.mediaType };
+    return { kind: eligibility.kind, url, mediaType: eligibility.mediaType };
   } catch (cause) {
     if (prepared) await cancelPreparedDownload(session, prepared).catch(() => undefined);
     throw cause;
@@ -325,7 +326,7 @@ export function previewEligibility(
   rawMediaType: string,
   size: number,
 ): {
-  kind: "text" | "image";
+  kind: "text" | "image" | "pdf";
   mediaType: string;
 } {
   const segments = rawMediaType.split(";");
@@ -354,6 +355,12 @@ export function previewEligibility(
     }
     return { kind: "text", mediaType };
   }
+  if (mediaType === "application/pdf" && !charset) {
+    if (size === 0) throw new Error("This document is empty. Download the verified original.");
+    if (size > previewPDFMaxBytes)
+      throw new Error("PDF previews are limited to 64 MiB; use verified download instead.");
+    return { kind: "pdf", mediaType };
+  }
   const image = charset === "" && ["image/png", "image/jpeg", "image/webp"].includes(mediaType);
   if (image) {
     if (size > previewImageMaxBytes) {
@@ -361,7 +368,7 @@ export function previewEligibility(
     }
     return { kind: "image", mediaType };
   }
-  throw new Error("The selected version is not an eligible text or raster image preview.");
+  throw new Error("This file has no preview. Download the verified original.");
 }
 
 function validatePreviewHeaders(headers: Headers, source: SelectedSource, mediaType: string): void {

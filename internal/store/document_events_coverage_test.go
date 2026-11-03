@@ -9,9 +9,9 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 
 	empty, err := s.DocumentEventCoverageReport(t.Context())
 	require.NoError(t, err)
@@ -55,26 +55,28 @@ func TestDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T) 
 	assert.Equal(t, int64(1), coverage.InvalidDates)
 	assert.Equal(t, int64(1), coverage.OperationalFallbacks)
 
-	_, err = s.db.Exec(`INSERT INTO document_event_dirty(content_version_id,revision,reason)
-		VALUES(?,1,'test')`, current.ID)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_dirty(content_version_id,revision,reason)
+		VALUES($1,1,'test')`, current.ID)
 	require.NoError(t, err)
 	coverage, err = s.DocumentEventCoverageReport(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), coverage.Pending, "a mismatched dirty revision is pending")
-	_, err = s.db.Exec(`DELETE FROM document_event_dirty WHERE content_version_id=?`, current.ID)
+	currentTarget = requireDocumentEventTarget(t, s, current.ID)
+	_, err = s.PublishDocumentEvents(t.Context(), currentTarget, DocumentEventsDeriverFingerprint,
+		currentDigest, mustMarshalDocumentEvents(t, currentRecord))
 	require.NoError(t, err)
 
-	_, err = s.db.Exec(`UPDATE document_event_attempts SET inputs_sha256=?
-		WHERE content_version_id=?`, fakeHash("b23"), current.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_attempts SET inputs_sha256=$1
+		WHERE content_version_id=$2`, fakeHash("b23"), current.ID)
 	require.NoError(t, err)
 	coverage, err = s.DocumentEventCoverageReport(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), coverage.Pending, "a head and attempt digest mismatch is pending")
-	_, err = s.db.Exec(`UPDATE document_event_attempts SET inputs_sha256=?
-		WHERE content_version_id=?`, currentDigest, current.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_attempts SET inputs_sha256=$1
+		WHERE content_version_id=$2`, currentDigest, current.ID)
 	require.NoError(t, err)
 
-	_, err = s.db.Exec(`DELETE FROM document_event_heads WHERE content_version_id=?`, current.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM document_event_heads WHERE content_version_id=$1`, current.ID)
 	require.NoError(t, err)
 	coverage, err = s.DocumentEventCoverageReport(t.Context())
 	require.NoError(t, err)
@@ -84,9 +86,9 @@ func TestDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T) 
 	assert.Zero(t, coverage.OperationalFallbacks, "only a fresh selected primary counts")
 }
 
-func TestDocumentEventCoverageReportsFreshTerminalStates(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventCoverageReportsFreshTerminalStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	failed, err := s.CreateFile(t.Context(), s.RootID(), "failed.txt", fakeHash("e51"), 1, "text/plain")
 	require.NoError(t, err)
 	unavailable, err := s.CreateFile(t.Context(), s.RootID(), "unavailable.txt", fakeHash("e52"), 1, "text/plain")
@@ -117,9 +119,9 @@ func TestDocumentEventCoverageReportsFreshTerminalStates(t *testing.T) {
 	assert.Equal(t, int64(2), coverage.Pending, "terminal attempts from an older epoch are pending")
 }
 
-func TestOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "epoch-relative.txt", fakeHash("c31"), 1, "text/plain")
 	require.NoError(t, err)
 	older, err := s.StartDocumentEventRebuild(t.Context(),
@@ -159,13 +161,13 @@ func TestDocumentEventCoverageRequiresF10MetadataContract(t *testing.T) {
 	s := newTestStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "metadata-contract.txt", fakeHash("d41"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO source_metadata_generations(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO source_metadata_generations(
 		generation_id,source_sha256,contract_version,extractor_fingerprint,
 		canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`,
 		"80000000-0000-4000-8000-000000000008", node.BlobHash, "not-f10",
 		fakeHash("d42"), []byte(`{}`), fakeHash("d43"), nowRFC3339())
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
 		VALUES(?,?,?)`, node.BlobHash, "80000000-0000-4000-8000-000000000008", nowRFC3339())
 	require.NoError(t, err)
 

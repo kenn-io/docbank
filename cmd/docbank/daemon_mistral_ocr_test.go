@@ -195,7 +195,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	bound.RenditionProvider, err = adapter.newProvider(environmentCredentialSecrets{variables: map[string]string{"docling": "DOCBANK_TEST_MISTRAL_OCR_KEY"}}, &http.Client{Transport: transport})
 	require.NoError(t, err)
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -207,7 +207,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "statement.pdf", written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
 	require.NoError(t, err)
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: t.TempDir(), Lifecycle: t.Context()})
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, SpoolDirectory: t.TempDir(), Lifecycle: t.Context()})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, service.Shutdown(context.Background())) }()
 	cfg.Server.APIKey = "synthetic-key"

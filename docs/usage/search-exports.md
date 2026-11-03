@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-31
 title: Search exports
 description: Export search counts for a date range as CSV, review date evidence, and verify the frozen evidence ZIP.
 ---
@@ -70,9 +70,9 @@ Save this version 1 request as `request.json`:
 ```
 
 ```bash
-docbank search-export create --input request.json --output search-export.zip
-docbank search-export verify search-export.zip
-docbank search-export csv search-export.zip --output search-export.csv
+docbank report create --input request.json --output search-export.zip
+docbank report verify search-export.zip
+docbank report csv search-export.zip --output search-export.csv
 ```
 
 `create` uses the daemon and prints coverage. If dates need review, it prints
@@ -80,8 +80,8 @@ an export ID and review instructions without writing the ZIP. Inspect the
 frozen evidence and submit a JSON array of choices:
 
 ```bash
-docbank search-export dates <export-id> --limit 50
-docbank search-export revise <export-id> --choices choices.json --output reviewed.zip
+docbank report dates <export-id> --limit 50
+docbank report revise <export-id> --choices choices.json --output reviewed.zip
 ```
 
 Use `--cursor` with the returned `next_cursor` to continue reading dates.
@@ -94,10 +94,10 @@ vault. Both verify the packet before accepting its counts.
 Use a known report ID to read its live summary or save its verified evidence ZIP:
 
 ```bash
-docbank search-export show <report-id>
-docbank search-export show <report-id> --json
-docbank search-export download <report-id> --output recovered.zip
-docbank search-export csv recovered.zip --output recovered.csv
+docbank report show <report-id>
+docbank report show <report-id> --json
+docbank report download <report-id> --output recovered.zip
+docbank report csv recovered.zip --output recovered.csv
 ```
 
 `show` includes counts, coverage, and expiry. A report awaiting date review has
@@ -110,8 +110,8 @@ from the saved ZIP offline.
 List recorded runs, including their original requests, through history:
 
 ```bash
-docbank search-export history --offset 0 --limit 20
-docbank search-export history --offset 0 --limit 20 --json
+docbank report history --offset 0 --limit 20
+docbank report history --offset 0 --limit 20 --json
 ```
 
 History is vault-wide, including browser-created reports. Its recorded state
@@ -148,8 +148,8 @@ a receipt. Repeating create or revise may consume another slot.
 Once you no longer need a live report, free its slot:
 
 ```bash
-docbank search-export release <report-id>
-docbank search-export release <report-id> --json
+docbank report release <report-id>
+docbank report release <report-id> --json
 ```
 
 Release discards that handle's packet and date-review evidence, including a
@@ -163,7 +163,7 @@ An active download returns `409 report_retained`; retry deliberately after it
 closes. Even `download && release` can need a retry because the server closes
 its reader after sending the final bytes. The command does not retry for you.
 
-After an uncertain reply, run `search-export show <report-id>`. A successful
+After an uncertain reply, run `docbank report show <report-id>`. A successful
 read means the handle remains. `410 report_unavailable` means no live handle
 owned by this caller remains; it does not establish which call removed it.
 `503 report_unavailable` means reporting itself is unavailable and says nothing

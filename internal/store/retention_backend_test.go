@@ -11,7 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRetentionCleanupPostgres(t *testing.T) {
+func checkRetentionCleanupPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -61,7 +62,8 @@ func copyRetentionStore(t *testing.T, source *Store) (*Store, *sql.DB) {
 	return target, setup
 }
 
-func TestRetainedCleanupFixturesPostgres(t *testing.T) {
+func checkRetainedCleanupFixturesPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	t.Run("PruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior", func(t *testing.T) {
 		t.Parallel()
@@ -94,7 +96,8 @@ func checkRetentionMetadata(t *testing.T, s *Store) {
 	}))
 }
 
-func TestCleanupSharedProcessingPostgres(t *testing.T) {
+func checkCleanupSharedProcessingPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, stage := range []string{"provider", "build"} {
 		t.Run(stage, func(t *testing.T) {
@@ -158,7 +161,8 @@ func TestCleanupSharedProcessingPostgres(t *testing.T) {
 	}
 }
 
-func TestCleanupInvalidationAndRollbackPostgres(t *testing.T) {
+func checkCleanupInvalidationAndRollbackPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -206,7 +210,8 @@ func TestCleanupInvalidationAndRollbackPostgres(t *testing.T) {
 	}
 }
 
-func TestCleanupEmailRetentionPostgres(t *testing.T) {
+func checkCleanupEmailRetentionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -244,7 +249,8 @@ func TestCleanupEmailRetentionPostgres(t *testing.T) {
 	}
 }
 
-func TestCleanupPhotoReceiptsPostgres(t *testing.T) {
+func checkCleanupPhotoReceiptsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -276,7 +282,8 @@ func TestCleanupPhotoReceiptsPostgres(t *testing.T) {
 	require.Equal(t, readTrashPhotoState(t, source, asset.ID), readTrashPhotoState(t, target, asset.ID))
 }
 
-func TestCleanupEmbeddingAuthorityPostgres(t *testing.T) {
+func checkCleanupEmbeddingAuthorityPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, version, profile, _ := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
@@ -310,7 +317,8 @@ func TestCleanupEmbeddingAuthorityPostgres(t *testing.T) {
 	}
 }
 
-func TestCleanupSidecarHistoryPostgres(t *testing.T) {
+func checkCleanupSidecarHistoryPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -349,7 +357,8 @@ func TestCleanupSidecarHistoryPostgres(t *testing.T) {
 	}
 }
 
-func TestCleanupPhotoTimelinePostgres(t *testing.T) {
+func checkCleanupPhotoTimelinePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()

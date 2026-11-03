@@ -146,7 +146,7 @@ func RunEmailPDFRetentionTest(t *testing.T, released bool,
 	needle := []byte(`"body_sha256":"` + receipt.Output.BodySHA256 + `"`)
 	require.Positive(t, bytes.Count(metadata.Bytes(), needle))
 	corrupt := bytes.ReplaceAll(metadata.Bytes(), needle, []byte(`"body_sha256":"`+strings.Repeat("f", 64)+`"`))
-	imported, err := store.Open(filepath.Join(t.TempDir(), "corrupt-import.db"))
+	imported, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "corrupt-import.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, imported.Close()) }()
 	require.Error(t, imported.ImportMetadata(t.Context(), bytes.NewReader(corrupt)))

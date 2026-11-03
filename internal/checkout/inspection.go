@@ -85,7 +85,7 @@ func (s Service) PrepareOperation(ctx context.Context, id, kind, destination str
 	return c, op, err
 }
 
-func (s Service) StartOperation(supervisor *jobs.Supervisor, c store.PhotoCheckout) error {
+func (s Service) StartOperation(ctx context.Context, supervisor *jobs.Supervisor, c store.PhotoCheckout) error {
 	if supervisor == nil {
 		return errors.New("photo checkout requires a job supervisor")
 	}

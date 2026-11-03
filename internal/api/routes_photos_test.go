@@ -3,11 +3,15 @@ package api_test
 import (
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +23,7 @@ import (
 func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("jpeg"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -51,7 +55,7 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 func TestPhotoTrashRouteRevision(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic jpeg"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -69,7 +73,7 @@ func TestPhotoTrashRouteRevision(t *testing.T) {
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("raw"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("raw"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "capture.bin", hash, size, "application/octet-stream")
 	require.NoError(t, err)
@@ -107,7 +111,7 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	assert.NotEmpty(t, promotedAsset.UpdatedAt)
 	assert.Nil(t, promotedAsset.ExcludedAt)
 
-	secondHash, secondSize, err := fixture.Blobs.Write(strings.NewReader("second raw"))
+	secondHash, secondSize, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("second raw"))
 	require.NoError(t, err)
 	secondNode, err := fixture.CreateFile(t.Context(), fixture.RootID(), "second.bin", secondHash, secondSize, "application/octet-stream")
 	require.NoError(t, err)
@@ -145,7 +149,7 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
+	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("jpeg"))
 	require.NoError(t, err)
 	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -166,11 +170,11 @@ func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	rawHash, rawSize, err := fixture.Blobs.Write(strings.NewReader("synthetic raw"))
+	rawHash, rawSize, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic raw"))
 	require.NoError(t, err)
 	raw, err := fixture.CreateFile(t.Context(), fixture.RootID(), "capture.raw", rawHash, rawSize, "application/octet-stream")
 	require.NoError(t, err)
-	jpegHash, jpegSize, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	jpegHash, jpegSize, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic jpeg"))
 	require.NoError(t, err)
 	jpeg, err := fixture.CreateFile(t.Context(), fixture.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
 	require.NoError(t, err)
@@ -215,6 +219,49 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
 	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
+}
+
+func TestPhotoStackGroupAcceptsSlowFullRunBody(t *testing.T) {
+	t.Parallel()
+	_, catalog := newTestServer(t, nil)
+	run := make([]string, 250_000)
+	for i := range run {
+		run[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	payload, err := json.Marshal(map[string]any{"asset_ids": run})
+	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		server := httptest.NewTestServer(t, catalog.Server.Handler())
+		reader, writer := io.Pipe()
+		written := make(chan error, 1)
+		go func() {
+			// A slow link delivers the run in two halves, six seconds apart.
+			half := len(payload) / 2
+			_, err := writer.Write(payload[:half])
+			if err == nil {
+				time.Sleep(6 * time.Second)
+				_, err = writer.Write(payload[half:])
+			}
+			written <- writer.CloseWithError(err)
+		}()
+		client := server.Client() // Client starts the server and sets URL.
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/photos/stacks/group", reader)
+		require.NoError(t, err)
+		// The simulated network uses a synthetic non-loopback authority.
+		request.Host = "localhost"
+		request.Header.Set("X-Api-Key", testAPIKey)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, response.Body.Close()) }()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, string(body[:min(len(body), 512)]))
+		var grouped api.GroupPhotoStacksResponse
+		require.NoError(t, json.Unmarshal(body, &grouped))
+		require.Len(t, grouped.UnavailableIDs, len(run))
+		require.NoError(t, <-written)
+	})
 }
 
 func TestPhotoSettingsAPIPermissionsAndPreconditions(t *testing.T) {

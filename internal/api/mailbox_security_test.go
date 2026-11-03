@@ -9,7 +9,7 @@ import (
 
 func TestMailboxBrowserBytesRequireVerifiedSocket(t *testing.T) {
 	t.Parallel()
-	require.False(t, mailboxBrowserRequestAllowed(httptest.NewRequest(http.MethodPut, "/api/v1/mailbox/containers/source/chunks/0", nil)))
-	require.False(t, mailboxBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/mailbox/transfers", nil)))
-	require.True(t, mailboxBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/mailbox/containers/source/preview", nil)))
+	require.False(t, mailboxBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/mailbox/containers/source/chunks/0", nil)))
+	require.False(t, mailboxBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mailbox/transfers", nil)))
+	require.True(t, mailboxBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mailbox/containers/source/preview", nil)))
 }

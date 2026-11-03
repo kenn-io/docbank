@@ -15,6 +15,33 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func TestSearcherEmptyScopeSkipsRerankingAuthorization(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []Mode{ModeSemantic, ModeHybrid} {
+		t.Run(string(mode), func(t *testing.T) {
+			reranker := &stageReranker{}
+			authorizer := &stageAuthorizer{err: errors.New("query consent required")}
+			searcher, backend := stageSearcher(t, func(config *SearcherConfig) {
+				config.Reranking = RerankingConfig{Enabled: true,
+					Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+					Authorizer: authorizer, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+			})
+
+			report, err := searcher.SearchEmpty(t.Context(), mode, true)
+			require.NoError(t, err)
+			assert.Equal(t, mode, report.RequestedMode)
+			assert.Equal(t, mode, report.ActualMode)
+			assert.Equal(t, Coverage{State: CoverageComplete, BindingRequired: true}, report.Coverage)
+			assert.Empty(t, report.Results)
+			assert.Empty(t, report.Degradations)
+			assert.Equal(t, []ProviderReceipt{{Stage: ProviderStageReranking, Outcome: ProviderOutcomeSkipped}}, report.Receipts)
+			assert.Empty(t, authorizer.operations)
+			assert.Zero(t, reranker.calls)
+			assert.Empty(t, backend.queries)
+		})
+	}
+}
+
 func TestSearcherOptionalProviderStagesAreDisabledByDefault(t *testing.T) {
 	t.Parallel()
 

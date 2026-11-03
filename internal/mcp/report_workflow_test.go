@@ -138,7 +138,7 @@ func TestMCPReportAndNativeExportWorkflow(t *testing.T) {
 
 	node, err := f.catalog.NodeByID(t.Context(), first.NodeID)
 	require.NoError(t, err)
-	hash, size, err := f.blobs.Write(strings.NewReader("replacement without the selected evidence"))
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("replacement without the selected evidence"))
 	require.NoError(t, err)
 	_, _, err = f.catalog.ReplaceContent(t.Context(), first.NodeID, node.Revision, hash, size, "text/plain")
 	require.NoError(t, err)

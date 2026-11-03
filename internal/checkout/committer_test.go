@@ -194,7 +194,7 @@ func TestCheckoutWorkerFailureReleasesOperation(t *testing.T) {
 	require.NoError(t, err)
 	supervisor := jobs.New(t.Context(), nil)
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	require.NoError(t, s.StartOperation(supervisor, c))
+	require.NoError(t, s.StartOperation(t.Context(), supervisor, c))
 	require.Eventually(t, func() bool {
 		registered := supervisor.Snapshot()
 		return len(registered) == 1 && registered[0].FinishedAt != nil
@@ -328,7 +328,7 @@ func TestCheckoutSidecarCommitKeepsNodeAndPairing(t *testing.T) {
 	s := checkoutService(t)
 	s.settleTime = time.Millisecond
 	asset := checkoutPhoto(t, s, "photo.jpg", "original")
-	hash, size, err := s.Blobs.Write(strings.NewReader("sidecar"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("sidecar"))
 	require.NoError(t, err)
 	sidecar, err := s.Store.CreateFile(t.Context(), s.Store.RootID(), "photo.jpg.xmp", hash, size, "application/rdf+xml")
 	require.NoError(t, err)
@@ -543,7 +543,7 @@ func TestCheckoutConflictsAllowIndependentCommits(t *testing.T) {
 					first, second = second, first
 				}
 				c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID, second.ID}})
-				hash, size, err := s.Blobs.Write(strings.NewReader("external"))
+				hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("external"))
 				require.NoError(t, err)
 				switch change {
 				case "head":
@@ -642,7 +642,7 @@ func TestCheckoutPartialPrunedHistorySurvivesCommitAndRebind(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(working), 0o700))
 	require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), present, func() (bool, error) { return true, os.WriteFile(working, []byte("first"), 0o600) }))
 	require.NoError(t, s.Store.FinishPhotoCheckout(t.Context(), c.ID, op.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
-	hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
 	require.NoError(t, err)
 	_, _, err = s.Store.ReplaceContent(t.Context(), second.Files[0].NodeID, store.UnconditionalRev, hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -675,7 +675,7 @@ func TestCheckoutPartialPrunedHistorySurvivesCommitAndRebind(t *testing.T) {
 			require.Equal(t, "conflict", entry.WorkingState)
 		}
 	}
-	hash, size, err = restored.Blobs.Write(strings.NewReader("third replacement"))
+	hash, size, err = restored.Blobs.WriteContext(t.Context(), strings.NewReader("third replacement"))
 	require.NoError(t, err)
 	_, _, err = restored.Store.ReplaceContent(t.Context(), third.Files[0].NodeID, store.UnconditionalRev, hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -1279,7 +1279,7 @@ func TestCheckoutCommitWithoutCaptureDateKeepsWorkingPath(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	s.settleTime = time.Millisecond
-	hash, size, err := s.Blobs.Write(strings.NewReader("original"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("original"))
 	require.NoError(t, err)
 	run, err := s.Store.BeginIngest(t.Context(), "cli", "synthetic photo")
 	require.NoError(t, err)
@@ -1344,13 +1344,13 @@ func TestCheckoutCommitAfterRevertKeepsModifiedTime(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	s.settleTime = time.Millisecond
-	hash, size, err := s.Blobs.Write(strings.NewReader("original"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("original"))
 	require.NoError(t, err)
 	run, err := s.Store.BeginIngest(t.Context(), "cli", "synthetic photo")
 	require.NoError(t, err)
 	imported, err := s.Store.IngestFileExact(t.Context(), run, s.Store.RootID(), "photo.jpg", hash, size, "image/jpeg", "photo.jpg", "2024-03-05T10:00:00Z")
 	require.NoError(t, err)
-	hash, size, err = s.Blobs.Write(strings.NewReader("replacement"))
+	hash, size, err = s.Blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
 	require.NoError(t, err)
 	replaced, _, err := s.Store.ReplaceContent(t.Context(), imported.ID, imported.Revision, hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -1494,7 +1494,7 @@ func TestCheckoutReimportAfterEditKeepsAsset(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, s.RunCommit(t.Context(), c))
 			} else {
-				hash, size, err := s.Blobs.Write(strings.NewReader("edited photo"))
+				hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("edited photo"))
 				require.NoError(t, err)
 				_, _, err = s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
 				require.NoError(t, err)

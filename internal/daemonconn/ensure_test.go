@@ -105,18 +105,28 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
 }
 
-func TestCreateTimeMatches(t *testing.T) {
+func TestVerifyRecordProcess(t *testing.T) {
 	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
 	require.Equal(t, os.Getpid(), rec.PID)
-	assert.True(t, createTimeMatches(rec), "own record must match")
+	require.NoError(t, verifyRecordProcess(rec), "own record must match")
 
-	// Simulate PID reuse: same live PID, different recorded create time.
-	rec.Metadata[metaCreateTime] = strconv.FormatInt(1, 10)
-	assert.False(t, createTimeMatches(rec), "mismatched create_time must read as dead")
+	// A live PID with another process's identity must not be signaled.
+	rec.PID = os.Getppid()
+	require.Error(t, verifyRecordProcess(rec))
 
-	// Records without the key (older daemons) match trivially.
-	delete(rec.Metadata, metaCreateTime)
-	assert.True(t, createTimeMatches(rec))
+	rec.PID = os.Getpid()
+	rec.ProcessIdentity, rec.ProcessIdentityV2 = "", ""
+	require.Error(t, verifyRecordProcess(rec), "missing identity cannot authorize signaling")
+}
+
+func TestStopRefusesUnverifiedPID(t *testing.T) {
+	_, rec := startUnresponsiveRuntime(t)
+	rec.ProcessIdentity = ""
+	rec.ProcessIdentityV2 = ""
+
+	err := signalStopRecord(t.Context(), rec)
+	require.ErrorContains(t, err, "recorded process identity")
+	assert.True(t, kitdaemon.ProcessAlive(rec.PID), "an unverified PID must not be signaled")
 }
 
 // A version-matched record without a published API key is a pre-key daemon:
@@ -224,6 +234,11 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 }
 
 func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	root, rec := startUnresponsiveRuntime(t)
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
@@ -268,10 +283,9 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	protocolVersion, err := strconv.Atoi(daemonProtocolVersion)
-	require.NoError(t, err)
-	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocolVersion - 1)
-	_, err = RuntimeStore(root).Write(rec)
+	// Main's protocol 112 lacks the changes route, even with the same dev version.
+	rec.Metadata[metaProtocolVersion] = "112"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,
 		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
@@ -637,7 +651,7 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	// The exact current test executable is intentional: the selected helper
 	// provides a portable child PID on Unix and Windows without a shell.
 	//nolint:gosec // os.Args[0] is not user-controlled command text in this test.
-	cmd := exec.Command(os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
 	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
 	require.NoError(t, cmd.Start())
 	done := make(chan struct{})
@@ -654,10 +668,10 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		}
 	})
 
-	var created int64
+	var identity kitdaemon.ProcessIdentity
 	require.Eventually(t, func() bool {
 		var ok bool
-		created, ok = processCreateTimeMillis(cmd.Process.Pid)
+		identity, ok = kitdaemon.ReadProcessIdentity(cmd.Process.Pid)
 		return ok
 	}, 5*time.Second, 10*time.Millisecond)
 
@@ -666,13 +680,10 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		Network: kitdaemon.NetworkTCP, Address: "127.0.0.1:1",
 	})
 	rec.PID = cmd.Process.Pid
-	identity, ok := kitdaemon.ReadProcessIdentity(rec.PID)
-	require.True(t, ok, "read helper process identity")
 	rec.ProcessIdentity = ""
 	rec.ProcessIdentityV2 = identity
 	rec.Metadata = map[string]string{
-		metaCreateTime: strconv.FormatInt(created, 10),
-		metaAPIKey:     "key", metaProtocolVersion: daemonProtocolVersion,
+		metaAPIKey: "key", metaProtocolVersion: daemonProtocolVersion,
 		metaShutdownToken: "token",
 	}
 	_, err := RuntimeStore(root).Write(rec)

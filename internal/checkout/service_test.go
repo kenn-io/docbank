@@ -28,7 +28,7 @@ import (
 func checkoutService(t *testing.T) Service {
 	t.Helper()
 	vault := t.TempDir()
-	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
@@ -39,7 +39,7 @@ func checkoutService(t *testing.T) Service {
 
 func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAsset {
 	t.Helper()
-	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	node, err := s.Store.CreateFile(t.Context(), s.Store.RootID(), name, hash, size, "image/jpeg")
 	require.NoError(t, err)
@@ -331,7 +331,7 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 				supervisor = jobs.New(t.Context(), nil)
 				supervisor.Stop()
 			}
-			cause := s.Start(supervisor, c, root)
+			cause := s.Start(t.Context(), supervisor, c, root)
 			require.Error(t, cause)
 			_, err = root.Stat(".")
 			require.Error(t, err)
@@ -566,7 +566,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			{"IMG.JPG", store.PhotoRoleImage, "image/jpeg"},
 			{"IMG.ARW.XMP", store.PhotoRoleSidecar, "application/rdf+xml"},
 		} {
-			hash, size, err := s.Blobs.Write(strings.NewReader(member.name))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(member.name))
 			require.NoError(t, err)
 			members = append(members, store.PhotoImportMember{Name: member.name, Role: member.role, MediaType: member.mediaType, BlobHash: hash, Size: size, OriginalPath: filepath.Join(source, member.name)})
 		}
@@ -582,7 +582,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.NoError(t, err)
 		node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
 		require.NoError(t, err)
-		hash, size, err := s.Blobs.Write(strings.NewReader("new bytes"))
+		hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("new bytes"))
 		require.NoError(t, err)
 		_, _, err = s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
 		require.NoError(t, err)
@@ -627,7 +627,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.Equal(t, filepath.Base(entries[0].Path), string(content))
 		supervisor := jobs.New(ctx, nil)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-		require.NoError(t, s.Start(supervisor, c, root))
+		require.NoError(t, s.Start(t.Context(), supervisor, c, root))
 		require.Eventually(t, func() bool {
 			operation, err := s.Store.StorageOperation(ctx, op.ID)
 			return err == nil && operation.FinishedAt != nil

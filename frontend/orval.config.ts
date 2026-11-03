@@ -50,6 +50,10 @@ export default defineConfig({
             mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
             requestOptions: { headers: { Accept: "application/x-ndjson" } },
           },
+          vaultChanges: {
+            mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+            requestOptions: { headers: { Accept: "application/x-ndjson" } },
+          },
           submitMediaSource: {
             formData: { path: "src/media-form-data.ts", name: "mediaFormData" },
           },

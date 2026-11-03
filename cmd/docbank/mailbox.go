@@ -18,7 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func init() { rootCmd.AddCommand(newMailboxCommand()) }
+func init() { registerGroupedCommand(emailCmd, newMailboxCommand(), "mailbox") }
 func newMailboxCommand() *cobra.Command {
 	root := &cobra.Command{
 		Long: `Import MBOX or Takeout ZIP asynchronously. import prints a job ID; follow with
@@ -33,8 +33,8 @@ Output: JSON receipts; watch streams NDJSON, cancel prints no receipt.`,
 	var preview bool
 	var labelTags map[string]string
 	upload := &cobra.Command{
-		Example: `  docbank mailbox import ./mail.mbox --dest /cases/acme
-  docbank mailbox import ./takeout.zip --preview --id acme-mail`,
+		Example: `  docbank email mailbox import ./mail.mbox --dest /cases/acme
+  docbank email mailbox import ./takeout.zip --preview --id acme-mail`,
 		Use:   "import <mbox-or-zip>",
 		Short: "Stream an archive to the daemon and start a resumable import",
 		Args:  cobra.ExactArgs(1),
@@ -123,7 +123,7 @@ Output: JSON receipts; watch streams NDJSON, cancel prints no receipt.`,
 		command := &cobra.Command{
 			Use:     action + " <job-id>",
 			Short:   shorts[action],
-			Example: "  docbank mailbox " + action + " <job-id>",
+			Example: "  docbank email mailbox " + action + " <job-id>",
 			Args:    cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := daemonconn.Ensure(cmd.Context())

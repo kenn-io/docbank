@@ -84,7 +84,7 @@ func TestContentReferencesByHashRequiresLogicalAuthorityAndBoundedInput(t *testi
 	// A catalog row without a content version is physical authority only and
 	// must not be presented as a document reference.
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, orphan, 7)
+		return s.EnsureBlobTx(t.Context(), tx, orphan, 7)
 	}))
 	refs, total, err := s.ContentReferencesByHash(ctx, orphan, 10, 0)
 	require.NoError(t, err)

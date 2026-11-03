@@ -811,7 +811,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
 		"[[watch]]\nname = \"documents\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
 			"destination = \"/inbox/documents\"\nexclude = [\".tmp\", \"cache/\"]\nexclude_patterns = [\"*.swp\", \".syncthing.*.tmp\"]\n"+
-			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\ncapture_on_change = true\n\n"+
+			"settle_time = \"45s\"\nminimum_age = \"168h\"\nscan_interval = \"3s\"\ntags = [\"receipts\", \"2026\"]\ncapture_on_change = true\n\n"+
 			"[[watch]]\nname = \"sessions\"\nsource = \""+relativeHomeSource+"\"\n"+
 			"destination = \"/agents/sessions\"\n"), 0o600))
 
@@ -820,6 +820,7 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.Len(t, c.Watches, 2)
 	assert.Equal(t, filepath.Clean(source), c.Watches[0].Source)
 	assert.Equal(t, "/inbox/documents", c.Watches[0].Destination)
+	assert.Equal(t, []string{"receipts", "2026"}, c.Watches[0].Tags)
 	assert.Equal(t, 45*time.Second, c.Watches[0].SettleTime.Std())
 	assert.Equal(t, 7*24*time.Hour, c.Watches[0].MinimumAge.Std())
 	assert.Equal(t, 3*time.Second, c.Watches[0].ScanInterval.Std())
@@ -1170,6 +1171,57 @@ func TestMediaSourceCeilingConfig(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, maximum, cfg.Media.MaxSourceBytes)
 			}
+		})
+	}
+}
+
+func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, adapter, endpoint, wantError string
+		chunkPolicy                        bool
+		floor                              *float64
+		inputKind, metric                  string
+	}{
+		{"standard bridge v2", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, nil, "", ""},
+		{"v2 text input", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "v2 standard embedding bridge requires image input", true, nil, "rendition_chunk", ""},
+		{"image chunk policy", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "image input must not define chunk policy or max input tokens", true, nil, "", ""},
+		{"cosine lower boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, new(-1.0), "", ""},
+		{"cosine upper boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, new(1.0), "", ""},
+		{"dot product floor", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "", false, new(2.0), "", "dot_product"},
+		{"cosine above upper boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "min_query_similarity", false, new(1.1), "", ""},
+		{"cosine below lower boundary", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "min_query_similarity", false, new(-1.1), "", ""},
+		{"unsupported floor metric", "docbank-standard-embedding-bridge/v2", "http://embedding.example.invalid", "min_query_similarity", false, new(0.2), "", "l2"},
+		{"text input with image floor", "docbank-openai-compatible-embeddings/v1", "http://embedding.example.invalid", "min_query_similarity", true, new(0.2), "rendition_chunk", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validProcessingConfig()
+			cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_EMBEDDING_PRIMARY_KEY"}}
+			profile := cfg.EmbeddingProfiles["semantic"]
+			profile.InputKind = "image"
+			if tc.inputKind != "" {
+				profile.InputKind = tc.inputKind
+			}
+			if tc.metric != "" {
+				profile.Metric = tc.metric
+			}
+			if !tc.chunkPolicy {
+				profile.MaxInputTokens, profile.Chunk = 0, EmbeddingChunkConfig{}
+			}
+			profile.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)}
+			profile.CompatibilityID = "nomic/search/v1"
+			profile.TrustBoundary = "operator_network"
+			profile.Runtime = &EmbeddingRuntimeConfig{MinQuerySimilarity: tc.floor, AdapterContract: tc.adapter, Endpoint: tc.endpoint, ModelRevision: "v1", RequestTimeout: Duration(time.Second), MaxRequestBytes: 1 << 20, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
+			cfg.EmbeddingProfiles["semantic"] = profile
+			if tc.wantError != "" {
+				require.ErrorContains(t, cfg.Validate(), tc.wantError)
+				return
+			}
+			require.NoError(t, cfg.Validate())
+			portable, err := cfg.ProcessingProfile("archive")
+			require.NoError(t, err)
+			require.Equal(t, document.EmbeddingInputImage, portable.Document.Embeddings[0].InputKind)
 		})
 	}
 }

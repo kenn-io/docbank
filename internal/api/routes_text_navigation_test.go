@@ -134,7 +134,7 @@ func TestTextNavigationHTTPAvailability(t *testing.T) {
 			cfg = d.Cfg
 			d.Gate = api.NewOperationGate()
 			var err error
-			d.Processing, err = processing.NewService(processing.ServiceConfig{
+			d.Processing, err = processing.NewService(t.Context(), processing.ServiceConfig{
 				Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
 				SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
 			})

@@ -72,7 +72,7 @@ func (s *Store) prepareAuditedBatchMove(
 		priorNodes: make(map[int64]Node, len(plan.changedIDs)),
 	}
 	for _, nodeID := range plan.changedIDs {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +87,7 @@ func (s *Store) prepareAuditedBatchMove(
 	}
 	snapshot.priorEventNodes = make(map[int64]Node, len(snapshot.eventNodeIDs))
 	for _, nodeID := range snapshot.eventNodeIDs {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +101,7 @@ func (s *Store) persistAuditedBatchMove(
 ) error {
 	resultingNodes := make(map[int64]Node, len(snapshot.priorNodes))
 	for nodeID := range snapshot.priorNodes {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -109,7 +109,7 @@ func (s *Store) persistAuditedBatchMove(
 	}
 	resultingEventNodes := make(map[int64]Node, len(snapshot.eventNodeIDs))
 	for _, nodeID := range snapshot.eventNodeIDs {
-		node, err := nodeByIDTx(tx, nodeID)
+		node, err := nodeByIDTx(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}

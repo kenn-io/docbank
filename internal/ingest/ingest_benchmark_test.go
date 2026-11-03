@@ -1,17 +1,63 @@
 package ingest
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
+
+// BenchmarkFolderWatchIdleTick holds file count constant to isolate the cost of
+// unchanged bytes from the per-file observation cost on periodic scans.
+func BenchmarkFolderWatchIdleTick(b *testing.B) {
+	for _, size := range []int{64 << 10, 1 << 20, 16 << 20} {
+		b.Run(fmt.Sprintf("bytes=%d", 64*size), func(b *testing.B) {
+			source := b.TempDir()
+			content := make([]byte, size)
+			for i := range 64 {
+				require.NoError(b, os.WriteFile(filepath.Join(source, fmt.Sprintf("file-%04d.bin", i)), content, 0o600))
+			}
+			processed := 0
+			scanner, err := NewFolderScanner(config.WatchConfig{
+				Name: "benchmark", Source: source, Destination: "/archive",
+				SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+			}, func(ctx context.Context, file FolderFile) error {
+				processed++
+				_, err := file.Digest(ctx)
+				return err
+			}, func(_ context.Context, ref string, err error) error {
+				b.Fatalf("rejected %s: %v", ref, err)
+				return err
+			})
+			require.NoError(b, err)
+			now := time.Now()
+			scanner.watcher.now = func() time.Time { return now }
+			root, err := scanner.openRoot()
+			require.NoError(b, err)
+			defer func() { require.NoError(b, root.Close()) }()
+			require.NoError(b, scanner.watcher.scan(b.Context(), root))
+			now = now.Add(time.Second)
+			require.NoError(b, scanner.watcher.scan(b.Context(), root))
+			require.Equal(b, 64, processed)
+			b.ReportAllocs()
+			for b.Loop() {
+				complete, err := scanner.watcher.scanWithHints(b.Context(), root, watchScanHints{Reconcile: true})
+				require.NoError(b, err)
+				require.True(b, complete)
+				require.Equal(b, 64, processed)
+			}
+		})
+	}
+}
 
 // BenchmarkAddPaths measures net-new imports, including durable blob writes
 // and metadata commits. Each iteration owns a fresh vault; source generation,
@@ -45,7 +91,7 @@ func BenchmarkAddPaths(b *testing.B) {
 			for b.Loop() {
 				b.StopTimer()
 				vault := b.TempDir()
-				s, err := store.Open(filepath.Join(vault, "docbank.db"))
+				s, err := store.Open(b.Context(), filepath.Join(vault, "docbank.db"))
 				require.NoError(b, err)
 				blobs, err := blob.NewWithOptions(store.NewPackCatalog(s),
 					filepath.Join(vault, "blobs"), blob.ManagedOptions())
@@ -82,7 +128,7 @@ func BenchmarkAddLabeledDirectoryTree(b *testing.B) {
 			for b.Loop() {
 				b.StopTimer()
 				vault := b.TempDir()
-				s, err := store.Open(filepath.Join(vault, "docbank.db"))
+				s, err := store.Open(b.Context(), filepath.Join(vault, "docbank.db"))
 				require.NoError(b, err)
 				blobs, err := blob.NewWithOptions(store.NewPackCatalog(s),
 					filepath.Join(vault, "blobs"), blob.ManagedOptions())

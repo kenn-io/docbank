@@ -283,10 +283,10 @@ func TestPhotoRejectsAuditRefusal(t *testing.T) {
 	roots, err := s.TrashedRoots(t.Context())
 	require.NoError(t, err)
 	var sequence, after int64
-	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water FROM audit_authority`).Scan(&sequence))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT operation_sequence_high_water FROM audit_authority`).Scan(&sequence))
 	_, err = s.MovePhotoRejects(t.Context(), false, append(supported, blocked))
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water FROM audit_authority`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT operation_sequence_high_water FROM audit_authority`).Scan(&after))
 	assert.Equal(t, sequence, after)
 	current, err := s.TrashedRoots(t.Context())
 	require.NoError(t, err)
@@ -371,7 +371,7 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 	assert.Equal(t, 1004, preview.Files)
 	// After 999 files, a four-file photo waits while the last photo's one file still fits.
 	var extraID string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT MAX(asset_id) FROM photo_files WHERE asset_id<>?`, lastID).Scan(&extraID))
 	require.Len(t, preview.Targets, 251)
 	assert.Equal(t, lastID, preview.Targets[250].AssetID)

@@ -15,8 +15,10 @@ import (
 const (
 	jsonSchemaDraft           = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField            = "package_id"
+	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
+	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
 	schemaOffsetField         = "offset"
@@ -652,6 +654,15 @@ func listDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func searchCoverageSchema() schema {
+	return objectSchema(schema{
+		"binding_required":   booleanSchema(),
+		"scoped_documents":   integerSchema(0, 4096),
+		"complete_documents": integerSchema(0, 4096),
+		schemaStateField:     stringSchema(64),
+	}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
@@ -677,29 +688,43 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
-		"vault_id":             uuidSchema(),
+		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
-		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
+		"fence_fingerprint":    fenceFingerprintSchema(),
 		"observed_scope_count": integerSchema(0, 0),
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{
 			"binding_required":   booleanSchema(),
-			"scoped_documents":   integerSchema(0, 4096),
-			"complete_documents": integerSchema(0, 4096),
+			"scoped_documents":   integerSchema(0, 0),
+			"complete_documents": integerSchema(0, 0),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
-		"reranking": objectSchema(schema{
-			"outcome":         enumSchema("applied", "skipped", "degraded"),
-			"cause":           stringSchema(64),
-			"candidate_count": integerSchema(0, 1000),
-		}, "outcome", "candidate_count"),
+		"reranking":       searchRerankingSchema(),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
+	}), cacheRequired("requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
+	output["if"] = schema{kataRequiredField: []string{"fence"}}
+	output["then"] = schema{
+		kataRequiredField: []string{schemaVaultIDField, "fence_fingerprint", "observed_scope_count"},
+		"properties": schema{
+			"coverage": schema{"properties": schema{
+				"scoped_documents":   integerSchema(0, 4096),
+				"complete_documents": integerSchema(0, 4096),
+			}},
+		},
+	}
 	return input, output
+}
+
+func searchRerankingSchema() schema {
+	return objectSchema(schema{
+		"outcome":         enumSchema("applied", "skipped", "degraded"),
+		"cause":           stringSchema(64),
+		"candidate_count": integerSchema(0, 1000),
+	}, "outcome", "candidate_count")
 }
 
 func getDocumentSchemas() (schema, schema) {
@@ -794,7 +819,7 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"capability":         enumSchema("rendition", "embedding", "query_embedding"),
 		"provider_id":        stringSchema(128),
 		"trust_boundary":     enumSchema("local_process", "operator_network", "hosted_provider"),
-		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "derived_upload", "rendition_chunk", "query_text"), "maxItems": 4, "uniqueItems": true},
+		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "derived_upload", "rendition_chunk", "query_text", "image"), "maxItems": 5, "uniqueItems": true},
 		"runtime_disclosure": runtimeDisclosure,
 		"disclose_filename":  booleanSchema(),
 		"filename":           stringSchema(255),
@@ -1014,4 +1039,8 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"kind":              enumSchema("photo", "video"),
 		"role":              enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
+}
+
+func fenceFingerprintSchema() schema {
+	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
 }

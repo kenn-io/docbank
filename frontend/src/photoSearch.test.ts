@@ -3,12 +3,14 @@ import { photoSearchSort, activeFilterCount } from "./photoSearch.js";
 import { datedPhotoFacets } from "./photos.svelte.js";
 
 it("chooses photo search order", () => {
-  for (const [syntax, text, field] of [
-    ["advanced", "rating:5 pick", "capture_time"],
-    ["simple", "pick", "relevance"],
-    ["simple", "  ", "capture_time"],
+  for (const [mode, syntax, text, field] of [
+    [undefined, "advanced", "rating:5 pick", "capture_time"],
+    [undefined, "simple", "pick", "relevance"],
+    [undefined, "simple", "  ", "capture_time"],
+    ["semantic", "advanced", "camera:sample sunset", "relevance"],
+    ["semantic", "simple", "  ", "capture_time"],
   ] as const) {
-    expect(photoSearchSort({ syntax, text }).field).toBe(field);
+    expect(photoSearchSort({ mode, syntax, text })).toEqual({ field, direction: "desc" });
   }
 });
 

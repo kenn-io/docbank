@@ -57,9 +57,9 @@ type treeWalker struct {
 }
 
 var treeCmd = &cobra.Command{
-	Example: `  docbank tree
-  docbank tree /cases --depth 2
-  docbank tree id:6 --json`,
+	Example: `  docbank document tree
+  docbank document tree /cases --depth 2
+  docbank document tree id:6 --json`,
 	GroupID: groupDocuments,
 	Use:     "tree [path-or-id]",
 	Short:   "Print the virtual folder tree with id:N selectors",
@@ -228,5 +228,5 @@ func init() {
 		"maximum nodes to print")
 	treeCmd.Flags().BoolVar(&treeAll, "all", false,
 		"print the complete subtree without depth or entry limits")
-	rootCmd.AddCommand(treeCmd)
+	registerGroupedCommand(documentCmd, treeCmd, "tree")
 }

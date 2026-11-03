@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json/v2"
@@ -16,7 +17,7 @@ import (
 
 func TestAuditedProvenanceAppendAndSupersessionRoundTrip(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -66,7 +67,7 @@ func TestAuditedProvenanceAppendAndSupersessionRoundTrip(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -77,7 +78,7 @@ func TestAuditedProvenanceAppendAndSupersessionRoundTrip(t *testing.T) {
 
 func TestAuditedProvenanceAppendRollsBackAllMetadata(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -86,7 +87,7 @@ func TestAuditedProvenanceAppendRollsBackAllMetadata(t *testing.T) {
 	node, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, scope.ID)
-	require.NoError(t, createAuditScopeFailureTrigger(s))
+	require.NoError(t, createAuditScopeFailureTrigger(t.Context(), s))
 
 	_, err = s.AppendNodeProvenance(t.Context(), ProvenanceAppendInput{
 		NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent",
@@ -97,7 +98,7 @@ func TestAuditedProvenanceAppendRollsBackAllMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, node.Revision, unchanged.Revision)
 	var ingests, provenance, sequence int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM ingests WHERE source_desc=?),
 		(SELECT COUNT(*) FROM provenance WHERE original_path=?),
 		(SELECT operation_sequence_high_water FROM audit_authority)`,
@@ -169,7 +170,7 @@ func TestAuditedProvenanceReplayRejectsOperationalPredecessor(t *testing.T) {
 
 func TestAuditedProvenanceReplayRejectsTamperedIngestIdentity(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -241,7 +242,7 @@ func TestAuditedProvenanceReplayRejectsTamperedIngestIdentity(t *testing.T) {
 
 func TestAuditedProvenanceImportRejectsTamperedFact(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -259,13 +260,13 @@ func TestAuditedProvenanceImportRejectsTamperedFact(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	malformed := rewriteAppendedProvenancePath(t, exported.Bytes(), node.ID)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "replayed audit attachments do not match current metadata")
 	var auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Zero(t, auditRows)
 }
 
@@ -309,14 +310,14 @@ func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
 					return err
 				}
 				if test.kind == "watch" {
-					if err := insertWatchSourceTx(tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size); err != nil {
+					if err := insertWatchSourceTx(t.Context(), tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size); err != nil {
 						return err
 					}
 				}
-				if err := bumpRevisionTx(tx, node.ID, run.record.StartedAt); err != nil {
+				if err := bumpRevisionTx(t.Context(), tx, node.ID, run.record.StartedAt); err != nil {
 					return err
 				}
-				resulting, err := nodeByIDTx(tx, node.ID)
+				resulting, err := nodeByIDTx(t.Context(), tx, node.ID)
 				if err != nil {
 					return err
 				}
@@ -352,7 +353,7 @@ func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
 			}
 			require.ErrorContains(t, err, "provenance mutation ingest requires a non-empty caller-supplied source kind")
 			var auditRows int
-			require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+			require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 			assert.Zero(t, auditRows, "rejected import must roll back audit history")
 		})
 	}
@@ -367,8 +368,8 @@ func findProvenanceFact(facts []ProvenanceFact, identity string) ProvenanceFact 
 	return ProvenanceFact{}
 }
 
-func createAuditScopeFailureTrigger(s *Store) error {
-	_, err := s.db.Exec(`CREATE TRIGGER reject_provenance_scope_advance
+func createAuditScopeFailureTrigger(ctx context.Context, s *Store) error {
+	_, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_provenance_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audited provenance failure'); END`)
 	return err
@@ -419,7 +420,7 @@ func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
 	run, err := s.BeginCallerSuppliedIngest(ctx, "agent", "synthetic directory replay")
 	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		prior, err := nodeByIDTx(tx, dir.ID)
+		prior, err := nodeByIDTx(t.Context(), tx, dir.ID)
 		if err != nil {
 			return err
 		}
@@ -438,10 +439,10 @@ func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
 			fact.Identity, fact.NodeID, fact.IngestID, fact.OriginalPath); err != nil {
 			return err
 		}
-		if err = bumpRevisionTx(tx, dir.ID, run.record.StartedAt); err != nil {
+		if err = bumpRevisionTx(t.Context(), tx, dir.ID, run.record.StartedAt); err != nil {
 			return err
 		}
-		resulting, err := nodeByIDTx(tx, dir.ID)
+		resulting, err := nodeByIDTx(t.Context(), tx, dir.ID)
 		if err != nil {
 			return err
 		}
@@ -471,20 +472,20 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 			ctx := t.Context()
 			seedMetadataRoundTrip(t, s)
 			s.vaultID = "99999999-9999-4999-8999-999999999999"
-			_, err := s.db.Exec("UPDATE vault_metadata SET vault_uid=?", s.vaultID)
+			_, err := s.db.ExecContext(t.Context(), "UPDATE vault_metadata SET vault_uid=?", s.vaultID)
 			require.NoError(t, err)
 			node, err := s.NodeByPath(ctx, "/Projects/report.txt")
 			require.NoError(t, err)
 			var predecessor string
 			if operation == "supersede" {
 				const priorIngest = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-				_, err = s.db.Exec("INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,'embedded:agent','Synthetic predecessor')",
+				_, err = s.db.ExecContext(t.Context(), "INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,'embedded:agent','Synthetic predecessor')",
 					priorIngest, testAuditTimestamp)
 				require.NoError(t, err)
 				prior := metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID, IngestID: priorIngest, OriginalPath: "/synthetic/prior.txt"}
 				predecessor, err = provenanceIdentity(prior)
 				require.NoError(t, err)
-				_, err = s.db.Exec("INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)",
+				_, err = s.db.ExecContext(t.Context(), "INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)",
 					predecessor, prior.NodeID, prior.IngestID, prior.OriginalPath)
 				require.NoError(t, err)
 			}
@@ -498,7 +499,7 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 				run.record.SourceKind = "filesystem"
 			}
 			if operation == "observe existing" {
-				require.NoError(t, s.db.QueryRow("SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=?", metadataIngestID).
+				require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT id,started_at,source_kind,source_desc FROM ingests WHERE id=?", metadataIngestID).
 					Scan(&run.record.ID, &run.record.StartedAt, &run.record.SourceKind, &run.record.SourceDesc))
 			}
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -515,14 +516,14 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if _, err = tx.Exec("INSERT INTO provenance(identity,node_id,ingest_id,original_path,supersedes) VALUES(?,?,?,?,?)",
+				if _, err = tx.ExecContext(t.Context(), "INSERT INTO provenance(identity,node_id,ingest_id,original_path,supersedes) VALUES(?,?,?,?,?)",
 					fact.Identity, fact.NodeID, fact.IngestID, fact.OriginalPath, fact.Supersedes); err != nil {
 					return err
 				}
-				if err = bumpRevisionTx(tx, node.ID, testAuditTimestamp); err != nil {
+				if err = bumpRevisionTx(t.Context(), tx, node.ID, testAuditTimestamp); err != nil {
 					return err
 				}
-				resulting, err := nodeByIDTx(tx, node.ID)
+				resulting, err := nodeByIDTx(t.Context(), tx, node.ID)
 				if err != nil {
 					return err
 				}
@@ -540,7 +541,7 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 			}))
 			require.NoError(t, s.ValidateMetadata(ctx))
 			var bindings int64
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance_version_bindings`).Scan(&bindings))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance_version_bindings`).Scan(&bindings))
 			assert.Zero(t, bindings, "legacy audited provenance histories remain explicitly unbound")
 			if observation {
 				wantCount := uint64(2)
@@ -560,7 +561,7 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 				restored := newTestStore(t)
 				require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 				var restoredBindings int64
-				require.NoError(t, restored.db.QueryRow(
+				require.NoError(t, restored.db.QueryRowContext(t.Context(),
 					`SELECT COUNT(*) FROM provenance_version_bindings`,
 				).Scan(&restoredBindings))
 				assert.Zero(t, restoredBindings)

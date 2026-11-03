@@ -28,32 +28,6 @@ function json(value: unknown): Response {
   });
 }
 
-function fenceFingerprint(vault: string, versions: string[]): string {
-  const bytes: number[] = [];
-  const append = (value: Uint8Array) => bytes.push(...value);
-  const length = (value: number) =>
-    append(
-      Uint8Array.from([
-        (value >>> 24) & 0xff,
-        (value >>> 16) & 0xff,
-        (value >>> 8) & 0xff,
-        value & 0xff,
-      ]),
-    );
-  const encoder = new TextEncoder();
-  append(encoder.encode("docbank-document-source-fence/v1"));
-  const vaultBytes = encoder.encode(vault);
-  length(vaultBytes.length);
-  append(vaultBytes);
-  length(versions.length);
-  for (const version of [...versions].sort()) {
-    const versionBytes = encoder.encode(version);
-    length(versionBytes.length);
-    append(versionBytes);
-  }
-  return `sha256:${createHash("sha256").update(Uint8Array.from(bytes)).digest("hex")}`;
-}
-
 function node(id: number, name: string, version: string) {
   return {
     id,
@@ -126,7 +100,6 @@ interface HarnessOptions {
   // A pending rerank rejects on abort, as fetch does, instead of resolving later.
   rerankAbortable?: boolean;
   rerankNode?: ReturnType<typeof node>;
-  emptyFence?: boolean;
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
   snapshotRows?: SnapshotRow[];
@@ -157,7 +130,6 @@ function installHarness(options: HarnessOptions) {
     path: "/",
   };
   const postBodies: Record<string, unknown>[] = [];
-  const fenceBodies: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -264,15 +236,6 @@ function installHarness(options: HarnessOptions) {
       const current = options.rerankNode?.id === id && calls > 0 ? options.rerankNode : file;
       return current ? json(current) : new Response("", { status: 404 });
     }
-    if (url === "/api/v1/processing/source-fences/resolve" && method === "POST") {
-      fenceBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-      const ids = options.emptyFence ? [] : [baseVersion, rerankedVersion];
-      return json({
-        fence: { vault_uid: vaultID, content_version_ids: ids },
-        observed_scope_count: ids.length,
-        fence_fingerprint: fenceFingerprint(vaultID, ids),
-      });
-    }
     if (url === "/api/v1/search" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       postBodies.push(body);
@@ -318,7 +281,6 @@ function installHarness(options: HarnessOptions) {
   return {
     fetchMock,
     postBodies,
-    fenceBodies,
     resolveRerank: (response: Response) => rerankResolve?.(response),
     resolveBase: (response: Response) => baseResolve?.(response),
     resolveProfiles: (response: Response) => profilesResolve?.(response),
@@ -376,7 +338,6 @@ it.each([
         },
       ],
       files: liveFiles ? [folder, file] : [folder],
-      emptyFence: !liveFiles,
       baseReport: report(
         embeddings ? "hybrid" : "lexical",
         liveFiles ? [result(file, 1, "invoice excerpt")] : [],
@@ -409,7 +370,7 @@ it.each([
       expect(harness.postBodies.at(-1)).toMatchObject({ mode: "hybrid", rerank: true });
     } else {
       expect(screen.queryByText("No documents match the current filter.")).toBeNull();
-      expect(harness.postBodies).toHaveLength(0);
+      expect(harness.postBodies).toHaveLength(embeddings ? 1 : 0);
       if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
   },
@@ -715,10 +676,11 @@ it("reports completed searches and a failed submission once, not reruns", async 
   await screen.findByText("reranked excerpt");
   await waitFor(() => expect(searchAction.mock.calls).toEqual([["short-lived", "hybrid", false]]));
   await fireEvent.click(toggle);
+  await waitFor(() => expect(harness.postBodies.filter((body) => !body.rerank)).toHaveLength(2));
   await screen.findByText("base excerpt");
   // Refresh and settings changes rerun the accepted search without a new action.
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  await waitFor(() => expect(harness.postBodies.filter((body) => !body.rerank)).toHaveLength(2));
+  await waitFor(() => expect(harness.postBodies.filter((body) => !body.rerank)).toHaveLength(3));
   await screen.findByText("base excerpt");
   expect(searchAction.mock.calls).toHaveLength(1);
   await submitSearch("new query");
@@ -1028,7 +990,7 @@ it("reports a Names and text GET failure without retrying it as a fallback", asy
   ).toBe(1);
 });
 
-it("sends the selected tag filter in the resolver body", async () => {
+it("sends the selected tag filter in the all-live scope", async () => {
   const file = node(2, "tagged.txt", baseVersion);
   const harness = installHarness({
     profiles: [
@@ -1051,12 +1013,12 @@ it("sends the selected tag filter in the resolver body", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await submitSearch("tagged");
   await screen.findByText("tagged excerpt");
-  expect(harness.fenceBodies[0]?.filters).toEqual({ tag_id: tagID });
+  expect(harness.postBodies[0]?.scope).toEqual({ kind: "all_live", filters: { tag_id: tagID } });
+  expect(harness.postBodies[0]).not.toHaveProperty("fence");
 });
 
-it("shows the empty-fence note without posting a search and reports it once, not for reruns", async () => {
+it("shows the empty-population note and reports a submitted search once", async () => {
   const searchRun = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
-  const action = vi.spyOn(actions, "reportAction").mockImplementation(() => {});
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
   const file = node(2, "empty.txt", baseVersion);
   const harness = installHarness({
@@ -1066,33 +1028,32 @@ it("shows the empty-fence note without posting a search and reports it once, not
         fingerprint: "a".repeat(64),
         rendition: true,
         embedding_bindings: ["embed"],
-        reranking_available: false,
+        reranking_available: true,
       },
     ],
     files: [file],
-    baseReport: report("hybrid", []),
-    emptyFence: true,
+    rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
+    baseReport: {
+      ...report("hybrid", []),
+      coverage: {
+        binding_required: true,
+        scoped_documents: 0,
+        complete_documents: 0,
+        state: "complete",
+      },
+    },
   });
   render(App);
   await screen.findAllByText("empty.txt");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
-  expect(harness.postBodies).toHaveLength(0);
-  expect(action).toHaveBeenCalledExactlyOnceWith("short-lived", "search_empty", "hybrid");
-  expect(searchRun).not.toHaveBeenCalled();
-  // A refresh reruns the same search without a new submission.
-  const fences = harness.fenceBodies.length;
+  expect(harness.postBodies).toHaveLength(1);
+  expect(searchRun).toHaveBeenCalledExactlyOnceWith("short-lived", "hybrid", true);
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 1));
-  expect(action).toHaveBeenCalledOnce();
-  action.mockClear();
-  await submitSearch("q".repeat(8193));
-  await waitFor(() => expect(harness.fenceBodies).toHaveLength(fences + 2));
-  await screen.findByText("No documents match the current filter.");
-  expect(action).not.toHaveBeenCalled();
-  expect(searchRun).not.toHaveBeenCalled();
+  await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+  expect(searchRun).toHaveBeenCalledOnce();
   expect(failure).not.toHaveBeenCalled();
-  expect(harness.postBodies).toHaveLength(0);
 });
 
 it("keeps a non-401 processing failure on the legacy GET path", async () => {

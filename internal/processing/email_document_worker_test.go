@@ -171,7 +171,7 @@ func TestEmailDocumentsRealCSVProviderSearchAndConsent(t *testing.T) {
 	request := emailProcessingRequest(t, receipt, provider.Descriptor())
 	request.Profile.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
 	request.Profile.RetentionDisclosure.TrustBoundary = string(provider.Descriptor().TrustBoundary)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: f.spool,
 		Profiles: map[string]ProfileConfig{"email": {Profile: request.Profile, RenditionProvider: provider}},
 	})

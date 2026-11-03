@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -238,14 +239,20 @@ type CoverageReport struct {
 	Embeddings         []CoverageClass `json:"embeddings"`
 }
 
+type DocumentSearchScope struct {
+	Kind    string                      `json:"kind" enum:"all_live"`
+	Filters *DocumentSourceFenceFilters `json:"filters,omitzero"`
+}
+
 type DocumentSearchRequest struct {
-	MediaSources MediaSearchSources  `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
-	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
-	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
-	Limit        int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
-	Profile      string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
-	BindingID    string              `json:"binding_id,omitzero" maxLength:"128"`
-	Fence        DocumentSourceFence `json:"fence"`
+	Scope        *DocumentSearchScope `json:"scope,omitzero"`
+	MediaSources MediaSearchSources   `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
+	Query        string               `json:"query" minLength:"1" maxLength:"8192"`
+	Mode         string               `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit        int                  `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile      string               `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID    string               `json:"binding_id,omitzero" maxLength:"128"`
+	Fence        DocumentSourceFence  `json:"fence,omitzero"`
 
 	Explain      bool `json:"explain,omitzero"`
 	Rerank       bool `json:"rerank,omitzero"`
@@ -537,6 +544,8 @@ type ProvenanceFact struct {
 	OriginalMTime     *string `json:"original_mtime,omitempty" format:"date-time"`
 	Supersedes        *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
 	Active            bool    `json:"active"`
+
+	URLFetch *ingest.URLFetch `json:"url_fetch,omitempty"`
 }
 
 // ProvenanceAppendRequest is the wire form of one post-ingest origin fact.
@@ -883,6 +892,7 @@ type ContentVerification struct {
 // now names them. Status is "added" for a new node and "skipped" for an
 // idempotent retry that converged on an existing node.
 type UploadReceipt struct {
+	IngestID     string `json:"ingest_id,omitempty" format:"uuid"`
 	Status       string `json:"status" enum:"added,skipped"`
 	Node         Node   `json:"node"`
 	ComputedHash string `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`
@@ -925,6 +935,7 @@ type SearchReport struct {
 	Hits           []SearchHit   `json:"hits"`
 	Limit          int           `json:"limit"`
 	Truncated      bool          `json:"truncated"`
+	PDFFilter      string        `json:"pdf_filter,omitzero"`
 	SourcePresent  bool          `json:"source_present,omitzero"`
 	TagID          string        `json:"tag_id,omitzero"`
 	MIMEType       string        `json:"mime_type,omitzero"`
@@ -1239,6 +1250,8 @@ type VerifyReport struct {
 type Job struct {
 	Processing *WatchProcessingStatus `json:"processing,omitzero"`
 
+	Tags              []string         `json:"tags,omitempty" doc:"Existing tag names applied to files imported by this watch."`
+	TagError          string           `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
 	Busy              bool             `json:"busy" doc:"Whether this job is processing work rather than waiting for an item or its next scheduled run."`
 	Lane              string           `json:"lane"`
 	CheckoutResults   map[string]int64 `json:"checkout_results,omitempty"`
@@ -1306,6 +1319,8 @@ type WatchProcessingStatus struct {
 type WatchedInbox struct {
 	Processing *WatchProcessingStatus `json:"processing,omitzero"`
 
+	Tags            []string `json:"tags" doc:"Existing tag names applied to files imported by this watch."`
+	TagError        string   `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
 	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`
@@ -1485,6 +1500,7 @@ func fromStoreSourceMetadata(view store.SourceMetadataView, redactSensitive bool
 
 func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {
 	return ProvenanceFact{
+		URLFetch: ingest.ParseURLFetch(fact.SourceKind, fact.SourceDescription),
 		Identity: fact.Identity, NodeID: fact.NodeID, IngestID: fact.IngestID,
 		IngestStartedAt: fact.IngestStartedAt, SourceKind: fact.SourceKind,
 		SourceDescription: fact.SourceDescription, OriginalPath: fact.OriginalPath,

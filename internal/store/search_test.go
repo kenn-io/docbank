@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
@@ -20,7 +23,7 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	t.Parallel()
 	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)
 	var buildID string
-	require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, sourceAttachment).Scan(&buildID))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, sourceAttachment).Scan(&buildID))
 	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
 	require.NoError(t, err)
 	versions := []string{sourceVersion}
@@ -34,7 +37,7 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	}
 	var records []EmbeddingSetRecord
 	for i, version := range versions {
-		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachments[i])
+		record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachments[i])
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
 			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "chunk", InputKind: record.InputKind}, SetID: record.ID,
@@ -57,11 +60,28 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	assert.Equal(t, 1, resolution.Candidates[0].DuplicateCount, "duplicate_count=1")
 	t.Log("duplicate_count=1 after shared row expansion and source exclusion")
 	assert.False(t, resolution.Truncated)
-	_, required, complete, rows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
+	_, rows, _, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 3, required)
-	assert.Equal(t, 3, complete)
 	assert.Len(t, rows, len(neighbors), "only scoring rows are deduplicated")
+	t.Run("shared inputs load only requested identities", func(t *testing.T) {
+		require.Len(t, neighbors, 2)
+		tx, err := s.db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, tx.Rollback()) }()
+		for i := range 2 {
+			keys := semanticNeighborKeys(neighbors[i : i+1])
+			members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
+			require.NoError(t, err)
+			require.Len(t, members, 1, "a neighbor must not load the other inputs in its set")
+			require.Len(t, members[keys[0]], 3, "all document memberships of the requested row survive")
+		}
+		wrongChecksum := neighbors[0]
+		wrongChecksum.InputChecksum = catalogSourceHash
+		keys := semanticNeighborKeys([]vectorindex.Neighbor{wrongChecksum})
+		members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
+		require.NoError(t, err)
+		require.Empty(t, members, "the checksum is part of row authority")
+	})
 	copyVersion, err := s.ContentVersionByID(t.Context(), versions[2])
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), copyVersion.NodeID, UnconditionalRev)
@@ -96,7 +116,7 @@ func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
 	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
 	require.NoError(t, err)
 	var secondVersion string
-	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&secondVersion))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&secondVersion))
 	third, err := s.CreateFile(t.Context(), s.RootID(), "third.txt", catalogSourceHash, 20, "text/plain")
 	require.NoError(t, err)
 	versions := []string{sourceVersion, secondVersion, third.CurrentVersionID}
@@ -104,7 +124,7 @@ func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
 	var records []EmbeddingSetRecord
 	var neighbors []vectorindex.Neighbor
 	for i, version := range versions {
-		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
 			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "optional", InputKind: record.InputKind}, SetID: record.ID,
@@ -145,11 +165,11 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 	t.Parallel()
 	s, first, profile, _ := newEmbeddingCatalogFixture(t)
 	var second string
-	require.NoError(t, s.db.QueryRow(`SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, first, catalogSourceHash).Scan(&second))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, first, catalogSourceHash).Scan(&second))
 	var neighbors []vectorindex.Neighbor
 	var space string
 	for _, version := range []string{first, second} {
-		record := embeddingSetFixture(s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
 			Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: "optional", InputKind: record.InputKind}, SetID: record.ID,
@@ -167,7 +187,115 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 	assert.NotEqual(t, result.Candidates[0].NodeID, result.Candidates[1].NodeID)
 }
 
-func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
+func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		indexed       string
+		wantNodeNames []string
+		limit         int
+		wantNext      int
+	}{
+		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2, wantNext: 3},
+		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1, wantNext: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newImageEmbeddingCatalogFixture(t)
+			s, profile := f.s, f.request.Profile
+			var nodes []Node
+			if tc.indexed == "all" {
+				for _, file := range []struct{ name, hash string }{
+					{"duplicate-a.jpg", catalogSourceHash},
+					{"duplicate-b.jpg", catalogSourceHash},
+					{"distinct.jpg", catalogEvidenceBlobHash},
+				} {
+					node, err := s.CreateFile(t.Context(), s.RootID(), file.name, file.hash,
+						int64(len(catalogBlobContents[file.hash])), "image/jpeg")
+					require.NoError(t, err)
+					nodes = append(nodes, node)
+				}
+			} else {
+				older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
+					catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+				require.NoError(t, err)
+				indexed, err := s.CreateFile(t.Context(), s.RootID(), "newer-indexed.jpg",
+					catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+					"2026-01-01T00:00:00.000000000Z", older.ID)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+					"2026-01-02T00:00:00.000000000Z", indexed.ID)
+				require.NoError(t, err)
+				nodes = []Node{older, indexed}
+			}
+
+			indexedNodes := nodes
+			if tc.indexed == "later" {
+				indexedNodes = nodes[1:]
+			}
+			var records []EmbeddingSetRecord
+			var neighbors []vectorindex.Neighbor
+			for index, node := range indexedNodes {
+				record, _ := f.forNode(t, node).publish(t)
+				records = append(records, record)
+				score := 1 - float64(index)/10
+				neighbors = append(neighbors, vectorindex.Neighbor{
+					SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
+					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score,
+				})
+			}
+			source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+			require.NoError(t, err)
+			scope := PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "lexical",
+				Sort: query.Sort{Field: "name", Direction: "asc"}}}
+			lexicalQuery := scope.Query
+			lexicalQuery.Filters.CollapseDuplicates = true
+			options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
+			_, annRows, _, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
+			require.NoError(t, err)
+			wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range indexedNodes {
+					if node.Name == name {
+						wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
+					}
+				}
+			}
+			require.Len(t, annRows, len(wantInputKeys))
+			gotInputKeys := make([]string, len(annRows))
+			for index, row := range annRows {
+				gotInputKeys[index] = row.InputKey
+			}
+			assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
+
+			resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
+				source.ManifestChecksum, neighbors, tc.limit, options, nil)
+			require.NoError(t, err)
+			wantIDs := make([]int64, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range nodes {
+					if node.Name == name {
+						wantIDs = append(wantIDs, node.ID)
+					}
+				}
+			}
+			require.Len(t, resolution.Candidates, len(wantIDs))
+			gotIDs := make([]int64, len(resolution.Candidates))
+			for index, candidate := range resolution.Candidates {
+				gotIDs[index] = candidate.NodeID
+			}
+			assert.ElementsMatch(t, wantIDs, gotIDs)
+			assert.False(t, resolution.Truncated)
+			assert.Equal(t, tc.wantNext, resolution.NextNeighbor)
+		})
+	}
+}
+
+func TestResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	version, err := s.ContentVersionByID(t.Context(), versionID)
@@ -181,7 +309,7 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 		BlobHash: version.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: excerpt + " beyond the excerpt limit",
 	}))
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -204,8 +332,11 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 		10, SearchOptions{MIMEType: "application/pdf"}, nil)
 	require.NoError(t, err)
 	assert.False(t, resolution.Truncated)
-	assert.Equal(t, 3, resolution.ScopedDocuments)
-	assert.Equal(t, 1, resolution.CompleteDocuments)
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), nil, SearchOptions{MIMEType: "application/pdf"}, profile.Fingerprint, record.BindingID)
+	require.NoError(t, err)
+	require.NotNil(t, revalidation.Coverage)
+	assert.Equal(t, 3, revalidation.Coverage.ScopedDocuments)
+	assert.Equal(t, 1, revalidation.Coverage.CompleteDocuments)
 	require.Len(t, resolution.Candidates, 1)
 	assert.Equal(t, versionID, resolution.Candidates[0].ContentVersionID)
 	assert.Equal(t, record.ID, resolution.Candidates[0].EmbeddingSetID)
@@ -231,14 +362,14 @@ func TestResolveSemanticCandidatesReturnsOnlyCurrentScopedHeads(t *testing.T) {
 	assert.False(t, filtered.Truncated)
 }
 
-func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
+func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	otherProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(t.Context(), tx, otherProfile)
 	}))
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -265,8 +396,8 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 			_, fingerprints, err := embeddingProfileBindingAuthority(t.Context(), s.db, test.profile, test.binding)
 			require.NoError(t, err)
 			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
-			_, _, _, rows, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
-				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{}, nil)
+			_, rows, _, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
+				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{ContentVersionIDs: []string{versionID}}, nil)
 			require.NoError(t, err)
 			if test.want {
 				require.Len(t, rows, 1)
@@ -285,7 +416,10 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 				require.Len(t, result.Candidates, 1)
 				assert.Equal(t, record.ID, result.Candidates[0].EmbeddingSetID)
 			} else {
-				assert.Zero(t, result.CompleteDocuments)
+				revalidation, err := s.RevalidateSearchCandidates(t.Context(), nil, SearchOptions{}, test.profile, test.binding)
+				require.NoError(t, err)
+				require.NotNil(t, revalidation.Coverage)
+				assert.Zero(t, revalidation.Coverage.CompleteDocuments)
 				assert.Empty(t, result.Candidates)
 			}
 		})
@@ -295,7 +429,7 @@ func TestResolveSemanticCandidatesIsolatesSharedVectorSpace(t *testing.T) {
 func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -325,7 +459,7 @@ func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.
 			node = second
 		}
 		requested[i] = SearchCandidateIdentity{NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: node.Name}}}
+			Evidence: []SearchEvidenceIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Kind: "node_name", NodeName: node.Name}}}
 	}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
@@ -349,13 +483,13 @@ func TestRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T) {
 	second, err := s.CreateFile(ctx, parent.ID, "second.txt", fakeHash("second"), 6, "text/plain")
 	require.NoError(t, err)
 	a := SearchCandidateIdentity{NodeID: first.ID, ContentVersionID: first.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: first.Name}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Kind: "node_name", NodeName: first.Name}}}
 	b := SearchCandidateIdentity{NodeID: second.ID, ContentVersionID: second.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: second.Name}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: second.ID, ContentVersionID: second.CurrentVersionID, Kind: "node_name", NodeName: second.Name}}}
 	// Expanded query variants can read the same node before and after a rename.
 	stale := a
-	stale.Evidence = []SearchEvidenceIdentity{{Kind: "node_name", NodeName: "renamed.txt"},
-		{Kind: "node_name", NodeName: first.Name}}
+	stale.Evidence = []SearchEvidenceIdentity{{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Kind: "node_name", NodeName: "renamed.txt"},
+		{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Kind: "node_name", NodeName: first.Name}}
 	missing := a
 	missing.NodeID = second.ID + 100
 	requested := []SearchCandidateIdentity{stale, b, missing, a, a}
@@ -392,9 +526,9 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.NoError(t, err)
 	requested := []SearchCandidateIdentity{
 		{NodeID: text.ID, ContentVersionID: text.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: text.BlobHash}}},
+			Evidence: []SearchEvidenceIdentity{{NodeID: text.ID, ContentVersionID: text.CurrentVersionID, Kind: "content_blob", BlobHash: text.BlobHash}}},
 		{NodeID: pdf.ID, ContentVersionID: pdf.CurrentVersionID,
-			Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: pdf.BlobHash}}},
+			Evidence: []SearchEvidenceIdentity{{NodeID: pdf.ID, ContentVersionID: pdf.CurrentVersionID, Kind: "content_blob", BlobHash: pdf.BlobHash}}},
 	}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested,
@@ -421,7 +555,7 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.NoError(t, err)
 	require.Len(t, revalidation.Candidates, 1, "a tag edit must not discard current content evidence")
 	nameMatch := SearchCandidateIdentity{NodeID: text.ID, ContentVersionID: text.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: text.Name}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: text.ID, ContentVersionID: text.CurrentVersionID, Kind: "node_name", NodeName: text.Name}}}
 	_, _, err = s.Move(t.Context(), text.ID, s.RootID(), "renamed.txt", tagged.Node.Revision)
 	require.NoError(t, err)
 	revalidation, err = s.RevalidateSearchCandidates(t.Context(),
@@ -430,6 +564,63 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	require.Len(t, revalidation.Candidates, 1, "a rename must discard only the stale name match")
 	assert.Equal(t, requested[0], revalidation.Candidates[0].SearchCandidateIdentity)
 	assert.Equal(t, "/renamed.txt", revalidation.Candidates[0].Path)
+}
+
+func TestRevalidateSearchCandidatesRechecksPhotoMetadataMatch(t *testing.T) {
+	t.Parallel()
+	t.Run("cleared caption", func(t *testing.T) {
+		s := newTestStore(t)
+		captioned := browsePhotoNode(t, s, "plain.jpg", browseHash("captioned"), "image/jpeg")
+		named := browsePhotoNode(t, s, "sunset-b.jpg", browseHash("named"), "image/jpeg")
+		file := mustPhotoAsset(t, s, captioned.ID).Files[0]
+		_, err := editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("sunset")}}})
+		require.NoError(t, err)
+		authored := snapshotTestQuery(t, `{"text":"sunset"}`)
+		opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &authored}
+		hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "sunset", 10, opts, false)
+		require.NoError(t, err)
+		require.Len(t, hits, 2)
+		requested := make([]SearchCandidateIdentity, 0, len(hits))
+		for _, hit := range hits {
+			requested = append(requested, SearchCandidateIdentity{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID,
+				Evidence: []SearchEvidenceIdentity{{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID, Kind: "node_name", NodeName: hit.Node.Name}}})
+		}
+		file = mustPhotoAsset(t, s, captioned.ID).Files[0]
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Caption: new("")}}})
+		require.NoError(t, err)
+
+		revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, opts, "", "")
+
+		require.NoError(t, err)
+		require.Len(t, revalidation.Candidates, 1, "a cleared caption must discard the metadata match")
+		assert.Equal(t, named.ID, revalidation.Candidates[0].NodeID)
+	})
+	t.Run("per-source evidence", func(t *testing.T) {
+		s := newTestStore(t)
+		original := browsePhotoNode(t, s, "original.jpg", browseHash("shared"), "image/jpeg")
+		matched := browsePhotoNode(t, s, "sunset.jpg", original.BlobHash, "image/jpeg")
+		other := browsePhotoNode(t, s, "sunset-other.jpg", browseHash("other"), "image/jpeg")
+		lexical := snapshotTestQuery(t, `{"text":"sunset","filters":{"collapse_duplicates":true}}`)
+		opts := SearchOptions{PhotoScope: &PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, PhotoLexicalQuery: &lexical}
+		valid := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{
+				{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID, Kind: "node_name", NodeName: matched.Name},
+				{NodeID: original.ID, ContentVersionID: original.CurrentVersionID, Kind: "content_blob", BlobHash: original.BlobHash},
+			}}
+		wrongPhoto := SearchCandidateIdentity{NodeID: matched.ID, ContentVersionID: matched.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{NodeID: other.ID, ContentVersionID: other.CurrentVersionID, Kind: "node_name", NodeName: other.Name}}}
+
+		result, err := s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid, wrongPhoto}, opts, "", "")
+		require.NoError(t, err)
+		require.Len(t, result.Candidates, 1, "each source must be a current copy of the displayed photo")
+		require.Equal(t, valid, result.Candidates[0].SearchCandidateIdentity)
+
+		_, _, err = s.Trash(t.Context(), original.ID, original.Revision)
+		require.NoError(t, err)
+		result, err = s.RevalidateSearchCandidates(t.Context(), []SearchCandidateIdentity{valid}, opts, "", "")
+		require.NoError(t, err)
+		require.Empty(t, result.Candidates, "a live displayed photo must not hide stale evidence from another copy")
+	})
 }
 
 func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *testing.T) {
@@ -446,17 +637,17 @@ func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *tes
 		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
 		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
 	var nodeID int64
-	require.NoError(t, s.db.QueryRow(`SELECT n.id FROM nodes n JOIN content_versions cv
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT n.id FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id WHERE cv.version_id=?`, versions[0]).Scan(&nodeID))
 	requested := []SearchCandidateIdentity{{NodeID: nodeID, ContentVersionID: versions[0],
-		Evidence: []SearchEvidenceIdentity{{Kind: "rendition_segment", BuildID: build.ID,
+		Evidence: []SearchEvidenceIdentity{{NodeID: nodeID, ContentVersionID: versions[0], Kind: "rendition_segment", BuildID: build.ID,
 			SegmentID: build.LexicalSegments[0].ID}}}}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
 	require.NoError(t, err)
 	require.Len(t, revalidation.Candidates, 1)
 
-	_, err = s.db.Exec(`DELETE FROM rendition_lexical_heads`)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_lexical_heads`)
 	require.NoError(t, err)
 	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
 	require.NoError(t, err)
@@ -466,7 +657,7 @@ func TestRevalidateSearchCandidatesRequiresCurrentActiveRenditionEvidence(t *tes
 func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -477,10 +668,10 @@ func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.
 	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
 	require.NoError(t, err)
 	var nodeID int64
-	require.NoError(t, s.db.QueryRow(`SELECT n.id FROM nodes n JOIN content_versions cv
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT n.id FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID))
 	requested := []SearchCandidateIdentity{{NodeID: nodeID, ContentVersionID: versionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "embedding", VectorSpaceID: record.VectorSpace.ID,
+		Evidence: []SearchEvidenceIdentity{{NodeID: nodeID, ContentVersionID: versionID, Kind: "embedding", VectorSpaceID: record.VectorSpace.ID,
 			EmbeddingSetID: record.ID, InputGenerationID: record.InputGeneration.ID,
 			InputID: record.InputGeneration.Inputs[0].ID, InputKind: record.InputKind,
 			SourceManifestChecksum: source.ManifestChecksum}}}}
@@ -493,17 +684,17 @@ func TestRevalidateSearchCandidatesRejectsStaleSemanticSourceAndHead(t *testing.
 	assert.Equal(t, 2, revalidation.Coverage.ScopedDocuments)
 	assert.Equal(t, 1, revalidation.Coverage.CompleteDocuments)
 
-	_, err = s.db.Exec(`DELETE FROM embedding_heads WHERE embedding_set_id=?`, record.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_heads WHERE embedding_set_id=?`, record.ID)
 	require.NoError(t, err)
 	_, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
 		profile.Fingerprint, record.BindingID)
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
-func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *testing.T) {
+func TestChunkSemanticCandidatesAndRevalidationCoverageTrackEvidenceChecksum(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -522,22 +713,26 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{}, nil)
 	require.NoError(t, err)
 	require.Len(t, resolution.Candidates, 1)
-	require.Equal(t, 1, resolution.CompleteDocuments)
 	assert.Empty(t, resolution.Candidates[0].Excerpt,
 		"retrieval resolves rendition-chunk text from the exact retained input")
 
 	var nodeID int64
-	require.NoError(t, s.db.QueryRow(`SELECT n.id FROM nodes n JOIN content_versions cv
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT n.id FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id WHERE cv.version_id=?`, versionID).Scan(&nodeID))
 	requested := []SearchCandidateIdentity{{NodeID: nodeID,
-		ContentVersionID: versionID, Evidence: []SearchEvidenceIdentity{{Kind: "embedding",
+		ContentVersionID: versionID, Evidence: []SearchEvidenceIdentity{{NodeID: nodeID, ContentVersionID: versionID, Kind: "embedding",
 			VectorSpaceID: record.VectorSpace.ID, EmbeddingSetID: record.ID,
 			InputGenerationID: record.InputGeneration.ID, InputID: record.InputGeneration.Inputs[0].ID,
 			InputKind: record.InputKind, SourceManifestChecksum: source.ManifestChecksum}}}}
 
-	_, err = s.db.Exec(`DROP TRIGGER rendition_builds_immutable_update`)
+	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, profile.Fingerprint, record.BindingID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
+	require.NotNil(t, revalidation.Coverage)
+	require.Equal(t, 1, revalidation.Coverage.CompleteDocuments)
+
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER rendition_builds_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
 		SELECT build_id FROM rendition_attachments WHERE attachment_id=?)`, fakeHash("inconsistent"), attachmentID)
 	require.NoError(t, err)
 
@@ -546,9 +741,8 @@ func TestChunkSemanticAuthorityKeepsResultsCoverageAndRevalidationConsistent(t *
 		[]vectorindex.Neighbor{neighbor}, 10, SearchOptions{}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, resolution.Candidates)
-	assert.Zero(t, resolution.CompleteDocuments)
 
-	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
+	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{},
 		profile.Fingerprint, record.BindingID)
 	require.NoError(t, err)
 	assert.Empty(t, revalidation.Candidates)
@@ -626,10 +820,10 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 	assert.Equal(t, len(neighbors), consumed)
 }
 
-func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testing.T) {
+func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -661,12 +855,17 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptorAndCoverage(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, record.VectorSpace.Descriptor, authority.VectorSpace.Descriptor)
 	assert.False(t, authority.BindingRequired)
-	assert.Equal(t, 2, authority.ScopedDocuments)
-	assert.Equal(t, 1, authority.CompleteDocuments)
 	require.Len(t, authority.ANNRows, 1)
 	assert.Equal(t, record.VectorSet.ID, authority.ANNRows[0].SetID)
 	assert.Equal(t, versionID, authority.ANNRows[0].InputKey)
 	assert.Equal(t, stored.ID, authority.Lease.Generation.ID)
+	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
+		authority.Lease.FencingToken, now))
+	authority, err = s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "whole-space-reader", now, time.Minute, SearchOptions{})
+	require.NoError(t, err)
+	assert.True(t, authority.WholeSpace)
+	assert.Nil(t, authority.ANNRows)
 	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
 		authority.Lease.FencingToken, now))
 
@@ -1199,7 +1398,7 @@ func TestSearchContentScopeFollowsMovedDirectories(t *testing.T) {
 		Status: ExtractionOK, Text: "quarterly notes",
 	}))
 	requested := []SearchCandidateIdentity{{NodeID: file.ID, ContentVersionID: file.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: file.BlobHash}}}}
+		Evidence: []SearchEvidenceIdentity{{NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Kind: "content_blob", BlobHash: file.BlobHash}}}}
 	opts := SearchOptions{UnderNodeID: scope.ID}
 	branch, err = s.NodeByID(ctx, branch.ID)
 	require.NoError(t, err)
@@ -1551,17 +1750,17 @@ func TestLexicalGenerationBuildFailureLeavesNoReadablePartialGeneration(t *testi
 	)
 	require.NoError(t, s.StageRenditionBuild(ctx, secondBuild))
 	secondGenerationID := fakeHash("93")
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		CREATE TRIGGER fail_lexical_generation_catalog
 		BEFORE INSERT ON rendition_lexical_generations
-		WHEN new.generation_id = '` + secondGenerationID + `'
+		WHEN new.generation_id = '`+secondGenerationID+`'
 		BEGIN SELECT RAISE(ABORT, 'injected failure after FTS build'); END`)
 	require.NoError(t, err)
 
 	_, err = s.StageLexicalGeneration(ctx, secondGenerationID)
 	require.ErrorContains(t, err, "injected failure after FTS build")
 	var partialRows int
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM rendition_lexical_index WHERE build_id=?`, secondBuild.ID,
 	).Scan(&partialRows))
 	assert.Zero(t, partialRows)
@@ -1606,7 +1805,7 @@ func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.
 		ID: fakeHash("53"), VaultID: s.VaultID(), ContentVersionID: secondVersion,
 		BuildID: secondBuild.ID, Profile: profile, AttachedAt: "2026-08-22T10:02:00.000000000Z",
 	}
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		CREATE TRIGGER fail_lexical_head_flip
 		BEFORE UPDATE ON rendition_lexical_heads
 		BEGIN SELECT RAISE(ABORT, 'injected failure before head flip'); END`)
@@ -1625,7 +1824,7 @@ func TestLexicalGenerationHeadFailureRollsBackAttachmentAndBothHeads(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, firstGeneration, active)
 	var attachments int
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM rendition_attachments WHERE attachment_id=?`, secondAttachment.ID,
 	).Scan(&attachments))
 	assert.Zero(t, attachments)
@@ -2005,7 +2204,7 @@ func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testin
 	}
 	counts := func() (generations, indexRows, ftsRows int) {
 		t.Helper()
-		require.NoError(t, s.db.QueryRow(`SELECT
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 			(SELECT COUNT(*) FROM rendition_lexical_generations),
 			(SELECT COUNT(*) FROM rendition_lexical_index),
 			(SELECT COUNT(*) FROM rendition_lexical_fts)`).Scan(&generations, &indexRows, &ftsRows))
@@ -2201,7 +2400,7 @@ func TestPendingAndFailedTextExtractions(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = s.db.Exec(`DELETE FROM text_extraction_queue`)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM text_extraction_queue`)
 	require.NoError(t, err)
 	pending, err := s.PendingTextExtractions(ctx, 10)
 	require.NoError(t, err)
@@ -2253,7 +2452,7 @@ func TestRecordExtractionRejectsVersionDowngrade(t *testing.T) {
 	require.Error(t, err)
 	var version int64
 	var text string
-	require.NoError(t, s.db.QueryRow(`
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `
 		SELECT extractor_version,text FROM extracted_text
 		WHERE blob_hash=? AND extractor='plain-text'`, hash,
 	).Scan(&version, &text))
@@ -2292,6 +2491,43 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
+func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("aa")
+	first, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "shared.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	historical, err := s.CreateFile(ctx, s.RootID(), "historical.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, historical.ID, historical.Revision, fakeHash("bb"), 10, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trashed.txt", hash, 10, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	changes, cursor, err := s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	require.Equal(t, []int64{first.ID, second.ID}, []int64{changes[0].NodeID, changes[1].NodeID})
+	require.Equal(t, "processed", changes[0].Kind)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable-extraction-authority",
+	}))
+	changes, _, err = s.VaultChanges(ctx, cursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, changes)
+}
+
 // Mutation caught: accepting a newer plain-text result after legacy authority
 // publication can replace the portable version-1 source without a compatible
 // rendition transition.
@@ -2325,7 +2561,7 @@ func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testin
 			require.ErrorContains(t, err, "unsupported newer plain-text extraction")
 			var version int64
 			var status, text string
-			require.NoError(t, s.db.QueryRow(`SELECT extractor_version,status,text
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT extractor_version,status,text
 				FROM extracted_text WHERE blob_hash=? AND extractor='plain-text'`, hash,
 			).Scan(&version, &status, &text))
 			assert.Equal(t, int64(1), version)
@@ -2376,7 +2612,7 @@ func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 	require.NoError(t, err)
 
 	var queued int
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM text_extraction_queue`,
 	).Scan(&queued))
 	assert.Equal(t, 2, queued, "the stale queue hint should exercise dequeue validation")
@@ -2661,4 +2897,311 @@ func TestSearchContentFirstGenerationSources(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	first, err := s.ContentVersionByID(t.Context(), version)
+	require.NoError(t, err)
+	nodes := []Node{{ID: first.NodeID, CurrentVersionID: version}}
+	for i := range 4 {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("page-%d.txt", i), testSHA256(fmt.Appendf(nil, "page-%d", i)), 20, "text/plain")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+	var neighbors []vectorindex.Neighbor
+	var space string
+	for i, node := range nodes {
+		record := embeddingSetFixture(t.Context(), s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key:   EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		space = record.VectorSpace.ID
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: node.CurrentVersionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 1 - float64(i)/10})
+	}
+	_, _, err = s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
+	require.NoError(t, err)
+	source, err := s.CaptureVectorIndexSource(t.Context(), space)
+	require.NoError(t, err)
+	result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
+		space, source.ManifestChecksum, neighbors, 1, SearchOptions{}, map[int64]struct{}{nodes[1].ID: {}, nodes[2].ID: {}})
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	assert.Equal(t, nodes[3].ID, result.Candidates[0].NodeID)
+	assert.True(t, result.Truncated)
+	assert.Equal(t, 4, result.NextNeighbor)
+}
+
+func TestSimilarCandidatesCountUnvisitedCopiesKeepBoundaryTiesAndStopBeforeTiedTail(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	sourceNode, err := s.ContentVersionByID(t.Context(), version)
+	require.NoError(t, err)
+	// The oldest copy is last among the top-score ties. The low-score copy
+	// lies beyond the stopping prefix but must still count toward the group.
+	var nodes []Node
+	for _, file := range []struct{ name, hash, modified string }{
+		{"old.txt", testSHA256([]byte("copy-group")), "2026-01-01"},
+		{"new.txt", testSHA256([]byte("copy-group")), "2026-01-02"},
+		{"other.txt", testSHA256([]byte("other-group")), "2026-01-01"},
+		{"low.txt", testSHA256([]byte("copy-group")), "2026-01-03"},
+		{"tail.txt", testSHA256([]byte("tail-group")), "2026-01-01"},
+	} {
+		node, err := s.CreateFile(t.Context(), s.RootID(), file.name, file.hash, 20, "text/plain")
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, file.modified, node.ID)
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+	}
+	// new, other, old all tie. tail starts below the two strong groups;
+	// low is beyond that stopping point.
+	order := []int{1, 2, 0, 4, 3}
+	var neighbors []vectorindex.Neighbor
+	var space string
+	versions := []string{version}
+	for _, node := range append([]Node{{ID: sourceNode.NodeID, CurrentVersionID: version}}, nodes...) {
+		record := embeddingSetFixture(t.Context(), s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+			Key:   EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		space = record.VectorSpace.ID
+		if node.ID == sourceNode.NodeID {
+			continue
+		}
+		versions = append(versions, node.CurrentVersionID)
+	}
+	for i, index := range order {
+		node := nodes[index]
+		record := embeddingSetFixture(t.Context(), s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		score := 0.9
+		if i >= 3 {
+			score = 0.5 - float64(i)/10
+		}
+		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: node.CurrentVersionID,
+			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score})
+	}
+	source, err := s.CaptureVectorIndexSource(t.Context(), space)
+	require.NoError(t, err)
+	result, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
+		space, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: version})
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	assert.Equal(t, nodes[0].ID, result.Candidates[0].NodeID)
+	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
+	assert.True(t, result.Truncated)
+
+	// One winner and a tied zero-score tail settle the page as soon as an
+	// overflow group appears. Walking the rest cannot change the winner.
+	for i := range neighbors {
+		neighbors[i].Score = 0
+	}
+	neighbors[0].Score = 1
+	loaded := 0
+	result = SimilarSearchResolution{}
+	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return s.similarCandidatesTx(t.Context(), semanticMembershipCountingQuerier{metadataQuerier: tx, loaded: &loaded},
+			profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, neighbors, 1,
+			SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID}, &result)
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	assert.Equal(t, nodes[1].ID, result.Candidates[0].NodeID)
+	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
+	assert.True(t, result.Truncated)
+	assert.Equal(t, 2, loaded, "a tied tail must not force loading every identity")
+}
+
+type semanticMembershipCountingQuerier struct {
+	metadataQuerier
+
+	loaded *int
+}
+
+func (q semanticMembershipCountingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "$.VectorSetID") {
+		var keys []json.RawMessage
+		encoded, ok := args[0].(string)
+		if !ok {
+			return nil, errors.New("membership identities must be JSON text")
+		}
+		if err := json.Unmarshal([]byte(encoded), &keys); err != nil {
+			return nil, err
+		}
+		*q.loaded += len(keys)
+	}
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
+func TestSemanticAcquisitionSkipsUnscopedRowsAndMatchesVersionFence(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	ctx := t.Context()
+	versions := []string{version}
+	for _, name := range []string{"second.txt", "other-binding.txt"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(name)), 20, "text/plain")
+		require.NoError(t, err)
+		versions = append(versions, node.CurrentVersionID)
+	}
+	var space string
+	publish := func(t *testing.T, record EmbeddingSetRecord, fence int64) {
+		t.Helper()
+		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			return s.EnsureBlobTx(ctx, tx, record.VectorSet.PayloadBlobHash, int64(len(record.VectorSet.Payload)))
+		}))
+		require.NoError(t, s.StageEmbeddingSet(ctx, record))
+		require.NoError(t, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{FencingToken: fence,
+			Key:   EmbeddingHeadKey{ContentVersionID: record.ContentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		space = record.VectorSpace.ID
+	}
+	for i, version := range versions {
+		binding := "optional"
+		if i == 2 {
+			binding = "required"
+		}
+		record := embeddingSetFixture(ctx, s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, binding, "")
+		publish(t, record, 1)
+	}
+	counted := &membershipCountingQuerier{metadataQuerier: s.db}
+	rows, wholeSpace, err := semanticANNRowsForSourceTx(ctx, counted, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
+	require.NoError(t, err)
+	require.True(t, wholeSpace)
+	require.Nil(t, rows)
+	require.Zero(t, counted.queries, "unscoped acquisition must not read the catalog")
+	opts := SearchOptions{ContentVersionIDs: versions}
+	rows, _, err = semanticANNRowsForSourceTx(ctx, s.db, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, opts)
+	require.NoError(t, err)
+	filter, args := searchFilterSQL(opts)
+	args = append([]any{space, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile}, args...)
+	oldRows, err := s.db.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+semanticMembershipSQL(`FROM embedding_sets es`)+filter, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, oldRows.Close()) }()
+	var want []vectorindex.RowIdentity
+	for oldRows.Next() {
+		var row vectorindex.RowIdentity
+		require.NoError(t, oldRows.Scan(&row.SetID, &row.InputKey, &row.InputChecksum))
+		want = append(want, row)
+	}
+	require.NoError(t, oldRows.Err())
+	require.ElementsMatch(t, want, rows)
+}
+
+func TestSemanticSparseFilteredAcquisitionUsesEmbeddingCandidates(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+		Key:   EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind},
+		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+	for i := range 16 {
+		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("unembedded-%d.pdf", i), testSHA256(fmt.Appendf(nil, "unembedded-%d", i)), 20, "application/pdf")
+		require.NoError(t, err)
+	}
+	q := &semanticScanPlanQuerier{metadataQuerier: s.db, store: s, t: t}
+	_, _, err := semanticANNRowsForSourceTx(t.Context(), q, profile.Fingerprint, "optional", record.InputKind, record.VectorSpace.ID, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	// Start with embedding candidates. Materializing all matching files makes
+	// sparse semantic searches grow with unembedded files.
+	require.True(t, strings.HasPrefix(q.plan, "SEARCH es "), q.plan)
+}
+
+func TestSemanticVersionFenceAcquisitionUsesKeyLookups(t *testing.T) {
+	t.Parallel()
+	s, record, _ := newPublishedVectorIndexFixture(t)
+	q := &semanticScanPlanQuerier{metadataQuerier: s.db, store: s, t: t}
+	rows, wholeSpace, err := semanticANNRowsForSourceTx(t.Context(), q, record.ProcessingProfileFingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, SearchOptions{ContentVersionIDs: []string{record.ContentVersionID}})
+	require.NoError(t, err)
+	require.False(t, wholeSpace)
+	require.Equal(t, []vectorindex.RowIdentity{{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
+		InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum}}, rows)
+	// A bounded version fence must look up nodes by key even when most files
+	// have no embeddings. Scanning nodes makes similar search grow with the vault.
+	require.NotContains(t, q.plan, "SCAN n ", q.plan)
+	require.Contains(t, q.plan, "SEARCH n USING INTEGER PRIMARY KEY", q.plan)
+}
+
+type semanticScanPlanQuerier struct {
+	metadataQuerier
+
+	store *Store
+	t     *testing.T
+	plan  string
+}
+
+func (q *semanticScanPlanQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	q.plan = explainQueryPlan(q.t, q.store, query, args...)
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
+func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
+	t.Parallel()
+	s, record, source := newPublishedVectorIndexFixture(t)
+	version, err := s.ContentVersionByID(t.Context(), record.InputGeneration.SourceVersionID)
+	require.NoError(t, err)
+	opts := SearchOptions{ContentVersionIDs: []string{version.ID}}
+	neighbor := vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}
+	for _, name := range []string{"fence", "similar", "similar-source-fence", "stale-index"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "stale-index" {
+				now := time.Now().UTC()
+				require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
+				publishVectorIndexMembersForTest(t, s, record, 2)
+			}
+			tx, err := s.writeDB.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, tx.Rollback()) }()
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			switch name {
+			case "stale-index":
+				_, err := s.AcquireSemanticSearchAuthority(ctx, record.ProcessingProfileFingerprint, record.BindingID, "stale-search", time.Now().UTC(), time.Minute, SearchOptions{})
+				require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+			case "fence":
+				got, _, _, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, opts, nil)
+				require.NoError(t, err)
+				require.Equal(t, source.ManifestChecksum, got)
+			case "similar":
+				got, err := s.ResolveSimilarCandidates(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, source.ManifestChecksum, []vectorindex.Neighbor{neighbor}, 10, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+				require.NoError(t, err)
+				require.Equal(t, 1, got.CompleteDocuments)
+			case "similar-source-fence":
+				now := time.Now().UTC()
+				_, err := s.AcquireSimilarSearchAuthority(ctx, record.ProcessingProfileFingerprint, "binding-without-head", "reader", now, time.Minute, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+				require.ErrorIs(t, err, ErrSimilarSourceUnavailable)
+			}
+		})
+	}
+}
+
+func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceCancellation(t *testing.T) {
+	t.Parallel()
+	s, first, source := newPublishedVectorIndexFixture(t)
+	now := time.Now().UTC()
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("coverage-cancellation", source, []byte("index"), now)))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	release := make(chan struct{})
+	close(release)
+	readDB := s.db
+	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
+		// Cancel eligibility loading after the lease and source checks succeed.
+		if strings.Contains(query, "SELECT evr.vector_set_id,evr.input_id,evr.checksum") {
+			cancel()
+		}
+	}})
+	t.Cleanup(func() {
+		require.NoError(t, s.db.Close())
+		require.NoError(t, readDB.Close())
+	})
+	_, err := s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "canceled-search", now, time.Minute, SearchOptions{MIMEType: "text/plain"})
+	require.ErrorIs(t, err, context.Canceled)
+	var leases int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+	require.Zero(t, leases)
 }

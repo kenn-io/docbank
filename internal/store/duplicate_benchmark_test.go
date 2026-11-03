@@ -16,7 +16,7 @@ import (
 func BenchmarkDuplicates(b *testing.B) {
 	for _, unrelated := range []int{0, 10000} {
 		b.Run(fmt.Sprintf("unrelated=%d", unrelated), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
@@ -71,7 +71,7 @@ func BenchmarkDuplicateReferencePages(b *testing.B) {
 		for _, groups := range []int{1, 50} {
 			for _, depth := range []int{0, 16} {
 				b.Run(fmt.Sprintf("references=%d/groups=%d/depth=%d", references, groups, depth), func(b *testing.B) {
-					s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+					s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 					require.NoError(b, err)
 					b.Cleanup(func() { require.NoError(b, s.Close()) })
 					ctx := b.Context()
@@ -133,7 +133,7 @@ func BenchmarkDuplicateReferencePages(b *testing.B) {
 func BenchmarkDuplicateCollectionPreviews(b *testing.B) {
 	for _, count := range []int{0, 1, 16, 17, 128} {
 		b.Run(fmt.Sprintf("collections=%d", count), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
@@ -179,7 +179,7 @@ func BenchmarkDuplicateCollectionPreviews(b *testing.B) {
 func BenchmarkDuplicateGroupWithUnrelatedCollections(b *testing.B) {
 	for _, unrelated := range []int{0, 10000} {
 		b.Run(fmt.Sprintf("unrelated=%d", unrelated), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()

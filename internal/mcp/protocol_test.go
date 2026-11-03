@@ -225,7 +225,7 @@ func TestHTTPIngressEnforcesHeadersAndAcceptBeforeSDKDispatch(t *testing.T) {
 	handler := newTestServer().HTTPHandler()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, test.fixture)))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, test.fixture)))
 			request.Header = test.headers.Clone()
 			recorder := httptest.NewRecorder()
 
@@ -245,7 +245,7 @@ func TestHTTPIngressEnforcesHeadersAndAcceptBeforeSDKDispatch(t *testing.T) {
 }
 
 func TestHTTPUnknownMethodReturnsNotFoundJSONRPCError(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, "unknown-method.json")))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, "unknown-method.json")))
 	request.Header = protocolHeaders("docbank/unknown", "")
 	recorder := httptest.NewRecorder()
 
@@ -286,7 +286,7 @@ func TestHTTPIngressRejectsInvalidProtocolBeforeHeaderMirroring(t *testing.T) {
 	handler := newTestServer().HTTPHandler()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, test.fixture)))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, test.fixture)))
 			request.Header = test.headers.Clone()
 			recorder := httptest.NewRecorder()
 
@@ -317,7 +317,7 @@ func TestHTTPHeaderMismatchStopsBeforeSDKDispatch(t *testing.T) {
 			return next(ctx, method, request)
 		}
 	})
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, "discover.json")))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", bytes.NewReader(fixture(t, "discover.json")))
 	request.Header = headersWithout(protocolHeaders("server/discover", ""), "Mcp-Method")
 	recorder := httptest.NewRecorder()
 

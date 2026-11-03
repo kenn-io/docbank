@@ -48,7 +48,18 @@ export class PhotoAuthoredEditor {
   }
   suggestions = $state<api.PhotoSuggestion[]>([]);
   get activeSuggestion() {
-    return this.suggestions.find((suggestion) => suggestion.target === this.asset?.display_file_id);
+    return this.suggestions.find(
+      (suggestion) =>
+        suggestion.target === this.asset?.display_file_id && suggestion.rotation === undefined,
+    );
+  }
+  get rotationSuggestion() {
+    if (this.files.length !== 1 || this.files[0]!.file_id !== this.asset?.display_file_id)
+      return undefined;
+    return this.suggestions.find(
+      (suggestion) =>
+        suggestion.target === this.asset?.display_file_id && suggestion.rotation !== undefined,
+    );
   }
   suggestionsError = $state("");
   asset = $state<api.PhotoAsset>();
@@ -571,6 +582,7 @@ export class PhotoAuthoredEditor {
             response: dismiss ? "dismissed" : "accepted",
             caption,
             tags,
+            rotation: suggestion.rotation,
             asset_id: suggestion.asset_id,
             asset_revision: suggestion.asset_revision,
             source_revision: suggestion.source_revision,
@@ -581,7 +593,12 @@ export class PhotoAuthoredEditor {
       );
       if (result.authored_receipt?.receipt_id) {
         this.receiptID = result.authored_receipt.receipt_id;
-        this.undoState.summary = `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
+        this.undoState.summary =
+          suggestion.rotation !== undefined
+            ? dismiss
+              ? "Confirmed rotation"
+              : "Rotated photo"
+            : `Accepted ${[...(caption ? ["caption"] : []), ...(tags.length ? ["tags"] : [])].join(" and ")}`;
       }
       await holdMutations(async () => {
         this.endWrite(write);
@@ -592,8 +609,12 @@ export class PhotoAuthoredEditor {
         await refresh?.(result.authored_receipt, refreshedTags);
       });
     } catch (cause) {
-      this.suggestionsError = this.failure(cause);
       this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+      if (suggestion.rotation !== undefined && this.conflict) {
+        this.endWrite(write);
+        await this.reload();
+      }
+      this.suggestionsError = this.failure(cause);
     } finally {
       this.endWrite(write);
     }

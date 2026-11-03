@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
+func checkProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := testProviderAuthorizationRequest()
 
 	_, err := s.AuthorizeProviderOperation(t.Context(), request)
@@ -41,9 +42,10 @@ func TestProcessingConsentAuthorizesOnlyExactCurrentGrant(t *testing.T) {
 	assert.Equal(t, grant.RevocationFence, authorization.RevocationFence)
 }
 
-func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
+func checkProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	rendition := testProviderAuthorizationRequest()
 	embedding := rendition
 	embedding.DisclosureFingerprint = testConsentFingerprint("embedding-disclosure")
@@ -68,7 +70,8 @@ func TestProcessingConsentSetAuthorizesItsExactSiblingGrant(t *testing.T) {
 	require.ErrorIs(t, err, ErrProcessingConsentRequired)
 }
 
-func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
+func checkProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	tests := map[string]func(ProviderOperationAuthorizationRequest) ProviderOperationAuthorizationRequest{
 		"profile drift including endpoint or deployment epoch": func(r ProviderOperationAuthorizationRequest) ProviderOperationAuthorizationRequest {
@@ -90,7 +93,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			request := testProviderAuthorizationRequest()
 			_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 			require.NoError(t, err)
@@ -101,7 +104,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	}
 
 	t.Run("expired grant", func(t *testing.T) {
-		s := newTestStore(t)
+		s := open(t)
 		request := testProviderAuthorizationRequest()
 		expired := time.Now().Add(-time.Minute)
 		_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, &expired))
@@ -112,7 +115,7 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	})
 
 	t.Run("expired current-fence grant takes precedence over revoked history", func(t *testing.T) {
-		s := newTestStore(t)
+		s := open(t)
 		request := testProviderAuthorizationRequest()
 		_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 		require.NoError(t, err)
@@ -129,9 +132,10 @@ func TestProcessingConsentRejectsExpiredAndDriftedOperations(t *testing.T) {
 	})
 }
 
-func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T) {
+func checkProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	request := testProviderAuthorizationRequest()
 	first, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(request, nil))
 	require.NoError(t, err)
@@ -161,9 +165,11 @@ func TestProcessingConsentRevocationFencesSubmissionAndPublication(t *testing.T)
 	require.ErrorContains(t, err, "only be checked during atomic publication")
 }
 
-func TestProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T) {
+func checkProcessingConsentRevocationIsCheckedInPublicationTransaction(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	operation := document.RenditionAuthorization{
 		RenditionRequestFingerprint: profile.RenditionRequestFingerprint,
@@ -266,7 +272,7 @@ func TestProcessingConsentHistoryIsAppendOnly(t *testing.T) {
 		`UPDATE processing_consent_revocations SET scope='changed' WHERE revocation_id='` + revocation.ID + `'`,
 		`DELETE FROM processing_consent_revocations WHERE revocation_id='` + revocation.ID + `'`,
 	} {
-		_, err := s.db.Exec(statement)
+		_, err := s.db.ExecContext(t.Context(), statement)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "immutable")
 	}
@@ -281,13 +287,13 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		_, err = s.db.Exec(`DROP TRIGGER processing_consent_grants_immutable_update`)
+		_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER processing_consent_grants_immutable_update`)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecContext(t.Context(), `
 			UPDATE processing_consent_grants SET input_classes_json=? WHERE grant_id=?`,
 			`["rendition_chunk","original_file"]`, grant.ID)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecContext(t.Context(), `
 			CREATE TRIGGER processing_consent_grants_immutable_update
 			BEFORE UPDATE ON processing_consent_grants BEGIN
 				SELECT RAISE(ABORT, 'processing consent grant records are immutable');
@@ -305,13 +311,13 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		_, err = s.db.Exec(`DROP TRIGGER processing_consent_grants_immutable_update`)
+		_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER processing_consent_grants_immutable_update`)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecContext(t.Context(), `
 			UPDATE processing_consent_grants SET retained_classes_json='null' WHERE grant_id=?`,
 			grant.ID)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecContext(t.Context(), `
 			CREATE TRIGGER processing_consent_grants_immutable_update
 			BEFORE UPDATE ON processing_consent_grants BEGIN
 				SELECT RAISE(ABORT, 'processing consent grant records are immutable');
@@ -330,13 +336,13 @@ func TestProcessingConsentValidationRejectsCorruptRows(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = s.db.Exec(`DROP TRIGGER processing_consent_revocations_immutable_update`)
+		_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER processing_consent_revocations_immutable_update`)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecContext(t.Context(), `
 			UPDATE processing_consent_revocations SET revoked_at=? WHERE revocation_id=?`,
 			`not-a-timestamp`, revocation.ID)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecContext(t.Context(), `
 			CREATE TRIGGER processing_consent_revocations_immutable_update
 			BEFORE UPDATE ON processing_consent_revocations BEGIN
 				SELECT RAISE(ABORT, 'processing consent revocation records are immutable');
@@ -360,7 +366,7 @@ func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testin
 	assert.Contains(t, snapshot.String(), grant.ID)
 	assert.Contains(t, snapshot.String(), grant.ConsentSetID)
 
-	target, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	freshIncarnation, err := target.CurrentProcessingIncarnation(t.Context())
@@ -377,12 +383,12 @@ func TestProcessingConsentRestorePreservesHistoryButRotatesIncarnation(t *testin
 	require.ErrorIs(t, err, ErrProcessingConsentRequired,
 		"a restored historical grant must not authorize the fresh incarnation")
 	var historical int
-	require.NoError(t, target.db.QueryRow(
+	require.NoError(t, target.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM processing_consent_grants WHERE grant_id=?`, grant.ID,
 	).Scan(&historical))
 	assert.Equal(t, 1, historical)
 	var restoredConsentSetID string
-	require.NoError(t, target.db.QueryRow(
+	require.NoError(t, target.db.QueryRowContext(t.Context(),
 		`SELECT consent_set_id FROM processing_consent_grants WHERE grant_id=?`, grant.ID,
 	).Scan(&restoredConsentSetID))
 	assert.Equal(t, grant.ConsentSetID, restoredConsentSetID)

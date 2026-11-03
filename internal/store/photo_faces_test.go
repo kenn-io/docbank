@@ -450,9 +450,9 @@ func TestPhotoFaceAuditWritesFailClosed(t *testing.T) {
 	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_faces`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_faces`).Scan(&count))
 	require.Equal(t, 1, count)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM person_document_assertions`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_document_assertions`).Scan(&count))
 	require.Zero(t, count)
 }
 
@@ -468,14 +468,14 @@ func TestPhotoFaceWholePhotoMarkIsIdempotent(t *testing.T) {
 	var before, after bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &before))
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
 	repeated, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 	require.NoError(t, err)
 	require.Equal(t, first, repeated)
 	require.NoError(t, s.ExportMetadata(ctx, &after))
 	require.Equal(t, before.String(), after.String())
 	var unchanged int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&unchanged))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state`).Scan(&unchanged))
 	require.Equal(t, epoch, unchanged)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
@@ -553,7 +553,7 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 	require.NoError(t, err)
 	box := document.FaceBox{Width: 0.2, Height: 0.2}
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
 	for _, personID := range []string{"", person.PersonID} {
 		id := uuid.New().String()
 		face, assertion, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, personID)
@@ -567,7 +567,7 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 		require.NoError(t, s.ExportMetadata(ctx, &after))
 		require.Equal(t, before.String(), after.String())
 		var actual int64
-		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state`).Scan(&actual))
 		require.Equal(t, epoch, actual)
 
 		changed := box
@@ -589,10 +589,10 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, inputsSHA, raw)
 	require.NoError(t, err)
 	var beforeProjection, afterProjection int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&beforeProjection))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state`).Scan(&beforeProjection))
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, otherPerson.PersonID)
 	require.NoError(t, err)
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&afterProjection))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state`).Scan(&afterProjection))
 	require.Equal(t, beforeProjection+1, afterProjection)
 }
 
@@ -643,9 +643,9 @@ func TestPhotoFacePurgeAndPruneRestoreReferences(t *testing.T) {
 			}
 			require.NoError(t, err)
 			var count int64
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_faces`).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_faces`).Scan(&count))
 			require.Zero(t, count)
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM person_document_assertions`).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_document_assertions`).Scan(&count))
 			require.Zero(t, count)
 			var exported bytes.Buffer
 			require.NoError(t, s.ExportMetadata(ctx, &exported))

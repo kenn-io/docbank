@@ -21,7 +21,7 @@ func TestBatesBrowserRuleAllowsOnlyReviewedWorkflow(t *testing.T) {
 		{http.MethodGet, "/api/v1/bates/exports/11111111-1111-4111-8111-111111111111"},
 		{http.MethodPost, "/api/v1/bates/exports/11111111-1111-4111-8111-111111111111/download"},
 	} {
-		require.True(t, webSessionRequestAllowed(httptest.NewRequest(request.method, request.path, nil)), request.method+" "+request.path)
+		require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), request.method, request.path, nil)), request.method+" "+request.path)
 	}
 	for _, request := range []struct{ method, path string }{
 		{http.MethodDelete, "/api/v1/bates/allocations/11111111-1111-4111-8111-111111111111"},
@@ -30,6 +30,6 @@ func TestBatesBrowserRuleAllowsOnlyReviewedWorkflow(t *testing.T) {
 		{http.MethodPost, "/api/v1/bates/exports/11111111-1111-4111-8111-111111111111"},
 		{http.MethodGet, "/api/v1/bates/exports/a/b/c"},
 	} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(request.method, request.path, nil)), request.method+" "+request.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), request.method, request.path, nil)), request.method+" "+request.path)
 	}
 }

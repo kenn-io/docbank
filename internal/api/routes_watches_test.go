@@ -38,7 +38,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	<-running
 
 	source := filepath.Join(t.TempDir(), "source")
-	ts, _ := newTestServer(t, func(d *api.Deps) {
+	ts, st := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = supervisor
 		d.Cfg.Watches = []config.WatchConfig{
 			{
@@ -47,7 +47,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 				ScanInterval: config.Duration(time.Second),
 			},
 			{
-				Name: "archive", Source: source, Destination: "/records",
+				Name: "archive", Source: source, Destination: "/records", Tags: []string{"receipts"},
 				CaptureOnChange: true,
 				SettleTime:      config.Duration(2 * time.Minute),
 				MinimumAge:      config.Duration(7 * 24 * time.Hour),
@@ -63,6 +63,8 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	require.Len(t, got.Items, 2)
 	assert.Equal(t, "archive", got.Items[0].Name)
+	assert.Equal(t, []string{"receipts"}, got.Items[0].Tags)
+	assert.Equal(t, `tag "receipts" is unavailable`, got.Items[0].TagError)
 	assert.True(t, got.Items[0].CaptureOnChange)
 	assert.Contains(t, body, `"capture_on_change":true`)
 	assert.Equal(t, source, got.Items[0].Source)
@@ -82,6 +84,13 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, "0s", got.Items[1].MinimumAge)
 	assert.Empty(t, got.Items[1].Exclude)
 	assert.Nil(t, got.Items[1].Job)
+	_, err := st.CreateTag(t.Context(), "receipts")
+	require.NoError(t, err)
+	resp, body = get(t, ts, "/api/v1/watches", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Items, 2)
+	assert.Empty(t, got.Items[0].TagError)
 	close(release)
 }
 

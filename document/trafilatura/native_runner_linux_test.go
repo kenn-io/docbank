@@ -58,7 +58,7 @@ func TestNativeRunnerUsesExactStdinArgumentsAndCleanEnvironment(t *testing.T) {
 }
 
 func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
 	executable := buildIsolatedHelper(t, "network", listener.Addr().String())
@@ -74,7 +74,7 @@ func TestNativeRunnerDeniesLoopbackNetworkAccess(t *testing.T) {
 
 func TestNativeRunnerDeniesHostPathnameUnixSocketAccess(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "host.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
 	executable := buildIsolatedHelper(t, "unix-network", socketPath)
@@ -146,7 +146,7 @@ func buildIsolatedHelper(t *testing.T, mode, networkAddress string) string {
 		"-X=main.mode=" + mode,
 		"-X=main.networkAddress=" + networkAddress,
 	}, " ")
-	command := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags,
+	command := exec.CommandContext(t.Context(), "go", "build", "-trimpath", "-ldflags", ldflags,
 		"-o", target, "../internal/providerutil/sandbox/testdata/sandboxhelper")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)

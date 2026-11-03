@@ -11,7 +11,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestProvenancePhotoEffectsPostgres(t *testing.T) {
+func checkProvenancePhotoEffectsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -82,7 +83,8 @@ func TestProvenancePhotoEffectsPostgres(t *testing.T) {
 	require.Equal(t, reference, read(target))
 }
 
-func TestProvenanceInvalidationPostgres(t *testing.T) {
+func checkProvenanceInvalidationPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -150,7 +152,8 @@ func TestProvenanceInvalidationPostgres(t *testing.T) {
 	require.Equal(t, after, read(target))
 }
 
-func TestImportReadSnapshotsPostgres(t *testing.T) {
+func checkImportReadSnapshotsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, kind := range []string{"provenance", "collection"} {
 		t.Run(kind, func(t *testing.T) {
@@ -200,7 +203,8 @@ func TestImportReadSnapshotsPostgres(t *testing.T) {
 	}
 }
 
-func TestProvenanceRequeuesPhotoExportPostgres(t *testing.T) {
+func checkProvenanceRequeuesPhotoExportPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, operation := range []string{"append", "observe"} {
 		t.Run(operation, func(t *testing.T) {

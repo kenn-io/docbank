@@ -44,12 +44,11 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	BurstGapSeconds             int    `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
-	HiddenUnlockLifetimeSeconds *int64 `json:"hidden_unlock_lifetime_seconds,omitzero"`
-
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision   int64   `json:"revision" minimum:"1"`
-	UpdatedAt  string  `json:"updated_at,omitzero" format:"date-time"`
+	BurstGapSeconds             int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	HiddenUnlockLifetimeSeconds *int64  `json:"hidden_unlock_lifetime_seconds,omitzero"`
+	Preference                  *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision                    int64   `json:"revision" minimum:"1"`
+	UpdatedAt                   string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {

@@ -35,7 +35,7 @@ func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(
 			<-r.Context().Done()
 			close(canceled)
 		}), "master-key", sessions, "master-owner")
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/queries", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/workspace/queries", nil)
 		req.Header.Set(WebSessionHeader, token)
 		done := make(chan struct{})
 		go func() {
@@ -63,7 +63,7 @@ func TestServerShutdownInvalidatesSnapshotsWithCanceledContext(t *testing.T) {
 			name = "expired"
 		}
 		t.Run(name, func(t *testing.T) {
-			catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+			catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 			_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "bounded.txt",
@@ -127,4 +127,21 @@ func TestWorkspaceFacetResponseRetainsSelectedValueBeyondTopFifty(t *testing.T) 
 	require.NoError(t, json.Unmarshal(encoded, &decoded))
 	require.Len(t, decoded.Facets[0].Values, 51)
 	assert.True(t, decoded.Facets[0].Values[50].Selected)
+}
+
+func TestWorkspacePagePreservesPhotoRankingStatus(t *testing.T) {
+	t.Parallel()
+	value, err := query.Parse([]byte(`{"mode":"semantic","text":"sunset","sort":{"field":"relevance","direction":"desc"}}`))
+	require.NoError(t, err)
+	wire, err := fromStoreWorkspacePage(store.SnapshotPage{
+		Query: value, PhotoRanking: &store.PhotoRanking{RequestedMode: "semantic", ActualMode: "semantic", Truncated: true, CoverageIncomplete: true},
+	})
+	require.NoError(t, err)
+	encoded, err := json.Marshal(wire)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	assert.Equal(t, "semantic", fields["actual_mode"])
+	assert.Equal(t, true, fields["truncated"])
+	assert.Equal(t, true, fields["coverage_incomplete"])
 }

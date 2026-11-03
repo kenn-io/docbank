@@ -82,7 +82,7 @@ func registerPageRoutes(humaAPI huma.API, d Deps, g *OperationGate) {
 		}
 		r := in.Body
 		var job store.PageRenderJob
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			job, err = d.Store.QueuePageJob(ctx, r.OperationID, store.PageJobRequest{NodeID: r.Selection.NodeID, Revision: r.Selection.Revision, Source: r.Selection.Source, Pages: r.Pages, DPI: r.DPI, RuntimeFingerprint: d.PageRuntime.Fingerprint()})
 			return err
@@ -106,7 +106,7 @@ func registerPageRoutes(humaAPI huma.API, d Deps, g *OperationGate) {
 		ID   string `path:"id" format:"uuid"`
 		Body PageSelectionRequest
 	}) (*struct{ Body store.PageRenderJob }, error) {
-		if err := g.mutate(func() error { return d.Store.CancelPageJob(ctx, in.ID, in.Body.Selection) }); err != nil {
+		if err := g.mutate(ctx, func() error { return d.Store.CancelPageJob(ctx, in.ID, in.Body.Selection) }); err != nil {
 			return nil, pageError(err)
 		}
 		job, err := d.Store.PageJob(ctx, in.ID, in.Body.Selection)

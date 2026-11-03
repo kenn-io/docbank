@@ -664,7 +664,7 @@ func TestRenditionWorkerQuarantinesSealTimePolicyMismatch(t *testing.T) {
 	assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
 	var exported bytes.Buffer
 	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &exported))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(
@@ -1582,8 +1582,8 @@ func (writer *failOnceRenditionBlobWriter) WithMutation(
 	return writer.delegate.WithMutation(ctx, fn)
 }
 
-func newWorkerProvider(t *testing.T) *workerProvider {
-	t.Helper()
+func newWorkerProvider(tb testing.TB) *workerProvider {
+	tb.Helper()
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.worker-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: processingHash("worker-policy"),
@@ -1594,7 +1594,7 @@ func newWorkerProvider(t *testing.T) *workerProvider {
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return &workerProvider{descriptor: descriptor}
 }
 

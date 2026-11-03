@@ -1309,7 +1309,7 @@ unguarded SQL path for unaudited metadata after activation.
 
 ## Deletion and storage maintenance
 
-`docbank rm` remains a reversible trash operation for audited nodes. Restore
+`docbank document remove` remains a reversible trash operation for audited nodes. Restore
 continues to work normally, and both transitions appear in history.
 
 A trash root is protected when it or any descendant belongs to an audit scope.

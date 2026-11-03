@@ -22,12 +22,12 @@ func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
 
 	hash := fakeHash("abcd")
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
 		) VALUES
@@ -52,7 +52,7 @@ func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
 	require.NoError(t, s.BeginStorageRecoveryPublication(ctx, operation.ID, plan))
 	require.NoError(t, s.BeginStorageRecoveryPublication(ctx, operation.ID, plan))
 
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		UPDATE blob_locations SET generation=?
 		WHERE blob_hash=? AND store_id=?`,
 		"40000000-0000-4000-8000-000000000003", hash, secondary.ID,

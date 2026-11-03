@@ -61,7 +61,7 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, receipt.ReceiptID)
 			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts WHERE receipt_id=?`, receipt.ReceiptID).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE receipt_id=?`, receipt.ReceiptID).Scan(&count))
 			require.Equal(t, 1, count)
 			require.Len(t, receipt.After, len(request.Responses))
 			if response == "accepted" {
@@ -77,7 +77,7 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 					require.Empty(t, target.Values.Flag)
 					require.NotZero(t, target.Values.Confirmed&PhotoConfirmedFlag)
 				}
-				_, err = s.db.Exec(`UPDATE photo_quality_signals SET focus=1.0-focus`)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE photo_quality_signals SET focus=1.0-focus`)
 				require.NoError(t, err)
 				require.Empty(t, bestShotPreparation(t, s, ids).Proposals)
 			}
@@ -139,14 +139,14 @@ func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
 	require.Empty(t, events)
 	// Fresh measurements with the same badges are still the displayed choice.
-	_, err = s.db.Exec(`UPDATE photo_quality_signals SET focus=focus*0.9`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE photo_quality_signals SET focus=focus*0.9`)
 	require.NoError(t, err)
 	receipt, err := s.DecidePhotoStack(ctx, request)
 	require.NoError(t, err)
 	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.NoError(t, err)
 	request = bestShotRequest(t, s, ids)
-	_, err = s.db.Exec(`UPDATE photo_quality_signals SET focus=1.0-focus`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE photo_quality_signals SET focus=1.0-focus`)
 	require.NoError(t, err)
 	_, err = s.DecidePhotoStack(ctx, request)
 	require.ErrorIs(t, err, ErrStalePhotoStack)
@@ -229,10 +229,10 @@ func TestPhotoBestShotsStaleFaces(t *testing.T) {
 	signals := document.PhotoQualitySignals{Focus: 0.9, FaceReports: []document.PhotoFaceReport{{FaceID: face.FaceID, Sharpness: new(0.7), Prominence: 0.25}}}
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), signals, inputs))
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
-	_, err = s.db.Exec(`UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, face.FaceID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, face.FaceID)
 	require.NoError(t, err)
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 3)
-	_, err = s.db.Exec(`UPDATE photo_faces SET x=0.1,width=0.4,revision=revision+1 WHERE face_id=?`, face.FaceID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE photo_faces SET x=0.1,width=0.4,revision=revision+1 WHERE face_id=?`, face.FaceID)
 	require.NoError(t, err)
 	require.Len(t, bestShotPreparation(t, s, ids).Proposals, 2)
 	_, inputs, err = s.PhotoQualityFaces(ctx, node.CurrentVersionID)

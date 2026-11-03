@@ -27,7 +27,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 	var trashed Node
 	var origPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, id)
+		n, err := nodeByIDTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -52,7 +52,7 @@ func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error
 		if err := s.trashNodeTx(ctx, tx, n, nowRFC3339()); err != nil {
 			return err
 		}
-		trashed, err = nodeByIDTx(tx, id)
+		trashed, err = nodeByIDTx(ctx, tx, id)
 		return err
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func (s *Store) TrashPathRevision(
 		if err := s.trashNodeTx(ctx, tx, n, nowRFC3339()); err != nil {
 			return err
 		}
-		trashed, err = nodeByIDTx(tx, n.ID)
+		trashed, err = nodeByIDTx(ctx, tx, n.ID)
 		return err
 	})
 	if err != nil {
@@ -117,6 +117,7 @@ func (s *Store) TrashPathRevision(
 // trashNodeTx trashes a live node n (pre-checked by the caller) and its live
 // subtree within the caller's transaction.
 func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string) error {
+	var changeIDs []int64
 	removed, trashedNodes := map[string]int64{}, map[int64]Node{}
 	if err := queryRows(ctx, tx, `
 			WITH RECURSIVE subtree(id) AS (
@@ -136,6 +137,7 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 		if err := rows.Scan(&node.ID, &node.Name, &node.ParentID, &fileID, &originalNode); err != nil {
 			return err
 		}
+		changeIDs = append(changeIDs, node.ID)
 		trashedNodes[node.ID] = node
 		if fileID.Valid {
 			removed[fileID.String] = originalNode.Int64
@@ -162,11 +164,14 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 			return err
 		}
 	}
+	if err := recordVaultChangesTx(ctx, tx, "trashed", changeIDs...); err != nil {
+		return err
+	}
 	trashedNodes[n.ID] = Node{ID: n.ID, Name: n.Name, ParentID: &s.rootID}
 	if err := s.refreshTrashedNodeWorkTx(ctx, tx, trashedNodes, n); err != nil {
 		return err
 	}
-	return bumpRevisionTx(tx, *n.ParentID, now)
+	return bumpRevisionTx(ctx, tx, *n.ParentID, now)
 }
 
 // The mutation returns the names and parents needed for sidecar pairing, so a
@@ -237,7 +242,7 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 	var restored Node
 	var restoredPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		n, err := nodeByIDTx(tx, id)
+		n, err := nodeByIDTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -279,7 +284,7 @@ func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (res
 	if trashParent.Valid {
 		originParentID := trashParent.Int64
 		target.originParentID = &originParentID
-		if _, err := liveDirTx(tx, originParentID); err == nil {
+		if _, err := liveDirTx(ctx, tx, originParentID); err == nil {
 			target.destID = originParentID
 		} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
 			return restoreTarget{}, err
@@ -296,6 +301,10 @@ func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (res
 func (s *Store) restoreNodeTx(
 	ctx context.Context, tx *sql.Tx, node Node, target restoreTarget, now string,
 ) (Node, error) {
+	ids, err := trashedSubtreeIDsTx(ctx, tx, node.ID, *node.TrashedAt)
+	if err != nil {
+		return Node{}, err
+	}
 	// Reattach the top node FIRST — parent, final (possibly re-suffixed)
 	// name, and liveness in one statement. Un-trashing before renaming
 	// would trip the live-sibling unique index whenever the original
@@ -334,10 +343,13 @@ func (s *Store) restoreNodeTx(
 	if err := s.refreshTrashedNodeWorkTx(ctx, tx, restoredNodes, node); err != nil {
 		return Node{}, err
 	}
-	if err := bumpRevisionTx(tx, target.destID, now); err != nil {
+	if err := bumpRevisionTx(ctx, tx, target.destID, now); err != nil {
 		return Node{}, err
 	}
-	return nodeByIDTx(tx, node.ID)
+	if err := recordVaultChangesTx(ctx, tx, "restored", ids...); err != nil {
+		return Node{}, err
+	}
+	return nodeByIDTx(ctx, tx, node.ID)
 }
 
 // TrashedRoots lists restorable trash roots, newest first.
@@ -523,7 +535,7 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + retainedNodes + `)`
-	runTx := s.photoReadTx
+	runTx := s.withReadTx
 	if run {
 		runTx = s.withLogicalTx
 	}
@@ -580,13 +592,16 @@ func (s *Store) trashEmpty(
 		if err != nil {
 			return fmt.Errorf("listing nodes affected by trash empty: %w", err)
 		}
+		if err := recordVaultChangesTx(ctx, tx, "removed", doomedIDs...); err != nil {
+			return err
+		}
 		if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, doomedIDs); err != nil {
 			return err
 		}
 		// One trash-empty operation advances each affected tag once, even when
 		// several assignments disappear. A row-level node_tags trigger would
 		// instead expose physical cascade cardinality as revision semantics.
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			WITH RECURSIVE roots(id) AS (`+selection+`),
 			doomed(id) AS (
 			  SELECT id FROM roots

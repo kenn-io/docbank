@@ -19,8 +19,9 @@ import (
 func hashBytes(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 func mailboxFixture(t *testing.T, drivers ...docsqlite.Driver) *Service {
 	t.Helper()
-	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"), drivers...)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"), drivers...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	b, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))

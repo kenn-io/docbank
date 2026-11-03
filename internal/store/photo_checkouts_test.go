@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -329,7 +330,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			portableLines[i] = encoded
 			require.NoError(t, err)
 		}
-		windowsRestored, err := Open(filepath.Join(t.TempDir(), "windows-colon-restored.db"))
+		windowsRestored, err := Open(t.Context(), filepath.Join(t.TempDir(), "windows-colon-restored.db"))
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, windowsRestored.Close()) })
 		require.NoError(t, windowsRestored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(portableLines, []byte{'\n'}))))
@@ -372,7 +373,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				}
 			}
 			require.True(t, changed, bad.name)
-			invalid, err := Open(filepath.Join(t.TempDir(), bad.name+".db"))
+			invalid, err := Open(t.Context(), filepath.Join(t.TempDir(), bad.name+".db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, invalid.Close()) })
 			err = invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
@@ -834,6 +835,27 @@ func TestPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T) {
 	require.NotContains(t, skipped, kept.ID)
 }
 
+func TestPhotoCheckoutNamesURLImportsByDocument(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	source := "https://example.com/download?id=7&sig=" + strings.Repeat("a", 300)
+	fetch := fmt.Sprintf(`{"version":1,"requested_url":%q,"final_url":"https://example.com/filing.png","fetched_at":"2026-10-01T12:34:56Z"}`, source)
+	run, err := s.BeginIngest(ctx, "url", fetch)
+	require.NoError(t, err)
+	node, _, err := s.IngestFile(ctx, run, s.RootID(), "filing.png", browseHash("png"), 20, "image/png", source, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
+	require.NoError(t, err)
+	require.Empty(t, checkout.SkippedPhotos)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "filing.png", path.Base(entries[0].Path))
+}
+
 func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 	t.Parallel()
 	for _, mutation := range []string{"trashed", "retargeted", "unpublished", "detached own file"} {
@@ -1209,7 +1231,7 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	selection := PhotoCheckoutSelection{AssetIDs: []string{kept.ID, purged.ID}}
 	var entries []PhotoCheckoutEntry
 	var estimate PhotoCheckoutEstimate
-	require.NoError(t, s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(t, s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		entries, estimate, err = s.checkoutEntriesTx(ctx, tx, selection)
 		return err

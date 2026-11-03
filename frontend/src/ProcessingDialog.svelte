@@ -351,6 +351,7 @@
   ariaLabel={title}
   width="520px"
   onclose={close}
+  closable
   closeOnOverlayClick={!running}
   footer={plan ? actions : undefined}
 >

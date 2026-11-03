@@ -245,7 +245,7 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 				if err != nil || !bytes.Equal(current, frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
 					return fmt.Errorf("%w: photo %d (%s) changed during preparation", bundle.ErrConflict, m.NodeID, input.Name)
 				}
-				if err = s.EnsureBlobTx(tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
+				if err = s.EnsureBlobTx(ctx, tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
 					return err
 				}
 				d := bundle.Document{Member: m, Name: input.Name, MediaType: input.MediaType}

@@ -52,7 +52,7 @@ func TestVectorIndexRestoreRebuildsRealPublishedEmbeddings(t *testing.T) {
 				backup.RestoreOptions{TargetDir: target, Jobs: 1},
 			)
 			require.NoError(t, err)
-			restored, err := store.Open(filepath.Join(target, "docbank.db"))
+			restored, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, restored.Close()) })
 			active, err := restored.ActiveVectorIndexGeneration(t.Context(), spaces[0])

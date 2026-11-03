@@ -16,10 +16,10 @@ import (
 var mkdirJSON bool
 
 var mkdirCmd = &cobra.Command{
-	Example: `  docbank mkdir /cases
-  docbank mkdir /cases/acme --json`,
+	Example: `  docbank document mkdir /cases
+  docbank document mkdir /cases/acme --json`,
 	Long: `The parent must exist (no -p). To create a nested folder while importing, use
-docbank add --dest, which creates parents.`,
+docbank document add --dest, which creates parents.`,
 	GroupID: groupDocuments,
 	Use:     "mkdir <absolute-virtual-path>",
 	Short:   "Create a directory in the virtual tree",
@@ -73,5 +73,5 @@ func validateMkdirPathArgument(path string) error {
 
 func init() {
 	mkdirCmd.Flags().BoolVar(&mkdirJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(mkdirCmd)
+	registerGroupedCommand(documentCmd, mkdirCmd, "mkdir")
 }

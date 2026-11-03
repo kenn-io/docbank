@@ -2,6 +2,7 @@ package daemonconn_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -48,11 +49,11 @@ func TestEmailViewerRealDaemonBrowser(t *testing.T) {
 	}
 	run("daemon", "start")
 	t.Cleanup(func() {
-		cmd := exec.Command(binary, "daemon", "stop")
+		cmd := exec.CommandContext(context.WithoutCancel(t.Context()), binary, "daemon", "stop")
 		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
-		status := exec.Command(binary, "daemon", "status", "--json")
+		status := exec.CommandContext(context.WithoutCancel(t.Context()), binary, "daemon", "status", "--json")
 		status.Env = append(os.Environ(), "DOCBANK_HOME="+vault)
 		out, err = status.CombinedOutput()
 		require.NoError(t, err, string(out))

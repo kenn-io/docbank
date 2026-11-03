@@ -15,7 +15,7 @@ import (
 func BenchmarkContentReferencesByHash(b *testing.B) {
 	for _, files := range []int{100, 10000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()

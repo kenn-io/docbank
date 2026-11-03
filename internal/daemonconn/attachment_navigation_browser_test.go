@@ -1,6 +1,7 @@
 package daemonconn_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -41,7 +42,7 @@ func TestAttachmentNavigationRealDaemonBrowser(t *testing.T) {
 	}
 	run("daemon", "start")
 	t.Cleanup(func() {
-		cmd := exec.Command(binary, "daemon", "stop")
+		cmd := exec.CommandContext(context.WithoutCancel(t.Context()), binary, "daemon", "stop")
 		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
 		out, stopErr := cmd.CombinedOutput()
 		require.NoError(t, stopErr, string(out))

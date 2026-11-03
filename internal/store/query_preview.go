@@ -19,7 +19,8 @@ func (s *Store) CompileQuery(ctx context.Context, value query.Query) (compiled C
 	active := false
 	defer func() {
 		if active {
-			_, err := conn.ExecContext(context.Background(), "ROLLBACK")
+			// Roll back even when ctx is canceled so the pooled connection is clean.
+			_, err := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 			retErr = errors.Join(retErr, err)
 		}
 		retErr = errors.Join(retErr, conn.Close())

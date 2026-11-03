@@ -18,7 +18,7 @@ func photoSidecarIntendedTarget(ctx context.Context, q metadataQuerier, sidecar 
 	path := node.Name
 	var kind, source string
 	err := q.QueryRowContext(ctx, `SELECT p.original_path,i.source_kind,i.source_desc FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
- WHERE p.node_id=? AND b.content_version_id=? AND (i.source_kind NOT LIKE 'embedded:%' OR i.source_kind='embedded:photo-xmp') AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ WHERE p.node_id=? AND b.content_version_id=? AND (i.source_kind NOT LIKE 'embedded:%' OR i.source_kind='embedded:photo-xmp') AND i.source_kind<>'url' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY b.observed_at DESC,p.identity DESC LIMIT 1`, node.ID, node.CurrentVersionID).Scan(&path, &kind, &source)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err

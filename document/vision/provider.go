@@ -53,8 +53,8 @@ var captionMarkdown = []*regexp.Regexp{
 }
 
 const prompt = `Look at this photograph and describe what is visible. Output strictly valid JSON, no markdown or commentary:
-{"caption":"...","tags":["..."],"visible_text":"..."}
-Caption: 1 to 3 neutral English sentences, at most 300 characters, plain text. Tags: up to 10 free-text English tags, most salient first, describing subjects, scenes, settings, mood, weather, time of day. Visible text: make a best-effort transcription of legible text from this 512px preview, without interpreting it. Leave unclear text out rather than inventing it. Do not name specific people, invent place names, or include camera/lens metadata. Return empty strings and an empty tag array when nothing can be described.`
+{"caption":"...","tags":["..."],"visible_text":"...","rotation":null}
+Rotation: clockwise correction in degrees, 0, 90, 180, or 270; use null when uncertain. Caption: 1 to 3 neutral English sentences, at most 300 characters, plain text. Tags: up to 10 free-text English tags, most salient first, describing subjects, scenes, settings, mood, weather, time of day. Visible text: make a best-effort transcription of legible text from this 512px preview, without interpreting it. Leave unclear text out rather than inventing it. Do not name specific people, invent place names, or include camera/lens metadata. Return empty strings and an empty tag array when nothing can be described.`
 const provider = providerutil.Provider("vision")
 
 type Profile struct {
@@ -221,6 +221,7 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 		return document.PhotoDescription{}, errors.New("vision response has no JSON object")
 	}
 	var fields struct {
+		Rotation    jsontext.Value `json:"rotation"`
 		Caption     jsontext.Value `json:"caption"`
 		Tags        jsontext.Value `json:"tags"`
 		VisibleText jsontext.Value `json:"visible_text"`
@@ -228,10 +229,14 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &fields); err != nil {
 		return document.PhotoDescription{}, err
 	}
-	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText) == 0 {
+	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText)+len(fields.Rotation) == 0 {
 		return document.PhotoDescription{}, errors.New("vision response has no description field")
 	}
 	out := document.PhotoDescription{Tags: []string{}}
+	var angle int
+	if len(fields.Rotation) > 0 && string(fields.Rotation) != "null" && json.Unmarshal(fields.Rotation, &angle) == nil && slices.Contains([]int{0, 90, 180, 270}, angle) {
+		out.Rotation = new(angle)
+	}
 	var caption string
 	if json.Unmarshal(fields.Caption, &caption) == nil {
 		caption = captionListMarker.ReplaceAllString(caption, "")

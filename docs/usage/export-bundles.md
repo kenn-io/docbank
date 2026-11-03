@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-31
 title: Verified export bundles
 description: Download document versions, verified email PDFs, and attachment sets as verified ZIP bundles.
 ---
@@ -130,7 +130,7 @@ These options control embedded metadata in rendered photos. Bundle manifests ret
 - Each preparation allows at most 16 photos, 512 MiB of source bytes and 1 GiB of rendered copies, within five minutes. Sources over 512 MiB and images over 100 million pixels stop preparation. JPEG output is limited to 65,535 pixels per side; set a smaller long edge or choose PNG for wider images.
 - Full-size 100-million-pixel exports can use several GiB of memory for source bytes, decoded pixels, transforms, and encoding; the 1 GiB limit covers encoded output.
 - Preparation reserves one minute of its five-minute deadline for publication. Cancellation and the rendering deadline interrupt pixel transforms and encoding, including after decoding completes.
-- A changed or unavailable photo, unsupported color profile, or malformed metadata stops the complete preparation; the error names the photo. A source that fails integrity verification also stops preparation; run `docbank verify` to check the vault. A source read failure such as a permissions error returns a server error instead. Switch to **Export selection** and select photos without that photo, or remove it from your existing selection and retry. For unsupported color, export the untouched original through the document export flow.
+- A changed or unavailable photo, unsupported color profile, or malformed metadata stops the complete preparation; the error names the photo. A source that fails integrity verification also stops preparation; run `docbank vault verify` to check the vault. A source read failure such as a permissions error returns a server error instead. Switch to **Export selection** and select photos without that photo, or remove it from your existing selection and retry. For unsupported color, export the untouched original through the document export flow.
 
 The CLI prompts for the Hidden photos passcode when needed and keeps its unlock cookie only for that invocation. See [Free a finished job slot](#free-a-finished-job-slot) for release behavior and export limits.
 

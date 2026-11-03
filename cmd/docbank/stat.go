@@ -16,8 +16,8 @@ import (
 var statJSON bool
 
 var statCmd = &cobra.Command{
-	Example: `  docbank stat /cases/acme/invoice.pdf
-  docbank stat id:12 --json`,
+	Example: `  docbank document stat /cases/acme/invoice.pdf
+  docbank document stat id:12 --json`,
 	Long: `Show a node's path, id, revision, current version UUID, sha256, size, MIME and
 source metadata. The version UUID is what versions, rendition and processing
 commands ask for (JSON field current_version_id).`,
@@ -139,5 +139,5 @@ func nodeState(node api.Node) string {
 
 func init() {
 	statCmd.Flags().BoolVar(&statJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(statCmd)
+	registerGroupedCommand(documentCmd, statCmd, "stat")
 }

@@ -46,7 +46,7 @@ func TestS3PlacementLifecycle(t *testing.T) {
 		Priority: 20, ForcePathStyle: true,
 	}
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "metadata.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	secondary, err := metadata.PrepareSecondaryBlobStore(

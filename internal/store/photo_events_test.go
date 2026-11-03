@@ -95,7 +95,7 @@ func TestPhotoEventsTellSubscriberJoiningMidWrite(t *testing.T) {
 	var events <-chan struct{}
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		events = watchPhotoChanges(t, s)
-		_, err := tx.Exec(`UPDATE nodes SET name='committed.jpg',revision=revision+1 WHERE id=?`, node.ID)
+		_, err := tx.ExecContext(t.Context(), `UPDATE nodes SET name='committed.jpg',revision=revision+1 WHERE id=?`, node.ID)
 		return err
 	}))
 	requirePhotoSignal(t, events, "triggers were not armed for this write")
@@ -176,6 +176,17 @@ func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 		require.NoError(t, change.do(), change.name)
 		requirePhotoSignal(t, events, change.name)
 	}
+	vectorStore, _, source := newPublishedVectorIndexFixture(t)
+	now := time.Now().UTC()
+	claim, claimed, err := vectorStore.ClaimVectorIndexBuild(t.Context(), source.VectorSpaceID,
+		source.ManifestChecksum, "photo-events-worker", now, time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	generation := vectorIndexGenerationFixture("photo-events-publication", source, []byte("index"), now)
+	require.NoError(t, vectorStore.StageVectorIndexGeneration(t.Context(), claim, generation, now))
+	vectorEvents := watchPhotoChanges(t, vectorStore)
+	require.NoError(t, vectorStore.PublishVectorIndexGeneration(t.Context(), claim, generation.ID, now))
+	requirePhotoSignal(t, vectorEvents, "vector index publication")
 }
 
 func TestPhotoEventsIgnoreBookkeeping(t *testing.T) {

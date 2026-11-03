@@ -67,7 +67,7 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.Quer
 				return nil, workspaceQueryError(err)
 			}
 		} else {
-			err = g.mutate(func() error { set, err = d.Store.CreatePhotoSet(ctx, in.Body.Name); return err })
+			err = g.mutate(ctx, func() error { set, err = d.Store.CreatePhotoSet(ctx, in.Body.Name); return err })
 			if err != nil {
 				return nil, FromStoreError(err)
 			}
@@ -84,7 +84,7 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.Quer
 			return nil, err
 		}
 		var out *photoAlbumOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			set, err := d.Store.UpdatePhotoSet(ctx, in.SetID, revision, in.Body.Name, in.Body.Starred, nil)
 			if err != nil {
 				return FromStoreError(err)
@@ -104,7 +104,7 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.Quer
 			return nil, err
 		}
 		var out *photoAlbumOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			set, err := d.Store.UpdatePhotoSet(ctx, in.SetID, revision, nil, nil, &in.Body.AssetID)
 			if err != nil {
 				return FromStoreError(err)
@@ -124,7 +124,7 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.Quer
 			return nil, err
 		}
 		var out *photoAlbumOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			set, err := d.Store.DuplicatePhotoSet(ctx, in.SetID, revision, in.Body.Name)
 			if err != nil {
 				return FromStoreError(err)
@@ -143,7 +143,7 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.Quer
 			return nil, err
 		}
 		var out *photoAlbumOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			set, err := d.Store.DeletePhotoSet(ctx, in.SetID, revision)
 			if err != nil {
 				return FromStoreError(err)
@@ -180,7 +180,7 @@ func registerPhotoAlbumMembersRoute(api huma.API, d Deps, g *gate, add bool) {
 			selection.Query = &value
 		}
 		var out *photoAlbumOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			set, err := d.Store.ChangePhotoSetMembers(ctx, in.SetID, revision, add, selection)
 			if err != nil {
 				return workspaceQueryError(err)

@@ -92,7 +92,7 @@ func nodeByIDQuery(ctx context.Context, queryer rowQuerier, id int64) (Node, err
 // NodeViewByID returns a node and its live path from one read transaction.
 func (s *Store) NodeViewByID(ctx context.Context, id int64) (NodeView, error) {
 	return s.nodeView(ctx, func(tx *sql.Tx) (Node, error) {
-		return nodeByIDTx(tx, id)
+		return nodeByIDTx(ctx, tx, id)
 	})
 }
 
@@ -282,7 +282,7 @@ func (s *Store) DirectoryChildrenPage(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	dir, err := nodeByIDTx(tx, dirID)
+	dir, err := nodeByIDTx(ctx, tx, dirID)
 	if err != nil {
 		return DirectoryPageView{}, err
 	}

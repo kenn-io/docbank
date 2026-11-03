@@ -92,7 +92,7 @@ func TestMediaHTTPUsesSmallerConfiguredCeiling(t *testing.T) {
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), MediaMaxBytes: 64})
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), MediaMaxBytes: 64})
 		require.NoError(t, err)
 		deps.Processing = service
 	})

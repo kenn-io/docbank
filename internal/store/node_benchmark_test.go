@@ -14,7 +14,7 @@ import (
 func BenchmarkDirectoryChildrenPage(b *testing.B) {
 	for _, children := range []int{100, 10000} {
 		b.Run(fmt.Sprintf("children=%d", children), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			for i := range children {

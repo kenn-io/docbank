@@ -17,7 +17,7 @@ func BenchmarkMediaSourcePages(b *testing.B) {
 		{1, 1}, {1, 100}, {1, 1000}, {100, 1}, {100, 100},
 	} {
 		b.Run(fmt.Sprintf("sources=%d/occurrences=%d", shape.sources, shape.occurrences), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()

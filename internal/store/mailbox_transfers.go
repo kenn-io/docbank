@@ -187,7 +187,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	}
 	var target Node
 	if existing {
-		target, err = nodeByIDTx(tx, prior.Target.NodeID)
+		target, err = nodeByIDTx(ctx, tx, prior.Target.NodeID)
 		if errors.Is(err, ErrNotFound) || (err == nil && target.TrashedAt != nil) {
 			prior.Outcome = "tombstone"
 			return prior, nil
@@ -244,7 +244,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 			if active {
 				change, err = s.changeAuditedTagAssignmentTx(ctx, tx, id, content.Node, content.Node.Revision, true)
 			} else {
-				change, err = changeTagAssignmentTx(ctx, tx, id, content.Node, content.Node.Revision, true, nowRFC3339())
+				change, err = s.changeTagAssignmentTx(ctx, tx, id, content.Node, content.Node.Revision, true, nowRFC3339())
 			}
 			if err != nil {
 				return MailboxTransferReceipt{}, err
@@ -260,7 +260,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	if view.Evidence.Inventory == nil {
 		return MailboxTransferReceipt{}, ErrMailboxInvalid
 	}
-	dir, err := liveDirTx(tx, p.Request.DestinationID)
+	dir, err := liveDirTx(ctx, tx, p.Request.DestinationID)
 	if err != nil {
 		return MailboxTransferReceipt{}, err
 	}

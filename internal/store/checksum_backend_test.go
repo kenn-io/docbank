@@ -7,12 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChecksumRecordingSQLite(t *testing.T) {
+func checkChecksumRecordingSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkChecksumRecording(t, newTestStore(t))
 }
 
-func TestChecksumRecordingPostgres(t *testing.T) {
+func checkChecksumRecordingPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkChecksumRecording(t, newPostgresQueryStore(t))
 }

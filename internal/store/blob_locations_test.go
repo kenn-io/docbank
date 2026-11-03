@@ -23,11 +23,11 @@ func TestFreshBlobCatalogHasOneFixedPrimary(t *testing.T) {
 		CreatedAt: primary.CreatedAt,
 	}, primary)
 
-	blobColumns, err := tableColumns(s.db, "blobs")
+	blobColumns, err := queryTableColumns(t.Context(), s.db, "blobs")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"created_at", "hash", "size"}, blobColumns)
 
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_stores(
 			store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
 		) VALUES(?, 'other-primary', 'filesystem', 'primary', 'active', 'other',

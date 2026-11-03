@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,6 +92,33 @@ func NewSearcher(config SearcherConfig) (*Searcher, error) {
 		reranking: config.Reranking, mediaEvidence: config.MediaEvidence}, nil
 }
 
+// SearchEmpty reports a semantic or hybrid scope already observed to be empty,
+// without acquiring semantic authority or sending query text to a provider.
+func (searcher *Searcher) SearchEmpty(ctx context.Context, mode Mode, bindingRequired bool) (Report, error) {
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
+	coverage := Coverage{State: CoverageComplete, BindingRequired: bindingRequired}
+	var report Report
+	switch mode {
+	case ModeSemantic:
+		report = laneReport(mode, mode, coverage, nil, false)
+	case ModeHybrid:
+		var err error
+		report, err = makeHybridReport(mode, coverage, nil, nil, false, DefaultCandidateLimit)
+		if err != nil {
+			return Report{}, err
+		}
+	default:
+		return Report{}, errors.New("empty scope requires semantic or hybrid retrieval")
+	}
+	report, receipt, _, err := searcher.rerank(ctx, Query{}, report)
+	if receipt != nil {
+		report.Receipts = append(report.Receipts, *receipt)
+	}
+	return report, err
+}
+
 func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, error) {
 	query, err := normalizeQuery(query)
 	if err != nil {
@@ -168,16 +196,7 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	}
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {
-		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
-		for j, reference := range result.Evidence {
-			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind, NodeName: reference.NodeName,
-				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
-				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
-				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
-				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
-		}
-		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
-			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
+		requested[i] = searchCandidateIdentity(result)
 	}
 	semanticProfile, semanticBinding := "", ""
 	if report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
@@ -220,6 +239,27 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	}
 	report.Results = results
 	return report, nil
+}
+
+func searchCandidateIdentity(result Result) store.SearchCandidateIdentity {
+	evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
+	for i, reference := range result.Evidence {
+		evidence[i] = store.SearchEvidenceIdentity{NodeID: reference.NodeID, ContentVersionID: reference.ContentVersionID,
+			Kind: reference.Kind, NodeName: reference.NodeName, VectorSpaceID: reference.VectorSpaceID,
+			EmbeddingSetID: reference.EmbeddingSetID, InputGenerationID: reference.InputGenerationID,
+			InputID: reference.InputID, InputKind: reference.InputKind, BuildID: reference.BuildID,
+			SegmentID: reference.SegmentID, BlobHash: reference.BlobHash,
+			SourceManifestChecksum: reference.SourceManifestChecksum}
+	}
+	return store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
+		ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
+}
+
+func photoFusionBlob(scope store.SearchOptions, hash string) string {
+	if scope.CollapsesPhotoDuplicates() {
+		return hash
+	}
+	return ""
 }
 
 func (searcher *Searcher) searchBase(ctx context.Context, query Query) (Report, error) {
@@ -376,13 +416,9 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			}
 		}
 	}()
-	coverage = Coverage{BindingRequired: authority.BindingRequired,
-		ScopedDocuments: authority.ScopedDocuments, CompleteDocuments: authority.CompleteDocuments,
-		State: CoverageComplete}
-	if authority.CompleteDocuments != authority.ScopedDocuments {
-		coverage.State = CoverageIncomplete
-	}
-	if authority.ANNRows == nil {
+	// Search reports coverage from final candidate revalidation.
+	coverage = Coverage{BindingRequired: authority.BindingRequired, State: CoverageUnknown}
+	if authority.ANNRows == nil && !authority.WholeSpace {
 		return nil, coverage, false, errors.New("semantic search authority lacks source-fenced ANN rows")
 	}
 	provider, err := searcher.encoders.ResolveQueryEncoder(ctx, authority.VectorSpace.Descriptor)
@@ -420,9 +456,22 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		metadata.Manifest.Checksum != stored.IndexManifestChecksum || metadata.RowCount != stored.RowCount {
 		return nil, coverage, false, errors.New("leased vector generation is incompatible with active query authority")
 	}
-	neighbors, err := generation.SearchRows(embedded.Vectors[0].Values, authority.ANNRows)
+	var neighbors []vectorindex.Neighbor
+	if authority.WholeSpace {
+		neighbors, err = generation.Search(embedded.Vectors[0].Values, metadata.RowCount)
+	} else {
+		neighbors, err = generation.SearchRows(embedded.Vectors[0].Values, authority.ANNRows)
+	}
 	if err != nil {
 		return nil, coverage, false, err
+	}
+	if query.MinVectorScore != nil {
+		if descriptor.Metric == document.VectorMetricL2 {
+			return nil, coverage, false, errors.New("minimum vector score requires cosine or dot_product metric")
+		}
+		neighbors = neighbors[:sort.Search(len(neighbors), func(i int) bool {
+			return neighbors[i].Score < *query.MinVectorScore
+		})]
 	}
 	candidates := make([]Candidate, 0, min(query.VectorLimit, len(neighbors)))
 	seen := make(map[int64]struct{})
@@ -436,12 +485,6 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		}
 		if resolution.SourceManifestChecksum != stored.SourceManifestChecksum {
 			return nil, coverage, false, store.ErrVectorIndexSourceStale
-		}
-		coverage.ScopedDocuments = resolution.ScopedDocuments
-		coverage.CompleteDocuments = resolution.CompleteDocuments
-		coverage.State = CoverageComplete
-		if coverage.CompleteDocuments != coverage.ScopedDocuments {
-			coverage.State = CoverageIncomplete
 		}
 		truncated = truncated || resolution.Truncated
 		for _, item := range resolution.Candidates {
@@ -478,7 +521,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
 				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
 				Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
-				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}})
+				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}, photoBlobHash: photoFusionBlob(query.Scope, item.BlobHash)})
 		}
 		if len(candidates) == query.VectorLimit || !resolution.Truncated {
 			break
@@ -503,7 +546,10 @@ func normalizeQuery(query Query) (Query, error) {
 	if err != nil {
 		return Query{}, err
 	}
-	query.Mode, query.Limit = Mode(options.Mode), options.CandidateLimit
+	if query.Mode == "" {
+		query.Mode = ModeAuto
+	}
+	query.Limit = options.CandidateLimit
 	if query.LexicalLimit == 0 {
 		query.LexicalLimit = query.Limit
 	}
@@ -542,7 +588,7 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 		reference.TimeSpan = span
 		candidates[index] = Candidate{Document: DocumentIdentity{VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
-			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,
+			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt, photoBlobHash: photoFusionBlob(query.Scope, hit.Node.BlobHash),
 			Evidence: []EvidenceReference{reference}}
 		if len(query.Scope.SelectedBuilds) != 0 {
 			candidates[index].Document.BuildID = hit.BuildID

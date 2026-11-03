@@ -13,7 +13,7 @@ copies in secondary stores.
 Use `docbank backup create` to capture content across all stores. Copying the
 database and primary directory is a complete manual archive only when the
 primary holds every retained blob. Stop the daemon before making that copy.
-Run `docbank verify` before relying on the result. [Backup and recovery](backup.md)
+Run `docbank vault verify` before relying on the result. [Backup and recovery](backup.md)
 owns the complete capture and restore contract.
 
 Hidden-photo backups preserve credentials, failed attempts and lockout expiry. Unlock sessions stay in memory and expire on restart or restore.

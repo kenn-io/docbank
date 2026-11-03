@@ -12,8 +12,8 @@ import (
 var revertJSON bool
 
 var revertCmd = &cobra.Command{
-	Example: `  docbank versions list id:12 # pick an older VERSION
-  docbank revert id:12 <version-uuid>`,
+	Example: `  docbank document versions list id:12 # pick an older VERSION
+  docbank document revert id:12 <version-uuid>`,
 	GroupID: groupDocuments,
 	Use:     "revert <path-or-id> <version-uuid>",
 	Short:   "Create a new current version from an immutable prior version",
@@ -60,5 +60,5 @@ var revertCmd = &cobra.Command{
 
 func init() {
 	revertCmd.Flags().BoolVar(&revertJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(revertCmd)
+	registerGroupedCommand(documentCmd, revertCmd, "revert")
 }

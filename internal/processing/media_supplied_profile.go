@@ -163,7 +163,7 @@ func NewSuppliedMediaProfile(
 	if catalog == nil || blobs == nil || principal == "" {
 		return "", ProfileConfig{}, errors.New("supplied media profile requires catalog, blobs, and principal")
 	}
-	sourceBinding := stableHash("docbank/supplied-media-source/v1", catalog.VaultID(), principal)
+	sourceBinding := store.LengthPrefixedSHA256("docbank/supplied-media-source/v1", catalog.VaultID(), principal)
 	provider, err := suppliedtranscript.New(suppliedtranscript.Profile{
 		Source:        retainedTranscriptSource{catalog: catalog, blobs: blobs, principal: principal},
 		SourceBinding: sourceBinding, MaxDocumentChars: 16 << 20,
@@ -177,29 +177,29 @@ func NewSuppliedMediaProfile(
 		Rendition: &document.RenditionBindingV1{ //nolint:gosec // Contains a stable non-secret local binding identity.
 			Name: "supplied-transcript", AdapterContract: "rendition-adapter/v1",
 			Descriptor:               document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
-			AuthorizationFingerprint: stableHash("docbank/supplied-media-authorization/v1", sourceBinding),
+			AuthorizationFingerprint: store.LengthPrefixedSHA256("docbank/supplied-media-authorization/v1", sourceBinding),
 			CredentialBinding:        "credential:local-supplied-transcript",
-			DeploymentFingerprint:    sourceBinding, DisclosureFingerprint: stableHash(
+			DeploymentFingerprint:    sourceBinding, DisclosureFingerprint: store.LengthPrefixedSHA256(
 				"docbank/supplied-media-disclosure/v1", sourceBinding),
 			TrustBoundary: string(descriptor.TrustBoundary), MaxDocumentBytes: media.MaxMediaSourceBytes,
 			MaxResponseBytes: 16 << 20, MaxUnits: 1,
 			RequestedArtifacts:       []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
-			UploadOptionsFingerprint: stableHash("docbank/supplied-media-upload/v1", sourceBinding),
+			UploadOptionsFingerprint: store.LengthPrefixedSHA256("docbank/supplied-media-upload/v1", sourceBinding),
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
-			CompletenessFingerprint:     stableHash("docbank/supplied-media-completeness/v1"),
-			LexicalSegmenterFingerprint: stableHash("docbank/supplied-media-segmenter/v1"),
+			CompletenessFingerprint:     store.LengthPrefixedSHA256("docbank/supplied-media-completeness/v1"),
+			LexicalSegmenterFingerprint: store.LengthPrefixedSHA256("docbank/supplied-media-segmenter/v1"),
 			MaxDocumentChars:            16 << 20, MaxSegmentRunes: 1 << 20, MaxUnitRunes: 1 << 20,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
-			NormalizerFingerprint:      stableHash("docbank/supplied-media-normalizer/v1"),
+			NormalizerFingerprint:      store.LengthPrefixedSHA256("docbank/supplied-media-normalizer/v1"),
 			RenditionContract:          document.RenditionContractV1,
-			SanitizerFingerprint:       stableHash("docbank/supplied-media-sanitizer/v1"),
+			SanitizerFingerprint:       store.LengthPrefixedSHA256("docbank/supplied-media-sanitizer/v1"),
 			SourceEvidenceContract:     document.SourceEvidenceContractV1,
 		},
 		Retrieval: document.RetrievalPolicyV1{LexicalLimit: 100, VectorLimit: 100},
 		RetentionDisclosure: document.RetentionDisclosurePolicyV1{
-			AttachmentPolicyFingerprint: stableHash("docbank/supplied-media-attachments/v1"),
-			ConsentFingerprint:          stableHash("docbank/supplied-media-consent/v1", sourceBinding),
+			AttachmentPolicyFingerprint: store.LengthPrefixedSHA256("docbank/supplied-media-attachments/v1"),
+			ConsentFingerprint:          store.LengthPrefixedSHA256("docbank/supplied-media-consent/v1", sourceBinding),
 			RetainSanitizedMarkdown:     true, RetainTypedArtifacts: true,
 			TrustBoundary: string(descriptor.TrustBoundary),
 		},
@@ -218,7 +218,7 @@ func NewSuppliedCaptionProfile(
 	if catalog == nil || blobs == nil || principal == "" {
 		return "", ProfileConfig{}, errors.New("supplied caption profile requires catalog, blobs, and principal")
 	}
-	sourceBinding := stableHash("docbank/supplied-captions-source/v1", catalog.VaultID(), principal)
+	sourceBinding := store.LengthPrefixedSHA256("docbank/supplied-captions-source/v1", catalog.VaultID(), principal)
 	provider, err := suppliedtranscript.NewCaptions(suppliedtranscript.CaptionProfile{
 		Source:        retainedTranscriptSource{catalog: catalog, blobs: blobs, principal: principal},
 		SourceBinding: sourceBinding, MaxDocumentChars: 16 << 20,
@@ -232,29 +232,29 @@ func NewSuppliedCaptionProfile(
 		Rendition: &document.RenditionBindingV1{ //nolint:gosec // Contains a stable non-secret local binding identity.
 			Name: "supplied-captions", AdapterContract: "rendition-adapter/v1",
 			Descriptor:               document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
-			AuthorizationFingerprint: stableHash("docbank/supplied-captions-authorization/v1", sourceBinding),
+			AuthorizationFingerprint: store.LengthPrefixedSHA256("docbank/supplied-captions-authorization/v1", sourceBinding),
 			CredentialBinding:        "credential:local-supplied-captions",
-			DeploymentFingerprint:    sourceBinding, DisclosureFingerprint: stableHash(
+			DeploymentFingerprint:    sourceBinding, DisclosureFingerprint: store.LengthPrefixedSHA256(
 				"docbank/supplied-captions-disclosure/v1", sourceBinding),
 			TrustBoundary: string(descriptor.TrustBoundary), MaxDocumentBytes: media.MaxMediaSourceBytes,
 			MaxResponseBytes: 16 << 20, MaxUnits: 25_000,
 			RequestedArtifacts:       []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
-			UploadOptionsFingerprint: stableHash("docbank/supplied-captions-upload/v1", sourceBinding),
+			UploadOptionsFingerprint: store.LengthPrefixedSHA256("docbank/supplied-captions-upload/v1", sourceBinding),
 		},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{
-			CompletenessFingerprint:     stableHash("docbank/supplied-captions-completeness/v1"),
-			LexicalSegmenterFingerprint: stableHash("docbank/supplied-captions-segmenter/v1"),
+			CompletenessFingerprint:     store.LengthPrefixedSHA256("docbank/supplied-captions-completeness/v1"),
+			LexicalSegmenterFingerprint: store.LengthPrefixedSHA256("docbank/supplied-captions-segmenter/v1"),
 			MaxDocumentChars:            16 << 20, MaxSegmentRunes: 1 << 20, MaxUnitRunes: 1 << 20,
 			NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
-			NormalizerFingerprint:      stableHash("docbank/supplied-captions-normalizer/v1"),
+			NormalizerFingerprint:      store.LengthPrefixedSHA256("docbank/supplied-captions-normalizer/v1"),
 			RenditionContract:          document.RenditionContractV1,
-			SanitizerFingerprint:       stableHash("docbank/supplied-captions-sanitizer/v1"),
+			SanitizerFingerprint:       store.LengthPrefixedSHA256("docbank/supplied-captions-sanitizer/v1"),
 			SourceEvidenceContract:     document.SourceEvidenceContractV1,
 		},
 		Retrieval: document.RetrievalPolicyV1{LexicalLimit: 100, VectorLimit: 100},
 		RetentionDisclosure: document.RetentionDisclosurePolicyV1{
-			AttachmentPolicyFingerprint: stableHash("docbank/supplied-captions-attachments/v1"),
-			ConsentFingerprint:          stableHash("docbank/supplied-captions-consent/v1", sourceBinding),
+			AttachmentPolicyFingerprint: store.LengthPrefixedSHA256("docbank/supplied-captions-attachments/v1"),
+			ConsentFingerprint:          store.LengthPrefixedSHA256("docbank/supplied-captions-consent/v1", sourceBinding),
 			RetainSanitizedMarkdown:     true, RetainTypedArtifacts: true,
 			TrustBoundary: string(descriptor.TrustBoundary),
 		},

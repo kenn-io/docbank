@@ -54,7 +54,7 @@ func TestWatcherImportsLongPath(t *testing.T) {
 	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, now.Add(time.Second)))
 	node, err := ing.Store.NodeByPath(t.Context(), "/inbox/"+rel)
 	require.NoError(t, err)
-	content, err := ing.Blobs.Open(node.BlobHash)
+	content, err := ing.Blobs.OpenContext(t.Context(), node.BlobHash)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, content.Close()) })
 	data, err := io.ReadAll(content)

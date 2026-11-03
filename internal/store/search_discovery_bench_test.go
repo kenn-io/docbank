@@ -14,7 +14,7 @@ import (
 // The corpus is metadata only; seeding never enters timed loops.
 func benchmarkDiscoveryFixture(b *testing.B, count int) (*Store, int64, int64, int64) {
 	b.Helper()
-	s, err := Open(filepath.Join(b.TempDir(), "benchmark.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "benchmark.db"))
 	if err != nil {
 		b.Fatal(err)
 	}

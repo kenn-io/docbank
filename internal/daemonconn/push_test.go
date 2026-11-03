@@ -13,7 +13,7 @@ import (
 // serveRawChallenge answers each connection's first request with reply, raw.
 func serveRawChallenge(t *testing.T, reply string) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	go func() {

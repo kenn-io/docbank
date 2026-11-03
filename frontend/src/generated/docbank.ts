@@ -636,6 +636,7 @@ export interface Error {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -1352,6 +1353,15 @@ export interface ClaimBackupRepositoryRequest {
   repo?: string;
 }
 
+export interface URLFetch {
+  etag?: string;
+  fetched_at: string;
+  final_url: string;
+  last_modified?: string;
+  requested_url: string;
+  version: number;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1370,6 +1380,7 @@ export interface Collection {
   started_at: string;
   /** @minimum 0 */
   total_bytes: number;
+  url_fetch?: URLFetch;
 }
 
 export interface CollectionLabel {
@@ -1463,6 +1474,7 @@ export interface CollectionQualitySummary {
   started_at: string;
   /** @minimum 0 */
   total_bytes: number;
+  url_fetch?: URLFetch;
 }
 
 export interface QualityBucket {
@@ -2301,6 +2313,29 @@ export interface DocumentSourceFence {
   vault_uid: string;
 }
 
+export interface DocumentSourceFenceFilters {
+  /** @maxLength 255 */
+  mime_type?: string;
+  modified_before?: string;
+  modified_since?: string;
+  source_present?: boolean;
+  tag_id?: string;
+  /** @minimum 1 */
+  under_node_id?: number;
+}
+
+export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
+
+
+export const DocumentSearchScopeKind = {
+  all_live: 'all_live',
+} as const;
+
+export interface DocumentSearchScope {
+  filters?: DocumentSourceFenceFilters;
+  kind: DocumentSearchScopeKind;
+}
+
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2308,7 +2343,7 @@ export interface DocumentSearchRequest {
   binding_id?: string;
   content_first?: boolean;
   explain?: boolean;
-  fence: DocumentSourceFence;
+  fence?: DocumentSourceFence;
   /**
      * @minimum 1
      * @maximum 100
@@ -2332,6 +2367,7 @@ export interface DocumentSearchRequest {
      */
   query: string;
   rerank?: boolean;
+  scope?: DocumentSearchScope;
 }
 
 export interface DocumentSearchValidation {
@@ -2452,17 +2488,6 @@ export interface DocumentSimilarRequest {
      */
   limit?: number;
   selector: ProcessingSelector;
-}
-
-export interface DocumentSourceFenceFilters {
-  /** @maxLength 255 */
-  mime_type?: string;
-  modified_before?: string;
-  modified_since?: string;
-  source_present?: boolean;
-  tag_id?: string;
-  /** @minimum 1 */
-  under_node_id?: number;
 }
 
 export interface ResolvedDocumentSourceFence {
@@ -3707,6 +3732,10 @@ export interface Job {
   processing?: WatchProcessingStatus;
   started_at: string;
   status: JobStatus;
+  /** Why configured watch tags are unavailable. */
+  tag_error?: string;
+  /** Existing tag names applied to files imported by this watch. */
+  tags?: string[];
   total_bytes?: number;
   total_objects?: number;
 }
@@ -5915,8 +5944,28 @@ export interface PhotoAuthoredReceipt {
   undo_of?: string;
 }
 
+export type PhotoSuggestionRotation = typeof PhotoSuggestionRotation[keyof typeof PhotoSuggestionRotation];
+
+
+export const PhotoSuggestionRotation = {
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
+export type PhotoDescriptionRotation = typeof PhotoDescriptionRotation[keyof typeof PhotoDescriptionRotation];
+
+
+export const PhotoDescriptionRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoDescription {
   caption: string;
+  rotation?: PhotoDescriptionRotation;
   tags: string[];
   visible_text: string;
 }
@@ -5929,6 +5978,8 @@ export interface PhotoSuggestion {
   authored_receipt?: PhotoAuthoredReceipt;
   content_version_id: string;
   node_revision: number;
+  rotation?: PhotoSuggestionRotation;
+  rotation_source?: string;
   source_revision: number;
   suggestion_id: string;
   target: string;
@@ -6275,6 +6326,7 @@ export interface PhotoMapRow {
   asset_id: string;
   /** @nullable */
   capture_time: string | null;
+  display_file_id: string;
   /**
      * Set only when the file modified time, not a capture date, placed the photo.
      * @nullable
@@ -6309,22 +6361,29 @@ export interface PhotoStack {
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  actual_mode?: string;
   /**
      * @minimum 1
      * @maximum 30
      */
   burst_gap_seconds?: number;
+  coverage_incomplete?: boolean;
   facets: PhotoBrowsePageFacetsItem[];
+  fallback_reason?: string;
   /** Photos with stale source metadata group as photos with no serial until it updates, so their stacks can change. */
   grouping_incomplete?: boolean;
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];
+  member_hash?: string;
   next_cursor?: string;
   relevance_available: boolean;
+  requested_mode?: string;
+  snapshot_id?: string;
   /** Bursts among items when stacks were requested; other items are single photos. */
   stacks?: PhotoStack[];
   /** @minimum 0 */
   total: number;
+  truncated?: boolean;
 }
 
 export type PhotoBrowseRequestFacetsItem = typeof PhotoBrowseRequestFacetsItem[keyof typeof PhotoBrowseRequestFacetsItem];
@@ -6365,6 +6424,7 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+  snapshot_id?: string;
   /** Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows. */
   stacks?: boolean;
 }
@@ -6813,6 +6873,18 @@ export const PhotoSuggestionResponseResponse = {
   dismissed: 'dismissed',
 } as const;
 
+/**
+ * The clockwise angle shown in the rotation proposal, also supplied on dismissal.
+ */
+export type PhotoSuggestionResponseRotation = typeof PhotoSuggestionResponseRotation[keyof typeof PhotoSuggestionResponseRotation];
+
+
+export const PhotoSuggestionResponseRotation = {
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoSuggestionResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6821,6 +6893,8 @@ export interface PhotoSuggestionResponse {
   caption: boolean;
   node_revision: number;
   response: PhotoSuggestionResponseResponse;
+  /** The clockwise angle shown in the rotation proposal, also supplied on dismissal. */
+  rotation?: PhotoSuggestionResponseRotation;
   source_revision: number;
   /** @maxItems 64 */
   tags: string[];
@@ -7374,6 +7448,7 @@ export interface ProvenanceFact {
   source_kind: string;
   /** @pattern ^[0-9a-f]{64}$ */
   supersedes?: string;
+  url_fetch?: URLFetch;
 }
 
 export interface ProvenanceAppendReceipt {
@@ -8099,12 +8174,15 @@ export type WorkspaceQueryResponseFacetsItem = {
 export interface WorkspaceQueryResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  actual_mode?: string;
   coverage: WorkspaceQueryCoverage;
+  coverage_incomplete?: boolean;
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
   /** @maxItems 8 */
   facets: WorkspaceQueryResponseFacetsItem[];
+  fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
   /** @pattern ^[0-9a-f]{64}$ */
   member_hash: string;
@@ -8117,6 +8195,7 @@ export interface WorkspaceQueryResponse {
   query: SavedQueryV1Schema;
   /** @pattern ^sha256:[0-9a-f]{64}$ */
   query_fingerprint: string;
+  requested_mode?: string;
   /** @maxItems 250 */
   rows: WorkspaceQueryRow[];
   snapshot: boolean;
@@ -8128,6 +8207,7 @@ export interface WorkspaceQueryResponse {
   total: number;
   /** @minimum 0 */
   total_bytes: number;
+  truncated?: boolean;
 }
 
 export interface SavedQueryRunResult {
@@ -8168,6 +8248,7 @@ export interface SearchReport {
   mime_type?: string;
   modified_before?: string;
   modified_since?: string;
+  pdf_filter?: string;
   source_present?: boolean;
   tag_id?: string;
   truncated: boolean;
@@ -8843,6 +8924,7 @@ export interface UploadReceipt {
   /** @pattern ^[0-9a-f]{64}$ */
   computed_hash: string;
   computed_size: number;
+  ingest_id?: string;
   node: Node;
   status: UploadReceiptStatus;
 }
@@ -8932,6 +9014,10 @@ export interface WatchedInbox {
   scan_interval: string;
   settle_time: string;
   source: string;
+  /** Why configured watch tags are unavailable. */
+  tag_error?: string;
+  /** Existing tag names applied to files imported by this watch. */
+  tags: string[];
 }
 
 export interface WatchedInboxList {
@@ -9210,6 +9296,11 @@ cursor?: string;
 limit?: number;
 };
 
+export type VaultChangesParams = {
+after?: string;
+follow?: boolean;
+};
+
 export type ListCollectionsParams = {
 /**
  * @minimum 1
@@ -9361,6 +9452,7 @@ export type GetExportJobEventsDefault = {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -10040,6 +10132,10 @@ q?: string;
 fuzzy?: boolean;
 source_present?: boolean;
 /**
+ * @maxLength 16384
+ */
+pdf_filter?: string;
+/**
  * @minimum 1
  * @maximum 1000
  */
@@ -10138,9 +10234,13 @@ offset?: number;
 
 export type UploadFileParams = {
 /**
+ * Absolute destination directory path; creates missing parents; exclusive with parent_id
+ */
+parent_path?: string;
+/**
  * Stable destination directory node ID
  */
-parent_id: number;
+parent_id?: number;
 /**
  * Virtual filename; must equal the multipart filename
  * @minLength 1
@@ -10149,6 +10249,10 @@ name: string;
 };
 
 export type UploadFileHeaders = {
+/**
+ * JSON URL fetch evidence
+ */
+'X-Docbank-URL-Fetch'?: string;
 /**
  * Expected lowercase hexadecimal SHA-256 of the file payload
  * @pattern ^[0-9a-f]{64}$
@@ -11778,6 +11882,51 @@ return sessionJSON<BatesPlan>(getPlanBatesStampUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(batesPlanRequest)
+  }
+);}
+
+
+
+export const getVaultChangesUrl = (params?: VaultChangesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/changes?${stringifiedParams}` : `/api/v1/changes`
+}
+
+/**
+ * @summary Read resumable vault changes
+ */
+export const vaultChanges = (params?: VaultChangesParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Response>(getVaultChangesUrl(params),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `application/x-ndjson`, ...getHeaders(options?.headers) }
+
   }
 );}
 
@@ -19945,7 +20094,7 @@ export const getSearchDocumentsUrl = () => {
 }
 
 /**
- * @summary Search exact source-fenced document versions
+ * @summary Search document versions by fence or live scope
  */
 export const searchDocuments = async (documentSearchRequest: NonReadonly<DocumentSearchRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentSearchReport> => {
 

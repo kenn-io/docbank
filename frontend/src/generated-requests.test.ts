@@ -153,19 +153,25 @@ it("reads page images as PNG bytes with PNG Accept", async () => {
   expect(headers.get("Accept")).toBe("image/png");
 });
 
-it("preserves export progress as an NDJSON response", async () => {
-  const body =
-    '{"delivery":"current_state","job":{"sequence":1}}\n{"delivery":"current_state","job":{"sequence":2}}\n';
+it.each([
+  {
+    name: "export progress",
+    read: () =>
+      api.getExportJobEvents("synthetic-job", { after: 1 }, { session: "synthetic-session" }),
+    body: '{"delivery":"current_state","job":{"sequence":1}}\n{"delivery":"current_state","job":{"sequence":2}}\n',
+  },
+  {
+    name: "vault changes",
+    read: () => api.vaultChanges(undefined, { session: "synthetic-session" }),
+    body: '{"type":"change","change":{"cursor":"MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjE","kind":"created","node_id":2,"revision":1}}\n{"type":"result","cursor":"MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjE"}\n',
+  },
+])("preserves $name as an NDJSON response", async ({ read, body }) => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(body, {
       headers: { "Content-Type": "application/x-ndjson" },
     }),
   );
-  const response = await api.getExportJobEvents(
-    "synthetic-job",
-    { after: 1 },
-    { session: "synthetic-session" },
-  );
+  const response = await read();
   expect(response).toBeInstanceOf(Response);
   expect(await response.text()).toBe(body);
   const [, request] = fetch.mock.calls[0];

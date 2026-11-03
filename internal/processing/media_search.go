@@ -38,7 +38,7 @@ func (service *Service) searchMediaSources(
 		return retrieval.Report{}, err
 	}
 	plan := newMediaSearchPlan(request.MediaSources, requests, selected)
-	report := retrieval.Report{RequestedMode: prepared.mode, ActualMode: retrieval.ModeLexical,
+	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: retrieval.ModeLexical,
 		Results: []retrieval.Result{}}
 	if len(plan.builds) != 0 {
 		candidateLimit := service.profiles[request.Profile].portable.Retrieval.LexicalLimit
@@ -60,7 +60,7 @@ func (service *Service) searchMediaSources(
 		report.Results = report.Results[:prepared.limit]
 		report.Truncated = true
 	}
-	report.RequestedMode = prepared.mode
+	report.RequestedMode = prepared.requestedMode
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	report.MediaSourceSelection, report.Coverage = true, plan.coverage()
 	return report, nil

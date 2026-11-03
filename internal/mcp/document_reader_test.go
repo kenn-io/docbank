@@ -17,12 +17,11 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
-func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
-	f := newNativeExportFixture(t)
-	f.addFile(t, "alpha.txt", "observatory")
+func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server, *processing.Service, string) {
+	t.Helper()
 	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
 	require.NoError(t, err)
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
 		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, service.Shutdown(context.Background())) })
@@ -33,6 +32,13 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	httpServer := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(httpServer.Close)
 	daemon := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	return daemon, service, profileName
+}
+
+func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
+	f := newNativeExportFixture(t)
+	f.addFile(t, "alpha.txt", "observatory")
+	daemon, service, profileName := newProcessingDocumentServer(t, f)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	embedded := sdkmcp.NewServer(testImplementation(), nil)
 	for _, name := range []string{"get_vault_info", "list_documents", "search_documents"} {
@@ -82,7 +88,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 			assert.Equal(t, expected.Content, actual.Content)
 		})
 	}
-	// Resolve the complete population and reject it; never silently truncate it.
+	// Filter searches cover live populations larger than an explicit version list.
 	for i := range 4096 {
 		f.addFile(t, "extra-"+strconv.Itoa(i)+".txt", "same")
 	}
@@ -90,14 +96,12 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 		"query": "alpha", "profile": profileName, "mode": "lexical", "filters": map[string]any{},
 	}})
 	require.NoError(t, err)
-	require.True(t, result.IsError)
-	encoded, err := json.Marshal(result.StructuredContent)
-	require.NoError(t, err)
-	var failure struct {
-		Code     string `json:"code"`
-		Observed int    `json:"observed_scope_count"`
-	}
-	require.NoError(t, json.Unmarshal(encoded, &failure))
-	assert.Equal(t, "scope_too_large", failure.Code)
-	assert.Equal(t, 4097, failure.Observed)
+	require.False(t, result.IsError)
+	output := structuredMap(t, result.StructuredContent)
+	hits, ok := output["results"].([]any)
+	require.True(t, ok)
+	require.Len(t, hits, 1)
+	hit, ok := hits[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "/alpha.txt", hit["path"])
 }

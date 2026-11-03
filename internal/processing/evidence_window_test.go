@@ -28,7 +28,7 @@ func newEvidenceWindowFixture(t *testing.T) evidenceWindowFixture {
 	published, err := publisher.PublishRendition(t.Context(), f.stage(t,
 		publicationIDs{"evidence-build", "evidence-attachment", "evidence-generation"}, "aé界🙂z", "Synthetic evidence"))
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 	version, err := f.catalog.ContentVersionByID(t.Context(), f.versionID)
 	require.NoError(t, err)

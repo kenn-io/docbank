@@ -17,7 +17,7 @@ func (s *Store) changeAuditedTagAssignmentTx(
 		return TagAssignmentChange{}, fmt.Errorf("allocating audited tag operation: %w", err)
 	}
 	recordedAt := nowRFC3339()
-	result, err := changeTagAssignmentTx(
+	result, err := s.changeTagAssignmentTx(
 		ctx, tx, tagID, prior, ifRev, assign, recordedAt,
 	)
 	if err != nil || !result.Changed {

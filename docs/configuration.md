@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-25
+last_edited: 2026-10-31
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -33,11 +33,11 @@ environment variable:
 export DOCBANK_HOME=/Volumes/Archive/docbank
 ```
 
-Run `docbank info` after selecting a vault to see its canonical path and vault
+Run `docbank vault info` after selecting a vault to see its canonical path and vault
 ID. This helps when one machine has several independent Docbank archives:
 
 ```bash
-DOCBANK_HOME=/Volumes/Archive/docbank docbank info
+DOCBANK_HOME=/Volumes/Archive/docbank docbank vault info
 ```
 
 The directory layout is created on first use:
@@ -100,8 +100,8 @@ owns or creates the vault root.
     Don't edit or prune `blobs/` or a secondary namespace by hand. The
     database authorizes physical files, including files for prior document
     versions. To reclaim space, use `docbank trash empty --run`,
-    `docbank gc --run`, and (for dead packed payload) `docbank storage repack`.
-    To check integrity, use `docbank verify`.
+    `docbank vault gc --run`, and (for dead packed payload) `docbank storage repack`.
+    To check integrity, use `docbank vault verify`.
 
 ## config.toml
 
@@ -166,6 +166,7 @@ pack_max_bytes = 268435456  # 256 MiB soft raw-byte budget per run
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["receipts"] # optional; first run: docbank tag create receipts
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
@@ -316,7 +317,7 @@ with periodic reconciliation at the same interval.
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
 source are ignored. `exclude` stays a literal name-or-relative-path rule,
 including names containing `*`, `?`, or `[`. Add `exclude_patterns` for glob
-rules with the same [syntax as `docbank add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
+rules with the same [syntax as `docbank document add`](usage/importing.md#choose-files-with-include-and-exclude-rules):
 a pattern without `/` matches basenames at any depth; one with `/` matches
 paths relative to the source root. Use `/` separators on every platform.
 Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
@@ -333,6 +334,8 @@ destination = "/notes"
 exclude = [".stversions", ".git"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
+
+First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
 
 Empty, absolute, parent-traversal, malformed, and backslash-containing glob
 rules fail watcher or folder-scanner construction with the watch name.
@@ -449,7 +452,7 @@ rendition; embedding stages require explicit profile execution.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, capture mode (`settled` or `prompt`), settle window,
+destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
@@ -475,7 +478,7 @@ A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
 Inspect the source facts recorded for an imported file with
-`docbank provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
+`docbank document provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
 Provenance is distinct from job status. It survives daemon restarts and
 records where successfully ingested content came from, while `docbank jobs`
 describes only the current daemon run.
@@ -499,7 +502,7 @@ Compute both fingerprints with the release binary, using the exact model, trust 
 docbank processing vision-fingerprints --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
-Copy the printed `descriptor_fingerprint` and `disclosure_fingerprint` assignments into the tables below, then add them to `config.toml` and set `DOCBANK_VISION_KEY` in the daemon's environment. The other fingerprints identify synthetic policies; use stable identities for your policies and change them when those policies change.
+Copy the printed `descriptor_fingerprint` and `disclosure_fingerprint` assignments into the tables below, then add them to `config.toml` and set `DOCBANK_VISION_KEY` in the daemon's environment. Recompute these pinned fingerprints when the vision prompt changes, including an upgrade that adds orientation support, then review the changed processing plan and grant fresh consent. The other fingerprints identify synthetic policies; use stable identities for your policies and change them when those policies change.
 
 ```toml
 [credential_bindings.vision]
@@ -553,7 +556,9 @@ retain_sanitized_markdown = false
 retain_typed_artifacts = false
 ```
 
-Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. An explicit build can name another profile, but it describes a photo only when the photo has no pending suggestion. A build for a photo that already has a pending suggestion from any profile completes without a provider call; dismiss that suggestion first to ask another profile.
+Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. Automatic work leaves settled descriptions alone.
+
+A consented explicit build under another provider fingerprint can refresh rotation even when the photo already has a description. Pending and accepted caption and tag decisions stay settled. After a dismissal, an explicit build with a different provider fingerprint can offer replacement text along with the new rotation answer.
 
 ### Automatic face detection
 
@@ -1097,7 +1102,7 @@ and must be supplied separately after restoring a vault.
 
 | Fields | Meaning |
 | --- | --- |
-| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for rendition chunks and original files. |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v2` for image inputs and text queries. |
 | `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
 | `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
 | `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |
@@ -1109,6 +1114,31 @@ Request timeouts must also be positive and at most five minutes. Retry policy
 belongs to the worker, so runtime configuration has no retry-count or retry-delay
 fields. The worker handles transient failures and capacity-driven batch splits.
 It records malformed responses separately from rejected document input.
+
+#### Image/text retrieval
+
+Use `docbank-standard-embedding-bridge/v2` with `input_kind = "image"` for Photos Meaning and Hybrid search. The bridge receives verified, stripped JPEG grid previews and text queries in the same vector space. Originals and filenames stay local. Use the bridge endpoint origin, pinned `model_revision`, provider disclosure, and explicit transport policy described above. Grant image and query-text consent before searching; missing consent, provider access, or an active index returns metadata matches with a visible reason.
+
+Set `min_query_similarity` in the image binding's runtime config to a threshold calibrated for the pinned model revision. There is no default. It accepts a finite score for cosine or dot product; cosine values must be in `[-1, 1]`. Other input kinds and L2 bindings reject this setting. An image binding without a threshold uses the `similarity_floor_unset` metadata fallback for Meaning and Hybrid search.
+
+Docbank applies the threshold to raw similarity before ranking or combining the semantic and metadata results. Meaning returns an empty result without fallback when every photo falls below it. Hybrid retains metadata matches. Changing the threshold leaves all fingerprints unchanged and requires no reindexing.
+
+```toml
+[processing_profiles.photos]
+embeddings = ["images"]
+
+[embedding_profiles.images]
+input_kind = "image"
+# Supply the remaining pinned profile fields from the provisioned bridge.
+
+[embedding_profiles.images.runtime]
+adapter_contract = "docbank-standard-embedding-bridge/v2"
+endpoint = "https://embedding.example.invalid"
+model_revision = "provisioned-image-model-v1"
+# Example only: calibrate this value for the pinned model revision.
+min_query_similarity = 0.2
+# Supply the disclosure, credentials, limits, and transport policy above.
+```
 
 #### Voyage text retrieval
 
@@ -1177,10 +1207,13 @@ encoders, each with `mode` and `template`. Templates use `{{content}}`. Contract
 validation checks the supported roles and formatting rules. `query_instruction`
 is available only to contracts that support it.
 
-Discovery reads in pages and waits one minute between complete passes.
+Discovery reads in pages and checks once a minute whether another complete
+pass is needed. Quiet vaults skip the pass; see [idle embedding discovery](embedding.md#idle-embedding-discovery)
+for the wake triggers.
 Existing queued work is still checked on the normal one-second idle cadence.
 Discovery skips missing or invalid generation bytes so later candidates can
-proceed, and a later pass retries them. Database failures keep their
+proceed. Later passes retry temporary input failures; permanent rejections
+allow discovery to settle. Database failures keep their
 separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.
@@ -1395,12 +1428,12 @@ Docbank sends these events:
 Core actions send one event when a person's action completes:
 
 - `document_added` after a CLI `add`, web upload, or photo import adds at least one document. Uploads that end with an error still count if they added documents.
-- `search_run` after a submitted search returns accepted results, including empty results. Complete queries, exact-version searches, and similar-document searches also report. Automatic refreshes, filter changes, and mode changes stay silent. An empty source fence runs no search and sends no `search_run` on the web or in the terminal browser. It carries `search_type` of `text`, `semantic`, or `hybrid`, using the executed mode after fallback. Photos reports only search form submissions.
+- `search_run` after a submitted search returns accepted results, including empty results. Complete queries, exact-version searches, and similar-document searches also report. Automatic refreshes, filter changes, and mode changes stay silent. Empty scopes run a normal search on the web and in the terminal browser. It carries `search_type` of `text`, `semantic`, or `hybrid`, using the executed mode after fallback. Photos reports only search form submissions.
 - `document_opened` after an explicit web open with Enter, double-click, or a row click, a related or duplicate document link, a successful download, or a Photos open from the grid or Map. Grid and Map opens report once the viewer shows the photo. A failed detail load counts as a failed `open`; closing or stepping to another photo first stays silent. Moving through listed documents with j/k, snapshot Previous/Next, Photos arrows or filmstrip, Compare, Cull, and inspector back or return sends nothing. Terminal UI Enter-open and CLI `cat` or `get` also report.
-- `search_empty` after a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, except a valid submitted search that ends on an empty source fence, which sends only `search_empty`, with the requested mode as `search_type`. The CLI falls back to text search and sends both.
+- `search_empty` after a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, including when the search scope is empty.
 - `error_shown` when a search, add, or open the person ran fails. It requires `surface` and `kind`. `kind` is `search`, `add`, or `open`. The daemon sends any other `kind` string as `other`.
   - A failed submitted search counts once on the web, in the terminal browser, and in the CLI, including Processing searches, similar-document searches, and Photos search. A failed upload or photo import run counts once however many items failed. Rejected input counts as a failed search or add like any other failure. A failed download, related-document open, Photos detail load, `get`, or `cat` counts as `open`.
-  - Invalid input, including an over-long query, sends nothing when the source fence is empty. Sign-in prompts, cancels, passive loads and refreshes, paging, sorting, other drawers and dialogs, notices, warnings, and CLI usage errors before connecting stay silent. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
+  - Sign-in prompts, cancels, passive loads and refreshes, paging, sorting, other drawers and dialogs, notices, warnings, and CLI usage errors before connecting stay silent. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
 
 Each core action requires `surface` of `web`, `tui`, or `cli`; a missing or unsupported value returns HTTP 400. Searches also require an allowed `search_type`. The daemon forwards every core action without counting state. PostHog queries count installs per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs. CLI and TUI actions stay silent when `CLAUDECODE` or `CODEX_THREAD_ID` is set. Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
 

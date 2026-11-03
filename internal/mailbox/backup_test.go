@@ -47,7 +47,7 @@ func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(ctx, repository, "mailbox", backup.RestoreOptions{TargetDir: destination, Jobs: 2})
 	require.NoError(t, err)
-	restored, err := store.OpenForRestore(filepath.Join(destination, "docbank.db"), store.DefaultSQLiteDriver())
+	restored, err := store.OpenForRestore(t.Context(), filepath.Join(destination, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	bs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(destination, "blobs"))
@@ -55,7 +55,9 @@ func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, bs.Close()) })
 	_, err = maintenance.GarbageCollect(ctx, restored, bs, maintenance.GCOptions{})
 	require.NoError(t, err)
-	service := Service{Store: restored, Blobs: bs, Spool: t.TempDir()}
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	service := Service{Store: restored, Blobs: bs, Spool: spool}
 	sealed, err := restored.MailboxContainer(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
 	reader, err := service.ReaderAt(ctx, sealed)

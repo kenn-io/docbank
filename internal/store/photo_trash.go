@@ -23,7 +23,7 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 		}
 		nodes := make([]Node, 0, len(current.Files))
 		for _, file := range current.Files {
-			node, err := nodeByIDTx(tx, file.NodeID)
+			node, err := nodeByIDTx(ctx, tx, file.NodeID)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func trashRootTx(ctx context.Context, tx *sql.Tx, node Node) (Node, error) {
 		if node.ParentID == nil {
 			break
 		}
-		parent, err := nodeByIDTx(tx, *node.ParentID)
+		parent, err := nodeByIDTx(ctx, tx, *node.ParentID)
 		if err != nil {
 			return Node{}, err
 		}
@@ -146,7 +146,7 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGr
 			}
 			group.assets[id] = asset
 			for _, file := range asset.Files {
-				member, err := nodeByIDTx(tx, file.NodeID)
+				member, err := nodeByIDTx(ctx, tx, file.NodeID)
 				if err != nil {
 					return group, err
 				}
@@ -213,7 +213,7 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 		return Node{}, err
 	}
 	for _, id := range order {
-		current, err := nodeByIDTx(tx, id)
+		current, err := nodeByIDTx(ctx, tx, id)
 		if err != nil {
 			return Node{}, err
 		}
@@ -229,7 +229,7 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 			return Node{}, err
 		}
 	}
-	return nodeByIDTx(tx, node.ID)
+	return nodeByIDTx(ctx, tx, node.ID)
 }
 
 func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) ([]int64, error) {
@@ -340,7 +340,7 @@ func (s *Store) photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleW
 			selected = append(selected, id)
 			continue
 		}
-		node, err := nodeByIDTx(tx, id)
+		node, err := nodeByIDTx(ctx, tx, id)
 		if err != nil {
 			return photoTrashSelection{}, err
 		}

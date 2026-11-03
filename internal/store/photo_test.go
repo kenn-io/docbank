@@ -723,7 +723,7 @@ func TestPhotoEnrollmentSkipsEmailChildAndKeepsProcessedSource(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for hash, contents := range catalogBlobContents {
-			if err := s.EnsureBlobTx(tx, hash, int64(len(contents))); err != nil {
+			if err := s.EnsureBlobTx(t.Context(), tx, hash, int64(len(contents))); err != nil {
 				return err
 			}
 		}

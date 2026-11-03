@@ -29,7 +29,7 @@ func configureLoomManualTestService(t *testing.T) func(*api.Deps) {
 		require.NoError(t, err)
 		captionName, captionProfile, err := processing.NewSuppliedCaptionProfile(deps.Store, deps.Blobs, "daemon:operator")
 		require.NoError(t, err)
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Principal: "daemon:operator",
 			Profiles: map[string]processing.ProfileConfig{transcriptName: transcriptProfile, captionName: captionProfile},
@@ -141,7 +141,7 @@ func TestLoomManualExportHTTPRejectsOversizeVideoBeforeStaging(t *testing.T) {
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: blockedSpool, Principal: "daemon:operator",
 		})

@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
+func checkEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -41,12 +42,15 @@ func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
 	for hash := range f.bytes {
 		require.NotContains(t, report.PhysicalDerivativeBlobsPendingGC, hash)
 	}
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	_, err = restored.EmailMetadata(t.Context(), a.Version.ID)
-	require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
+	if s.postgresSchema == "" { // Metadata restore remains SQLite-only.
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		restored := newTestStore(t)
+		require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+		_, err = restored.EmailMetadata(t.Context(), a.Version.ID)
+		require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
+	}
+
 	report, err = s.PurgeDerivatives(t.Context(), PurgeRequest{All: true})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.RemovedEmailGenerations)
@@ -56,12 +60,13 @@ func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
 			require.Contains(t, report.PhysicalDerivativeBlobsPendingGC, hash)
 		}
 	}
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T) {
+func checkEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -99,6 +104,8 @@ func TestEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T) 
 	}
 	bodyRecipe, err := document.EmailBodyRecipeFingerprint(a.Evidence.Recipe)
 	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	require.NoError(t, s.RecordEmailBodyUnavailable(t.Context(), a.Attachment.ID, bodyRecipe, new("1.1"), "empty_body"))
 	targets, err := s.MissingEmailTargetsAfter(t.Context(), recipe, bodyProfile.Fingerprint, "", 100)
 	require.NoError(t, err)
@@ -110,6 +117,11 @@ func TestEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T) 
 	require.NoError(t, s.RecordEmailBodyUnavailable(t.Context(), a.Attachment.ID, bodyRecipe, new("1.1"), "empty_body"))
 	require.Error(t, s.RecordEmailBodyUnavailable(t.Context(), a.Attachment.ID, bodyRecipe, new("1.1"), "unsupported_body"))
 	require.Error(t, s.RecordEmailBodyUnavailable(t.Context(), a.Attachment.ID, bodyRecipe, nil, "network_failure"))
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1, "only the first terminal body result changes readable output")
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, a.Version.NodeID, changes[0].NodeID)
 	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{All: true})
 	require.NoError(t, err)
 	targets, err = s.MissingEmailTargetsAfter(t.Context(), fakeHash("ff"), bodyProfile.Fingerprint, "", 100)
@@ -128,7 +140,7 @@ func TestEmailTargetsSkipCompletedCorruptionAndContinueToPending(t *testing.T) {
 	require.NoError(t, s.RecordEmailBodyUnavailable(
 		t.Context(), complete.Attachment.ID, bodyRecipe, new("1.1"), "empty_body",
 	))
-	_, err = s.db.Exec(`UPDATE email_generations SET canonical_json=? WHERE generation_id=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE email_generations SET canonical_json=? WHERE generation_id=?`,
 		[]byte(`{}`), complete.Generation.ID)
 	require.NoError(t, err)
 	pending, err := s.CreateFile(t.Context(), s.RootID(), "pending.eml",
@@ -149,7 +161,7 @@ func TestEmailTargetQueryUsesMIMEPartialIndex(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	rows, err := s.db.QueryContext(t.Context(),
-		"EXPLAIN QUERY PLAN "+missingEmailVersionIDsQuery, "", fakeHash("recipe"))
+		"EXPLAIN QUERY PLAN "+s.missingEmailVersionIDsQuery(), "", fakeHash("recipe"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	used := false
@@ -175,11 +187,11 @@ func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
 	require.NoError(t, err)
 	var before bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &before))
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_audit BEFORE INSERT ON audit_records BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_audit BEFORE INSERT ON audit_records BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
 	require.NoError(t, err)
 	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{All: true})
 	require.ErrorContains(t, err, "synthetic audit failure")
-	_, err = s.db.Exec(`DROP TRIGGER fail_email_audit`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_email_audit`)
 	require.NoError(t, err)
 	var after bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &after))
@@ -201,14 +213,15 @@ func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
 	require.NoError(t, restored.ValidateMetadata(t.Context()))
 	_, err = restored.EmailMetadata(t.Context(), v.Version.ID)
 	require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
-	_, err = restored.db.Exec(`UPDATE derivative_purge_suppressions SET active=0,superseded_at=?,superseding_build_id=? WHERE profile_fingerprint=?`, "2026-09-09T12:00:00.000000000Z", fakeHash("ea"), derivativeAttachmentSuppressionScope(v.Version.ID, emailInventorySuppressionProfile))
+	_, err = restored.db.ExecContext(t.Context(), `UPDATE derivative_purge_suppressions SET active=0,superseded_at=?,superseding_build_id=? WHERE profile_fingerprint=?`, "2026-09-09T12:00:00.000000000Z", fakeHash("ea"), derivativeAttachmentSuppressionScope(v.Version.ID, emailInventorySuppressionProfile))
 	require.NoError(t, err)
 	require.Error(t, restored.ValidateMetadata(t.Context()), "unrecorded suppression rewrite must fail audit replay")
 }
 
-func TestEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T) {
+func checkEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -237,5 +250,5 @@ func TestEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, report.RemovedEmailGenerations)
 	require.Equal(t, len(f.publication.Artifacts), report.RemovedEmailPartArtifacts)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }

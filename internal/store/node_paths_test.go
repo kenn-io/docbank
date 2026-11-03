@@ -61,7 +61,7 @@ func TestNodeByPathUsesCallerSnapshot(t *testing.T) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = nodeByIDTx(tx, file.ID)
+	_, err = nodeByIDTx(t.Context(), tx, file.ID)
 	require.NoError(t, err)
 	_, _, err = s.Move(ctx, directory.ID, s.RootID(), "after", UnconditionalRev)
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestPathsOfUsesCallerSnapshot(t *testing.T) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = nodeByIDTx(tx, file.ID)
+	_, err = nodeByIDTx(t.Context(), tx, file.ID)
 	require.NoError(t, err)
 
 	_, _, err = s.Move(ctx, directory.ID, s.RootID(), "after", UnconditionalRev)

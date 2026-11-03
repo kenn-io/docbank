@@ -5,9 +5,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/scripts/patch-embedpdf.mjs ./scripts/patch-embedpdf.mjs
 RUN npm ci
 COPY frontend/ ./
 COPY document/format_metadata.json /src/document/format_metadata.json
+COPY internal/pdfproduction/fonts/NotoSansJP.ttf /src/internal/pdfproduction/fonts/NotoSansJP.ttf
 RUN npm run build
 
 # Keep the Go version aligned with go.mod: source-metadata qualification

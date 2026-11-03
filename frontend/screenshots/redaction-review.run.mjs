@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const git = (...args) => execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
 console.log(
-  `Browser PDF redaction review: ${git("rev-parse", "HEAD")} (${git("status", "--porcelain") ? "dirty" : "clean"} tree)`,
+  `Browser document reader and PDF redaction review: ${git("rev-parse", "HEAD")} (${git("status", "--porcelain") ? "dirty" : "clean"} tree)`,
 );
 const scratch = await mkdtemp(path.join(tmpdir(), "docbank-redaction-browser-build-"));
 let keepScratch = false;
@@ -58,6 +58,11 @@ try {
         ".superpowers/redaction-review-browser",
         mode,
       ),
+      DOCBANK_DOCUMENT_READER_PROOF_DIR: path.join(
+        repository,
+        ".superpowers/document-reader-browser",
+        mode,
+      ),
       PLAYWRIGHT_JSON_OUTPUT_FILE: report,
     };
     try {
@@ -83,6 +88,7 @@ try {
           "frontend/node_modules/@playwright/test/cli.js",
           "test",
           "redaction-review.screenshot.ts",
+          "document-reader.screenshot.ts",
           "--config",
           "frontend/screenshots/playwright.config.ts",
           "--project",
@@ -98,10 +104,10 @@ try {
       const { expected, unexpected, flaky, skipped } = result.stats;
       assert.deepEqual(
         { expected, unexpected, flaky, skipped },
-        { expected: 1, unexpected: 0, flaky: 0, skipped: 0 },
-        `${mode} must execute one passing case`,
+        { expected: 8, unexpected: 0, flaky: 0, skipped: 0 },
+        `${mode} must execute eight passing cases`,
       );
-      console.log(`${mode}: executed=1 passed=1 skipped=0 failed=0`);
+      console.log(`${mode}: executed=8 passed=8 skipped=0 failed=0`);
     } catch (error) {
       failures.push(mode);
       keepScratch = true;

@@ -196,7 +196,7 @@ function Install-Docbank {
                 Write-WarningMessage "Added $installDirectory to PATH; restart your terminal to use it."
             }
         }
-        Write-Info 'Get started: docbank add ~/Documents --dest /archive'
+        Write-Info 'Get started: docbank document add ~/Documents --dest /archive'
     } finally {
         if ($staged -and (Test-Path -LiteralPath $staged)) {
             Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue

@@ -16,7 +16,7 @@ func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
 	for _, stage := range []ProviderStage{ProviderStageExpansion, ProviderStageReranking} {
 		for _, outcome := range []string{"success", "failure", "canceled"} {
 			t.Run(string(stage)+"/"+outcome, func(t *testing.T) {
-				catalog, err := store.Open(filepath.Join(t.TempDir(), "consent.db"))
+				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 				_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "needle.txt", strings.Repeat("a", 64), 1, "text/plain")

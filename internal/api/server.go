@@ -247,9 +247,11 @@ func NewServer(d Deps) *Server {
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
+	// Photo event streams belong to the server and end at Close.
 	photoEventsContext, stopPhotoEvents := context.WithCancel(context.Background())
 	s.stopPhotoEvents = stopPhotoEvents
 	registerPhotoEvents(photoEventsContext, mux, humaAPI, d)
+	registerChanges(photoEventsContext, mux, humaAPI, d)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPhotoFaceRoutes(humaAPI, d, g)
 	registerPhotoFaceDecisionRoutes(humaAPI, d, g)
@@ -258,7 +260,7 @@ func NewServer(d Deps) *Server {
 	registerPhotoSuggestionRoutes(humaAPI, d, g)
 	registerPhotoHiddenRoutes(humaAPI, d, g)
 	registerPhotoSetRoutes(humaAPI, d, g, s.snapshots)
-	registerPhotoQueryRoutes(humaAPI, d, cursorService, g)
+	registerPhotoQueryRoutes(humaAPI, d, cursorService, g, snapshots)
 	registerPhotoTimelineRoute(humaAPI, s.snapshots)
 	registerPeopleRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)

@@ -142,14 +142,14 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	binding := bindingForIngest(t, s, node.CurrentVersionID, run.ID())
 	var revision int64
-	require.NoError(t, s.db.QueryRow(`SELECT revision FROM document_event_dirty
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM document_event_dirty
 		WHERE content_version_id=?`, node.CurrentVersionID).Scan(&revision))
 
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return s.bindProvenanceVersionTx(t.Context(), tx, binding)
 	}))
 	var replayRevision int64
-	require.NoError(t, s.db.QueryRow(`SELECT revision FROM document_event_dirty
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM document_event_dirty
 		WHERE content_version_id=?`, node.CurrentVersionID).Scan(&replayRevision))
 	require.Equal(t, revision, replayRevision)
 
@@ -185,7 +185,7 @@ func TestProvenanceBindingWriterIsImmutableAndIdempotent(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrProvenanceMismatch)
 
-	_, err = s.db.Exec(`UPDATE provenance_version_bindings SET basis_ref='changed'
+	_, err = s.db.ExecContext(t.Context(), `UPDATE provenance_version_bindings SET basis_ref='changed'
 		WHERE provenance_identity=? AND content_version_id=?`,
 		binding.ProvenanceIdentity, binding.ContentVersionID)
 	require.ErrorContains(t, err, "immutable")
@@ -234,7 +234,7 @@ func TestProvenanceBindingsInGenesisRespectEnrollmentScope(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -245,7 +245,7 @@ func TestProvenanceBindingsInGenesisRespectEnrollmentScope(t *testing.T) {
 
 func TestMetadataImportRejectsProvenanceBindingTamperingAndRollsBack(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -299,7 +299,7 @@ func TestMetadataImportRejectsProvenanceBindingTamperingAndRollsBack(t *testing.
 			err := target.ImportMetadata(t.Context(), bytes.NewReader(testCase.input))
 			require.ErrorContains(t, err, testCase.want)
 			var bindings, audits int64
-			require.NoError(t, target.db.QueryRow(`SELECT
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM provenance_version_bindings),
 				(SELECT COUNT(*) FROM audit_records)`).Scan(&bindings, &audits))
 			require.Zero(t, bindings)
@@ -313,7 +313,7 @@ func TestCurrentMetadataActiveAuditRequiresProvenanceBindingTable(t *testing.T) 
 	s := newTestStore(t)
 	seedInitialAuditAuthority(t, s, s.RootID())
 
-	_, err := s.db.Exec(`DROP TABLE provenance_version_bindings`)
+	_, err := s.db.ExecContext(t.Context(), `DROP TABLE provenance_version_bindings`)
 	require.NoError(t, err)
 
 	var exported bytes.Buffer

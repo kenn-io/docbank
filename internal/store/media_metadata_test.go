@@ -14,7 +14,7 @@ import (
 func TestMediaMetadataExportKeepsIdentityAndDropsPrivateRefs(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.db.Exec(`INSERT INTO media_sources VALUES('s','remote_recording','cap.cloud','app',?,?)`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('s','remote_recording','cap.cloud','app',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	tx, err := s.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
@@ -38,20 +38,20 @@ func TestMediaMetadataRoundTripSanitizesRuntimeAuthority(t *testing.T) {
 	require.NoError(t, err)
 	stamp := nowRFC3339()
 	opID := "00000000-0000-4000-8000-000000000010"
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
 		recording.CurrentVersionID, `{}`, stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_occurrences VALUES(
 		'occurrence','source','source-version','operator','remote-ref','1','recording.mp3','','','{}',1,?,NULL)`, stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_input_artifacts VALUES(
 		'input','occurrence','source','source-version',?,'caption','supplied','cap.cloud','en',?,?)`,
 		caption.CurrentVersionID, fakeHash("b2"), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_operations VALUES(?, 'operator','submit_remote_recording',?,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations VALUES(?, 'operator','submit_remote_recording',?,
 		'source','{"outcome":"queued"}',?,?)`, opID, strings.Repeat("d", 64), stamp, stamp)
 	require.NoError(t, err)
 
@@ -63,7 +63,7 @@ func TestMediaMetadataRoundTripSanitizesRuntimeAuthority(t *testing.T) {
 		"media_sources", "media_source_versions", "media_occurrences", "media_input_artifacts", "media_operations",
 	} {
 		var count int
-		require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM `+table).Scan(&count))
+		require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count))
 		require.Equal(t, 1, count, table)
 	}
 }
@@ -148,7 +148,7 @@ func TestMediaMetadataRestoreKeepsProcessingReceipts(t *testing.T) {
 func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.db.Exec(`DROP TABLE media_input_artifacts`)
+	_, err := s.db.ExecContext(t.Context(), `DROP TABLE media_input_artifacts`)
 	require.NoError(t, err)
 	err = s.ExportMetadata(t.Context(), &bytes.Buffer{})
 	require.ErrorContains(t, err, "media_input_artifacts")
@@ -163,16 +163,16 @@ func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T)
 	updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, "audio/mpeg")
 	require.NoError(t, err)
 	stamp := nowRFC3339()
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
 		created.CurrentVersionID, `{}`, stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_occurrences VALUES(
 		'occurrence','source','source-version','operator','ref','1','','','','{}',1,?,NULL)`, stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_input_artifacts VALUES(
 		'input','occurrence','source','source-version',?,'recording','supplied','','',?,?)`,
 		created.CurrentVersionID, fakeHash("a1"), stamp)
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *test
 			reverted, revertVersion, _, err := s.RevertContent(
 				ctx, created.ID, replaced.Revision, created.CurrentVersionID)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+			_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 				strings.Repeat("c", 64), nowRFC3339())
 			require.NoError(t, err)
 			require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
@@ -258,7 +258,7 @@ func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *test
 		reverted, pinnedRevert, _, err := s.RevertContent(
 			ctx, created.ID, replaced.Revision, created.CurrentVersionID)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 			strings.Repeat("c", 64), nowRFC3339())
 		require.NoError(t, err)
 		require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
@@ -316,10 +316,10 @@ func TestMediaMetadataRejectsNonObjectTimestampClaim(t *testing.T) {
 	file, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
 	require.NoError(t, err)
 	stamp := nowRFC3339()
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
 		file.CurrentVersionID, `[]`, stamp)
 	require.NoError(t, err)
 	err = s.ExportMetadata(ctx, &bytes.Buffer{})
@@ -333,13 +333,13 @@ func TestMediaInputArtifactBytesBelongToBackupAuthority(t *testing.T) {
 	caption, err := s.CreateFile(ctx, s.RootID(), "caption.vtt", fakeHash("b2"), 20, "text/vtt")
 	require.NoError(t, err)
 	stamp := nowRFC3339()
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_occurrences VALUES(
 		'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_input_artifacts VALUES(
 		'input','occurrence','source',NULL,?,'caption','supplied','cap.cloud','en',?,?)`,
 		caption.CurrentVersionID, fakeHash("b2"), stamp)
 	require.NoError(t, err)
@@ -358,7 +358,7 @@ func TestMediaMetadataImportRequiresPristineMediaTables(t *testing.T) {
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 	target := newTestStore(t)
-	_, err := target.db.Exec(`INSERT INTO media_sources VALUES('existing','supplied_media','','',?,?)`,
+	_, err := target.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('existing','supplied_media','','',?,?)`,
 		strings.Repeat("a", 64), nowRFC3339())
 	require.NoError(t, err)
 	err = target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes()))

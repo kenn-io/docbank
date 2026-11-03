@@ -13,8 +13,8 @@ import (
 var infoJSON bool
 
 var infoCmd = &cobra.Command{
-	Example: `  docbank info
-  DOCBANK_HOME=/tmp/scratch-vault docbank info --json`,
+	Example: `  docbank vault info
+  DOCBANK_HOME=/tmp/scratch-vault docbank vault info --json`,
 	Long: `Prints the vault ID, home path and live/trash/history/storage counts.
 Creates an empty vault on first use of a new DOCBANK_HOME.`,
 	GroupID: groupOperations,
@@ -58,5 +58,5 @@ Creates an empty vault on first use of a new DOCBANK_HOME.`,
 
 func init() {
 	infoCmd.Flags().BoolVar(&infoJSON, "json", false, "print JSON to stdout")
-	rootCmd.AddCommand(infoCmd)
+	registerGroupedCommand(vaultCmd, infoCmd, "info")
 }

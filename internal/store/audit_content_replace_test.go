@@ -12,7 +12,7 @@ import (
 
 func TestAuditedContentReplacementAdvancesPortableAuthority(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -31,7 +31,7 @@ func TestAuditedContentReplacementAdvancesPortableAuthority(t *testing.T) {
 	assert.Equal(t, "content_replace", version.TransitionKind)
 
 	var sequence, allocationCount, scopeCount, recordCount int64
-	require.NoError(t, source.db.QueryRow(`SELECT
+	require.NoError(t, source.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT allocation_entry_count FROM audit_authority),
 		(SELECT entry_count FROM audit_scopes),
@@ -45,7 +45,7 @@ func TestAuditedContentReplacementAdvancesPortableAuthority(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -65,7 +65,7 @@ func TestAuditedContentReplacementAdvancesPortableAuthority(t *testing.T) {
 
 func TestAuditedContentRevertAdvancesPortableAuthority(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -91,7 +91,7 @@ func TestAuditedContentRevertAdvancesPortableAuthority(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -134,11 +134,11 @@ func TestAuditedContentRevertAdvancesPortableAuthority(t *testing.T) {
 
 func TestAuditedContentRevertRejectsMissingPhysicalAuthority(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
-	_, err = s.db.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, metadataHashVersion)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM blob_locations WHERE blob_hash=?`, metadataHashVersion)
 	require.NoError(t, err)
 	scope, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestAuditedContentRevertRejectsMissingPhysicalAuthority(t *testing.T) {
 
 func TestAuditedVaultRejectsRevertOutsideScope(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -194,7 +194,7 @@ func TestAuditedVaultRejectsRevertOutsideScope(t *testing.T) {
 
 func TestAuditedContentRevertRollsBackWholeOperation(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -203,7 +203,7 @@ func TestAuditedContentRevertRollsBackWholeOperation(t *testing.T) {
 	seedInitialAuditAuthority(t, s, scope.ID)
 	file, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_revert_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_revert_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit revert failure'); END`)
 	require.NoError(t, err)
@@ -219,7 +219,7 @@ func TestAuditedContentRevertRollsBackWholeOperation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, file, unchanged)
 	var versions, records int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM content_versions WHERE node_id=?),
 		(SELECT COUNT(*) FROM audit_records)`, file.ID).Scan(&versions, &records))
 	assert.Equal(t, int64(2), versions)
@@ -228,7 +228,7 @@ func TestAuditedContentRevertRollsBackWholeOperation(t *testing.T) {
 
 func TestAuditedContentTransitionsChainMultipleOperations(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -267,7 +267,7 @@ func TestAuditedContentTransitionsChainMultipleOperations(t *testing.T) {
 	assert.Equal(t, reverted.ID, file.CurrentVersionID)
 
 	var sequence, records int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&sequence, &records))
 	assert.Equal(t, int64(4), sequence)
@@ -277,7 +277,7 @@ func TestAuditedContentTransitionsChainMultipleOperations(t *testing.T) {
 
 func TestAuditedVaultRejectsReplacementOutsideScope(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -303,7 +303,7 @@ func TestAuditedVaultRejectsReplacementOutsideScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, outside, unchanged)
 	var candidateBlobs int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM blobs WHERE hash=?`, fakeHash("e5"),
 	).Scan(&candidateBlobs))
 	assert.Zero(t, candidateBlobs)
@@ -311,7 +311,7 @@ func TestAuditedVaultRejectsReplacementOutsideScope(t *testing.T) {
 
 func TestAuditedContentReplacementImportRejectsFinalStateDivergence(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -330,19 +330,19 @@ func TestAuditedContentReplacementImportRejectsFinalStateDivergence(t *testing.T
 	divergent := mutateMetadataNodeRecord(t, exported.Bytes(), file.ID, func(node *metadataNode) {
 		node.ModifiedAt = "2026-01-09T00:00:00.000000000Z"
 	})
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(divergent))
 	require.ErrorContains(t, err, "replayed audit topology does not match")
 	var auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Zero(t, auditRows)
 }
 
 func TestAuditedContentReplacementRollsBackWholeOperation(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -351,7 +351,7 @@ func TestAuditedContentReplacementRollsBackWholeOperation(t *testing.T) {
 	seedInitialAuditAuthority(t, s, scope.ID)
 	file, err := s.NodeByPath(t.Context(), "/Projects/report.txt")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit replacement failure'); END`)
 	require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestAuditedContentReplacementRollsBackWholeOperation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, file, unchanged)
 	var versions, records, candidateBlobs int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM content_versions WHERE node_id=?),
 		(SELECT COUNT(*) FROM audit_records),
 		(SELECT COUNT(*) FROM blobs WHERE hash=?)`, file.ID, fakeHash("d4")).Scan(

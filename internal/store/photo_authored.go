@@ -643,7 +643,7 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			if err != nil {
 				return err
 			}
-			tag, err := tagByIDTx(tx, tagID)
+			tag, err := tagByIDTx(ctx, tx, tagID)
 			if errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("keyword no longer exists; reload metadata before undoing: %w", ErrStaleRevision)
 			}

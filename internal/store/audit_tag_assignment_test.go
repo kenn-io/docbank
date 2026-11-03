@@ -36,7 +36,7 @@ func TestAuditedTagAssignmentRoundTrips(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -51,7 +51,7 @@ func TestAuditedTagAssignmentNoOpDoesNotAdvanceHistory(t *testing.T) {
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
 	var before int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&before))
 
@@ -62,7 +62,7 @@ func TestAuditedTagAssignmentNoOpDoesNotAdvanceHistory(t *testing.T) {
 	assert.False(t, repeated.Changed)
 	assert.Equal(t, assigned.Node.Revision, repeated.Node.Revision)
 	var after int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&after))
 	assert.Equal(t, before, after)
@@ -91,7 +91,7 @@ func TestAuditedTagAssignmentOutsideScopeRollsBack(t *testing.T) {
 func TestAuditedTagAssignmentRollsBackWithHistory(t *testing.T) {
 	t.Parallel()
 	s, tag, report := newAuditedTagStore(t)
-	_, err := s.db.Exec(`CREATE TRIGGER reject_audit_tag_scope_advance
+	_, err := s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_tag_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit tag failure'); END`)
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestAuditedTagAssignmentRollsBackWithHistory(t *testing.T) {
 	assert.Equal(t, tag.Revision, currentTag.Revision)
 	assert.Zero(t, currentTag.AssignmentCount)
 	var sequence int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&sequence))
 	assert.Equal(t, int64(1), sequence)
@@ -161,13 +161,13 @@ func TestAuditedTagAssignmentImportRejectsMissingCurrentAssignment(t *testing.T)
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	malformed := omitMetadataTagAssignment(t, exported.Bytes(), tag.ID, report.ID)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "replayed audit attachments do not match current metadata")
 	var assignmentRows, auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM node_tags),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&assignmentRows, &auditRows))
 	assert.Zero(t, assignmentRows)
@@ -176,7 +176,7 @@ func TestAuditedTagAssignmentImportRejectsMissingCurrentAssignment(t *testing.T)
 
 func newAuditedTagStore(t *testing.T) (*Store, Tag, Node) {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)

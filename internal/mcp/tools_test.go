@@ -29,7 +29,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
-		"get_vault_info", "list_documents", "search_documents", "get_document",
+		"get_vault_info", "list_documents", "answer_question", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
@@ -46,7 +46,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.True(t, tool.Annotations.ReadOnlyHint)
 		assert.True(t, tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
-		assert.Equal(t, new(tool.Name == "get_kata_context" || tool.Name == "search_documents"), tool.Annotations.OpenWorldHint)
+		assert.Equal(t, new(tool.Name == "get_kata_context" || tool.Name == "search_documents" || tool.Name == "answer_question"), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema)
 		assertSchemaContract(t, tool.OutputSchema)
 		assert.Equal(t, map[string]any{"maxResponseBytes": maxToolResponseBytes}, tool.Meta["io.docbank/bounds"])
@@ -254,6 +254,28 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 	assertSchemaRejects(t, search.InputSchema, map[string]any{
 		"query": "synthetic", "profile": "local", "filters": map[string]any{"modified_since": "not-a-date"},
 	})
+
+	scopedOutput := map[string]any{"vault_id": testVaultID, "requested_mode": "hybrid", "actual_mode": "hybrid",
+		"coverage":        map[string]any{"binding_required": true, "scoped_documents": 5000, "complete_documents": 5000, "state": "complete"},
+		"skipped_reasons": []any{}, "results": []any{}, "truncated": false, "ttlMs": 0, "cacheScope": "private"}
+	assertSchemaAccepts(t, search.OutputSchema, scopedOutput)
+	delete(scopedOutput, "vault_id")
+	assertSchemaAccepts(t, search.OutputSchema, scopedOutput)
+	scopedOutput["vault_id"] = testVaultID
+	coverage := map[string]any{"binding_required": true, "scoped_documents": 4096, "complete_documents": 4096, "state": "complete"}
+	scopedOutput["coverage"] = coverage
+	scopedOutput["fence"] = map[string]any{"vault_id": testVaultID, "content_version_ids": []any{testVersionID}}
+	scopedOutput["observed_scope_count"] = 1
+	assertSchemaRejects(t, search.OutputSchema, scopedOutput)
+	scopedOutput["fence_fingerprint"] = testFenceFingerprint
+	assertSchemaAccepts(t, search.OutputSchema, scopedOutput)
+	for _, count := range []string{"scoped_documents", "complete_documents"} {
+		coverage[count] = 4097
+		assertSchemaRejects(t, search.OutputSchema, scopedOutput)
+		coverage[count] = 4096
+	}
+	delete(scopedOutput, "vault_id")
+	assertSchemaRejects(t, search.OutputSchema, scopedOutput)
 
 	read := tools["read_rendition_text"]
 	assertSchemaAccepts(t, read.InputSchema, map[string]any{

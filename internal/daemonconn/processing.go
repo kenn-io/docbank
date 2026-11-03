@@ -441,6 +441,17 @@ func (c *Connection) ProcessingStatus(ctx context.Context, jobID string) (api.Pr
 	return result, nil
 }
 
+func (c *Connection) ValidateDocumentSearch(ctx context.Context, request api.DocumentSearchValidationRequest) error {
+	result, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
+	if err != nil {
+		return err
+	}
+	if !result.Valid {
+		return errors.New("search validation response is invalid")
+	}
+	return nil
+}
+
 func (c *Connection) SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	var result api.DocumentSearchReport
 	apiResponse, err := c.API().SearchDocuments(ctx, &apiclient.SearchDocumentsRequestOptions{Body: &request})
@@ -502,26 +513,9 @@ func validateDocumentSimilarReport(request api.DocumentSimilarRequest, report ap
 	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
 }
 
-// ValidateDocumentSearch asks the daemon to apply ordinary search semantics
-// without executing a search. It is used only for an exact empty source fence.
-func (c *Connection) ValidateDocumentSearch(
-	ctx context.Context, request api.DocumentSearchValidationRequest,
-) error {
-	var result api.DocumentSearchValidation
-	apiResponse, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
-	if err != nil {
-		return err
-	}
-	result = *apiResponse
-	if !result.Valid {
-		return errors.New("search validation response is invalid")
-	}
-	return nil
-}
-
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
-		len(request.Fence.ContentVersionIDs) > 4096 {
+	if request.Scope == nil && (!validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
+		len(request.Fence.ContentVersionIDs) > 4096) {
 		return errors.New("request fence identity is invalid")
 	}
 	versions := make(map[string]struct{}, len(request.Fence.ContentVersionIDs))
@@ -577,7 +571,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	} else if report.Reranking != nil {
 		return errors.New("unrequested reranking receipt was returned")
 	}
-	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
+	if report.Coverage.ScopedDocuments < 0 || (request.Scope == nil && report.Coverage.ScopedDocuments > len(versions)) ||
 		report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
 		(report.Coverage.State != "unknown" && report.Coverage.State != "complete" &&
@@ -604,10 +598,10 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
 	for index, result := range report.Results {
-		if result.VaultUID != request.Fence.VaultUID || !validUUIDv4(result.VaultUID) {
+		if (request.Scope == nil && result.VaultUID != request.Fence.VaultUID) || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}
-		if _, allowed := versions[result.ContentVersionID]; !allowed || !validUUIDv4(result.ContentVersionID) {
+		if _, allowed := versions[result.ContentVersionID]; (!allowed && request.Scope == nil) || !validUUIDv4(result.ContentVersionID) {
 			return fmt.Errorf("result %d escaped the content-version fence", index)
 		}
 		if result.NodeID < 1 || result.Rank != index+1 || math.IsNaN(result.Score) || math.IsInf(result.Score, 0) {
@@ -667,7 +661,7 @@ func validDocumentSearchActualMode(requested, actual string) bool {
 	if actual != "lexical" && actual != "semantic" && actual != "hybrid" {
 		return false
 	}
-	return requested == "auto" || requested == actual
+	return requested == "auto" || requested == actual || requested == "hybrid" && actual == "lexical"
 }
 
 func validateDocumentLaneRanks(actualMode string, result api.DocumentSearchResult,
@@ -720,9 +714,9 @@ func validateDocumentEvidenceIdentity(evidence api.DocumentEvidenceReference) er
 		if evidence.SegmentID != "" || !validSHA256Hex(evidence.VectorSpaceID) ||
 			!validSHA256Hex(evidence.EmbeddingSetID) || !validSHA256Hex(evidence.InputGenerationID) ||
 			!validBoundedSearchIdentity(evidence.InputID, 1024) ||
-			(evidence.InputKind != "rendition_chunk" && evidence.InputKind != "original_file") ||
+			(evidence.InputKind != "rendition_chunk" && evidence.InputKind != "original_file" && evidence.InputKind != "image") ||
 			(evidence.InputKind == "rendition_chunk" && !validSHA256Hex(evidence.BuildID)) ||
-			(evidence.InputKind == "original_file" && (evidence.BuildID != "" || evidence.TimeSpan != nil)) ||
+			(evidence.InputKind != "rendition_chunk" && (evidence.BuildID != "" || evidence.TimeSpan != nil)) ||
 			!validSHA256Hex(evidence.SourceManifestChecksum) {
 			return errors.New("embedding evidence identity is incomplete or inconsistent")
 		}

@@ -13,7 +13,7 @@ import (
 
 func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -30,7 +30,7 @@ func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 
 	var sequence, allocationCount, scopeCount, baselineCount int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT allocation_entry_count FROM audit_authority),
 		(SELECT entry_count FROM audit_scopes),
@@ -42,7 +42,7 @@ func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 	assert.Equal(t, sequence, scopeCount)
 	assert.Equal(t, int64(3), baselineCount)
 
-	rows, err := s.db.Query(`SELECT node_id FROM audit_memberships
+	rows, err := s.db.QueryContext(t.Context(), `SELECT node_id FROM audit_memberships
 		WHERE node_id IN (?,?) ORDER BY node_id`, directory.ID, file.ID)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -57,7 +57,7 @@ func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -72,7 +72,7 @@ func TestAuditedNodeCreationInheritsMembershipAndRoundTrips(t *testing.T) {
 
 func TestAuditedMkdirPathRecordsInheritedCreation(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -86,7 +86,7 @@ func TestAuditedMkdirPathRecordsInheritedCreation(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 
 	var scopeID string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT scope_id FROM audit_memberships WHERE node_id=?`, created.ID,
 	).Scan(&scopeID))
 	assert.Equal(t, testAuditScopeID, scopeID)
@@ -94,7 +94,7 @@ func TestAuditedMkdirPathRecordsInheritedCreation(t *testing.T) {
 
 func TestAuditedNodeCreationImportRejectsMembershipRetarget(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -104,7 +104,7 @@ func TestAuditedNodeCreationImportRejectsMembershipRetarget(t *testing.T) {
 	created, err := s.Mkdir(t.Context(), scope.ID, "retargeted")
 	require.NoError(t, err)
 	var initialBaseline string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT digest FROM audit_baselines WHERE operation_id=?`, testAuditOperationID,
 	).Scan(&initialBaseline))
 	var exported bytes.Buffer
@@ -113,19 +113,19 @@ func TestAuditedNodeCreationImportRejectsMembershipRetarget(t *testing.T) {
 		t, exported.Bytes(), uint64(created.ID), initialBaseline,
 	)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "membership")
 	var auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Zero(t, auditRows)
 }
 
 func TestAuditedNodeCreationImportRejectsCrossVaultBaseline(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -140,19 +140,19 @@ func TestAuditedNodeCreationImportRejectsCrossVaultBaseline(t *testing.T) {
 		t, exported.Bytes(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 	)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "enrollment_baseline.vault_id")
 	var auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Zero(t, auditRows)
 }
 
 func TestAuditedNodeCreationImportRejectsProtectedVersionReuse(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -170,26 +170,26 @@ func TestAuditedNodeCreationImportRejectsProtectedVersionReuse(t *testing.T) {
 		metadataVersionOld, metadataHashVersion,
 	)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "reuses protected content version "+metadataVersionOld)
 	var auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Zero(t, auditRows)
 }
 
 func TestAuditedNodeCreationRollsBackWholeOperation(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
 	scope, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, scope.ID)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_creation_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_creation_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audited creation failure'); END`)
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestAuditedNodeCreationRollsBackWholeOperation(t *testing.T) {
 	_, err = s.NodeByPath(t.Context(), "/Projects/rollback.txt")
 	require.ErrorIs(t, err, ErrNotFound)
 	var blobRows, baselineRows, recordRows int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM blobs WHERE hash=?),
 		(SELECT COUNT(*) FROM audit_baselines),
 		(SELECT COUNT(*) FROM audit_records)`, fakeHash("ac2")).Scan(

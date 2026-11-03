@@ -313,7 +313,7 @@ func (c *fakeIndexCatalog) AbandonVectorIndexBuild(context.Context, store.Vector
 }
 
 func TestIndexWorkerRunReturnsDiscoveryFailure(t *testing.T) {
-	metadata, err := store.Open(filepath.Join(t.TempDir(), "index.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "index.db"))
 	require.NoError(t, err)
 	require.NoError(t, metadata.Close())
 	catalog, _ := newIndexCatalogFixture(t)

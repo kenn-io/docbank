@@ -81,6 +81,8 @@ func (source MediaSourceSelector) Identity() MediaSource {
 }
 
 type Candidate struct {
+	// photoBlobHash groups copies before the shared fusion limit.
+	photoBlobHash string
 	Document      DocumentIdentity
 	Lane          Lane
 	Rank          int
@@ -172,6 +174,7 @@ type Query struct {
 	// Lane limits bound candidates before fusion. Zero uses Limit.
 	LexicalLimit                 int
 	VectorLimit                  int
+	MinVectorScore               *float64
 	ContentFirst                 bool
 	Scope                        store.SearchOptions
 	ProcessingProfileFingerprint string

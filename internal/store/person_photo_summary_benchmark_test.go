@@ -36,7 +36,7 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts, photos int) {
 	b.Helper()
 	const evidencePeople, photosPerPerson = 100, 250
 	const heavyPeople, heavyPhotos = 8, 300
-	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()

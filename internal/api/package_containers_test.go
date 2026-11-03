@@ -30,7 +30,7 @@ func TestPackageContainerHTTPUploadAndSeal(t *testing.T) {
 	require.Equal(t, "zip", container.Format)
 	require.Equal(t, "uploading", container.State)
 
-	req, err := http.NewRequest(http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/pkg-1/chunks/0", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/pkg-1/chunks/0", bytes.NewReader(raw))
 	require.NoError(t, err)
 	req.Header.Set(api.BlobHashHeader, digest)
 	req.Header.Set(api.BlobSizeHeader, strconv.Itoa(len(raw)))
@@ -61,7 +61,7 @@ func TestPackageContainerIncompleteSealAndBrowserPUT(t *testing.T) {
 	require.Equal(t, 201, created.Code, created.Body.String())
 	bad := srv.call(t, http.MethodPost, "/api/v1/packages/containers/pkg-2/seal", "", nil)
 	require.Equal(t, 422, bad.Code, bad.Body.String())
-	request, err := http.NewRequest(http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/pkg-2/chunks/0", bytes.NewReader(raw))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/pkg-2/chunks/0", bytes.NewReader(raw))
 	require.NoError(t, err)
 	request.Header.Set("X-Api-Key", "")
 	request.Header.Set(api.WebSessionHeader, packageBrowserToken(t, srv))
@@ -87,7 +87,7 @@ func TestPackageContainerSealRejectsWrongFullHash(t *testing.T) {
 		"container_id": "wrong-hash-zip", "sha256": hex.EncodeToString(wrong[:]), "size": len(raw),
 	}), nil)
 	require.Equal(t, 201, created.Code, created.Body.String())
-	request, err := http.NewRequest(http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/wrong-hash-zip/chunks/0", bytes.NewReader(raw))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPut, srv.ts.URL+"/api/v1/packages/containers/wrong-hash-zip/chunks/0", bytes.NewReader(raw))
 	require.NoError(t, err)
 	request.Header.Set(api.BlobHashHeader, hex.EncodeToString(actual[:]))
 	request.Header.Set(api.BlobSizeHeader, strconv.Itoa(len(raw)))

@@ -33,7 +33,7 @@ func TestPackagePreflightToolsReturnImageDiagnostics(t *testing.T) {
 	for _, count := range []int{1, 250} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			vault := t.TempDir()
-			catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+			catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 			blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
@@ -104,7 +104,7 @@ func TestPackageDiagnosticSchemaAcceptsImagePageOrdinals(t *testing.T) {
 
 func TestPackageZIPPreflightRecoversAfterLostSealResponse(t *testing.T) {
 	vault := t.TempDir()
-	catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
@@ -190,7 +190,7 @@ func TestPackageZIPPreflightCleansUnsealedFailedUploads(t *testing.T) {
 	for _, outcome := range []string{"unsealed", "canceled", "unreadable"} {
 		t.Run(outcome, func(t *testing.T) {
 			vault := t.TempDir()
-			catalog, err := store.Open(filepath.Join(vault, "docbank.db"))
+			catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 			blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
@@ -246,7 +246,7 @@ func TestPackageZIPPreflightCleansUnsealedFailedUploads(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("container was not declared")
 			}
-			request := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/packages/containers/"+containerID, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/packages/containers/"+containerID, nil)
 			request.Header.Set("X-Api-Key", cfg.Server.APIKey)
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)

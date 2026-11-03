@@ -41,7 +41,7 @@ func photoSnapshotPopulation(compiled CompiledQuery, generation string, coverage
 }
 
 // CreatePhotoAlbum copies a caller's complete frozen photo set in one transaction.
-func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snapshotID, memberHash, name string, mutate func(func() error) error) (PhotoSet, error) {
+func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snapshotID, memberHash, name string, mutate func(context.Context, func() error) error) (PhotoSet, error) {
 	cached, err := s.lookup(owner, snapshotID)
 	if err != nil {
 		return PhotoSet{}, err
@@ -97,7 +97,7 @@ func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snap
 	if mutate == nil {
 		err = write()
 	} else {
-		err = mutate(write)
+		err = mutate(ctx, write)
 	}
 	return out, err
 }
@@ -111,4 +111,12 @@ func photoSnapshotLibraryMembersTx(ctx context.Context, tx rowQuerier, encoded [
 		return ErrPhotoSnapshotMemberNotInLibrary
 	}
 	return nil
+}
+
+func rankedPhotoSnapshotPopulation(ranking *PhotoRanking) (compiledQueryFragment, error) {
+	encoded, err := json.Marshal(ranking.Members)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	return compiledQueryFragment{sql: `SELECT n.id node_id,v.version_id content_version_id,a.asset_id,CAST(rank.key AS INTEGER)+1 photo_position FROM json_each(?) rank JOIN photo_assets a ON a.asset_id=json_extract(rank.value,'$.asset_id') ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) + ` WHERE n.id=json_extract(rank.value,'$.node_id') AND v.version_id=json_extract(rank.value,'$.content_version_id') AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` ORDER BY CAST(rank.key AS INTEGER)`, args: []any{string(encoded)}}, nil
 }

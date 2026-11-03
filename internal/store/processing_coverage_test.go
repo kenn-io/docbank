@@ -23,7 +23,7 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 	}
 	ids = append(ids, "00000000-0000-4000-8000-000000000001")
 	for _, id := range ids[:2] {
-		record := embeddingSetFixture(s, id, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, id, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: id, BindingID: record.BindingID, InputKind: record.InputKind},
@@ -31,7 +31,7 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 			ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 		}))
 	}
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: chunk.BindingID, InputKind: chunk.InputKind},
@@ -58,9 +58,11 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 		Complete: 1, Stale: 1, Unavailable: total - 2}, coverage.Embeddings[1])
 }
 
-func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T) {
+func checkProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	oldBuild := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), oldBuild))
@@ -117,10 +119,11 @@ func TestProcessingCoverageReportsRebuildWhilePreviousGenerationServes(t *testin
 	assert.Zero(t, coverage.Renditions.PreviousGenerationServing)
 }
 
-func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
+func checkProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	old := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
+	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -172,7 +175,7 @@ func TestProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T) {
 func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -186,9 +189,9 @@ func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	coverage, err := s.ProcessingCoverage(t.Context(), scope)
 	require.NoError(t, err)
 	require.Equal(t, "complete", coverage.Embeddings[0].State)
-	_, err = s.db.Exec(`DROP TRIGGER rendition_builds_immutable_update`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER rendition_builds_immutable_update`)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_builds SET evidence_checksum=? WHERE build_id=(
 		SELECT build_id FROM rendition_attachments WHERE attachment_id=?)`, testSHA256([]byte("changed-evidence")), attachmentID)
 	require.NoError(t, err)
 	coverage, err = s.ProcessingCoverage(t.Context(), scope)
@@ -198,9 +201,11 @@ func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	assert.Zero(t, coverage.Embeddings[0].Complete)
 }
 
-func TestProcessingCoverageSharedBuildKeepsVersionStates(t *testing.T) {
+func checkProcessingCoverageSharedBuildKeepsVersionStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
@@ -260,12 +265,25 @@ func TestProcessingCoverageValidatesEachBuildAndSnapshot(t *testing.T) {
 			assert.Equal(t, 2, coverage.Renditions.Complete)
 			// Deliberately corrupt retained text after a successful read. Coverage
 			// must still validate every distinct build in the new snapshot.
-			_, err = s.db.Exec(`DROP TRIGGER rendition_lexical_segments_immutable_update`)
+			_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER rendition_lexical_segments_immutable_update`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE rendition_lexical_segments SET char_end=999 WHERE build_id=?`, corruptBuild)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_lexical_segments SET char_end=999 WHERE build_id=?`, corruptBuild)
 			require.NoError(t, err)
 			_, err = s.ProcessingCoverage(t.Context(), scope)
 			require.ErrorContains(t, err, "rendition lexical segment 0 is invalid")
 		})
 	}
+}
+
+func TestProcessingCoverageQueuedEmbedding(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	_, err := f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.NoError(t, err)
+	coverage, err := f.s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{ContentVersionIDs: []string{f.node.CurrentVersionID}, ProcessingProfileFingerprint: f.request.Profile.Fingerprint, Bindings: []ProcessingCoverageBinding{{BindingID: f.request.BindingID}}})
+	require.NoError(t, err)
+	require.Len(t, coverage.Embeddings, 1)
+	assert.Equal(t, "rebuilding", coverage.Embeddings[0].State)
+	assert.Equal(t, 1, coverage.Embeddings[0].Rebuilding)
+	assert.Zero(t, coverage.Embeddings[0].Unavailable)
 }

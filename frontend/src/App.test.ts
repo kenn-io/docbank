@@ -2278,6 +2278,61 @@ it.each(["click", "Enter"] as const)(
   },
 );
 
+it("keeps folder metadata while reselecting it and still opens the folder", async () => {
+  prepareKeyboardApp();
+  const backend = installKeyboardBackend();
+  render(App);
+  const folder = await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(folder);
+  const inspector = screen.getByRole("complementary", { name: "Document inspector" });
+  await waitFor(() =>
+    expect(
+      within(inspector).getByRole("button", { name: "Add tag" }).hasAttribute("disabled"),
+    ).toBe(false),
+  );
+  const loaded = backend.getTagReads();
+
+  await fireEvent.click(folder);
+  expect(backend.getTagReads()).toBe(loaded);
+  expect(within(inspector).getByRole("button", { name: "Add tag" }).hasAttribute("disabled")).toBe(
+    false,
+  );
+
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(backend.getTagReads()).toBeGreaterThan(loaded));
+
+  await fireEvent.doubleClick(screen.getByRole("cell", { name: "Reports" }));
+  await waitFor(() => expect(backend.getReportsReads()).toBe(1));
+});
+
+it("retries failed folder metadata when reselecting it", async () => {
+  prepareKeyboardApp();
+  installKeyboardBackend();
+  const fetcher = vi.mocked(globalThis.fetch);
+  const original = fetcher.getMockImplementation()!;
+  let failed = false;
+  fetcher.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/nodes/20/tags?limit=1000&offset=0" && !failed) {
+      failed = true;
+      return Response.json({ detail: "Folder tags unavailable" }, { status: 503 });
+    }
+    return original(input, init);
+  });
+  render(App);
+  const folder = await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(folder);
+  await screen.findByText("Folder tags unavailable");
+
+  await fireEvent.click(folder);
+  const inspector = screen.getByRole("complementary", { name: "Document inspector" });
+  await waitFor(() =>
+    expect(
+      within(inspector).getByRole("button", { name: "Add tag" }).hasAttribute("disabled"),
+    ).toBe(false),
+  );
+  expect(screen.queryByText("Folder tags unavailable")).toBeNull();
+});
+
 it("loads and edits tag bindings in an empty vault", async () => {
   const storage = prepareKeyboardApp();
   const key = `docbank:tag-hotkeys:v1:${keyboardVaultID}`;

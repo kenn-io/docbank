@@ -27,7 +27,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/merge/extra"},
 	}
 	for _, path := range paths {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(path.method, path.path, nil)), path.method+" "+path.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), path.method, path.path, nil)), path.method+" "+path.path)
 	}
 	version := "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
@@ -38,7 +38,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false&hidden=true"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=%zz"},
 	} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.path)
 	}
 }
 
@@ -56,7 +56,7 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false"},
 	} {
-		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
+		require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.path)
 	}
 	for _, route := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/nodes"},
@@ -74,21 +74,21 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/photos/authored/stack"},
 		{http.MethodPost, "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/undo"},
 	} {
-		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path+"?extra=1", nil)))
+		require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.method+" "+route.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path+"?extra=1", nil)))
 		if route.method == http.MethodPost && route.path != "/api/v1/photos/albums" {
-			require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, route.path, nil)))
+			require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, route.path, nil)))
 		}
 	}
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/nodes?parent_id=1", nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/nodes?parent_id=1", nil)))
 	xmp := "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/xmp"
-	require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, xmp, nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, xmp, nil)))
+	require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, xmp, nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, xmp, nil)))
 	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/authored/photos/undo", "/api/v1/photos/authored/invalid/xmp", xmp + "/extra"} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, path, nil)), path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, nil)), path)
 	}
 	for _, path := range []string{"/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPut, path, nil)), path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPut, path, nil)), path)
 	}
 	checkout := "/api/v1/photos/checkouts/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
@@ -101,11 +101,11 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		{http.MethodPost, checkout + "/commit"},
 		{http.MethodPost, checkout + "/rebind"},
 	} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
+		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.method+" "+route.path)
 	}
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, album, nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPatch, album, nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/photos/assets", nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, album, nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPatch, album, nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/photos/assets", nil)))
 }
 
 func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {
@@ -121,9 +121,9 @@ func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodHead} {
 			allowed := slices.Contains(route.methods, method)
-			require.Equal(t, allowed, webSessionRequestAllowed(httptest.NewRequest(method, route.path, nil)), method+" "+route.path)
-			require.False(t, webSessionRequestAllowed(httptest.NewRequest(method, route.path+"?extra=1", nil)))
-			require.False(t, webSessionRequestAllowed(httptest.NewRequest(method, route.path+"/extra", nil)))
+			require.Equal(t, allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), method, route.path, nil)), method+" "+route.path)
+			require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), method, route.path+"?extra=1", nil)))
+			require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), method, route.path+"/extra", nil)))
 		}
 	}
 }
@@ -147,7 +147,7 @@ func TestWebPages(t *testing.T) {
 	} {
 		require.Equal(t, tc.allowed, authExempt(tc.path), tc.path)
 		response := httptest.NewRecorder()
-		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		mux.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil))
 		status := http.StatusNotFound
 		if tc.allowed {
 			status = http.StatusOK

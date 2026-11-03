@@ -3,6 +3,7 @@
 package docbank
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,7 +26,7 @@ func TestResetVaultRejectsWindowsDirectoryReparsePoint(t *testing.T) {
 	require.NoError(t, vault.Close())
 
 	alias := filepath.Join(base, "vault-alias")
-	require.NoError(t, createWindowsJunction(alias, realRoot))
+	require.NoError(t, createWindowsJunction(t.Context(), alias, realRoot))
 	attributes, err := resetSourceAttributesNoFollow(alias)
 	require.NoError(t, err)
 	require.True(t, attributes.directory)
@@ -68,7 +69,7 @@ func TestResetVaultRejectsWindowsDirectoryReparsePointAfterOwnerRelease(t *testi
 				if err := os.Rename(root, parked); err != nil {
 					return err
 				}
-				return createWindowsJunction(root, parked)
+				return createWindowsJunction(t.Context(), root, parked)
 			},
 		},
 	)
@@ -86,8 +87,8 @@ func TestResetVaultRejectsWindowsDirectoryReparsePointAfterOwnerRelease(t *testi
 	assert.NoDirExists(t, diagnostic)
 }
 
-func createWindowsJunction(alias, target string) error {
-	output, err := exec.Command("cmd.exe", "/c", "mklink", "/J", alias, target).CombinedOutput()
+func createWindowsJunction(ctx context.Context, alias, target string) error {
+	output, err := exec.CommandContext(ctx, "cmd.exe", "/c", "mklink", "/J", alias, target).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("creating directory junction: %w: %s", err, output)
 	}

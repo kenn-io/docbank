@@ -35,7 +35,9 @@ func TestDefaultClientRefusesEgressDestinationDrift(t *testing.T) {
 	client, err := NewClient(policy, ClientConfig{Timeout: time.Second})
 	require.NoError(t, err)
 
-	response, err := client.http.Get(drift.URL)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, drift.URL, nil)
+	require.NoError(t, err)
+	response, err := client.http.Do(request)
 	if response != nil {
 		require.NoError(t, response.Body.Close())
 	}

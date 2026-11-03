@@ -78,7 +78,7 @@ func exportExchange(
 	}
 	handler, err := server.HTTPTransportHandler(HTTPOptions{BearerToken: "synthetic-export-key"})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7341/mcp", bytes.NewReader(raw))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1:7341/mcp", bytes.NewReader(raw))
 	name, _ := params["name"].(string)
 	request.Header = protocolHeaders(method, name)
 	request.Header.Set("Authorization", "Bearer synthetic-export-key")
@@ -176,7 +176,7 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -200,7 +200,7 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 
 func (f *nativeExportFixture) addFile(t *testing.T, name, content string) bundle.Member {
 	t.Helper()
-	hash, size, err := f.blobs.Write(strings.NewReader(content))
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, hash, size, "text/plain")
 	require.NoError(t, err)

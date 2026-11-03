@@ -20,7 +20,7 @@ import (
 func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	const asOf = "2026-08-25T10:00:00.000000000Z"
@@ -42,7 +42,7 @@ func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
 	assert.Zero(t, report.RemovedEmbeddingInputGenerations)
 	assert.Zero(t, report.RemovedEmbeddingVectorSets)
 	var authorities int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
 		(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
 		(SELECT COUNT(*) FROM embedding_vector_sets WHERE vector_set_id=?) +
@@ -55,7 +55,7 @@ func TestEmbeddingCatalogPurgeUsesSingleRootExpiryBoundary(t *testing.T) {
 func TestEmbeddingCatalogRejectsJobRootsBeforePersistence(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	for kind, target := range map[CurrentRenditionTargetKind]string{
@@ -71,7 +71,7 @@ func TestEmbeddingCatalogRejectsJobRootsBeforePersistence(t *testing.T) {
 			}
 			require.ErrorContains(t, s.PutCurrentRenditionRoot(t.Context(), root), "job root target")
 			var count int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?`, root.ID).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM current_rendition_roots WHERE root_id=?`, root.ID).Scan(&count))
 			assert.Zero(t, count)
 			require.NoError(t, s.ValidateMetadata(t.Context()))
 			var exported bytes.Buffer
@@ -96,10 +96,10 @@ func TestEmbeddingCatalogExplicitPurgePreservesEveryActiveRoot(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-			record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 			var nodeID, revision int64
-			require.NoError(t, s.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=?`, versionID).Scan(&nodeID, &revision))
 			root := CurrentRenditionRoot{
 				ID: "explicit-purge-" + strings.ReplaceAll(testCase.name, " ", "-"), Kind: testCase.kind,
 				TargetKind: testCase.targetKind, TargetID: testCase.target(record), FencingToken: 1,
@@ -117,7 +117,7 @@ func TestEmbeddingCatalogExplicitPurgePreservesEveryActiveRoot(t *testing.T) {
 			assert.Zero(t, report.RemovedEmbeddingVectorSets)
 			assert.True(t, report.ImmutableBackupCopiesUntouched)
 			var authorities, activeRoots int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
 				(SELECT COUNT(*) FROM embedding_input_generations WHERE generation_id=?) +
 				(SELECT COUNT(*) FROM embedding_vector_sets WHERE vector_set_id=?) +
@@ -199,10 +199,10 @@ func TestEmbeddingCatalogExplicitChunkPurgeRetainsRootAttachmentChain(t *testing
 		t.Run(testCase.name, func(t *testing.T) {
 			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 			var buildID string
-			require.NoError(t, s.db.QueryRow(`SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachmentID).Scan(&buildID))
 
-			chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
-			direct := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+			chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			direct := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			for _, record := range []EmbeddingSetRecord{chunk, direct} {
 				require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 				require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -246,12 +246,12 @@ func TestEmbeddingCatalogExplicitChunkPurgeRetainsRootAttachmentChain(t *testing
 			_, err = s.ActiveRendition(t.Context(), versionID, profile.Fingerprint)
 			require.ErrorIs(t, err, ErrNotFound)
 			var chunkHeads int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM embedding_heads
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_heads
 				WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=? AND input_kind=?`,
 				versionID, profile.Fingerprint, chunk.BindingID, chunk.InputKind).Scan(&chunkHeads))
 			assert.Zero(t, chunkHeads)
 			var retained, directSets, directHeads int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM rendition_attachments WHERE attachment_id=?) +
 				(SELECT COUNT(*) FROM rendition_builds WHERE build_id=?) +
 				(SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
@@ -303,7 +303,7 @@ func TestEmbeddingCatalogExplicitChunkPurgeRetainsRootAttachmentChain(t *testing
 				assert.Equal(t, 1, report.ExpiredRootsRemoved)
 			}
 			var remaining int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM rendition_attachments WHERE attachment_id=?) +
 				(SELECT COUNT(*) FROM rendition_builds WHERE build_id=?) +
 				(SELECT COUNT(*) FROM embedding_sets WHERE embedding_set_id=?) +
@@ -330,18 +330,18 @@ func TestEmbeddingCatalogCurrentSchemaMissingTableFailsClosedBeforeBootstrap(t *
 		for _, table := range tables {
 			t.Run(driverCase.name+"/"+table, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "catalog.db")
-				s, err := Open(path, driverCase.driver)
+				s, err := Open(t.Context(), path, driverCase.driver)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
 				db, err := driverCase.driver.Open(path, docsqlite.OpenOptions{
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 				})
 				require.NoError(t, err)
-				_, err = db.Exec(`DROP TABLE ` + table)
+				_, err = db.ExecContext(t.Context(), `DROP TABLE `+table)
 				require.NoError(t, err)
 				require.NoError(t, db.Close())
 
-				reopened, openErr := Open(path, driverCase.driver)
+				reopened, openErr := Open(t.Context(), path, driverCase.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}
@@ -351,7 +351,7 @@ func TestEmbeddingCatalogCurrentSchemaMissingTableFailsClosedBeforeBootstrap(t *
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 				})
 				require.NoError(t, err)
-				columns, err := tableColumns(db, table)
+				columns, err := queryTableColumns(t.Context(), db, table)
 				require.NoError(t, err)
 				assert.Empty(t, columns, "failed open must not recreate missing current-schema authority")
 				require.NoError(t, db.Close())
@@ -363,7 +363,7 @@ func TestEmbeddingCatalogCurrentSchemaMissingTableFailsClosedBeforeBootstrap(t *
 func TestEmbeddingCatalogRestoreRejectsNoncanonicalDescriptorBytes(t *testing.T) {
 	t.Parallel()
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	record := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
 	var metadata bytes.Buffer
 	require.NoError(t, source.ExportMetadata(t.Context(), &metadata))
@@ -400,7 +400,7 @@ func TestEmbeddingCatalogRestoreRejectsNoncanonicalDescriptorBytes(t *testing.T)
 			require.ErrorContains(t, err, "descriptor")
 			assert.NotContains(t, err.Error(), privateMaterial)
 			var spaces int
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM embedding_vector_spaces`).Scan(&spaces))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_vector_spaces`).Scan(&spaces))
 			assert.Zero(t, spaces)
 		})
 	}
@@ -412,7 +412,7 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 
 	t.Run("set", func(t *testing.T) {
 		s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-		record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		record.CreatedAt = secretLikeTimestamp
 		require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "embedding set created_at")
 		record.CreatedAt = embeddingCatalogTime
@@ -421,7 +421,7 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 
 	t.Run("generation", func(t *testing.T) {
 		s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-		record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		record.InputGeneration.CreatedAt = "2026-08-25T10:00:00Z"
 		require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "input-generation created_at")
 		record.InputGeneration.CreatedAt = embeddingCatalogTime
@@ -430,7 +430,7 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 
 	t.Run("head", func(t *testing.T) {
 		s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-		record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		head := EmbeddingHeadRecord{
 			FencingToken: 1,
@@ -460,7 +460,7 @@ func TestEmbeddingCatalogLiveWritesRequireCanonicalTimestamps(t *testing.T) {
 func TestEmbeddingCatalogMetadataImportRequiresCanonicalTimestamps(t *testing.T) {
 	t.Parallel()
 	source, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	record := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, source.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -496,7 +496,7 @@ func TestEmbeddingCatalogMetadataImportRequiresCanonicalTimestamps(t *testing.T)
 			err := target.ImportMetadata(t.Context(), bytes.NewReader(mutated))
 			require.ErrorContains(t, err, testCase.want)
 			var rows int
-			require.NoError(t, target.db.QueryRow(`SELECT
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM embedding_sets) +
 				(SELECT COUNT(*) FROM embedding_heads) +
 				(SELECT COUNT(*) FROM embedding_failures)`).Scan(&rows))

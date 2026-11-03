@@ -51,7 +51,7 @@ func newFamilyReportFixture(t *testing.T, scenario string) *familyReportFixture 
 	require.NoError(t, err)
 	f := &familyReportFixture{root: root, reportRenditionFixture: newReportRenditionFixture(t),
 		originals: make(map[string]reportOriginal)}
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))

@@ -18,7 +18,7 @@ export DOCBANK_HOME=$(mktemp -d)
 `add` copies files into the vault. Sources are never modified or deleted.
 
 ```bash
-docbank add ~/Documents/taxes --dest /taxes
+docbank document add ~/Documents/taxes --dest /taxes
 ```
 
 ```
@@ -48,7 +48,7 @@ added: 0  skipped: 214  failed: 0
 ## Browse the tree
 
 ```bash
-docbank ls /taxes
+docbank document list /taxes
 ```
 
 ```
@@ -61,7 +61,7 @@ id:231    file  48211  2026-07-06T21:14:08Z  checklist.pdf
 `tree` prints the whole hierarchy with node IDs:
 
 ```bash
-docbank tree /taxes
+docbank document tree /taxes
 ```
 
 ```
@@ -93,35 +93,35 @@ verifies the complete download in a private temporary file before publishing
 the destination:
 
 ```bash
-docbank cat /taxes/checklist.pdf
-docbank get /taxes/checklist.pdf /tmp/checklist.pdf
+docbank document cat /taxes/checklist.pdf
+docbank document get /taxes/checklist.pdf /tmp/checklist.pdf
 ```
 
 Every imported file also has an immutable content version with its own UUID:
 
 ```bash
-docbank versions list /taxes/checklist.pdf
-docbank versions show <version-uuid> --json
-docbank versions cat <version-uuid> > /tmp/checklist-version.pdf
+docbank document versions list /taxes/checklist.pdf
+docbank document versions show <version-uuid> --json
+docbank document versions cat <version-uuid> > /tmp/checklist-version.pdf
 ```
 
 The version ID survives node renames and moves. Replace the current content
 while keeping the same file node:
 
 ```bash
-docbank put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
-docbank versions list /taxes/checklist.pdf
+docbank document put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
+docbank document versions list /taxes/checklist.pdf
 ```
 
 `put` hashes the source before contacting the daemon, then inspects the target
 and uploads it, showing separate progress for both file passes. The upload
 requires the target revision it just observed, so it fails if the target
 changed in the meantime instead of overwriting that change. The prior version
-remains available through `docbank versions cat <old-version-uuid>`. Adopt it as
+remains available through `docbank document versions cat <old-version-uuid>`. Adopt it as
 current without erasing the replacement:
 
 ```bash
-docbank revert /taxes/checklist.pdf <old-version-uuid>
+docbank document revert /taxes/checklist.pdf <old-version-uuid>
 ```
 
 Reverting creates a new current version that records the older version it
@@ -135,7 +135,7 @@ when the result changed. GUI editors need their wait flag, for example
 `VISUAL='code --wait'`.
 
 ```bash
-docbank edit /notes/draft.md
+docbank document edit /notes/draft.md
 ```
 
 ## Organize independently with tags
@@ -160,10 +160,10 @@ Moves and renames change only metadata. The stored bytes do not move.
 
 ```bash
 # Rename in place (destination doesn't exist; its parent does)
-docbank mv /taxes/checklist.pdf /taxes/filing-checklist.pdf
+docbank document move /taxes/checklist.pdf /taxes/filing-checklist.pdf
 
 # Move into an existing directory, keeping the name
-docbank mv /taxes/filing-checklist.pdf /taxes/2025
+docbank document move /taxes/filing-checklist.pdf /taxes/2025
 ```
 
 ```
@@ -190,16 +190,16 @@ ID   PATH
 the trash and its name becomes reusable:
 
 ```bash
-docbank rm /taxes/2024/return.pdf
+docbank document remove /taxes/2024/return.pdf
 ```
 
 ```
-trashed [15] /taxes/2024/return.pdf (restore with: docbank restore 15)
+trashed [15] /taxes/2024/return.pdf (restore with: docbank document restore 15)
 ```
 
 ```bash
 docbank trash list        # what's recoverable
-docbank restore 15        # put it back where it was
+docbank document restore 15        # put it back where it was
 docbank trash empty --older-than 30d         # dry run: report old trash
 docbank trash empty --older-than 30d --run   # permanently delete old trash
 ```
@@ -211,7 +211,7 @@ until you garbage-collect. `gc` is a dry run by default. It removes loose files
 directly and marks unreachable packed payload as pending repack:
 
 ```bash
-docbank gc
+docbank vault gc
 ```
 
 ```
@@ -220,10 +220,10 @@ dry run — pass --run to delete
 ```
 
 ```bash
-docbank gc --run
+docbank vault gc --run
 docbank storage status     # shows dead packed payload, if any
 docbank storage repack     # compacts eligible sparse packs
-docbank verify            # re-hash every stored blob
+docbank vault verify            # re-hash every stored blob
 ```
 
 ```
@@ -252,8 +252,8 @@ docbank backup list --repo "$DOCBANK_BACKUP"
 docbank backup verify --repo "$DOCBANK_BACKUP"
 docbank backup restore --repo "$DOCBANK_BACKUP" --target "$DOCBANK_RESTORE"
 
-DOCBANK_HOME="$DOCBANK_RESTORE" docbank tree /
-DOCBANK_HOME="$DOCBANK_RESTORE" docbank verify
+DOCBANK_HOME="$DOCBANK_RESTORE" docbank document tree /
+DOCBANK_HOME="$DOCBANK_RESTORE" docbank vault verify
 ```
 
 You can use the restored vault independently. Restore does not replace the

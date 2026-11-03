@@ -63,7 +63,7 @@ func fakeDaemonHandler(t *testing.T, record *kitdaemon.RuntimeRecord, token stri
 }
 
 // runCLI executes the root command against a test vault (caller must have
-// set DOCBANK_HOME via t.Setenv) and returns captured stdout.
+// set DOCBANK_HOME via t.Setenv) and returns captured stdout and stderr.
 //
 // It must not pass t.Context(): cobra caches the first context on each
 // subcommand (Command.ctx is only assigned when nil), so a later test would
@@ -102,6 +102,11 @@ func resetFlags(c *cobra.Command) {
 
 func setupVaultHome(t *testing.T) string {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
 	startTestDaemon(t, dir)

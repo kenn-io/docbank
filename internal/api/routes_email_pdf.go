@@ -45,7 +45,7 @@ func registerEmailPDFRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var out document.EmailPDFJob
-		err := g.mutate(func() error { var err error; out, err = d.RequestEmailPDF(r.Context(), input); return err })
+		err := g.mutate(r.Context(), func() error { var err error; out, err = d.RequestEmailPDF(r.Context(), input); return err })
 		if err != nil {
 			writeEmailStoreError(w, err)
 			return

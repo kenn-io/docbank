@@ -209,7 +209,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	// Deps are built directly (not via newTestServer) to mirror its internals:
 	// a real store and blob dir under a temp directory.
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
@@ -223,7 +223,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights"} {
 		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", "test-key")
 			req.RemoteAddr = "192.0.2.1:4444"
@@ -261,7 +261,7 @@ func TestIngestRoutesRejectInvalidJSONTextBeforeDecoding(t *testing.T) {
 				"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight",
 			} {
 				t.Run(route, func(t *testing.T) {
-					req, reqErr := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(tt.body))
+					req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+route, bytes.NewReader(tt.body))
 					require.NoError(t, reqErr)
 					req.Header.Set("Content-Type", "application/json")
 					resp, reqErr := ts.Client().Do(req)
@@ -299,7 +299,7 @@ func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
 			body = bytes.Replace(body, []byte("\U0001f600"), []byte(`\ud83d\ude00`), 1)
 			require.Contains(t, string(body), `\ud83d\ude00`)
 
-			req, err := http.NewRequest(http.MethodPost, ts.URL+route, bytes.NewReader(body))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+route, bytes.NewReader(body))
 			require.NoError(t, err)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := ts.Client().Do(req)
@@ -469,7 +469,7 @@ func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
 	content := "vault inventory"
-	hash, size, err := s.Blobs.Write(strings.NewReader(content))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	file, err := s.CreateFile(t.Context(), docs.ID, "record.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -664,7 +664,7 @@ func TestGCRevokesPackedBlobAuthority(t *testing.T) {
 	assert.Zero(t, gcReport.ReclaimedFiles)
 	assert.Equal(t, 1, gcReport.RemovedBlobs)
 
-	_, err = s.Blobs.Open(file.BlobHash)
+	_, err = s.Blobs.OpenContext(t.Context(), file.BlobHash)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	entries, err := store.NewPackCatalog(s.Store).ListIndexed(t.Context())
 	require.NoError(t, err)
@@ -839,7 +839,7 @@ func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
 func TestGCEndpointRetainsFullPhysicalOrphanReconciliation(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	hash, size, err := s.Blobs.Write(strings.NewReader("untracked physical content"))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("untracked physical content"))
 	require.NoError(t, err)
 	path := filepath.Join(s.BlobsDir, hash[:2], hash)
 	require.FileExists(t, path)

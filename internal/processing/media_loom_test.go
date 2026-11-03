@@ -371,7 +371,7 @@ func TestLoomCaptionProcessingRequiresConsentAndNoEgress(t *testing.T) { //nolin
 	require.NoError(t, err)
 	name, profile, err := NewSuppliedCaptionProfile(fixture.catalog, fixture.blobs, base.principal)
 	require.NoError(t, err)
-	captionService, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	captionService, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: base.principal,
 		Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)
@@ -465,7 +465,7 @@ func TestLoomCoverageStaysTruthful(t *testing.T) { //nolint:paralleltest // swap
 	require.NoError(t, err)
 	name, profile, err := NewSuppliedCaptionProfile(fixture.catalog, fixture.blobs, service.principal)
 	require.NoError(t, err)
-	captionService, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	captionService, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: service.principal,
 		Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)

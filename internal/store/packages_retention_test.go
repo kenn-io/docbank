@@ -138,7 +138,7 @@ func TestPackageManifestAndSelectedRepresentationRemainBlobRoots(t *testing.T) {
 	manifest := request.ManifestBlobSHA256
 	representation := fakeHash("c4")
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, representation, 23)
+		return s.EnsureBlobTx(t.Context(), tx, representation, 23)
 	}))
 	members, err := s.SnapshotMembers(t.Context(), request.SnapshotID, 0, 1)
 	require.NoError(t, err)

@@ -78,7 +78,7 @@ func TestVaultMailboxTransferNewestReceiptSurvivesRestore(t *testing.T) {
 	require.Less(t, newest.ID, largestID, "the newest receipt must precede an older receipt in UUID order")
 	var exported bytes.Buffer
 	require.NoError(t, v.metadata.ExportMetadata(ctx, &exported))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, &exported))

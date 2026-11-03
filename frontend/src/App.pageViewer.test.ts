@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import App from "./App.svelte";
 
 afterEach(() => {
@@ -44,7 +44,7 @@ it.each(["none", "tags", "audit"])(
       blob_hash: "a".repeat(64),
     };
     const json = (v: unknown) => new Response(JSON.stringify(v));
-    let inventories = 0;
+    let previews = 0;
     let tagAttempts = 0,
       auditAttempts = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -54,17 +54,8 @@ it.each(["none", "tags", "audit"])(
         return json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
       if (url === "/api/v1/nodes/2") return json(node);
       if (url.endsWith("/pages/inventory")) {
-        inventories++;
-        return json({
-          runtime_available: false,
-          inventory: {
-            source: { version_id: node.current_version_id, sha256: node.blob_hash, size: 100 },
-            page_count: 0,
-            frames: [],
-            recipes: [],
-            images: [],
-          },
-        });
+        previews++;
+        return new Promise<Response>(() => {});
       }
       if (url.includes("/nodes/2/tags?")) {
         if (++tagAttempts === 1 && failure === "tags") throw new TypeError("Tag request lost");
@@ -96,10 +87,13 @@ it.each(["none", "tags", "audit"])(
     render(App);
     if (failure === "tags")
       await screen.findByText("Refresh the current view before using document actions.");
-    else await screen.findByText(/No page inventory/);
-    if (failure === "audit") await waitFor(() => expect(auditAttempts).toBe(1));
+    else await screen.findByText(/Verifying page…/);
+    if (failure === "audit") {
+      await waitFor(() => expect(auditAttempts).toBe(1));
+      await act(() => Promise.resolve());
+    }
     await fireEvent.click(screen.getByRole("cell", { name: "synthetic.pdf" }));
-    await screen.findByText(/No page inventory/);
+    await screen.findByText(/Verifying page…/);
     await waitFor(() => {
       expect(screen.queryByText("Tag request lost")).toBeNull();
       expect(screen.queryByText("Audit request lost")).toBeNull();
@@ -107,9 +101,10 @@ it.each(["none", "tags", "audit"])(
         screen.queryByText("Refresh the current view before using document actions."),
       ).toBeNull();
     });
-    expect(screen.getByRole("region", { name: "Pages of synthetic.pdf" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Verified content of synthetic.pdf" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
-    if (failure !== "tags") expect(inventories).toBe(1);
+    if (failure !== "tags") expect(previews).toBe(1);
     if (failure === "tags") expect(tagAttempts).toBe(2);
     if (failure === "audit") {
       expect(auditAttempts).toBe(2);

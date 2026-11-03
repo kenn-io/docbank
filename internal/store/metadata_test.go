@@ -80,7 +80,7 @@ const (
 
 func TestExportMetadataPreservesV1JavaScriptSeparatorEscapes(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
@@ -103,7 +103,7 @@ func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T)
 		{name: "pure Go", driver: modernc.Driver{}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			source, err := Open(filepath.Join(t.TempDir(), "source.db"), testCase.driver)
+			source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"), testCase.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, source.Close()) })
 			const md5sum = "f6fdffe48c908deb0f4c3bd36c032e72"
@@ -118,7 +118,7 @@ func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T)
 			assert.Contains(t, exported.String(),
 				`{"type":"blob_checksum","blob_sha256":"`+metadataHashCurrent+`","md5":"`+md5sum+`"}`)
 
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"), testCase.driver)
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"), testCase.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -135,7 +135,7 @@ func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T)
 			} {
 				t.Run(invalid.name, func(t *testing.T) {
 					malformed := strings.Replace(exported.String(), md5sum, invalid.md5, 1)
-					rejected, err := Open(filepath.Join(t.TempDir(), "rejected.db"), testCase.driver)
+					rejected, err := Open(t.Context(), filepath.Join(t.TempDir(), "rejected.db"), testCase.driver)
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, rejected.Close()) })
 					err = rejected.ImportMetadata(t.Context(), strings.NewReader(malformed))
@@ -155,7 +155,7 @@ func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {
 	require.NoError(t, s.RecordRenditionBlob(t.Context(), staged, 9,
 		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: true}))
 	var stagedCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_blob_staging
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_blob_staging
 		WHERE blob_hash=?`, staged).Scan(&stagedCount))
 	require.Equal(t, 1, stagedCount)
 
@@ -182,7 +182,7 @@ func TestBackupLiveReferenceOverridesProviderStagingHashCollision(t *testing.T) 
 	require.NoError(t, s.RecordRenditionBlob(t.Context(), shared, 9,
 		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: false}))
 	var staged int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_blob_staging
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_blob_staging
 		WHERE blob_hash=?`, shared).Scan(&staged))
 	require.Zero(t, staged, "deduplicated ordinary bytes are not provider staging")
 	snapshot, err := s.BeginMetadataSnapshot(t.Context())
@@ -209,7 +209,7 @@ func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *t
 	purged, err := s.PurgeDerivatives(t.Context(), PurgeRequest{})
 	require.NoError(t, err)
 	require.Equal(t, []string{pending}, purged.PhysicalDerivativeBlobsPendingGC)
-	_, err = s.db.Exec(`DELETE FROM rendition_blob_staging WHERE blob_hash=?`, pending)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_blob_staging WHERE blob_hash=?`, pending)
 	require.NoError(t, err,
 		"simulate a committed derivative whose manifest was removed before physical collection")
 
@@ -235,7 +235,7 @@ func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *t
 func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	sourceVaultID := source.VaultID()
@@ -291,7 +291,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	assert.NotContains(t, first.String(), "blob_pack_entries")
 	assert.NotContains(t, first.String(), "metadata-pack")
 
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
@@ -403,7 +403,7 @@ func TestMetadataImportQueuesOnlyCurrentTextVersions(t *testing.T) {
 
 func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -463,7 +463,7 @@ func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			target, openErr := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, openErr := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, openErr)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			targetVaultID := target.VaultID()
@@ -471,8 +471,8 @@ func TestImportMetadataRejectsInvalidProvenanceAuthorityAndRollsBack(t *testing.
 			require.ErrorContains(t, importErr, test.want)
 			assert.Equal(t, targetVaultID, target.VaultID())
 			var nodes, provenanceRows int64
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM provenance`).Scan(&provenanceRows))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance`).Scan(&provenanceRows))
 			assert.Equal(t, int64(1), nodes)
 			assert.Zero(t, provenanceRows)
 		})
@@ -521,7 +521,7 @@ func TestImportMetadataRejectsWatchSourceRetargetedToDirectoryAndRollsBack(t *te
 	err = target.ImportMetadata(ctx, bytes.NewReader(append(bytes.Join(lines, []byte{'\n'}), '\n')))
 	require.ErrorContains(t, err, "references non-file node")
 	var nodes, cursors int64
-	require.NoError(t, target.db.QueryRow(`
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `
 		SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM watch_sources)`,
 	).Scan(&nodes, &cursors))
 	assert.Equal(t, int64(1), nodes)
@@ -568,7 +568,7 @@ func TestImportMetadataRejectsWatchSourcesSharingNodeAndRollsBack(t *testing.T) 
 	err = target.ImportMetadata(ctx, bytes.NewReader(malformed.Bytes()))
 	require.Error(t, err)
 	var nodes, cursors int64
-	require.NoError(t, target.db.QueryRow(`
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `
 		SELECT (SELECT COUNT(*) FROM nodes), (SELECT COUNT(*) FROM watch_sources)`,
 	).Scan(&nodes, &cursors))
 	assert.Equal(t, int64(1), nodes)
@@ -577,13 +577,13 @@ func TestImportMetadataRejectsWatchSourcesSharingNodeAndRollsBack(t *testing.T) 
 
 func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
 	firstIdentity := strings.Repeat("d", 64)
 	secondIdentity := strings.Repeat("e", 64)
-	_, err = source.db.Exec(`INSERT INTO provenance(
+	_, err = source.db.ExecContext(t.Context(), `INSERT INTO provenance(
 		identity,node_id,ingest_id,original_path,original_mtime,supersedes
 	) VALUES
 		(?,10,?,'/cycle/one',NULL,?),
@@ -599,7 +599,7 @@ func TestMetadataRelationsRejectProvenanceCycle(t *testing.T) {
 
 func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	t.Parallel()
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	targetVaultID := target.VaultID()
@@ -613,11 +613,11 @@ func TestImportMetadataRejectsDanglingContentAndRollsBack(t *testing.T) {
 	require.ErrorContains(t, err, "current version does not belong")
 	assert.Equal(t, int64(1), target.RootID())
 	var nodes int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 	assert.Equal(t, targetVaultID, target.VaultID())
 	var storedVaultID string
-	require.NoError(t, target.db.QueryRow(
+	require.NoError(t, target.db.QueryRowContext(t.Context(),
 		`SELECT vault_uid FROM vault_metadata WHERE singleton = 1`,
 	).Scan(&storedVaultID))
 	assert.Equal(t, targetVaultID, storedVaultID)
@@ -653,14 +653,14 @@ func TestImportMetadataRejectsInvalidUTF8AndRollsBack(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			err = target.ImportMetadata(t.Context(), bytes.NewReader(tt.input))
 			require.Error(t, err)
 			var nodes, tags int64
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM tags`).Scan(&tags))
 			assert.Equal(t, int64(1), nodes)
 			assert.Zero(t, tags)
 		})
@@ -674,19 +674,19 @@ func TestImportMetadataAcceptsValidSurrogatePair(t *testing.T) {
 		`{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}`,
 		`{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive \ud83d\ude00","revision":1}`,
 	}, "\n") + "\n"
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(t.Context(), strings.NewReader(input)))
 	var name string
-	require.NoError(t, target.db.QueryRow(`SELECT name FROM tags WHERE id=?`, metadataTagID).Scan(&name))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT name FROM tags WHERE id=?`, metadataTagID).Scan(&name))
 	assert.Equal(t, "archive 😀", name)
 }
 
 func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -696,20 +696,20 @@ func TestImportMetadataRejectsLaterContentCreateAndRollsBack(t *testing.T) {
 		`"transition_kind":"content_replace"`, `"transition_kind":"content_create"`, 1)
 	require.NotEqual(t, exported.String(), malformed)
 
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	err = target.ImportMetadata(ctx, strings.NewReader(malformed))
 	require.ErrorContains(t, err, "content_create is required exactly at node revision one")
 	var nodes int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 }
 
 func TestImportMetadataRejectsEmptyNonNullContentMIME(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -720,20 +720,20 @@ func TestImportMetadataRejectsEmptyNonNullContentMIME(t *testing.T) {
 	)
 	require.NotEqual(t, exported.String(), malformed)
 
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	err = target.ImportMetadata(ctx, strings.NewReader(malformed))
 	require.ErrorContains(t, err, "content version mime_type must be null or non-empty")
 	var nodes int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 }
 
 func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -764,13 +764,13 @@ func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing
 		t.Run(tt.name, func(t *testing.T) {
 			malformed := strings.Replace(exported.String(), tt.old, tt.replace, 1)
 			require.NotEqual(t, exported.String(), malformed)
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			err = target.ImportMetadata(ctx, strings.NewReader(malformed))
 			require.ErrorContains(t, err, tt.want)
 			var nodes int64
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 			assert.Equal(t, int64(1), nodes, "failed import must leave the pristine target intact")
 		})
 	}
@@ -779,7 +779,7 @@ func TestImportMetadataRejectsInvalidContentRelationshipsAndRollsBack(t *testing
 func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -852,13 +852,13 @@ func TestImportMetadataRejectsEachRevertContentMismatch(t *testing.T) {
 			for _, record := range records {
 				require.NoError(t, json.MarshalEncode(enc, record))
 			}
-			target, openErr := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, openErr := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, openErr)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			importErr := target.ImportMetadata(ctx, &malformed)
 			require.ErrorContains(t, importErr, "revert source content differs from new version")
 			var nodes int64
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 			assert.Equal(t, int64(1), nodes)
 		})
 	}
@@ -894,11 +894,11 @@ func TestExportMetadataRejectsMalformedContentVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+			source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, source.Close()) })
 			seedMetadataRoundTrip(t, source)
-			_, err = source.db.Exec(tt.statement, metadataVersionCurrent)
+			_, err = source.db.ExecContext(t.Context(), tt.statement, metadataVersionCurrent)
 			require.NoError(t, err)
 			var exported bytes.Buffer
 			err = source.ExportMetadata(t.Context(), &exported)
@@ -937,7 +937,7 @@ func TestExportMetadataRejectsForeignKeyCorruption(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+			source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, source.Close()) })
 			seedMetadataRoundTrip(t, source)
@@ -958,7 +958,7 @@ func TestExportMetadataRejectsForeignKeyCorruption(t *testing.T) {
 
 func TestExportMetadataRejectsMissingRoot(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	conn, err := source.db.Conn(t.Context())
@@ -976,11 +976,11 @@ func TestExportMetadataRejectsMissingRoot(t *testing.T) {
 
 func TestExportMetadataRejectsRegressedNodeSequence(t *testing.T) {
 	t.Parallel()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
-	_, err = source.db.Exec(`UPDATE sqlite_sequence SET seq=1 WHERE name='nodes'`)
+	_, err = source.db.ExecContext(t.Context(), `UPDATE sqlite_sequence SET seq=1 WHERE name='nodes'`)
 	require.NoError(t, err)
 
 	var exported bytes.Buffer
@@ -990,7 +990,7 @@ func TestExportMetadataRejectsRegressedNodeSequence(t *testing.T) {
 
 func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 	t.Parallel()
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
@@ -1002,8 +1002,8 @@ func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 	err = target.ImportMetadata(context.Background(), strings.NewReader(input))
 	require.ErrorContains(t, err, "extracted text references missing blob authority")
 	var nodes, extracted int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM extracted_text`).Scan(&extracted))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM extracted_text`).Scan(&extracted))
 	assert.Equal(t, int64(1), nodes)
 	assert.Zero(t, extracted)
 }
@@ -1011,7 +1011,7 @@ func TestImportMetadataRejectsOrphanedExtractionAndRollsBack(t *testing.T) {
 func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -1022,13 +1022,13 @@ func TestImportMetadataRejectsDisconnectedCycle(t *testing.T) {
 	cyclic = strings.Replace(cyclic,
 		`"id":12,"parent_id":1`, `"id":12,"parent_id":7`, 1)
 
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	err = target.ImportMetadata(ctx, strings.NewReader(cyclic))
 	require.ErrorContains(t, err, "unreachable")
 	var nodes int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes)
 }
 
@@ -1092,7 +1092,7 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			lines := append([]string{
@@ -1102,7 +1102,7 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 			err = target.ImportMetadata(context.Background(), strings.NewReader(strings.Join(lines, "\n")+"\n"))
 			require.ErrorContains(t, err, tt.want)
 			var nodes int64
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 			assert.Equal(t, int64(1), nodes)
 		})
 	}
@@ -1111,7 +1111,7 @@ func TestImportMetadataRejectsUnsafeTrashTopology(t *testing.T) {
 func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	source, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 	seedMetadataRoundTrip(t, source)
@@ -1119,19 +1119,19 @@ func TestImportMetadataRejectsNodeSequenceBelowSurvivingIDs(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &exported))
 	badSequence := strings.Replace(exported.String(), `"node_sequence":50`, `"node_sequence":10`, 1)
 
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	err = target.ImportMetadata(ctx, strings.NewReader(badSequence))
 	require.ErrorContains(t, err, "below maximum node ID")
 	var nodes int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodes))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodes))
 	assert.Equal(t, int64(1), nodes)
 }
 
 func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 	t.Parallel()
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	_, err = target.Mkdir(context.Background(), target.RootID(), "existing")
@@ -1228,7 +1228,7 @@ func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 			err = target.ImportMetadata(t.Context(), strings.NewReader(test.input))
 			require.ErrorContains(t, err, "not pristine")
 			var rows int
-			require.NoError(t, target.db.QueryRow(test.countQuery).Scan(&rows))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), test.countQuery).Scan(&rows))
 			assert.Equal(t, 1, rows, "rejected restore must preserve the target for inspection")
 		})
 	}
@@ -1293,7 +1293,7 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 			`{"type":"mailbox_transfer_head"}` + "\n": `unknown record type "mailbox_transfer_head"`,
 	} {
 		t.Run(input, func(t *testing.T) {
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 			require.ErrorContains(t, target.ImportMetadata(context.Background(), strings.NewReader(input)), want)
@@ -1304,7 +1304,7 @@ func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 func TestExportMetadataRejectsMalformedVaultIdentity(t *testing.T) {
 	t.Parallel()
 	source := newTestStore(t)
-	_, err := source.db.Exec(`UPDATE vault_metadata SET vault_uid = 'not-a-uuid' WHERE singleton = 1`)
+	_, err := source.db.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid = 'not-a-uuid' WHERE singleton = 1`)
 	require.NoError(t, err)
 
 	var exported bytes.Buffer
@@ -1323,7 +1323,7 @@ func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
 			"tag":    `{"type":"tag","tag_id":"not-a-uuid","name":"archive","revision":1}`,
 		} {
 			t.Run(name, func(t *testing.T) {
-				target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+				target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, target.Close()) })
 				err = target.ImportMetadata(t.Context(), strings.NewReader(header+root+record+"\n"))
@@ -1340,7 +1340,7 @@ func TestMetadataRejectsMalformedStableRecordIDs(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				source := newTestStore(t)
-				_, err := source.db.Exec(insert)
+				_, err := source.db.ExecContext(t.Context(), insert)
 				require.NoError(t, err)
 				var exported bytes.Buffer
 				err = source.ExportMetadata(t.Context(), &exported)
@@ -1356,7 +1356,7 @@ func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 	)
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
@@ -1365,7 +1365,7 @@ func TestMetadataRejectsNonCanonicalTagNames(t *testing.T) {
 	require.ErrorContains(t, err, "canonical NFC")
 
 	var tags int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM tags`).Scan(&tags))
 	assert.Zero(t, tags, "failed import must not retain a non-canonical tag")
 }
 
@@ -1375,7 +1375,7 @@ func TestImportMetadataRejectsInvalidTagRevision(t *testing.T) {
 		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
 		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 	)
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
@@ -1384,7 +1384,7 @@ func TestImportMetadataRejectsInvalidTagRevision(t *testing.T) {
 	require.ErrorContains(t, err, "invalid tag record")
 
 	var tags int64
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&tags))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM tags`).Scan(&tags))
 	assert.Zero(t, tags)
 }
 
@@ -1396,7 +1396,7 @@ func TestImportMetadataTreatsTagRevisionAsOpaque(t *testing.T) {
 		`{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive","revision":1}`,
 		`{"type":"node_tag","node_id":1,"tag_id":"` + metadataTagID + `"}`,
 	}, "\n") + "\n"
-	target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 
@@ -1416,7 +1416,7 @@ func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing
 		"tag":    `{"type":"tag","tag_id":"` + metadataTagID + `","name":"archive","revision":1}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
 
@@ -1424,7 +1424,7 @@ func TestImportMetadataRejectsDuplicateStableRecordIDsTransactionally(t *testing
 			require.Error(t, err)
 
 			var recordCount int64
-			require.NoError(t, target.db.QueryRow(
+			require.NoError(t, target.db.QueryRowContext(t.Context(),
 				`SELECT (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM tags)`,
 			).Scan(&recordCount))
 			assert.Zero(t, recordCount)
@@ -1599,7 +1599,7 @@ func TestProcessingMetadataJSONLIsDependencyOrderedAndCrossDriverStable(t *testi
 
 	targetPath := filepath.Join(t.TempDir(), "modernc-target.db")
 	materializeCatalogBlobs(t, targetPath, "", "")
-	target, err := Open(targetPath, modernc.Driver{})
+	target, err := Open(t.Context(), targetPath, modernc.Driver{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
@@ -1724,7 +1724,7 @@ func TestProcessingMetadataNilHeadingPathRoundTripsAsEmptyArray(t *testing.T) {
 
 	targetPath := filepath.Join(t.TempDir(), "target.db")
 	materializeCatalogBlobs(t, targetPath, "", "")
-	target, err := Open(targetPath)
+	target, err := Open(t.Context(), targetPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -1772,7 +1772,7 @@ func TestProcessingMetadataImportRejectsInvalidAuthorityTransactionally(t *testi
 			require.Error(t, err)
 
 			var processingRows, nodes int
-			require.NoError(t, target.db.QueryRow(`
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `
 				SELECT
 				  (SELECT COUNT(*) FROM processing_profiles)
 				    + (SELECT COUNT(*) FROM rendition_builds)

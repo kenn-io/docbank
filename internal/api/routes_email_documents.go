@@ -49,7 +49,7 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			return
 		}
 		var receipt document.EmailDocumentPublicationReceipt
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			if d.PublishEmailDocuments == nil {
 				return errors.New("email document publication is not configured")
 			}
@@ -89,7 +89,7 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 		if !readEmailDocumentJSON(w, r, &request) {
 			return
 		}
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			return d.Store.RemoveEmailDocumentPublication(r.Context(), r.PathValue("operation_id"), request.RequestDigest)
 		})
 		if err != nil {

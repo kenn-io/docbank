@@ -29,7 +29,7 @@ func TestNetworkMCPGuardPreservesHostOriginAndBearerBoundary(t *testing.T) {
 		{"127.0.0.1:7341", "", testMCPBearer, 204},
 	} {
 		t.Run(test.host+test.origin+test.token, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/mcp", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp", nil)
 			request.Host = test.host
 			request.Header.Set("Authorization", "Bearer "+test.token)
 			if test.origin != "" {

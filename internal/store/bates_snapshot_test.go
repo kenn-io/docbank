@@ -43,7 +43,7 @@ func TestBatesSnapshotReservationAtomic(t *testing.T) {
 	require.ErrorContains(t, err, "injected allocation failure")
 	path := s.path
 	require.NoError(t, s.Close())
-	s, err = Open(path)
+	s, err = Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	var count, cursor int
@@ -70,7 +70,7 @@ func TestBatesSnapshotReservationAtomic(t *testing.T) {
 func TestBatesSnapshotReservationConcurrent(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	other, err := Open(s.path)
+	other, err := Open(t.Context(), s.path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, other.Close()) })
 	stores := []*Store{s, other}

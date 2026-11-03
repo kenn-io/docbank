@@ -26,7 +26,7 @@ func TestMediaMaxBytesAllowsSuppliedMedia(t *testing.T) {
 			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "call.wav",
 				written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
 			require.NoError(t, err)
-			service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 				Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), MediaMaxBytes: maximum,
 			})
 			if maximum < 0 || maximum > 4<<30 {
@@ -102,7 +102,7 @@ func TestConfiguredCeilingAppliesToRetainedAudioPlanAndRuntime(t *testing.T) {
 	require.NoError(t, err)
 	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), MediaMaxBytes: 64, Profiles: map[string]ProfileConfig{name: profile}})
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), MediaMaxBytes: 64, Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)
 	plan, err := service.Plan(t.Context(), Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name})
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestPlanStreamsLargeSourceOnlyForAdmittedAudio(t *testing.T) {
 	f := newPublicationFixture(t)
 	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
 		SpoolDirectory: t.TempDir(), MediaMaxBytes: 3 << 30, Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)
 	for i, test := range []struct {
@@ -170,7 +170,7 @@ func TestProviderRuntimeAuthorizesAfterPreparation(t *testing.T) {
 		}
 		return started
 	}
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool,
 		Clock: clock, Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)
 	require.Equal(t, started, clock(), "the spool directory must start empty")
@@ -196,7 +196,7 @@ func TestConfiguredCeilingChangeKeepsQueuedExecutionIdentity(t *testing.T) {
 	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
 	newCeilingService := func(maximum int64) *Service {
-		service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
 			SpoolDirectory: t.TempDir(), MediaMaxBytes: maximum, Profiles: map[string]ProfileConfig{name: profile}})
 		require.NoError(t, err)
 		return service

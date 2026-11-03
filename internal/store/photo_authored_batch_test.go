@@ -170,7 +170,7 @@ func TestPhotoAuthoredBatchKeywordsUndoAndRestore(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(ctx))
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))

@@ -147,7 +147,7 @@ func TestSavedQueryMetadataImportRejectsMalformedOrCollidingAuthorityTransaction
 			assert.Zero(t, total)
 			assert.Empty(t, rows)
 			var roots int
-			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&roots))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&roots))
 			assert.Equal(t, 1, roots, "failed import must restore the pristine target")
 		})
 	}
@@ -164,14 +164,14 @@ func TestSavedQueryMetadataExportRejectsDatabaseInjectedPolicyViolations(t *test
 				{
 					name: "unknown kind",
 					inject: func(s *Store, id string) error {
-						_, err := s.db.Exec(`UPDATE saved_queries SET kind='future_kind' WHERE id=?`, id)
+						_, err := s.db.ExecContext(t.Context(), `UPDATE saved_queries SET kind='future_kind' WHERE id=?`, id)
 						return err
 					},
 				},
 				{
 					name: "oversized payload",
 					inject: func(s *Store, id string) error {
-						_, err := s.db.Exec(`UPDATE saved_queries SET payload=? WHERE id=?`,
+						_, err := s.db.ExecContext(t.Context(), `UPDATE saved_queries SET payload=? WHERE id=?`,
 							oversizedSavedQueryPayload(), id)
 						return err
 					},
@@ -295,11 +295,11 @@ func TestSavedQueryOldestReleasedSchemaUpgradeCreatesEmptyAuthority(t *testing.T
 			dbPath := filepath.Join(t.TempDir(), "docbank.db")
 			createV090Fixture(t, dbPath, test.driver)
 
-			s, err := Open(dbPath, test.driver)
+			s, err := Open(t.Context(), dbPath, test.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
 			var schemaVersion int
-			require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&schemaVersion))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&schemaVersion))
 			assert.Equal(t, currentStorageSchemaVersion, schemaVersion)
 			rows, total, err := s.SavedQueries(t.Context(), "", 10, 0)
 			require.NoError(t, err)
@@ -315,13 +315,13 @@ func TestSavedQueryCurrentSchemaRejectsMissingAuthorityTable(t *testing.T) {
 		for _, table := range []string{"saved_queries", "saved_query_runs"} {
 			t.Run(test.name+"/"+table, func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, test.driver)
+				s, err := Open(t.Context(), dbPath, test.driver)
 				require.NoError(t, err)
-				_, err = s.db.Exec(`DROP TABLE ` + table)
+				_, err = s.db.ExecContext(t.Context(), `DROP TABLE `+table)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
 
-				reopened, err := Open(dbPath, test.driver)
+				reopened, err := Open(t.Context(), dbPath, test.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}
@@ -337,15 +337,15 @@ func TestSavedQuerySchemaRejectsPriorUnreleasedLayout(t *testing.T) {
 		for _, version := range []int{6, 7, 8, 9, 10} {
 			t.Run(fmt.Sprintf("%s/v%d", test.name, version), func(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(dbPath, test.driver)
+				s, err := Open(t.Context(), dbPath, test.driver)
 				require.NoError(t, err)
-				_, err = s.db.Exec(`DROP TABLE collection_labels`)
+				_, err = s.db.ExecContext(t.Context(), `DROP TABLE collection_labels`)
 				require.NoError(t, err)
-				_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, version)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, version)
 				require.NoError(t, err)
 				require.NoError(t, s.Close())
 
-				reopened, err := Open(dbPath, test.driver)
+				reopened, err := Open(t.Context(), dbPath, test.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}

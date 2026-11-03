@@ -23,7 +23,7 @@ func TestMCPOriginalContent(t *testing.T) {
 	selected := f.addFile(t, "reviewed.bin", original)
 	node, err := f.catalog.NodeByID(t.Context(), selected.NodeID)
 	require.NoError(t, err)
-	hash, size, err := f.blobs.Write(strings.NewReader("replacement"))
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
 	require.NoError(t, err)
 	_, _, err = f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
 	require.NoError(t, err)

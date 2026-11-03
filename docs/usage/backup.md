@@ -255,7 +255,7 @@ Use a temporary fresh home to run the recovery daemon, and restore into a separa
 DOCBANK_HOME=~/Recovery/control docbank daemon start
 DOCBANK_HOME=~/Recovery/control docbank backup restore --repo ~/Backups/docbank --target ~/Recovery/vault
 DOCBANK_HOME=~/Recovery/control docbank daemon stop
-DOCBANK_HOME=~/Recovery/vault docbank info
+DOCBANK_HOME=~/Recovery/vault docbank vault info
 ```
 
 Restore validates photo relationships and recorded coverage before publishing the database, verifies managed content, clears sessions, and leaves checkouts unbound. Keep the backup repository available until you've checked the restored vault.
@@ -297,7 +297,7 @@ calling processing providers. See
 [Backup architecture](../architecture/backup.md#which-retained-records-must-round-trip)
 for retained records and rebuildable indexes.
 
-Snapshots keep photo suggestion dismissals and accepted-field decisions but omit suggestion text. After restore and fresh processing consent, only undecided fields are described again.
+Snapshots keep photo suggestion dismissals and accepted-field decisions, plus a marker for an unconfirmed rotation proposal. They omit generated text and rotation angles. After restore and fresh processing consent, only undecided fields are described again. A dismissed caption stays dismissed while its pending rotation regenerates; a confirmed rotation needs no regeneration.
 
 ## Restore and prove a snapshot
 
@@ -426,8 +426,8 @@ start it or replace the running vault with it. Inspect it under its own home
 first:
 
 ```bash
-DOCBANK_HOME=~/Restores/docbank-test docbank verify
-DOCBANK_HOME=~/Restores/docbank-test docbank tree /
+DOCBANK_HOME=~/Restores/docbank-test docbank vault verify
+DOCBANK_HOME=~/Restores/docbank-test docbank document tree /
 DOCBANK_HOME=~/Restores/docbank-test docbank daemon stop
 ```
 

@@ -10,7 +10,7 @@ import (
 
 func TestVerifyAuditReturnsReplayedEvidenceAndProtectedBlobs(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -51,7 +51,7 @@ func TestVerifyAuditReturnsReplayedEvidenceAndProtectedBlobs(t *testing.T) {
 
 func TestVerifyAuditRejectsAuthorityThatDoesNotMatchReplay(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -70,7 +70,7 @@ func TestVerifyAuditRejectsAuthorityThatDoesNotMatchReplay(t *testing.T) {
 
 func TestVerifyAuditProvesRecordedEvidenceIsAnExactPrefix(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -96,7 +96,7 @@ func TestVerifyAuditProvesRecordedEvidenceIsAnExactPrefix(t *testing.T) {
 
 func TestVerifyAuditReportsExpectedEvidenceDivergence(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -121,7 +121,7 @@ func TestVerifyAuditReportsExpectedEvidenceDivergence(t *testing.T) {
 
 func TestVerifyAuditRejectsMalformedExpectedEvidence(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 

@@ -26,7 +26,7 @@ import (
 func TestEmbeddingCatalogUsesCanonicalInputKindsAndProfileAuthority(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	record.BindingID = "not-in-profile"
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "processing profile binding")
 }
@@ -34,12 +34,12 @@ func TestEmbeddingCatalogUsesCanonicalInputKindsAndProfileAuthority(t *testing.T
 func TestEmbeddingCatalogDoesNotPersistGenerationTextInSQLiteOrMetadata(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.Contains(t, string(record.InputGeneration.GenerationJSON), "Synthetic evidence")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 
 	var columns string
-	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('embedding_input_generations') ORDER BY cid`)
+	rows, err := s.db.QueryContext(t.Context(), `SELECT name FROM pragma_table_info('embedding_input_generations') ORDER BY cid`)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var columnsSb34 strings.Builder
@@ -61,11 +61,11 @@ func TestEmbeddingCatalogDoesNotPersistGenerationTextInSQLiteOrMetadata(t *testi
 func TestEmbeddingCatalogRejectsOriginalFileAttachmentBypassAndVectorHeaderMismatch(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	original := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	original := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	original.InputGeneration.AttachmentID = attachmentID
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), original), "cannot claim rendition attachment")
 
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	decoded, _, err := document.DecodeVectorSetV1(chunk.VectorSet.Payload, document.VectorBounds{MaxRows: 128, MaxDimension: 8, MaxBytes: len(chunk.VectorSet.Payload)})
 	require.NoError(t, err)
 	values := make([][]float64, len(decoded.Vectors))
@@ -86,7 +86,7 @@ func TestEmbeddingCatalogRejectsOriginalFileAttachmentBypassAndVectorHeaderMisma
 	chunk.VectorSet.Payload = payload
 	chunk.VectorSet.ID, chunk.VectorSet.PayloadChecksum, chunk.VectorSet.PayloadBlobHash = checksum, checksum, testSHA256(payload)
 	require.NoError(t, s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, chunk.VectorSet.PayloadBlobHash, int64(len(payload)))
+		return s.EnsureBlobTx(t.Context(), tx, chunk.VectorSet.PayloadBlobHash, int64(len(payload)))
 	}))
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), chunk), "metric or normalization")
 }
@@ -94,7 +94,7 @@ func TestEmbeddingCatalogRejectsOriginalFileAttachmentBypassAndVectorHeaderMisma
 func TestEmbeddingCatalogRejectsGenerationBlobIdentityMismatch(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	record.InputGeneration.GenerationBlobHash = fakeHash("wrong generation blob")
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "blob hash")
 }
@@ -102,7 +102,7 @@ func TestEmbeddingCatalogRejectsGenerationBlobIdentityMismatch(t *testing.T) {
 func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T) {
 	t.Parallel()
 	s, versionID, profileRecord, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profileRecord.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record := embeddingSetFixture(t.Context(), s, versionID, profileRecord.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	var profile document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(profileRecord.CanonicalProfile, &profile))
 	_, fingerprints, err := document.CanonicalProfile(profile)
@@ -135,7 +135,7 @@ func TestEmbeddingCatalogRejectsGenerationFromDifferentChunkPolicy(t *testing.T)
 	record.InputGeneration.GenerationChecksum = generation.Checksum
 	record.InputGeneration.ID = testSHA256([]byte("embedding-generation-attachment/v1\x00" + generation.Checksum + "\x00" + attachmentID))
 	require.NoError(t, s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, record.InputGeneration.GenerationBlobHash, int64(len(encoded)))
+		return s.EnsureBlobTx(t.Context(), tx, record.InputGeneration.GenerationBlobHash, int64(len(encoded)))
 	}))
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "exact processing profile")
 }
@@ -145,7 +145,7 @@ func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
 	for _, mutation := range []string{"rendered", "content"} {
 		t.Run(mutation, func(t *testing.T) {
 			s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-			record := embeddingSetFixture(s, versionID, profile.Fingerprint,
+			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 				document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 			generation, err := document.DecodeEmbeddingInputGeneration(
 				record.InputGeneration.GenerationJSON,
@@ -211,10 +211,10 @@ func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
 			record.VectorSet.PayloadChecksum = vectorChecksum
 			record.VectorSet.PayloadBlobHash = testSHA256(encodedVectors)
 			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-				if err := s.EnsureBlobTx(tx, record.InputGeneration.GenerationBlobHash, int64(len(encodedGeneration))); err != nil {
+				if err := s.EnsureBlobTx(t.Context(), tx, record.InputGeneration.GenerationBlobHash, int64(len(encodedGeneration))); err != nil {
 					return err
 				}
-				return s.EnsureBlobTx(tx, record.VectorSet.PayloadBlobHash, int64(len(encodedVectors)))
+				return s.EnsureBlobTx(t.Context(), tx, record.VectorSet.PayloadBlobHash, int64(len(encodedVectors)))
 			}))
 
 			want := "model-input contract"
@@ -255,7 +255,7 @@ func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
 func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	generationBytes := append([]byte(nil), record.InputGeneration.GenerationJSON...)
 	vectorBytes := append([]byte(nil), record.VectorSet.Payload...)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -277,7 +277,7 @@ func TestEmbeddingCatalogRevalidatesExactArtifactsProviderFree(t *testing.T) {
 func TestEmbeddingCatalogMetadataRejectsDivergentE1Projection(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
@@ -293,9 +293,9 @@ func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing
 	for _, packed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "loose", true: "packed"}[packed], func(t *testing.T) {
 			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-			record := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+			record := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 			require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
-			direct := embeddingSetFixture(source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+			direct := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(t, source.StageEmbeddingSet(t.Context(), direct))
 			snapshot, err := source.BeginMetadataSnapshot(t.Context())
 			require.NoError(t, err)
@@ -353,19 +353,19 @@ func TestEmbeddingCatalogBackupRestoreVerifiesLooseAndPackedArtifacts(t *testing
 func TestEmbeddingCatalogRestoreVerifiesArtifactsRetainedAfterVersionPrune(t *testing.T) {
 	t.Parallel()
 	source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(source, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
-	chunk := embeddingSetFixture(source, versionID, profile.Fingerprint,
+	chunk := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, source.StageEmbeddingSet(t.Context(), chunk))
 
 	var nodeID, revision int64
-	require.NoError(t, source.db.QueryRow(`SELECT id,revision FROM nodes WHERE current_version_id=?`,
+	require.NoError(t, source.db.QueryRowContext(t.Context(), `SELECT id,revision FROM nodes WHERE current_version_id=?`,
 		versionID).Scan(&nodeID, &revision))
 	replacementHash := testSHA256([]byte("orphan-vector-restore-replacement"))
 	require.NoError(t, source.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return source.EnsureBlobTx(tx, replacementHash, 24)
+		return source.EnsureBlobTx(t.Context(), tx, replacementHash, 24)
 	}))
 	updated, _, err := source.ReplaceContent(
 		t.Context(), nodeID, revision, replacementHash, 24, "application/pdf",
@@ -496,11 +496,11 @@ func packEmbeddingRestoreArtifacts(t *testing.T, s *Store, layout *packstore.Lay
 func TestEmbeddingCatalogRequiresCanonicalGenerationAndVectorPayloads(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	record.InputGeneration.GenerationJSON = nil
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "generation JSON")
 
-	record = embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record = embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	evidenceJSON := record.InputGeneration.EvidenceJSON
 	record.InputGeneration.EvidenceJSON = nil
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "canonical evidence bytes")
@@ -508,7 +508,7 @@ func TestEmbeddingCatalogRequiresCanonicalGenerationAndVectorPayloads(t *testing
 	require.NotEqual(t, evidenceJSON, record.InputGeneration.EvidenceJSON)
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "evidence hash mismatch")
 
-	record = embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	record = embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	record.VectorSet.Payload = nil
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), record), "vector payload")
 }
@@ -516,7 +516,7 @@ func TestEmbeddingCatalogRequiresCanonicalGenerationAndVectorPayloads(t *testing
 func TestEmbeddingCatalogRejectsRotatedE1AndReorderedVectorAuthority(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 
 	rotated := cloneEmbeddingSetRecord(record)
 	rotated.VectorSpace.Descriptor.ModelRevision = "rotated"
@@ -540,7 +540,7 @@ func TestEmbeddingCatalogRejectsRotatedE1AndReorderedVectorAuthority(t *testing.
 	reordered.VectorSet.PayloadChecksum = checksum
 	reordered.VectorSet.ID = checksum
 	require.NoError(t, s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, reordered.VectorSet.PayloadBlobHash, int64(len(payload)))
+		return s.EnsureBlobTx(t.Context(), tx, reordered.VectorSet.PayloadBlobHash, int64(len(payload)))
 	}))
 	require.ErrorContains(t, s.StageEmbeddingSet(t.Context(), reordered), "ordered generation inputs")
 }
@@ -581,7 +581,7 @@ func TestEmbeddingCatalogRestoreVerificationAllowsOnlyMissingVectorPayloads(t *t
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			source, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
-			record := embeddingSetFixture(source, versionID, profile.Fingerprint,
+			record := embeddingSetFixture(t.Context(), source, versionID, profile.Fingerprint,
 				document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 			require.NoError(t, source.StageEmbeddingSet(t.Context(), record))
 			var metadata bytes.Buffer

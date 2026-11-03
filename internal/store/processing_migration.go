@@ -135,7 +135,7 @@ func (s *Store) MigrateLegacyPlainText(
 			if buildSuppressed {
 				continue
 			}
-			if _, authorityErr := requirePhysicalAuthorityTx(tx, row.blobHash); authorityErr != nil {
+			if _, authorityErr := requirePhysicalAuthorityTx(ctx, tx, row.blobHash); authorityErr != nil {
 				if errors.Is(authorityErr, ErrNotFound) ||
 					errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
 					continue
@@ -196,15 +196,8 @@ func (s *Store) MigrateLegacyPlainText(
 			if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO rendition_heads(
-					content_version_id,profile_fingerprint,attachment_id,published_at
-				) VALUES(?,?,?,?)
-				ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-					attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
-				version.versionID, profile.Fingerprint, attachmentID, row.extractedAt,
-			); err != nil {
-				return fmt.Errorf("publishing migrated legacy plain-text head: %w", err)
+			if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}); err != nil {
+				return err
 			}
 			report.MigratedAttachments++
 		}

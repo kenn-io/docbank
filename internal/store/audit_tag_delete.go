@@ -29,17 +29,17 @@ func (s *Store) deleteAuditedTagTx(
 		return Tag{}, fmt.Errorf("allocating audited tag-delete operation: %w", err)
 	}
 	recordedAt := nowRFC3339()
-	if err := touchAuditedTagDefinitionNodesTx(
-		tx, current.ID, priorNodes, recordedAt,
+	if err := s.touchAuditedTagDefinitionNodesTx(
+		ctx, tx, current.ID, priorNodes, recordedAt,
 	); err != nil {
 		return Tag{}, err
 	}
-	if err := deleteTagDefinitionTx(tx, current.ID); err != nil {
+	if err := s.deleteTagDefinitionTx(ctx, tx, current.ID); err != nil {
 		return Tag{}, err
 	}
 	resultingNodes := make([]Node, len(priorNodes))
 	for index, prior := range priorNodes {
-		resultingNodes[index], err = nodeByIDTx(tx, prior.ID)
+		resultingNodes[index], err = nodeByIDTx(ctx, tx, prior.ID)
 		if err != nil {
 			return Tag{}, err
 		}
@@ -57,7 +57,7 @@ func tagAssignmentNodeIDsTx(
 	ctx context.Context, tx *sql.Tx, tagID string,
 ) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT node_id FROM node_tags WHERE tag_id=? ORDER BY node_id`, tagID,
+		`SELECT node_id FROM node_tags WHERE tag_id=$1 ORDER BY node_id`, tagID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing assignments for tag %s: %w", tagID, err)

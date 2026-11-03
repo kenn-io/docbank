@@ -462,3 +462,21 @@ func invokeProcessingTool(
 	_, output := startProcessingSchemas()
 	return executeProcessingTool(ctx, lease, plans, mustResolveSchema(output), raw)
 }
+
+func TestProcessingPlanSchemaAcceptsImageInputClass(t *testing.T) {
+	plan := syntheticProcessingPlan(testProcessingPlanFingerprint)
+	plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "image", TrustBoundary: "local_process", InputClasses: []string{"image"}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
+	validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))["get_processing_plan"].OutputSchema)
+	raw, err := json.Marshal(plan)
+	require.NoError(t, err)
+	var value map[string]any
+	require.NoError(t, json.Unmarshal(raw, &value))
+	value["ttlMs"], value["cacheScope"] = 0, "private"
+	require.NoError(t, validator.Validate(&value))
+	plan.Flow[0].InputClasses = []string{"unknown"}
+	raw, err = json.Marshal(plan)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &value))
+	value["ttlMs"], value["cacheScope"] = 0, "private"
+	require.Error(t, validator.Validate(&value))
+}

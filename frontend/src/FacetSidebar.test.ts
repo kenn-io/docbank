@@ -6,9 +6,9 @@ import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(cleanup);
 
-it("selects unrated photos and empty flags and labels", async () => {
+it("narrows photos with metadata facets", async () => {
   const onchange = vi.fn();
-  render(FacetSidebar, {
+  const view = render(FacetSidebar, {
     unit: "photos",
     query: originalQuery,
     onchange,
@@ -37,7 +37,164 @@ it("selects unrated photos and empty flags and labels", async () => {
     within(screen.getByRole("group", { name: "Color label facet" })).getByRole("button"),
   );
   expect(onchange.mock.lastCall?.[0].filters.labels).toEqual([""]);
+  await view.rerender({
+    query: originalQuery,
+    facets: [
+      facet("year", { values: [{ key: "2024", label: "2024", count: 1, selected: false }] }),
+    ],
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "2024, 1 photos" }));
+  expect(onchange.mock.lastCall?.[0].filters).toMatchObject({
+    capture_after: "2024-01-01",
+    capture_before: "2025-01-01",
+  });
 });
+
+const selectedFacetCases: [
+  string,
+  {
+    mode: Query["mode"];
+    filters: Query["filters"];
+    facets: SnapshotPage["facets"];
+    group: string;
+    button: string | RegExp;
+    clears: (keyof Query["filters"])[];
+  },
+][] = [
+  [
+    "location",
+    {
+      mode: "semantic",
+      filters: { locations: ["Paris"] },
+      facets: [],
+      group: "Location facet",
+      button: "Paris, selected",
+      clears: ["locations"],
+    },
+  ],
+  [
+    "albums",
+    {
+      mode: "semantic",
+      filters: { set_ids: ["11111111-1111-4111-8111-111111111111"] },
+      facets: [],
+      group: "Albums facet",
+      button: "11111111-1111-4111-8111-111111111111, selected",
+      clears: ["set_ids"],
+    },
+  ],
+  [
+    "rating",
+    {
+      mode: "semantic",
+      filters: { rating_min: 3, rating_max: 3 },
+      facets: [],
+      group: "Rating facet",
+      button: "3 stars, selected",
+      clears: ["rating_min", "rating_max"],
+    },
+  ],
+  [
+    "flag",
+    {
+      mode: "semantic",
+      filters: { flags: ["pick"] },
+      facets: [],
+      group: "Flag facet",
+      button: "pick, selected",
+      clears: ["flags"],
+    },
+  ],
+  [
+    "color label",
+    {
+      mode: "semantic",
+      filters: { labels: ["red"] },
+      facets: [],
+      group: "Color label facet",
+      button: "red, selected",
+      clears: ["labels"],
+    },
+  ],
+  [
+    "camera",
+    {
+      mode: "semantic",
+      filters: { cameras: ["Canon"] },
+      facets: [],
+      group: "Camera facet",
+      button: "Canon, selected",
+      clears: ["cameras"],
+    },
+  ],
+  [
+    "lens",
+    {
+      mode: "semantic",
+      filters: { lenses: ["RF 50mm"] },
+      facets: [],
+      group: "Lens facet",
+      button: "RF 50mm, selected",
+      clears: ["lenses"],
+    },
+  ],
+  [
+    "capture year",
+    {
+      mode: "lexical",
+      filters: { capture_after: "2024-01-01", capture_before: "2025-01-01" },
+      facets: [],
+      group: "Year facet",
+      button: "2024, selected",
+      clears: ["capture_after", "capture_before"],
+    },
+  ],
+  [
+    "modified month",
+    {
+      mode: "lexical",
+      filters: { modified_after: "2025-07-01T00:00:00Z", modified_before: "2025-08-01T00:00:00Z" },
+      facets: [
+        facet("modified", {
+          total: 0,
+          missing: 0,
+          other: 0,
+          values: [{ key: "2025-07", label: "2025-07", count: 0, selected: true }],
+        }),
+      ],
+      group: "Modified facet",
+      button: /July 2025/,
+      clears: ["modified_after", "modified_before"],
+    },
+  ],
+];
+
+it.each(selectedFacetCases)(
+  "keeps the selected %s facet editable",
+  async (_name, selectedFacet) => {
+    const onchange = vi.fn();
+    const query = {
+      ...originalQuery,
+      mode: selectedFacet.mode,
+      filters: { ...originalQuery.filters, ...selectedFacet.filters },
+    };
+    render(FacetSidebar, {
+      unit: "photos",
+      query,
+      facets: selectedFacet.facets,
+      disabled: false,
+      onchange,
+    });
+    const selected = within(screen.getByRole("group", { name: selectedFacet.group })).getByRole(
+      "button",
+      { name: selectedFacet.button },
+    );
+    expect(selected.getAttribute("aria-pressed")).toBe("true");
+    await fireEvent.click(selected);
+    for (const field of selectedFacet.clears)
+      expect(onchange.mock.lastCall?.[0].filters[field]).toBeUndefined();
+  },
+);
 
 const tagID = "11111111-1111-4111-8111-111111111111";
 const excludedTagID = "22222222-2222-4222-8222-222222222222";
@@ -240,27 +397,6 @@ it("hides a group with no values or an empty scope, and keeps one with some miss
   expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
   await view.rerender({ facets: [facet("tags", { total: 0, missing: 0, other: 0 })] });
   expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
-});
-
-it("keeps an active modified month in an empty scope so it can be cleared", async () => {
-  const onchange = vi.fn();
-  const month = { key: "2025-07", label: "2025-07", count: 0, selected: true };
-  const filters = {
-    ...originalQuery.filters,
-    modified_after: "2025-07-01T00:00:00Z",
-    modified_before: "2025-08-01T00:00:00Z",
-  };
-  render(FacetSidebar, {
-    facets: [facet("modified", { total: 0, missing: 0, other: 0, values: [month] })],
-    query: { ...originalQuery, filters },
-    onchange,
-  });
-  await fireEvent.click(
-    within(screen.getByRole("group", { name: "Modified facet" })).getByRole("button", {
-      name: /July 2025/,
-    }),
-  );
-  expect(onchange.mock.calls.at(-1)?.[0].filters.modified_after).toBeUndefined();
 });
 
 it("keeps the No tags button reachable to clear while active and to apply after a tag is selected", async () => {

@@ -40,9 +40,10 @@ func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation
 
 // Losing the response must not duplicate children, and changing retry input
 // must never reinterpret the original operation.
-func TestEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T) {
+func checkEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -64,12 +65,13 @@ func TestEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T) {
 	req.DestinationRevision++
 	_, err = s.PublishEmailDocuments(t.Context(), req)
 	require.ErrorIs(t, err, ErrEmailDocumentConflict)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
+func checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -78,7 +80,7 @@ func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
 	_, err = s.PublishEmailDocuments(t.Context(), req)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	var count int
-	require.NoError(t, s.db.QueryRow("SELECT count(*) FROM email_document_publications").Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM email_document_publications").Scan(&count))
 	require.Zero(t, count)
 	req = attachmentRequest(t, s, view, "mail-first")
 	first, err := s.PublishEmailDocuments(t.Context(), req)
@@ -105,7 +107,7 @@ func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), page.Total)
 	require.NotEqual(t, page.Items[0].Relation.Parent.VersionID, page.Items[1].Relation.Parent.VersionID)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
 func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
@@ -158,7 +160,8 @@ func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
 	}
 }
 
-func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
+func checkEmailDocumentsExplicitRootAttachment(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	const payload = "%PDF-1.4\r\nSynthetic attachment\r\n%%EOF\r\n"
 	for _, explicit := range []bool{false, true} {
@@ -169,7 +172,7 @@ func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
 			raw = "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=root.pdf\r\n\r\n" + payload
 		}
 		t.Run(name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			f := newEmailSourceFixture(t, s, "root.eml", raw)
 			view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 			require.NoError(t, err)
@@ -187,7 +190,7 @@ func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
 			require.Equal(t, []byte(payload), f.bytes[relation.Child.SHA256])
 			require.Equal(t, int64(len(payload)), relation.Child.Size)
 			require.NotEqual(t, view.Version.BlobHash, relation.Child.SHA256)
-			require.NoError(t, s.ValidateMetadata(t.Context()))
+			checkRetentionMetadata(t, s)
 		})
 	}
 }

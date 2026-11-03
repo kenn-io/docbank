@@ -333,7 +333,7 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 	for _, outcome := range []string{"success", "invalid response", "canceled"} {
 		t.Run(outcome, func(t *testing.T) {
 			root, _, _ := exportFixture(t)
-			catalog, err := store.Open(filepath.Join(t.TempDir(), "consent.db"))
+			catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 			authorizer := &consentAuthorizer{catalog: catalog, request: store.ProviderOperationAuthorizationRequest{

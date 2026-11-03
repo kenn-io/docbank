@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-28
+last_edited: 2026-10-31
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -311,8 +311,10 @@ browser session does not preserve the drawer's job handle.
 
 ## Review and redact a PDF
 
-Select a live PDF in Documents and choose **Redact PDF** to mark rectangles or
-whole pages, inspect verified output and sanitized text, and download one ZIP.
+Open a live PDF and choose **Redact PDF** in the reader, or use the same action
+in the Documents inspector. Mark rectangles or whole pages, inspect verified
+output and sanitized text, and download one ZIP. Closing the review returns to
+the reader's page and zoom; unsaved masks require confirmation before discard.
 The original is unchanged. Reviews are temporary and require the configured
 Linux amd64 page runtime. See the [browser PDF review workflow](document-processing.md#review-a-pdf-in-the-browser)
 for coverage gaps, private review files, expiry and download limits.
@@ -622,7 +624,7 @@ authenticated API workflows.
 Each message occurrence becomes its own email document. Repeated messages
 remain separate occurrences, and attachments become child documents. An
 interrupted import resumes after its last saved message. See
-[mailbox import](../cli-reference.md#docbank-mailbox) for CLI status and receipts.
+[mailbox import](../cli-reference.md#docbank-email-mailbox) for CLI status and receipts.
 
 ![A completed Takeout import with three separate message occurrences](https://docbank.ai/assets/generated/web-mailbox-import.png)
 
@@ -705,35 +707,35 @@ The inspector puts the preview above details, tags, and **History**. Drag the in
 
 Protected items show a **Protected** chip that opens **Audit history**. For an unprotected folder, choose **Protect permanently…** in **⋯** to copy its command-line preview command. The command previews retained history and vault-wide metadata before you explicitly enable irreversible protection.
 
-The selected document card previews PDF and PNG pages, eligible UTF-8 text,
-and bounded PNG, JPEG, and WebP images. Animated WebP images may animate in the browser. Text is rendered as inert text, never as
-document HTML. Docbank verifies the selected version UUID, size, media type, and
-SHA-256 after receiving the complete body and before publishing text or an
-image URL. Unsupported files
-and text larger than 16 MiB remain available through **Download** without being decoded in the page.
+Double-click a PDF or Markdown file, press **Enter** on its row, or choose
+**Open** in the inspector to read it in a large viewer. **Escape** or **Close**
+returns to the selected row. This also works in search results and preserves
+the version selected by a frozen snapshot.
 
-For PDF files and PNGs with retained page geometry, **Preview** reads retained
-pages and images. Other PNGs use the verified original-image preview, including
-when the optional page runtime is unavailable.
+PDFs open in EmbedPDF, with search, zoom, page navigation, thumbnails, text
+selection and printing. **Download** saves the selected original. **Redact PDF**
+opens the review workflow for live PDFs; frozen search results stay read-only.
+Its rendering engine and fonts ship with Docbank; viewing a PDF
+needs no optional server runtime or external asset download. PDF previews are
+limited to 64 MiB. Markdown displays headings, lists, tables and code blocks;
+embedded HTML is sanitized and form controls are removed before display. Links
+open in a separate tab. Other eligible UTF-8 text appears
+as plain text. Text previews are limited to 16 MiB.
 
-Choose **Render page** when an image is missing. This requests only that page.
-Opening the inspector or moving between pages never starts bulk rendering.
-Rendering needs the [optional local page runtime](../architecture/page-images.md).
-PDF pages render at 144 DPI. The viewer prefers retained images at that density.
-Otherwise it displays the highest retained DPI and offers **Render page at 144
-DPI** when the runtime is available. PNGs keep their native physical density.
-Unsupported geometry, unavailable runtime, partial images, render failure, and
-a changed source are shown separately. Retained images remain readable when the
-runtime is unavailable.
+The inspector also previews bounded PNG, JPEG and WebP images. Animated WebP
+images may animate in the browser. Docbank verifies the selected version UUID,
+size, media type and SHA-256 before passing content to a viewer. Unsupported
+or oversized files remain available through **Download**. Reclicking a selected
+item retains its preview and metadata; browsing keeps the preview area a
+consistent height while the next file loads.
 
-**Previous page**, **Next page**, and the page selector navigate within the
-document. Navigation rechecks the inventory to include newly retained images.
-**Fit width** and numeric zoom change only its display size. Each page uses its
-own rotated crop dimensions. The browser checks the actual frame, recipe, image
-digest, byte length, and decoded dimensions before displaying it. Changing the
-source, page, session, or tab clears the old image and releases its resources.
-**Cancel render** is available for the active request created here. A matching
-request created elsewhere offers a refresh without taking ownership.
+Selecting a PDF in the inspector reads its retained page images without loading
+the whole PDF or starting a browser PDF engine. Open the reader to load the
+verified original. PNGs with retained page geometry also use the retained-page
+preview. Choose
+**Render page** when an image is missing; this needs the
+[optional local page runtime](../architecture/page-images.md). Other PNGs use
+the verified original-image preview, including when that runtime is unavailable.
 
 Choose **Text** to read the verified text rendition for the selected version
 and processing profile. The browser binds the source, profile, generation,
@@ -783,7 +785,7 @@ session.
 Preparation streams on the daemon and does not buffer the object in browser
 memory. It temporarily needs local free space equal to the document's logical
 size. Docbank reports that verified bytes were handed to the browser, not that
-the browser or operating system completed its final save. Use `docbank get`
+the browser or operating system completed its final save. Use `docbank document get`
 when automation needs a durable receipt after private staging, file sync,
 atomic publication, and parent-directory sync.
 
@@ -820,7 +822,7 @@ uses the live document's current name.
 Version comparison remains a CLI or authenticated API workflow.
 
 The drawer reads at most the newest 1,000 versions and says when older history
-exists. Use `docbank versions list`, its pagination flags, or the authenticated
+exists. Use `docbank document versions list`, its pagination flags, or the authenticated
 HTTP API for exhaustive automation. This view does not compare bytes, revert,
 or prune history.
 
@@ -843,7 +845,7 @@ supplied by an embedded application.
 The browser does not open, validate, change, or retain that external source.
 
 The drawer reads at most the newest 1,000 facts and says when older provenance
-exists. Use `docbank provenance`, its pagination flags, or the authenticated
+exists. Use `docbank document provenance`, its pagination flags, or the authenticated
 HTTP API for exhaustive automation. Provenance correction and external-content
 pinning are not browser workflows.
 
@@ -945,7 +947,8 @@ The list below shows every worker and its status, and offers pause controls for
 idle workers. Queued operations stay in that list until they start.
 
 A worker waiting for work shows Idle, and the header counts only work in
-progress.
+progress. Watched inboxes show their [configured tags](../configuration.md#watched-inboxes).
+A missing tag appears beside the configured tags, separately from any worker error.
 
 Pause or resume photo imports, visual previews, and the storage lanes `place`,
 `evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item

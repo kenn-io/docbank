@@ -10,7 +10,8 @@ import (
 	"go.kenn.io/kit/pack"
 )
 
-func TestDocumentWritesPostgres(t *testing.T) {
+func checkDocumentWrites(t *testing.T, openStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
 		name := "ordinary"
@@ -18,7 +19,7 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			name = "audited"
 		}
 		t.Run(name, func(t *testing.T) {
-			s := newPostgresQueryStore(t)
+			s := openStore(t)
 			ctx := t.Context()
 			if audited {
 				plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "cli", nil)
@@ -26,6 +27,15 @@ func TestDocumentWritesPostgres(t *testing.T) {
 				_, err = s.EnableInitialAudit(ctx, plan)
 				require.NoError(t, err)
 			}
+			photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("a3"), 4, "image/jpeg")
+			require.NoError(t, err)
+			// Exercise cursors beyond PostgreSQL's int4 range with a real file.
+			_, err = s.db.ExecContext(ctx, `INSERT INTO vault_changes(seq,kind,node_id,node_revision) VALUES(2147483648,'processed',$1,$2)`, photo.ID, photo.Revision)
+			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, `DELETE FROM vault_changes WHERE seq=1`)
+			require.NoError(t, err)
+			_, before, err := s.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
 			dir, path, err := s.MkdirPath(ctx, "/Documents")
 			require.NoError(t, err)
 			require.Equal(t, "/Documents", path)
@@ -60,6 +70,8 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			require.Equal(t, original.BlobHash, reverted.BlobHash)
 			require.Equal(t, "content_revert", version.TransitionKind)
 			require.Equal(t, new(original.CurrentVersionID), version.SourceVersionID)
+			changes, _, err := s.VaultChanges(ctx, before, 500)
+			require.NoError(t, err)
 			moved, path, err := s.Move(ctx, original.ID, dir.ID, "final.txt", reverted.Revision)
 			require.NoError(t, err)
 			require.Equal(t, "/Documents/final.txt", path)
@@ -85,8 +97,6 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM text_extraction_queue`).Scan(&queued))
 			require.Equal(t, 3, eligible)
 			require.Equal(t, 2, queued)
-			photo, err := s.CreateFile(ctx, dir.ID, "photo.jpg", fakeHash("a3"), 4, "image/jpeg")
-			require.NoError(t, err)
 			var enrolled int
 			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM photo_files WHERE node_id=$1`, photo.ID).Scan(&enrolled))
 			if audited {
@@ -94,6 +104,11 @@ func TestDocumentWritesPostgres(t *testing.T) {
 			} else {
 				require.Equal(t, 1, enrolled)
 			}
+			var kinds []string
+			for _, change := range changes {
+				kinds = append(kinds, change.Kind)
+			}
+			require.Equal(t, []string{"created", "created", "created", "created", "version_added", "version_added"}, kinds)
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				high, err := s.auditNodeSequence(ctx, tx)
 				if err != nil {
@@ -105,7 +120,8 @@ func TestDocumentWritesPostgres(t *testing.T) {
 	}
 }
 
-func TestDocumentNegativeSizePostgres(t *testing.T) {
+func checkDocumentNegativeSizePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	s := newPostgresQueryStore(t)
 	ctx := t.Context()
@@ -127,7 +143,8 @@ func TestDocumentNegativeSizePostgres(t *testing.T) {
 // The released SQLite trigger results are the oracle for retained photo facts.
 // Replace/revert must remove and restore the displayed bytes' source and date;
 // moving an unowned sibling sidecar must refresh its original's export work.
-func TestDocumentPhotoMaintenancePostgres(t *testing.T) {
+func checkDocumentPhotoMaintenancePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -170,7 +187,8 @@ func TestDocumentPhotoMaintenancePostgres(t *testing.T) {
 	}
 }
 
-func TestDocumentSidecarWorkPostgres(t *testing.T) {
+func checkDocumentSidecarWorkPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source, asset, raw := xmpSidecarPhoto(t)
@@ -216,7 +234,8 @@ func TestDocumentSidecarWorkPostgres(t *testing.T) {
 	}
 }
 
-func TestDocumentTextSuppressionPostgres(t *testing.T) {
+func checkDocumentTextSuppressionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
@@ -251,7 +270,8 @@ func TestDocumentTextSuppressionPostgres(t *testing.T) {
 	require.Equal(t, hash, queuedHash)
 }
 
-func TestDocumentBlobPromotionPostgres(t *testing.T) {
+func checkDocumentBlobPromotionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	setup, owner := pgtest.NewDatabase(t)
@@ -288,7 +308,8 @@ func TestDocumentBlobPromotionPostgres(t *testing.T) {
 	require.Equal(t, replacement.Node, current)
 }
 
-func TestDocumentReintroducedPackMappingsPostgres(t *testing.T) {
+func checkDocumentReintroducedPackMappingsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
 	setup, owner := pgtest.NewDatabase(t)

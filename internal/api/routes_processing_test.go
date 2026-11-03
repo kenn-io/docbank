@@ -259,7 +259,7 @@ func TestProcessingCoverageTracksTrashRestoreAndSupersessionEligibility(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, 1, readCoverage(node.CurrentVersionID).Renditions.Complete)
 
-	replacementHash, replacementSize, err := catalog.Blobs.Write(strings.NewReader("replacement evidence\n"))
+	replacementHash, replacementSize, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("replacement evidence\n"))
 	require.NoError(t, err)
 	replaced, replacement, err := catalog.ReplaceContent(t.Context(), restored.ID, restored.Revision,
 		replacementHash, replacementSize, "text/plain")
@@ -335,23 +335,25 @@ func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/search-validation.txt", "synthetic search evidence\n")
-	for _, mode := range []string{"auto", "lexical", "semantic", "hybrid"} {
+	for _, mode := range []string{"auto", "lexical"} {
 		response, body := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
 			map[string]any{"query": "synthetic", "mode": mode, "profile": "private", "content_first": true})
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 	}
 
 	for _, test := range []struct {
-		name, query, profile string
+		name, query, mode, profile string
 	}{
-		{name: "whitespace query", query: "   ", profile: "private"},
-		{name: "unconfigured profile", query: "synthetic", profile: "missing"},
+		{name: "whitespace query", query: "   ", mode: "lexical", profile: "private"},
+		{name: "unconfigured profile", query: "synthetic", mode: "lexical", profile: "missing"},
+		{name: "semantic without embeddings", query: "synthetic", mode: "semantic", profile: "private"},
+		{name: "hybrid without embeddings", query: "synthetic", mode: "hybrid", profile: "private"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			validationResponse, validationBody := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
-				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile, "content_first": true})
+				map[string]any{"query": test.query, "mode": test.mode, "limit": 1, "profile": test.profile, "content_first": true})
 			searchResponse, searchBody := do(t, ts, http.MethodPost, "/api/v1/search", nil,
-				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
+				map[string]any{"query": test.query, "mode": test.mode, "limit": 1, "profile": test.profile,
 					"content_first": true,
 					"fence": map[string]any{"vault_uid": catalog.VaultID(),
 						"content_version_ids": []string{node.CurrentVersionID}}})
@@ -369,7 +371,7 @@ func TestProcessingSourceFenceResolveRouteFailsClosedWithStableSanitizedErrors(t
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	current := createFileWithContent(t, ts, catalog, "/current.txt", "current\n")
 	oldID := current.CurrentVersionID
-	replacementHash, replacementSize, err := catalog.Blobs.Write(strings.NewReader("replacement\n"))
+	replacementHash, replacementSize, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("replacement\n"))
 	require.NoError(t, err)
 	current, _, err = catalog.ReplaceContent(t.Context(), current.ID, current.Revision,
 		replacementHash, replacementSize, "text/plain")
@@ -767,7 +769,7 @@ func assertProcessingSurvivesDisconnect(t *testing.T, ts *httptest.Server, selec
 	payload, err := json.Marshal(map[string]any{"selector": selector,
 		"plan_fingerprint": plan.Fingerprint, "consent": true})
 	require.NoError(t, err)
-	request, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/processing/jobs", bytes.NewReader(payload))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/json")
 
@@ -1224,7 +1226,7 @@ func configureProcessingTestServiceWithReranker(t *testing.T, reranker retrieval
 		require.NoError(t, err)
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"private": {
@@ -1301,7 +1303,7 @@ func configureProcessingTestServiceWithProviderAndRegistry(t *testing.T,
 	return func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory:    filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			RenditionRuntimes: registry,
@@ -1417,7 +1419,7 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 			CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:test",
 			Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
 			Dimensions: descriptor.Dimension, DisclosureFingerprint: processingTestHash("embedding-disclosure"),
-			DocumentFormatter: descriptor.DocumentFormatter, InputKind: document.EmbeddingInputOriginalFile,
+			DocumentFormatter: descriptor.DocumentFormatter, InputKind: descriptor.InputKinds[0],
 			MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
 			Metric: descriptor.Metric, Model: descriptor.Model, ModelInput: descriptor.ModelInput,
 			Name: "semantic", Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter,
@@ -1425,7 +1427,7 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 		}}
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"private": {
@@ -1438,7 +1440,9 @@ func configureProcessingTestServiceWithProviders(t *testing.T, rendition documen
 	}
 }
 
-type processingTestEmbeddingProvider struct{ descriptor document.EmbeddingDescriptor }
+type processingTestEmbeddingProvider struct {
+	descriptor document.EmbeddingDescriptor
+}
 
 func newProcessingTestEmbeddingProvider(t *testing.T) processingTestEmbeddingProvider {
 	t.Helper()
@@ -1474,7 +1478,7 @@ func (provider processingTestEmbeddingProvider) Descriptor() document.EmbeddingD
 	return provider.descriptor
 }
 
-func (processingTestEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
+func (provider processingTestEmbeddingProvider) Embed(_ context.Context, inputs []document.EmbeddingInput,
 	_ document.EmbeddingAuthorization,
 ) (document.EmbeddingResult, error) {
 	vectors := make([]document.EmbeddingVector, len(inputs))
@@ -1548,7 +1552,7 @@ func TestRenditionDownloadOutlivesRequestTimeout(t *testing.T) {
 	job := processingJobFromStream(t, body)
 	_, full := get(t, ts, "/api/v1/renditions/"+job.AttachmentID, nil)
 	synctest.Test(t, func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/renditions/"+job.AttachmentID, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/renditions/"+job.AttachmentID, nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
 		writer := &slowRenditionWriter{ResponseRecorder: httptest.NewRecorder(),
 			afterFirstWrite: func() { time.Sleep(61 * time.Second) }}
@@ -1580,7 +1584,7 @@ func TestProcessingReportsConsentExpiredDuringRendition(t *testing.T) { //nolint
 	ts, catalog := newTestServer(t, func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
-		deps.Processing, err = processing.NewService(processing.ServiceConfig{
+		deps.Processing, err = processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate,
 			SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"private": {
@@ -1795,4 +1799,106 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
 	assert.Contains(t, body, `"code":"content_missing"`)
 	assert.NotContains(t, body, "aé界🙂z")
+}
+
+func TestDocumentSearchAllLiveEmptyExplain(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	for _, tc := range []struct {
+		mode  string
+		trace []api.DocumentSearchTrace
+	}{
+		{"lexical", []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 0}}},
+		{"auto", []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 0}}},
+		{"semantic", []api.DocumentSearchTrace{{Code: "semantic_candidates", Count: 0}}},
+		{"hybrid", []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 0}, {Code: "semantic_candidates", Count: 0}, {Code: "fused_candidates", Count: 0}}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+				"profile": "private", "query": "synthetic", "mode": tc.mode,
+				"scope": map[string]any{"kind": "all_live"}, "explain": true,
+			})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var report api.DocumentSearchReport
+			require.NoError(t, json.Unmarshal([]byte(body), &report))
+			assert.Empty(t, report.Results)
+			assert.Equal(t, tc.trace, report.Trace)
+		})
+	}
+}
+
+func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/current.txt", "synthetic current text")
+	client := daemonconn.New(ts.URL, testAPIKey)
+	for _, scope := range []string{"all_live", "explicit_fence"} {
+		t.Run(scope, func(t *testing.T) {
+			request := api.DocumentSearchRequest{Query: "current", Mode: "auto", Profile: "private"}
+			if scope == "all_live" {
+				request.Scope = &api.DocumentSearchScope{Kind: "all_live"}
+			} else {
+				request.Fence = api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
+			}
+			report, err := client.SearchDocuments(t.Context(), request)
+			require.NoError(t, err)
+			assert.Equal(t, "auto", report.RequestedMode)
+			assert.Equal(t, "lexical", report.ActualMode)
+			require.Len(t, report.Results, 1)
+			assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
+		})
+	}
+}
+
+func TestDocumentSearchAllLiveScope(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/current.txt", "synthetic current text")
+	for _, tc := range []struct {
+		name   string
+		scope  any
+		fence  any
+		media  any
+		status int
+		code   string
+	}{
+		{name: "neither", status: 422, code: "validation"},
+		{name: "both", scope: map[string]any{"kind": "all_live"}, fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}, status: 422, code: "validation"},
+		{name: "media", scope: map[string]any{"kind": "all_live"}, media: []map[string]any{{"source_id": "source-a", "source_version_id": "version-a", "content_version_id": node.CurrentVersionID}}, status: 422, code: "invalid_media_search"},
+		{name: "unknown kind", scope: map[string]any{"kind": "unknown"}, status: 422, code: "validation"},
+		{name: "file as directory", scope: map[string]any{"kind": "all_live", "filters": map[string]any{"under_node_id": node.ID}}, status: 422, code: "not_dir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := map[string]any{"query": "current", "mode": "lexical", "profile": "private"}
+			if tc.scope != nil {
+				request["scope"] = tc.scope
+			}
+			if tc.fence != nil {
+				request["fence"] = tc.fence
+			}
+			if tc.media != nil {
+				request["media_sources"] = tc.media
+			}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+			assert.Equal(t, tc.status, response.StatusCode, body)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(body), &problem))
+			assert.Equal(t, tc.code, problem.Code, body)
+		})
+	}
+	run, err := catalog.BeginIngest(t.Context(), "watch", "notes")
+	require.NoError(t, err)
+	_, err = catalog.IngestFileExact(t.Context(), run, catalog.RootID(), "current-gone.txt", node.BlobHash, node.Size, "text/plain", "current-gone.txt", "")
+	require.NoError(t, err)
+	require.NoError(t, catalog.ReconcileWatchSourcePresence(t.Context(), "notes", store.WatchPresenceScan{ListedDirs: []string{""}}, time.Now()))
+	client := daemonconn.New(ts.URL, testAPIKey)
+	request := api.DocumentSearchRequest{Query: "current", Mode: "lexical", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
+	report, err := client.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	request.Scope.Filters = &api.DocumentSourceFenceFilters{SourcePresent: true}
+	report, err = client.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
 }

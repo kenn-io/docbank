@@ -16,12 +16,14 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestStorageTransactionsSQLite(t *testing.T) {
+func checkStorageTransactionsSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkStorageTransactions(t, newTestStore(t))
 }
 
-func TestStorageTransactionsPostgres(t *testing.T) {
+func checkStorageTransactionsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkStorageTransactions(t, newPostgresQueryStore(t))
 }
@@ -99,7 +101,8 @@ func checkStorageTransactions(t *testing.T, s *Store) {
 	}
 }
 
-func TestStorageWriterAdmissionPostgres(t *testing.T) {
+func checkStorageWriterAdmissionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, outcome := range []string{"commit", "rollback", "cancel waiter"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -159,7 +162,7 @@ func TestStorageWriterAdmissionPostgres(t *testing.T) {
 			go func() {
 				defer close(secondDone)
 				secondErr = s.withStorageTx(waitCtx, func(tx *sql.Tx) error {
-					node, err := nodeByIDTx(tx, s.RootID())
+					node, err := nodeByIDTx(t.Context(), tx, s.RootID())
 					if err != nil {
 						return err
 					}
@@ -217,7 +220,8 @@ func TestStorageWriterAdmissionPostgres(t *testing.T) {
 	}
 }
 
-func TestStorageWritersSeparateSchemasPostgres(t *testing.T) {
+func checkStorageWritersSeparateSchemasPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	setup, owner := pgtest.NewDatabase(t)
 	first := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "first_vault", SchemaOwner: owner})

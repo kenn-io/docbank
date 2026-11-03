@@ -152,7 +152,7 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	t.Parallel()
 	var cfg config.Config
 	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
-	sourceHash, sourceSize, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
+	sourceHash, sourceSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("%PDF-1.4 synthetic source"))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
 		renditionTextConfig(d)
 		configured = d.Cfg
 	})
-	pdfHash, pdfSize, err := configuredStore.Blobs.Write(strings.NewReader("%PDF unprocessed"))
+	pdfHash, pdfSize, err := configuredStore.Blobs.WriteContext(t.Context(), strings.NewReader("%PDF unprocessed"))
 	require.NoError(t, err)
 	pdf, err := configuredStore.CreateFile(t.Context(), configuredStore.RootID(), "unprocessed.pdf", pdfHash, pdfSize, "application/pdf")
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestRenditionTextHTTPKeepsSnapshotWithoutRenditionFrozenAfterPublication(t 
 		t.Run("shared_build="+strconv.FormatBool(sharedBuild), func(t *testing.T) {
 			var cfg config.Config
 			ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
-			hash, size, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("%PDF-1.4 synthetic source"))
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
 			require.NoError(t, err)
@@ -364,7 +364,7 @@ func TestRenditionTextHTTPReportsFailedLiveProcessing(t *testing.T) {
 		profile, err := d.Cfg.ProcessingProfile("archive")
 		require.NoError(t, err)
 		d.Gate = api.NewOperationGate()
-		d.Processing, err = processing.NewService(processing.ServiceConfig{
+		d.Processing, err = processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
 			SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
 			Profiles: map[string]processing.ProfileConfig{"archive": {

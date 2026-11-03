@@ -44,7 +44,7 @@ func TestBatchTagsReplayAfterInterveningChange(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
@@ -110,7 +110,7 @@ func TestBatchTagsRejectsInvalidStructureWithoutWrites(t *testing.T) {
 		})
 	}
 	var receipts, assignments int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM batch_tag_receipts),
 		(SELECT COUNT(*) FROM node_tags)`).Scan(&receipts, &assignments))
 	assert.Zero(t, receipts)
@@ -120,9 +120,9 @@ func TestBatchTagsRejectsInvalidStructureWithoutWrites(t *testing.T) {
 	assert.Equal(t, node.Revision, unchanged.Revision)
 }
 
-func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")
 	require.NoError(t, err)
@@ -156,8 +156,8 @@ func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
 	canonical, err := canonicalBatchTagReceiptV1JSON(receipt)
 	require.NoError(t, err)
 	var stored []byte
-	require.NoError(t, s.db.QueryRow(`SELECT receipt_json FROM batch_tag_receipts
-		WHERE operation_id=?`, receipt.OperationID).Scan(&stored))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT receipt_json FROM batch_tag_receipts
+		WHERE operation_id=$1`, receipt.OperationID).Scan(&stored))
 	assert.Equal(t, canonical, stored)
 	request.Nodes = []BatchTagTarget{
 		{NodeID: first.ID, Revision: first.Revision},
@@ -168,11 +168,11 @@ func TestBatchTagsMixedChangesNoOpsAndCallerOrder(t *testing.T) {
 	assert.Equal(t, receipt, reorderedReplay)
 }
 
-func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
-	t.Parallel()
+func checkBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, count := range []int{1, maxBatchTagTargets} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			nodes := createBatchTagDirectories(t, s, count)
 			tag, err := s.CreateTag(t.Context(), "Bounded")
 			require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestBatchTagsAcceptsOneAndOneThousandTargets(t *testing.T) {
 			require.NoError(t, err)
 			assert.Zero(t, removed.AssignmentCount)
 			assert.Equal(t, tag.Revision+2*int64(count), removed.TagRevision)
-			require.NoError(t, s.ValidateMetadata(t.Context()))
+			checkRetentionMetadata(t, s)
 		})
 	}
 }
@@ -253,7 +253,7 @@ func TestBatchTagsRejectsLateInvalidTargetAtomically(t *testing.T) {
 			require.NoError(t, readErr)
 			assert.Equal(t, tag, currentTag)
 			var receipts, assignments int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM batch_tag_receipts),
 				(SELECT COUNT(*) FROM node_tags WHERE node_id=?)`, first.ID,
 			).Scan(&receipts, &assignments))
@@ -282,7 +282,7 @@ func TestBatchTagsRejectsRevisionOverflowBeforeWrites(t *testing.T) {
 			if test.name == "tag" {
 				id = tag.ID
 			}
-			_, err = s.db.Exec(test.update, int64(math.MaxInt64), id)
+			_, err = s.db.ExecContext(t.Context(), test.update, int64(math.MaxInt64), id)
 			require.NoError(t, err)
 			if test.name == "node" {
 				node.Revision = math.MaxInt64
@@ -294,7 +294,7 @@ func TestBatchTagsRejectsRevisionOverflowBeforeWrites(t *testing.T) {
 			})
 			require.ErrorIs(t, err, ErrInvalidBatchTag)
 			var receipts, assignments int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM batch_tag_receipts),
 				(SELECT COUNT(*) FROM node_tags)`).Scan(&receipts, &assignments))
 			assert.Zero(t, receipts)
@@ -306,10 +306,10 @@ func TestBatchTagsRejectsRevisionOverflowBeforeWrites(t *testing.T) {
 func TestBatchTagsConcurrentSameOperationReturnsOneReceipt(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "vault.db")
-	firstStore, err := Open(dbPath)
+	firstStore, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, firstStore.Close()) })
-	secondStore, err := Open(dbPath)
+	secondStore, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, secondStore.Close()) })
 	node, err := firstStore.Mkdir(t.Context(), firstStore.RootID(), "concurrent")
@@ -338,7 +338,7 @@ func TestBatchTagsConcurrentSameOperationReturnsOneReceipt(t *testing.T) {
 	}
 	assert.Equal(t, receipts[0], receipts[1])
 	var receiptRows, assignments int
-	require.NoError(t, firstStore.db.QueryRow(`SELECT
+	require.NoError(t, firstStore.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM batch_tag_receipts),
 		(SELECT COUNT(*) FROM node_tags)`).Scan(&receiptRows, &assignments))
 	assert.Equal(t, 1, receiptRows)
@@ -348,7 +348,7 @@ func TestBatchTagsConcurrentSameOperationReturnsOneReceipt(t *testing.T) {
 func TestBatchTagsReplaysAfterRestartDeletionAndNodePurge(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "vault.db")
-	s, err := Open(dbPath)
+	s, err := Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	node, err := s.Mkdir(t.Context(), s.RootID(), "historical")
 	require.NoError(t, err)
@@ -363,7 +363,7 @@ func TestBatchTagsReplaysAfterRestartDeletionAndNodePurge(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	s, err = Open(dbPath)
+	s, err = Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	restarted, err := s.BatchTags(t.Context(), request)
@@ -420,7 +420,7 @@ func TestBatchTagsPropagatesCanceledContextAndBackendErrors(t *testing.T) {
 	_, err = s.PreviewBatchTags(ctx, tag.ID, request.Nodes)
 	require.ErrorIs(t, err, context.Canceled)
 
-	closed, err := Open(filepath.Join(t.TempDir(), "closed.db"))
+	closed, err := Open(t.Context(), filepath.Join(t.TempDir(), "closed.db"))
 	require.NoError(t, err)
 	closedNode, err := closed.Mkdir(t.Context(), closed.RootID(), "closed")
 	require.NoError(t, err)
@@ -458,7 +458,7 @@ func TestAuditedBatchTagsCommitAndReplayCanonicalHistory(t *testing.T) {
 	assert.True(t, receipt.Nodes[1].Changed)
 	assert.Equal(t, "tag_assign", auditEventKindForSequence(t, s, 3))
 	var before int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`).Scan(&before))
 	assert.Equal(t, int64(3), before)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
@@ -467,7 +467,7 @@ func TestAuditedBatchTagsCommitAndReplayCanonicalHistory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, receipt, replayed)
 	var after int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`).Scan(&after))
 	assert.Equal(t, before, after)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
@@ -494,7 +494,7 @@ func TestAuditedBatchTagsRollsBackEarlierTargetWhenLaterTargetIsUnsupported(t *t
 	require.NoError(t, err)
 	assert.Equal(t, tag, currentTag)
 	var sequence, receipts, assignments int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT COUNT(*) FROM batch_tag_receipts),
 		(SELECT COUNT(*) FROM node_tags WHERE tag_id=?)`, tag.ID,
@@ -511,17 +511,11 @@ func createBatchTagDirectories(t *testing.T, s *Store, count int) []Node {
 	recordedAt := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC).Format(timestampLayout)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		for i := range count {
-			row, err := tx.ExecContext(t.Context(), `INSERT INTO nodes(
-				parent_id,name,kind,created_at,modified_at) VALUES(?,?,'dir',?,?)`,
-				s.RootID(), fmt.Sprintf("node-%04d", i), recordedAt, recordedAt)
+			id, err := s.insertNodeTx(t.Context(), tx, s.RootID(), fmt.Sprintf("node-%04d", i), nodeKindDir, nil, recordedAt)
 			if err != nil {
 				return err
 			}
-			id, err := row.LastInsertId()
-			if err != nil {
-				return err
-			}
-			node, err := nodeByIDTx(tx, id)
+			node, err := nodeByIDTx(t.Context(), tx, id)
 			if err != nil {
 				return err
 			}
@@ -532,9 +526,9 @@ func createBatchTagDirectories(t *testing.T, s *Store, count int) []Node {
 	return result
 }
 
-func TestPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.Mkdir(ctx, s.RootID(), "first")
 	require.NoError(t, err)
@@ -567,14 +561,14 @@ func TestPreviewBatchTagsExactMembershipAndStaleFences(t *testing.T) {
 		},
 	}, preview)
 	var receipts int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
 	assert.Zero(t, receipts)
 
 	targets[2].Revision--
 	stale, err := s.PreviewBatchTags(ctx, tag.ID, targets)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Zero(t, stale)
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
 	assert.Zero(t, receipts)
 }
 
@@ -611,7 +605,7 @@ func TestPreviewBatchTagsAllNoneAndInvalidTargets(t *testing.T) {
 		assert.True(t, node.Assigned)
 	}
 	var receipts int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM batch_tag_receipts`).Scan(&receipts))
 	assert.Zero(t, receipts)
 
 	for name, invalid := range map[string][]BatchTagTarget{

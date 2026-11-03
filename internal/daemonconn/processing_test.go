@@ -432,6 +432,12 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 				}},
 			}}}
 	}
+	imageEvidence := func(report *api.DocumentSearchReport) *api.DocumentEvidenceReference {
+		evidence := &report.Results[0].Evidence[0]
+		evidence.InputKind, evidence.InputID = "image", "preview"
+		evidence.BuildID, evidence.TimeSpan = "", nil
+		return evidence
+	}
 	tests := []struct {
 		name   string
 		mutate func(*api.DocumentSearchReport)
@@ -474,6 +480,12 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 		{name: "inconsistent evidence identity", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Evidence[0].EmbeddingSetID = ""
 		}},
+		{name: "image build", mutate: func(report *api.DocumentSearchReport) {
+			imageEvidence(report).BuildID = strings.Repeat("f", 64)
+		}},
+		{name: "image time", mutate: func(report *api.DocumentSearchReport) {
+			imageEvidence(report).TimeSpan = &api.MediaTimeSpan{StartMS: 0, EndMS: 1000}
+		}},
 		{name: "relative path", mutate: func(report *api.DocumentSearchReport) {
 			report.Results[0].Path = "visible.pdf"
 		}},
@@ -507,6 +519,34 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, versionID, report.Results[0].ContentVersionID)
+
+	image := validReport()
+	imageEvidence(&image)
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, image))
+	}))
+	t.Cleanup(imageServer.Close)
+	report, err = daemonconn.New(imageServer.URL, serverKey).SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, "image", report.Results[0].Evidence[0].InputKind)
+
+	hybridRequest := request
+	hybridRequest.Mode = "hybrid"
+	fallback := validReport()
+	fallback.RequestedMode, fallback.ActualMode = "hybrid", "lexical"
+	fallback.Results[0].SemanticRank, fallback.Results[0].LexicalRank = 0, 1
+	fallback.Results[0].Evidence = []api.DocumentEvidenceReference{{Kind: "node_name"}}
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, fallback))
+	}))
+	t.Cleanup(fallbackServer.Close)
+	report, err = daemonconn.New(fallbackServer.URL, serverKey).SearchDocuments(t.Context(), hybridRequest)
+	require.NoError(t, err)
+	assert.Equal(t, "hybrid", report.RequestedMode)
+	assert.Equal(t, "lexical", report.ActualMode)
+	assert.Equal(t, 1, report.Results[0].LexicalRank)
 }
 
 func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {
@@ -984,6 +1024,28 @@ func TestProcessingClientValidatesStatusEmbeddingIdentities(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, job.ID, got.ID, "retain the already validated durable receipt")
 			assert.Empty(t, got.EmbeddingJobIDs, "reject unvalidated terminal identities")
+		})
+	}
+}
+
+func TestProcessingClientValidatesScopedSearchResponse(t *testing.T) {
+	for _, name := range []string{"valid"} {
+		t.Run(name, func(t *testing.T) {
+			request := api.DocumentSearchRequest{Query: "visible", Mode: "hybrid", Profile: "private", Scope: &api.DocumentSearchScope{Kind: "all_live"}}
+			report := api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid",
+				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 4099, CompleteDocuments: 2, State: "incomplete"},
+				Results: []api.DocumentSearchResult{
+					{VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 7, ContentVersionID: "22222222-2222-4222-8222-222222222222", Rank: 1, LexicalRank: 1, Score: 1, Path: "/visible.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}},
+					{VaultUID: "11111111-1111-4111-8111-111111111111", NodeID: 8, ContentVersionID: "33333333-3333-4333-8333-333333333333", Rank: 2, LexicalRank: 2, Score: .5, Path: "/visible-2.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}},
+				}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(w, report))
+			}))
+			t.Cleanup(server.Close)
+			result, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), request)
+			require.NoError(t, err)
+			assert.Len(t, result.Results, 2)
 		})
 	}
 }

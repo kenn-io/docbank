@@ -285,3 +285,56 @@ it("shows a query syntax example as the placeholder in query syntax mode", async
   expect(input.placeholder).toBe("rating:5 pick label:red");
   photos.dispose();
 });
+it.each([
+  ["provider_unavailable", "text"],
+  ["", "semantic"],
+] as const)(
+  "reports metadata fallback as the executed search mode: %s %s",
+  async (fallback_reason, executed) => {
+    const searchOutcome = vi.mocked(actions.reportSearch);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            items: [],
+            total: 0,
+            facets: [],
+            snapshot_id: "meaning-snapshot",
+            requested_mode: "semantic",
+            actual_mode: fallback_reason ? "lexical" : "semantic",
+            fallback_reason,
+          }),
+        ),
+      ),
+    );
+    const photos = new Photos("scoped", vi.fn());
+    photos.started = true;
+    render(PhotoSearch, { photos });
+    await fireEvent.click(screen.getByRole("combobox", { name: "Find by: Metadata" }));
+    await fireEvent.click(await screen.findByRole("option", { name: "Meaning" }));
+    const search = screen.getByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "sunset" } });
+    await fireEvent.submit(search.closest("form")!);
+    await waitFor(() =>
+      expect(searchOutcome).toHaveBeenCalledExactlyOnceWith("scoped", executed, true),
+    );
+    photos.dispose();
+  },
+);
+
+it("clears Meaning search into metadata browse", async () => {
+  const photos = new Photos("synthetic", vi.fn());
+  photos.query = { ...photos.query, text: "sunset", mode: "semantic" };
+  const submit = vi.spyOn(photos, "setQuery").mockResolvedValue(undefined);
+  render(PhotoSearch, { photos });
+  await fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(submit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: "",
+      mode: "lexical",
+    }),
+    undefined,
+  );
+  photos.dispose();
+});

@@ -32,7 +32,7 @@ type pdfReportFixture struct {
 func newPDFReportFixture(t *testing.T) *pdfReportFixture {
 	t.Helper()
 	f := &pdfReportFixture{root: t.TempDir(), reportRenditionFixture: newReportRenditionFixture(t)}
-	catalog, err := store.Open(filepath.Join(f.root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(f.root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(f.root, "blobs"))

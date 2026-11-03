@@ -860,3 +860,32 @@ it("retries incomplete grouping explicitly without resending the frozen run on f
   expect(cull.run?.groupingIncomplete).toBeFalsy();
   expect(cull.run?.groups).toEqual([ids]);
 });
+
+it("starts from supplied IDs without capturing", async () => {
+  const capture = vi.spyOn(api, "createWorkspaceQuery");
+  const ids = [photo(2).asset_id, photo(1).asset_id, photo(3).asset_id];
+  const flags = vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
+    items: [
+      { asset_id: ids[0]!, flag: "" },
+      { asset_id: ids[1]!, flag: "pick" },
+      { asset_id: ids[2]!, flag: "" },
+    ],
+  });
+  const store = storage();
+  const cull = new PhotoCull("session", store);
+  const filtered = {
+    ...query,
+    mode: "semantic" as const,
+    filters: { tag_ids: ["00000000-0000-4000-8000-000000000099"] },
+  };
+  expect(await cull.start(filtered, () => true, ids)).toBe(true);
+  expect(cull.run?.ids).toEqual(ids);
+  expect(cull.run?.checkpoint.pass).toEqual([ids[0], ids[2]]);
+  expect(flags).toHaveBeenCalledExactlyOnceWith(
+    { asset_ids: ids },
+    expect.objectContaining({ session: "session", signal: expect.any(AbortSignal) }),
+  );
+  expect(capture).not.toHaveBeenCalled();
+  await cull.flush();
+  expect((await store.load())?.ids).toEqual(ids);
+});

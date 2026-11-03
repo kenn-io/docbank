@@ -29,7 +29,7 @@ var (
 )
 
 var editCmd = &cobra.Command{
-	Example: `  docbank edit /cases/acme/notes.md --editor vi`,
+	Example: `  docbank document edit /cases/acme/notes.md --editor vi`,
 	GroupID: groupDocuments,
 	Use:     "edit <path-or-id>",
 	Short:   "Edit a file through a new immutable content version",
@@ -99,7 +99,7 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 	)
 	process.Stdin = cmd.InOrStdin()
 	process.Stdout = cmd.OutOrStdout()
-	process.Stderr = cmd.ErrOrStderr()
+	process.Stderr = editorStderrWriter(cmd.ErrOrStderr())
 	if err := process.Run(); err != nil {
 		return fmt.Errorf("editor %q failed: %w", editor[0], err)
 	}
@@ -206,6 +206,20 @@ func runEdit(cmd *cobra.Command, vaultPath string) (retErr error) {
 		return fmt.Errorf("writing edit result: %w", err)
 	}
 	return nil
+}
+
+func editorStderrWriter(stderr io.Writer) io.Writer {
+	diagnostics, ok := stderr.(*cliDiagnosticWriter)
+	if !ok {
+		return stderr
+	}
+	file, ok := diagnostics.Writer.(*os.File)
+	if !ok {
+		return stderr
+	}
+	// A non-file writer makes os/exec copy through a pipe. An editor child may
+	// inherit that pipe and keep Run waiting after the configured editor exits.
+	return file
 }
 
 func editorCommand(override string) ([]string, error) {
@@ -364,5 +378,5 @@ func init() {
 		"set the media type on the new version instead of preserving the current type")
 	editCmd.Flags().StringVar(&editProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain")
-	rootCmd.AddCommand(editCmd)
+	registerGroupedCommand(documentCmd, editCmd, "edit")
 }

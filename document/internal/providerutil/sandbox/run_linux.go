@@ -116,7 +116,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (result Result, er
 			_ = command.Process.Kill()
 		}
 	})
-	command = exec.Command( //nolint:gosec // the sealed executable and complete policy are authenticated below
+	command = exec.CommandContext(ctx, //nolint:gosec // the sealed executable and complete policy are authenticated below
 		"/proc/self/exe", launcherMarker, launchToken, request.Policy.Executable,
 	)
 	command.Dir = request.Policy.Directory
@@ -141,17 +141,10 @@ func (nativeRunner) Run(ctx context.Context, request Request) (result Result, er
 	_ = executable.Close()
 	_ = statusWriter.Close()
 
-	waited := make(chan error, 1)
-	go func() { waited <- command.Wait() }()
 	launcherStatus := make(chan launcherRunStatus, 1)
 	go func() { launcherStatus <- launcherStatusRead(statusReader) }()
-	var runErr error
-	select {
-	case runErr = <-waited:
-	case <-ctx.Done():
-		_ = command.Process.Kill()
-		runErr = <-waited
-	}
+	// CommandContext kills the launcher when ctx ends.
+	runErr := command.Wait()
 	status := <-launcherStatus
 	result = Result{
 		Stdout: output.Bytes(),

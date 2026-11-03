@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	querypkg "go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 	"go.kenn.io/kit/search/lexical"
 	"go.kenn.io/kit/search/sqlitefts"
@@ -92,6 +93,28 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	opts, err = s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
+	}
+	if opts.PhotoScope != nil {
+		request := *opts.PhotoScope
+		if opts.PhotoLexicalQuery == nil {
+			return nil, false, ErrInvalidPhotoQuery
+		}
+		request.Query = *opts.PhotoLexicalQuery
+		request.Query.Mode = querypkg.ModeLexical
+		request.Query.Sort = querypkg.Sort{Field: "relevance", Direction: "desc"}
+		request.PageSize = min(limit+1, MaxPhotoMapPageSize)
+		request.Stacks = false
+		request.Recipes = nil
+		request.Facets = nil
+		page, err := s.ListPhotoAssets(ctx, request, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		hits := make([]ExplainedLexicalCandidate, 0, min(limit, len(page.Items)))
+		for _, row := range page.Items[:min(limit, len(page.Items))] {
+			hits = append(hits, ExplainedLexicalCandidate{Node: Node{ID: row.NodeID, CurrentVersionID: row.ContentVersionID, Name: row.Name, BlobHash: row.sourceHash}, EvidenceKind: "node_name"})
+		}
+		return hits, page.Total > int64(limit), nil
 	}
 	fq := ftsQuery(query)
 	if fq == "" {
@@ -331,16 +354,23 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	PDFFilter           string
+	pdfPredicate        compiledQueryFragment
 	SourcePresent       bool
 	VectorSpaceID       string
 	EmbeddingDescriptor *document.EmbeddingDescriptor
-	SelectedBuilds      []SearchSelectedBuild
-	TagID               string
-	MIMEType            string
-	UnderNodeID         int64
-	ModifiedSince       string
-	ModifiedBefore      string
-	ContentVersionIDs   []string
+	PhotoScope          *PhotoBrowseRequest
+	// PhotoLexicalQuery retains the authored syntax independently of the vector filter scope.
+	PhotoLexicalQuery *querypkg.Query
+	photoFilter       compiledQueryFragment
+	photoLexical      compiledQueryFragment
+	SelectedBuilds    []SearchSelectedBuild
+	TagID             string
+	MIMEType          string
+	UnderNodeID       int64
+	ModifiedSince     string
+	ModifiedBefore    string
+	ContentVersionIDs []string
 }
 
 type SearchSelectedBuild struct {
@@ -351,7 +381,7 @@ type SearchSelectedBuild struct {
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS
 // query without the tag or time anchor required for a bounded filter page.
 func SearchNeedsQuery(query string, opts SearchOptions) bool {
-	return ftsQuery(query) == "" && opts.TagID == "" &&
+	return ftsQuery(query) == "" && opts.PDFFilter == "" && opts.TagID == "" &&
 		opts.ModifiedSince == "" && opts.ModifiedBefore == ""
 }
 
@@ -388,8 +418,11 @@ type RevalidatedSearchCandidate struct {
 
 // SearchEvidenceIdentity is the stable authority needed to prove that one
 // result still cites current serving evidence. NodeName is the name a
-// node_name match was read with; a rename invalidates that evidence.
+// node_name match was read with; a rename invalidates that evidence. Each item
+// names its own file version when duplicate photos contribute different signals.
 type SearchEvidenceIdentity struct {
+	NodeID                 int64                       `json:"node_id"`
+	ContentVersionID       string                      `json:"version_id"`
 	Kind                   string                      `json:"kind"`
 	NodeName               string                      `json:"node_name,omitempty"`
 	VectorSpaceID          string                      `json:"vector_space_id,omitempty"`
@@ -433,6 +466,9 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		}
 		payload[i] = searchCandidateRevalidationJSON(candidate)
 		for _, evidence := range candidate.Evidence {
+			if evidence.NodeID <= 0 || evidence.ContentVersionID == "" {
+				return SearchCandidateRevalidation{}, errors.New("search evidence document identity is incomplete")
+			}
 			if evidence.Kind == "rendition_segment" {
 				hasRenditionEvidence = true
 			}
@@ -454,10 +490,10 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	if err != nil {
 		return SearchCandidateRevalidation{}, err
 	}
-	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SearchCandidateRevalidation
 	var allowedPositions []int
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
+		filterSQL, filterArgs := searchFilterSQL(normalized)
 		if semanticProfileFingerprint != "" || semanticBindingID != "" {
 			if semanticProfileFingerprint == "" || semanticBindingID == "" {
 				return errors.New("semantic search coverage authority is incomplete")
@@ -500,68 +536,25 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 					JOIN rendition_attachments ra ON ra.build_id=ls.build_id
 					JOIN rendition_heads rh ON rh.content_version_id=ra.content_version_id
 					 AND rh.profile_fingerprint=ra.profile_fingerprint AND rh.attachment_id=ra.attachment_id
-					WHERE lh.singleton=1 AND ra.content_version_id=scoped.version_id
+					WHERE lh.singleton=1 AND ra.content_version_id=source.version_id
 					 AND ls.build_id=json_extract(evidence.value,'$.build_id')
 					 AND ls.segment_id=json_extract(evidence.value,'$.segment_id'))`
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, semanticSpace)
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
 				}
 				return captureErr
 			}
-			if current.ManifestChecksum != semanticSource {
+			if current != semanticSource {
 				return ErrVectorIndexSourceStale
 			}
 		}
-		args := append([]any{string(encoded)}, filterArgs...)
-		args = append(args, semanticProfileFingerprint, semanticBindingID)
-		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
-			SELECT CAST(key AS INTEGER) AS position,
-			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
-			       json_extract(value,'$.version_id') AS version_id,
-			       json_extract(value,'$.evidence') AS evidence
-			FROM json_each(?)
-		), scoped AS (
-			SELECT requested.position,requested.node_id,requested.version_id,requested.evidence,cv.blob_hash,
-			       n.name AS current_name
-			FROM requested JOIN nodes n ON n.id=requested.node_id
-			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-			 AND cv.version_id=requested.version_id
-			WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL+`
-		)
-		SELECT scoped.position FROM scoped
-		WHERE NOT EXISTS (
-			SELECT 1 FROM json_each(scoped.evidence) evidence
-			WHERE CASE json_extract(evidence.value,'$.kind')
-			WHEN 'node_name' THEN scoped.current_name IS NOT json_extract(evidence.value,'$.node_name')
-			WHEN 'content_blob' THEN NOT (
-				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
-				json_extract(evidence.value,'$.blob_hash')=scoped.blob_hash)
-			`+renditionEvidenceSQL+`
-			WHEN 'embedding' THEN NOT EXISTS (
-				SELECT 1 FROM embedding_heads eh
-				JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
-				 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
-				 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
-				 AND es.profile_fingerprint=eh.profile_fingerprint
-				JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
-				JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
-				 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
-				JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
-				WHERE eh.content_version_id=scoped.version_id
-				 AND eh.vector_space_id=json_extract(evidence.value,'$.vector_space_id')
-				 AND eh.embedding_set_id=json_extract(evidence.value,'$.embedding_set_id')
-				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
-				 AND es.profile_fingerprint=? AND es.binding_id=?
-				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
-				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
-				 AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`))
-			ELSE 1 END
-		) ORDER BY scoped.position`, args...)
+		args := slices.Concat([]any{string(encoded)}, filterArgs, normalized.photoLexical.args, []any{semanticProfileFingerprint, semanticBindingID})
+		rows, queryErr := tx.QueryContext(ctx, searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL, normalized), args...)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -606,11 +599,72 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	return result, nil
 }
 
+func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts SearchOptions) string {
+	differentSourceSQL := "source.node_id<>scoped.node_id"
+	if opts.CollapsesPhotoDuplicates() {
+		differentSourceSQL += " AND source.blob_hash<>scoped.blob_hash"
+	}
+	return `WITH requested AS (
+			SELECT CAST(key AS INTEGER) AS position,
+			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
+			       json_extract(value,'$.version_id') AS version_id,
+			       json_extract(value,'$.evidence') AS evidence
+			FROM json_each(?)
+		), identities AS (
+			SELECT node_id,version_id FROM requested
+			UNION
+			SELECT CAST(json_extract(evidence.value,'$.node_id') AS INTEGER),
+			       json_extract(evidence.value,'$.version_id')
+			FROM requested,json_each(requested.evidence) evidence
+		), live AS (
+			SELECT n.id AS node_id,cv.version_id,cv.blob_hash,n.name AS current_name
+			FROM identities JOIN nodes n ON n.id=identities.node_id
+			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+			 AND cv.version_id=identities.version_id
+			WHERE n.kind='file' AND n.trashed_at IS NULL ` + filterSQL + `
+		), scoped AS (
+			SELECT requested.*,live.blob_hash FROM requested JOIN live
+			 ON live.node_id=requested.node_id AND live.version_id=requested.version_id
+		)
+		SELECT scoped.position FROM scoped
+		WHERE NOT EXISTS (
+			SELECT 1 FROM json_each(scoped.evidence) evidence
+			LEFT JOIN live source ON source.node_id=CAST(json_extract(evidence.value,'$.node_id') AS INTEGER)
+			 AND source.version_id=json_extract(evidence.value,'$.version_id')
+			WHERE source.node_id IS NULL OR (` + differentSourceSQL + `) OR CASE json_extract(evidence.value,'$.kind')
+			` + nameEvidenceSQL(opts.photoLexical) + `
+			WHEN 'content_blob' THEN NOT (
+				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
+				json_extract(evidence.value,'$.blob_hash')=source.blob_hash)
+			` + renditionEvidenceSQL + `
+			WHEN 'embedding' THEN NOT EXISTS (
+				SELECT 1 FROM embedding_heads eh
+				JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
+				 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
+				 AND es.input_kind=eh.input_kind AND es.vector_space_id=eh.vector_space_id
+				 AND es.profile_fingerprint=eh.profile_fingerprint
+				JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
+				JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
+				 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
+				JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+				WHERE eh.content_version_id=source.version_id
+				 AND eh.vector_space_id=json_extract(evidence.value,'$.vector_space_id')
+				 AND eh.embedding_set_id=json_extract(evidence.value,'$.embedding_set_id')
+				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
+				 AND es.profile_fingerprint=? AND es.binding_id=?
+				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
+				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
+				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `)))
+			ELSE 1 END
+		) ORDER BY scoped.position`
+}
+
 // SemanticSearchCandidate is one vector neighbor reduced to a current,
 // scope-eligible document with bounded original-file text when available.
 // Retrieval resolves rendition-chunk text from the exact retained input.
 type SemanticSearchCandidate struct {
 	BlobHash          string
+	modifiedAt        string
 	VaultID           string
 	NodeID            int64
 	NodeRevision      int64
@@ -626,31 +680,26 @@ type SemanticSearchCandidate struct {
 	MediaEvidence     SearchMediaEvidence
 }
 
-// SemanticSearchResolution binds ranked candidates and coverage to the same
+// SemanticSearchResolution binds ranked candidates to the
 // current-head snapshot after query embedding and vector search complete.
 type SemanticSearchResolution struct {
 	SourceManifestChecksum string
 	Candidates             []SemanticSearchCandidate
 	Truncated              bool
-	ScopedDocuments        int
-	CompleteDocuments      int
 	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
 	NextNeighbor int
 }
 
 // SemanticSearchAuthority pins the exact persisted vector-space descriptor and
-// one active local index generation for a query. ANNRows is the source-fenced
-// subset that must be supplied to vector search before it scores any row.
-// Required and Complete count current documents after applying the operator
-// scope.
+// one active local index generation for a query. WholeSpace permits scoring the
+// entire generation; otherwise ANNRows limits scoring to the source-fenced scope.
 type SemanticSearchAuthority struct {
-	VectorSpace       EmbeddingVectorSpaceRecord
-	Lease             VectorIndexReaderLease
-	InputKind         document.EmbeddingInputKind
-	BindingRequired   bool
-	ScopedDocuments   int
-	CompleteDocuments int
-	ANNRows           []vectorindex.RowIdentity
+	VectorSpace     EmbeddingVectorSpaceRecord
+	Lease           VectorIndexReaderLease
+	InputKind       document.EmbeddingInputKind
+	BindingRequired bool
+	ANNRows         []vectorindex.RowIdentity
+	WholeSpace      bool
 }
 
 // AcquireSemanticSearchAuthority resolves the query contract from durable E1
@@ -677,19 +726,14 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		vectorSpaceID = normalized.VectorSpaceID
 	}
 	if similar != nil {
-		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 		})
 		if err != nil {
 			return SemanticSearchAuthority{}, err
 		}
 	}
-	var space EmbeddingVectorSpaceRecord
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var loadErr error
-		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
-		return loadErr
-	})
+	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -707,9 +751,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	release := func() {
 		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
-	current, required, complete, annRows, err := s.semanticSearchAuthorityFence(ctx,
+	current, annRows, wholeSpace, err := s.semanticSearchAuthorityFence(ctx,
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
-	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+	if err != nil || current != lease.Generation.SourceManifestChecksum {
 		release()
 		if err != nil {
 			return SemanticSearchAuthority{}, err
@@ -726,65 +770,92 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
 		BindingRequired: binding.Activation == document.EmbeddingRequired,
-		ScopedDocuments: required, CompleteDocuments: complete, ANNRows: annRows}, nil
+		ANNRows:         annRows, WholeSpace: wholeSpace}, nil
 }
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
-) (source VectorIndexSource, required, complete int, annRows []vectorindex.RowIdentity, retErr error) {
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+) (source string, annRows []vectorindex.RowIdentity, wholeSpace bool, retErr error) {
+	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
 			if err := similar.load(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
 				return err
 			}
 		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
 		}
-		required, complete, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
-			bindingID, inputKind, vectorSpaceID, opts)
-		if err != nil {
-			return err
-		}
-		filterSQL, filterArgs := searchFilterSQL(opts)
-		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs)
-		if err != nil {
-			return err
-		}
-		annRows = make([]vectorindex.RowIdentity, 0, len(eligible))
-		for key := range eligible {
-			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
-				InputKey: key.InputID, InputChecksum: key.InputChecksum})
-		}
-		sort.Slice(annRows, func(left, right int) bool {
-			if annRows[left].SetID != annRows[right].SetID {
-				return annRows[left].SetID < annRows[right].SetID
-			}
-			if annRows[left].InputKey != annRows[right].InputKey {
-				return annRows[left].InputKey < annRows[right].InputKey
-			}
-			return annRows[left].InputChecksum < annRows[right].InputChecksum
-		})
-		return nil
+		annRows, wholeSpace, err = semanticANNRowsForSourceTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		return err
 	})
-	return source, required, complete, annRows, err
+	return source, annRows, wholeSpace, err
 }
 
-func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
-) (required, complete int, retErr error) {
+func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space string, opts SearchOptions,
+) ([]vectorindex.RowIdentity, bool, error) {
 	filterSQL, filterArgs := searchFilterSQL(opts)
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		filterArgs...).Scan(&required); err != nil {
-		return 0, 0, err
+	if filterSQL == "" && !opts.CollapsesPhotoDuplicates() {
+		return nil, true, nil
 	}
-	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
-	args = append(args, filterArgs...)
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) FROM `+nodeFrom+`
+	rows, err := semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts, filterSQL, filterArgs)
+	return rows, false, err
+}
+
+// semanticANNRowsTx reads eligible rows in the requested scope for SearchRows.
+// This allowlist excludes other bindings, trashed, non-current,
+// out-of-scope, and non-representative rows before scoring.
+func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, filterSQL string, filterArgs []any,
+) ([]vectorindex.RowIdentity, error) {
+	annRows := make([]vectorindex.RowIdentity, 0)
+	var lastHash string
+	var representative int64
+	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+			if opts.CollapsesPhotoDuplicates() {
+				if hash != lastHash {
+					lastHash, representative = hash, nodeID
+				}
+				if nodeID != representative {
+					return
+				}
+			}
+			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
+		})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(annRows, vectorindex.CompareIdentity)
+	return slices.Compact(annRows), nil
+}
+
+// LiveSearchScopeExists reports whether normalized search filters match a live file.
+func (s *Store) LiveSearchScopeExists(ctx context.Context, opts SearchOptions) (bool, error) {
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 `+scopeSQL+` LIMIT 1)`, args...).Scan(&exists)
+	return exists, err
+}
+
+func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) `+scopeSQL, args...).Scan(&count)
+	return count, err
+}
+
+func liveSearchScopeSQL(filterSQL string, filterArgs []any) (string, []any) {
+	return `FROM ` + nodeFrom + `
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL ` + filterSQL, filterArgs
+}
+
+// currentEmbeddingHeadsSQL keeps coverage and semantic retrieval on the same
+// current-source, binding and rendition authority.
+func currentEmbeddingHeadsSQL() string {
+	return `FROM ` + nodeFrom + `
 		JOIN embedding_heads eh ON eh.content_version_id=cv.version_id
 		JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id
 		 AND es.content_version_id=eh.content_version_id AND es.binding_id=eh.binding_id
@@ -792,9 +863,21 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 		 AND es.profile_fingerprint=eh.profile_fingerprint
 		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL
-		  AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=?
-		  AND eh.vector_space_id=?
-		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`) `+filterSQL,
+		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))`
+}
+
+func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+) (required, complete int, retErr error) {
+	required, err := liveSearchScopeCount(ctx, tx, opts)
+	if err != nil {
+		return 0, 0, err
+	}
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
+	args = append(args, filterArgs...)
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
+		AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=? AND eh.vector_space_id=? `+filterSQL,
 		args...).Scan(&complete)
 	return required, complete, err
 }
@@ -818,51 +901,90 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	if err != nil {
 		return SemanticSearchResolution{}, err
 	}
-	filterSQL, filterArgs := searchFilterSQL(normalized)
 	var result SemanticSearchResolution
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
+		current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale
 			}
 			return captureErr
 		}
-		if current.ManifestChecksum != expectedSourceManifest {
+		if current != expectedSourceManifest {
 			return ErrVectorIndexSourceStale
 		}
-		result.SourceManifestChecksum = current.ManifestChecksum
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx,
-			profileFingerprint, bindingID, inputKind, vectorSpaceID, normalized)
-		if err != nil {
-			return err
-		}
-		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs)
-		if loadErr != nil {
-			return loadErr
-		}
-		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
-			neighbors, limit, eligible, excludedNodes)
-		for index := range result.Candidates {
-			candidate := &result.Candidates[index]
-			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
-			if err != nil {
-				return err
-			}
-			if candidate.InputKind == document.EmbeddingInputOriginalFile {
-				candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		result.SourceManifestChecksum = current
+		return s.semanticCandidatesTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, neighbors, limit, normalized, excludedNodes, &result)
 	})
 	if err != nil {
 		return SemanticSearchResolution{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, neighbors []vectorindex.Neighbor, limit int,
+	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution,
+) error {
+	var err error
+	filterSQL, filterArgs := searchFilterSQL(normalized)
+	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	representatives := make(map[string]int64)
+	prefix, walked := min(limit+1, len(neighbors)), 0
+	for {
+		members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+			filterSQL, filterArgs, semanticNeighborKeys(neighbors[walked:prefix]))
+		if err != nil {
+			return err
+		}
+		if normalized.CollapsesPhotoDuplicates() {
+			hashes := []string{}
+			for _, entries := range members {
+				for _, entry := range entries {
+					if _, seen := representatives[entry.BlobHash]; !seen {
+						representatives[entry.BlobHash] = 0
+						hashes = append(hashes, entry.BlobHash)
+					}
+				}
+			}
+			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+				filterSQL, filterArgs, hashes, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+					if representatives[hash] == 0 {
+						representatives[hash] = nodeID
+					}
+				})
+			if err != nil {
+				return err
+			}
+		}
+		for key, entries := range members {
+			for _, entry := range entries {
+				if !normalized.CollapsesPhotoDuplicates() || entry.NodeID == representatives[entry.BlobHash] {
+					eligible[key] = entry
+				}
+			}
+		}
+		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
+			neighbors[:prefix], limit, eligible, excludedNodes)
+		if result.Truncated || prefix == len(neighbors) {
+			break
+		}
+		walked, prefix = prefix, min(prefix*2, len(neighbors))
+	}
+	for index := range result.Candidates {
+		candidate := &result.Candidates[index]
+		candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
+		if err != nil {
+			return err
+		}
+		if candidate.InputKind == document.EmbeddingInputOriginalFile {
+			candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func searchExcerptByVersionTx(ctx context.Context, queryer interface {
@@ -882,56 +1004,113 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 }
 
 type semanticEligibilityKey struct {
-	VectorSetID   string
-	InputID       string
-	InputChecksum string
+	VectorSetID   string `json:"VectorSetID"`
+	InputID       string `json:"InputID"`
+	InputChecksum string `json:"InputChecksum"`
 }
 
-// loadSemanticEligibility performs the only catalog query needed while the
-// exact index's ordered neighbors are reduced. Its result is bounded by the
-// active vector-space catalog (at most one million rows), not by neighbor rank.
-func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
-) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
-	members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, filterSQL, filterArgs)
+// semanticNeighborKeys preserves the unique row identities returned by vector search.
+func semanticNeighborKeys(neighbors []vectorindex.Neighbor) []semanticEligibilityKey {
+	keys := make([]semanticEligibilityKey, len(neighbors))
+	for i, neighbor := range neighbors {
+		keys[i] = semanticEligibilityKey{neighbor.SetID, neighbor.InputKey, neighbor.InputChecksum}
+	}
+	return keys
+}
+
+// semanticMembershipSQL shares current-source and input authority across keyed
+// candidate loads and streaming row scans. The caller chooses the driving index.
+func semanticMembershipSQL(driver string) string {
+	return driver + `
+ JOIN content_versions cv ON cv.version_id=es.content_version_id
+ JOIN nodes n ON n.id=cv.node_id
+ JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
+  AND eh.binding_id=es.binding_id AND eh.input_kind=es.input_kind
+  AND eh.embedding_set_id=es.embedding_set_id AND eh.vector_space_id=es.vector_space_id
+  AND eh.profile_fingerprint=es.profile_fingerprint
+ JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
+ JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
+  AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
+ JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+ LEFT JOIN rendition_attachments ra ON ra.attachment_id=eig.attachment_id
+  AND ra.content_version_id=es.content_version_id AND ra.profile_fingerprint=es.profile_fingerprint
+ LEFT JOIN blobs evidence_blob ON evidence_blob.hash=eig.evidence_fingerprint
+ WHERE es.vector_space_id=?
+  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
+  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
+  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))
+ `
+}
+
+// scanSemanticRows reads the whole space when blobHashes is nil, else only
+// rows whose current content has one of those hashes.
+func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
+	blobHashes []string, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
+) (retErr error) {
+	driver := `FROM embedding_sets es`
+	prefix := ""
+	var args []any
+	if blobHashes != nil {
+		encoded, err := json.Marshal(blobHashes)
+		if err != nil {
+			return err
+		}
+		args = append(args, string(encoded))
+		driver = `FROM json_each(?) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
+   CROSS JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
+	} else if versionFence {
+		// Explicit version fences are bounded to 4096 IDs. Other filters keep
+		// the embedding scan so unembedded files do not drive their cost.
+		prefix = `WITH scoped_versions AS MATERIALIZED (
+   SELECT cv.version_id FROM content_versions cv
+   CROSS JOIN nodes n ON n.id=cv.node_id WHERE 1=1 ` + filterSQL + `) `
+		driver = `FROM scoped_versions scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
+   ON es.content_version_id=scope.version_id`
+		args = append(args, filterArgs...)
+		filterSQL, filterArgs = "", nil
+	}
+	args = append(args, space, profile, binding, kind)
+	args = append(args, filterArgs...)
+	order := ""
+	if representativeOrder {
+		order = " ORDER BY cv.blob_hash," + DuplicateRepresentativeOrder
+	}
+	rows, err := tx.QueryContext(ctx, prefix+`SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
+		semanticMembershipSQL(driver)+filterSQL+order, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate, len(members))
-	for key, entries := range members {
-		eligible[key] = entries[len(entries)-1]
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	for rows.Next() {
+		var key semanticEligibilityKey
+		var nodeID int64
+		var hash string
+		if err := rows.Scan(&key.VectorSetID, &key.InputID, &key.InputChecksum, &nodeID, &hash); err != nil {
+			return err
+		}
+		visit(key, nodeID, hash)
 	}
-	return eligible, nil
+	return rows.Err()
 }
 
 func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, keys []semanticEligibilityKey,
 ) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
-	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
+	encoded, err := json.Marshal(keys)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]any{string(encoded), vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
 	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
 			es.embedding_set_id,es.input_generation_id,es.input_kind,
 			evr.vector_set_id,evr.input_id,evr.checksum,
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
-			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash
-		FROM `+nodeFrom+`
-		JOIN embedding_sets es ON es.content_version_id=cv.version_id
-		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
-		 AND eh.binding_id=es.binding_id AND eh.input_kind=es.input_kind
-		 AND eh.embedding_set_id=es.embedding_set_id AND eh.vector_space_id=es.vector_space_id
-		 AND eh.profile_fingerprint=es.profile_fingerprint
-		JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
-		JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
-		 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
-		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
-		LEFT JOIN rendition_attachments ra ON ra.attachment_id=eig.attachment_id
-		 AND ra.content_version_id=es.content_version_id AND ra.profile_fingerprint=es.profile_fingerprint
-		LEFT JOIN blobs evidence_blob ON evidence_blob.hash=eig.evidence_fingerprint
-		WHERE es.vector_space_id=?
-		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
-		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR `+currentRenditionChunkAuthoritySQL+`)
-		  `+filterSQL, args...)
+			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash,n.modified_at
+  `+semanticMembershipSQL(`FROM json_each(?) k CROSS JOIN embedding_sets es INDEXED BY embedding_sets_vector_set ON es.vector_set_id=json_extract(k.value,'$.VectorSetID')`)+
+		` AND evr.input_id=json_extract(k.value,'$.InputID') AND evr.checksum=json_extract(k.value,'$.InputChecksum')`+
+		filterSQL+` ORDER BY es.vector_set_id,es.embedding_set_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -947,7 +1126,7 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 			&entry.MediaEvidence.BuildID, &entry.MediaEvidence.GenerationBlobHash,
 			&entry.MediaEvidence.GenerationEncodedSize, &entry.MediaEvidence.GenerationChecksum,
 			&entry.MediaEvidence.EvidenceFingerprint, &entry.MediaEvidence.EvidenceEncodedSize,
-			&entry.MediaEvidence.InputCount, &entry.BlobHash); err != nil {
+			&entry.MediaEvidence.InputCount, &entry.BlobHash, &entry.modifiedAt); err != nil {
 			return nil, err
 		}
 		eligible[key] = append(eligible[key], entry)
@@ -1032,7 +1211,7 @@ type LexicalGenerationLease struct {
 
 // lexicalGenerationReaders tracks live reader leases per store. The mutex
 // guards only the map and is held briefly, never while waiting on SQLite.
-// Ordering against collection comes from SQLite itself: a standalone lease
+// Ordering against collection comes from the store transaction: a standalone lease
 // is pinned inside a write transaction, so it serializes with the
 // publication or purge that snapshots pins and deletes generations, and a
 // read-bound lease is pinned inside the read snapshot it serves.
@@ -1048,12 +1227,12 @@ func (s *Store) RecordRenditionBlob(
 	ctx context.Context, hash string, size int64, physical BlobPhysical,
 ) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := s.EnsureBlobTx(tx, hash, size, physical); err != nil {
+		if err := s.EnsureBlobTx(ctx, tx, hash, size, physical); err != nil {
 			return err
 		}
 		if physical.Created {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_blob_staging(blob_hash)
-				VALUES(?) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
+				VALUES($1) ON CONFLICT(blob_hash) DO NOTHING`, hash); err != nil {
 				return fmt.Errorf("marking rendition blob %s as uncommitted staging: %w", hash, err)
 			}
 		}
@@ -1061,7 +1240,7 @@ func (s *Store) RecordRenditionBlob(
 	})
 }
 
-// StageLexicalGeneration builds a complete unreachable FTS projection over
+// StageLexicalGeneration builds a complete unreachable lexical projection over
 // every immutable rendition build currently staged in this vault.
 func (s *Store) StageLexicalGeneration(
 	ctx context.Context, generationID string,
@@ -1304,14 +1483,14 @@ func (s *Store) publishLexicalHeadTx(ctx context.Context, tx *sql.Tx, generation
 		return fmt.Errorf("reading current lexical head: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)
+		INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,$1)
 		ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id`,
 		generationID); err != nil {
 		return fmt.Errorf("publishing lexical head: %w", err)
 	}
 	if previous != "" && previous != generationID {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_superseded(generation_id)
-			VALUES(?) ON CONFLICT(generation_id) DO NOTHING`, previous); err != nil {
+			VALUES($1) ON CONFLICT(generation_id) DO NOTHING`, previous); err != nil {
 			return fmt.Errorf("recording superseded lexical generation %s: %w", previous, err)
 		}
 	}
@@ -1332,7 +1511,7 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 		                  WHERE h.generation_id=g.generation_id)
 		  AND NOT EXISTS (SELECT 1 FROM current_rendition_roots r
 		                  WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
-		                    AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>?))
+		                    AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$1))
 		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j
 		                  WHERE j.lexical_generation_id=g.generation_id)
 		ORDER BY g.generation_id`, nowRFC3339())
@@ -1346,8 +1525,8 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 			continue
 		}
 		for _, statement := range []string{
-			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=?`,
-			`DELETE FROM rendition_lexical_generations WHERE generation_id=?`,
+			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`,
+			`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`,
 		} {
 			if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
 				return removed, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
@@ -1614,7 +1793,8 @@ func (s *Store) withLexicalGenerationRead(
 	var lease *LexicalGenerationLease
 	defer func() {
 		if active {
-			_, err := conn.ExecContext(context.Background(), "ROLLBACK")
+			// Roll back even when ctx is canceled so the pooled connection is clean.
+			_, err := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 			retErr = errors.Join(retErr, err)
 		}
 		if lease != nil {
@@ -1870,7 +2050,7 @@ func validateRenditionPublicationTx(
 	}
 	var sourceSHA256 string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT blob_hash FROM content_versions WHERE version_id=?`, normalized.ContentVersionID,
+		`SELECT blob_hash FROM content_versions WHERE version_id=$1`, normalized.ContentVersionID,
 	).Scan(&sourceSHA256); errors.Is(err, sql.ErrNoRows) {
 		return build, fmt.Errorf("content version %s: %w", normalized.ContentVersionID, ErrNotFound)
 	} else if err != nil {
@@ -1894,7 +2074,7 @@ func validateRenditionPublicationTx(
 	var containsBuild bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM rendition_lexical_generation_builds
-		WHERE generation_id=? AND build_id=?
+		WHERE generation_id=$1 AND build_id=$2
 	)`, generationID, build.ID).Scan(&containsBuild); err != nil {
 		return build, fmt.Errorf("checking lexical generation %s build membership: %w", generationID, err)
 	}
@@ -1954,11 +2134,11 @@ func insertRenditionAttachmentAndHeadTx(
 	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord,
 ) error {
 	result, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO rendition_attachments(
+			INSERT INTO rendition_attachments(
 				attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
 				retention_disclosure_fingerprint,attachment_policy_fingerprint,
 				consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
 		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
 		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
 		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
@@ -1986,29 +2166,26 @@ func insertRenditionAttachmentAndHeadTx(
 	if binding, err := emailPDFBinding(normalized.Profile); err != nil {
 		return err
 	} else if binding != nil {
+		if inserted != 0 {
+			return recordProcessedTx(ctx, tx, normalized.ContentVersionID, "")
+		}
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-		VALUES(?,?,?,?)
-		ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-			attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
-		head.ContentVersionID, head.ProcessingProfileFingerprint,
-		head.AttachmentID, head.PublishedAt); err != nil {
-		return fmt.Errorf("publishing rendition head: %w", err)
+	if err := publishRenditionHeadTx(ctx, tx, head); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
-		WHERE content_version_id=? AND profile_fingerprint=? AND EXISTS (
+		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND EXISTS (
 			SELECT 1 FROM embedding_sets s
 			JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
 			WHERE s.embedding_set_id=embedding_heads.embedding_set_id
-			  AND g.attachment_id IS NOT NULL AND g.attachment_id<>?
+			  AND g.attachment_id IS NOT NULL AND g.attachment_id<>$3
 		)`, head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
 		return fmt.Errorf("revoking stale chunk embedding heads: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures
-		WHERE content_version_id=? AND profile_fingerprint=?
-		  AND attachment_id<>'' AND attachment_id<>?`,
+		WHERE content_version_id=$1 AND profile_fingerprint=$2
+		  AND attachment_id<>'' AND attachment_id<>$3`,
 		head.ContentVersionID, head.ProcessingProfileFingerprint, head.AttachmentID); err != nil {
 		return fmt.Errorf("clearing stale chunk embedding failures: %w", err)
 	}
@@ -2209,6 +2386,71 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
+// withSearchOptionsTx binds photo predicates to the read snapshot consuming them.
+// The generation lease also keeps publication from collecting their FTS rows.
+func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
+	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+		if opts.PhotoScope != nil {
+			lease, err := s.acquireLexicalGeneration(ctx, tx)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			if lease != nil {
+				defer func() { retErr = errors.Join(retErr, lease.Release()) }()
+			}
+		}
+		if opts.PhotoScope != nil {
+			request := *opts.PhotoScope
+			request.Query.Syntax = "advanced"
+			var err error
+			if opts.photoFilter, err = photoSearchFragment(ctx, tx, request); err != nil {
+				return err
+			}
+			if opts.PhotoLexicalQuery != nil {
+				request.Query = *opts.PhotoLexicalQuery
+				if opts.photoLexical, err = photoSearchFragment(ctx, tx, request); err != nil {
+					return err
+				}
+			}
+		}
+
+		return fn(tx, opts)
+	})
+}
+
+// photoSearchFragment compiles one photo query as lexical node membership.
+func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoBrowseRequest) (compiledQueryFragment, error) {
+	request.Query.Mode = querypkg.ModeLexical
+	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	generation, err := readActiveLexicalGeneration(ctx, queryer)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return compiledQueryFragment{}, err
+	}
+	metadata, ok := queryer.(metadataQuerier)
+	if !ok {
+		return compiledQueryFragment{}, ErrInvalidPhotoQuery
+	}
+	scope, err := newPhotoBrowseScope(ctx, metadata, compiled, generation.ID, request.Coverage, request.Hidden)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	statement, args, err := scope.bind(`SELECT n.id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where())
+	return compiledQueryFragment{sql: statement, args: args}, err
+}
+
+// nameEvidenceSQL marks a filename match stale once the name changes or, for
+// a photo search, the node no longer matches the authored query.
+func nameEvidenceSQL(photoLexical compiledQueryFragment) string {
+	stale := `WHEN 'node_name' THEN source.current_name IS NOT json_extract(evidence.value,'$.node_name')`
+	if photoLexical.sql != "" {
+		stale += ` OR source.node_id NOT IN (` + photoLexical.sql + `)`
+	}
+	return stale
+}
+
 // NormalizeSearchOptions validates scope identities and returns canonical filters.
 func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
 	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts)
@@ -2217,6 +2459,13 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
+	if opts.PDFFilter != "" {
+		predicate, err := compilePDFFilter(ctx, opts.PDFFilter)
+		if err != nil {
+			return SearchOptions{}, err
+		}
+		opts.pdfPredicate = predicate
+	}
 	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
 		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
 			MaxSearchSourceFenceIDs)
@@ -2357,8 +2606,16 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses []string
 		args    []any
 	)
+	if opts.PDFFilter != "" {
+		clauses = append(clauses, "AND ("+opts.pdfPredicate.sql+")")
+		args = append(args, opts.pdfPredicate.args...)
+	}
 	if opts.SourcePresent {
 		clauses = append(clauses, "AND "+sourcePresentSQL)
+	}
+	if opts.photoFilter.sql != "" {
+		clauses = append(clauses, `AND n.id IN (`+opts.photoFilter.sql+`)`)
+		args = append(args, opts.photoFilter.args...)
 	}
 	if len(opts.ContentVersionIDs) != 0 {
 		encoded, err := json.Marshal(opts.ContentVersionIDs)
@@ -2407,6 +2664,12 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		args = append(args, opts.ModifiedBefore)
 	}
 	return strings.Join(clauses, "\n"), args
+}
+
+// CollapsesPhotoDuplicates reports whether photo retrieval groups copies by content.
+func (opts SearchOptions) CollapsesPhotoDuplicates() bool {
+	return opts.PhotoScope != nil && opts.PhotoLexicalQuery != nil &&
+		opts.PhotoLexicalQuery.Filters.CollapseDuplicates
 }
 
 // NormalizeSearchTimeBounds accepts optional absolute RFC3339 timestamps and

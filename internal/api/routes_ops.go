@@ -340,7 +340,7 @@ func runIngest(
 	selection ingest.Selection,
 ) (IngestReport, error) {
 	var out IngestReport
-	err := g.mutate(func() error {
+	err := g.mutate(ctx, func() error {
 		return d.Blobs.WithMutation(ctx, func() error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
 			rep, err := ing.AddPathsWithSelection(ctx, paths, dest, opts, selection)

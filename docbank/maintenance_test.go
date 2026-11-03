@@ -106,7 +106,7 @@ func TestGarbageCollectKeepsLooseBytesWhenLogicalDeletionFails(t *testing.T) {
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate},
 	)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TRIGGER block_blob_delete
 		BEFORE DELETE ON blobs BEGIN
 			SELECT RAISE(ABORT, 'synthetic logical delete failure');
@@ -235,7 +235,7 @@ func TestGarbageCollectRetiresSecondaryLooseAuthority(t *testing.T) {
 	root := t.TempDir()
 	secondaryRoot := t.TempDir()
 	require.NoError(t, internalblob.EnsureFilesystemNamespace(secondaryRoot))
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	secondary, err := metadata.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive",

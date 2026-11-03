@@ -15,7 +15,7 @@ import (
 func TestLaneControlsDurableAndOutsideMetadata(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "vault.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	control, err := s.LaneControl(t.Context(), VisualPreviewLane)
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestLaneControlsDurableAndOutsideMetadata(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
 	assert.NotContains(t, metadata.String(), "lane")
 	require.NoError(t, s.Close())
-	s, err = Open(path)
+	s, err = Open(t.Context(), path)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	reopened, err := s.LaneControl(t.Context(), VisualPreviewLane)
@@ -59,7 +59,7 @@ func TestLaneControlsRejectMalformedFile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			s, err := Open(filepath.Join(dir, "vault.db"))
+			s, err := Open(t.Context(), filepath.Join(dir, "vault.db"))
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "lane-controls.json"), []byte(content), 0o600))
@@ -80,7 +80,7 @@ func TestLaneControlsRejectMalformedFile(t *testing.T) {
 func TestLaneControlsIgnoreFieldsFromNewerReleases(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	s, err := Open(filepath.Join(dir, "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(dir, "vault.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	unknown := `{"paused":"automatic","concurrency":12,"revision":1,"priority":"high"}`
@@ -134,7 +134,7 @@ func TestRestoreLaneControlsResetOnlyOnPublication(t *testing.T) {
 	for _, name := range []string{"paused", "malformed"} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			s, err := Open(filepath.Join(dir, "vault.db"))
+			s, err := Open(t.Context(), filepath.Join(dir, "vault.db"))
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			_, err = s.SetLaneControl(t.Context(), LaneControl{Lane: VisualPreviewLane, Paused: true, Concurrency: 3}, 1)
@@ -159,7 +159,7 @@ func TestRestoreLaneControlsResetOnlyOnPublication(t *testing.T) {
 
 func TestLaneControlsConcurrentReadsAndWrites(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	done := make(chan error, 1)

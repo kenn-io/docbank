@@ -183,7 +183,7 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 	if err := ensureSupervisedPathAbsent(outputPath, "output"); err != nil {
 		return 0, err
 	}
-	command := exec.Command( //nolint:gosec // authenticated sealed executable and policy
+	command := exec.Command( //nolint:gosec,noctx // authenticated sealed executable and policy; the parent cancels this launcher process by killing it
 		executablePath, control.Policy.Arguments...)
 	command.Dir = "/work"
 	command.Env = control.Policy.Environment
@@ -231,7 +231,7 @@ func runWarmup(spec commandSpec) (int, error) {
 				return 0, fmt.Errorf("remove sandbox warm-up output: %w", err)
 			}
 		}
-		command := exec.Command( //nolint:gosec // authenticated sealed executable and policy
+		command := exec.Command( //nolint:gosec,noctx // authenticated sealed executable and policy; the parent cancels this launcher process by killing it
 			spec.executablePath, spec.arguments...)
 		command.Dir = "/work"
 		command.Env = spec.environment

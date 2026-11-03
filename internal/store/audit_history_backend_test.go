@@ -15,7 +15,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestAuditHistoryPostgres(t *testing.T) {
+func checkAuditHistoryPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	source, reader, publish, scopeID, child, outside := newAuditHistoryPostgresFixture(t)
 	publish()
@@ -66,7 +67,8 @@ func TestAuditHistoryPostgres(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestAuditHistorySnapshotPostgres(t *testing.T) {
+func checkAuditHistorySnapshotPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	for _, method := range []string{"node", "path", "scope"} {
 		t.Run(method, func(t *testing.T) {

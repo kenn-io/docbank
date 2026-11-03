@@ -596,13 +596,8 @@ func (s *Store) withMaintenance(ctx context.Context, fn func() error) error {
 	return s.WithMaintenance(ctx, fn)
 }
 
-// Write streams r into durable canonical loose storage. The caller holds a
-// mutation lease across the subsequent metadata transaction.
-func (s *Store) Write(r io.Reader) (string, int64, error) {
-	return s.WriteContext(context.Background(), r)
-}
-
-// WriteContext is Write with cancellation.
+// WriteContext streams r into durable canonical loose storage. The caller
+// holds a mutation lease across the subsequent metadata transaction.
 func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, error) {
 	receipt, err := s.WriteDetailedContext(ctx, r)
 	return receipt.Hash, receipt.Size, err
@@ -734,12 +729,7 @@ func writeReceipt(result packstore.WriteResult) WriteReceipt {
 	}
 }
 
-// Open returns catalog-authorized loose or packed content.
-func (s *Store) Open(hash string) (io.ReadSeekCloser, error) {
-	return s.OpenContext(context.Background(), hash)
-}
-
-// OpenContext is Open with cancellation for daemon request paths.
+// OpenContext returns catalog-authorized loose or packed content.
 func (s *Store) OpenContext(ctx context.Context, hash string) (io.ReadSeekCloser, error) {
 	reader, _, err := s.OpenSeekableContext(ctx, hash)
 	return reader, err
@@ -761,16 +751,10 @@ func (s *Store) OpenSeekableContext(
 	return reader, size, nil
 }
 
-// OpenStream returns catalog-authorized loose or packed content without
+// OpenStreamContext returns catalog-authorized loose or packed content without
 // buffering the complete object. The bytes become authoritative only after
 // terminal EOF or a successful Verify call; an early Close reports incomplete
 // verification and does not drain the stream.
-func (s *Store) OpenStream(hash string) (packstore.VerifiedReadCloser, int64, error) {
-	return s.OpenStreamContext(context.Background(), hash)
-}
-
-// OpenStreamContext is OpenStream with cancellation for sequential daemon
-// request and backup paths.
 func (s *Store) OpenStreamContext(
 	ctx context.Context, hash string,
 ) (packstore.VerifiedReadCloser, int64, error) {
@@ -839,8 +823,8 @@ func (s *Store) VerifyLocation(
 }
 
 // Exists reports whether catalog-authorized content can be opened.
-func (s *Store) Exists(hash string) (bool, error) {
-	reader, err := s.Open(hash)
+func (s *Store) Exists(ctx context.Context, hash string) (bool, error) {
+	reader, err := s.OpenContext(ctx, hash)
 	if err == nil {
 		return true, reader.Close()
 	}

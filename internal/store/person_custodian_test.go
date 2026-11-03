@@ -198,7 +198,7 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	require.NoError(t, err)
 	scope := CustodianScope{Kind: "document", NodeID: node, ContentVersionID: version}
 	var epochBefore int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
 
 	assignment, err := s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: first.PersonID,
 		RawLabel: "Ada Lovelace", Rank: "primary", Basis: "operator_assigned", SourceRef: "operator", IfMatchRevision: 1})
@@ -212,7 +212,7 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	require.NotNil(t, assignment.PersonID)
 	require.Equal(t, first.PersonID, *assignment.PersonID)
 	var folded string
-	require.NoError(t, s.db.QueryRow(`SELECT raw_label_folded FROM custodian_assignments WHERE assignment_id=?`, assignment.AssignmentID).Scan(&folded))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT raw_label_folded FROM custodian_assignments WHERE assignment_id=?`, assignment.AssignmentID).Scan(&folded))
 	require.Equal(t, "ada lovelace", folded)
 
 	_, err = s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: second.PersonID,
@@ -230,7 +230,7 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	require.NoError(t, err)
 	require.Empty(t, rows)
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 	require.Equal(t, epochBefore+3, epoch)
 }
 

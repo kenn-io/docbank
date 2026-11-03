@@ -76,7 +76,7 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 	token := issueWebSession(t, ts)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}
 	owner := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
-	hash, size, err := s.Blobs.Write(bytes.NewReader([]byte("synthetic cancellation payload")))
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("synthetic cancellation payload")))
 	require.NoError(t, err)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "cancel.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		require.Equal(t, job.Receipt, &ticket.Receipt)
 		// Finish the handler and its lease cleanup before later removing the
 		// archive. Reading the HTTP body alone does not wait for server defers.
-		request := httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
 		request.RemoteAddr = "127.0.0.1:12345"
 		recorder := httptest.NewRecorder()
 		s.Server.Handler().ServeHTTP(recorder, request)
@@ -217,7 +217,9 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		z, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 		require.NoError(t, err)
 		require.Len(t, z.File, 4)
-		resp, err = ts.Client().Get(ts.URL + ticket.URL)
+		request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
+		require.NoError(t, err)
+		resp, err = ts.Client().Do(request)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
@@ -229,7 +231,7 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "export_retained")
-	request := httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
 	request.RemoteAddr = "127.0.0.1:12345"
 	recorder := httptest.NewRecorder()
 	s.Server.Handler().ServeHTTP(recorder, request)
@@ -406,7 +408,7 @@ func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 	require.NoError(t, err)
 	var pixels bytes.Buffer
 	require.NoError(t, png.Encode(&pixels, image.NewRGBA(image.Rect(0, 0, 72, 72))))
-	imageHash, imageSize, err := s.Blobs.Write(bytes.NewReader(pixels.Bytes()))
+	imageHash, imageSize, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pixels.Bytes()))
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPageImage(t.Context(), claim, document.PageImageV1{Contract: document.PageImageContractV1, Source: selected, Page: 1, FrameSHA256: frameHash, RecipeSHA256: recipeHash, SHA256: imageHash, Size: imageSize, Width: 72, Height: 72}, recipe, &store.BlobPhysical{Encoding: "raw", StoredBytes: imageSize}))
 	require.NoError(t, s.FinishPageJob(t.Context(), claim, "completed", ""))
@@ -417,7 +419,7 @@ func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 	require.Equal(t, 3, plan.RoleEntries)
 	_, err = s.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{n.CurrentVersionID}})
 	require.ErrorIs(t, err, bundle.ErrRetained)
-	newHash, newSize, err := s.Blobs.Write(bytes.NewReader([]byte("new synthetic head")))
+	newHash, newSize, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("new synthetic head")))
 	require.NoError(t, err)
 	_, _, err = s.ReplaceContent(t.Context(), n.ID, n.Revision, newHash, newSize, "text/plain")
 	require.NoError(t, err)
@@ -433,7 +435,9 @@ func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 		Receipt bundle.Receipt `json:"receipt"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &ticket))
-	resp, err := ts.Client().Get(ts.URL + ticket.URL)
+	httpRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
+	require.NoError(t, err)
+	resp, err := ts.Client().Do(httpRequest)
 	require.NoError(t, err)
 	archive, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -451,7 +455,7 @@ func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 	restoredRoot := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(t.Context(), repository, "synthetic-export-test", backup.RestoreOptions{TargetDir: restoredRoot, Jobs: 1})
 	require.NoError(t, err)
-	restored, err := store.OpenForRestore(filepath.Join(restoredRoot, "docbank.db"), store.DefaultSQLiteDriver())
+	restored, err := store.OpenForRestore(t.Context(), filepath.Join(restoredRoot, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restored.Close()) }()
 	restoredBlobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(restoredRoot, "blobs"))

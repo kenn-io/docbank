@@ -1308,6 +1308,8 @@ CREATE TABLE {{schema}}.saved_query_runs (
     photos                     BIGINT NOT NULL DEFAULT 0
 );
 
+CREATE INDEX saved_query_runs_definition ON {{schema}}.saved_query_runs(saved_query_id, ran_at DESC);
+
 CREATE TABLE {{schema}}.term_report_history (
     id           TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     parent_id    TEXT COLLATE "C" NOT NULL,
@@ -1650,6 +1652,8 @@ CREATE TABLE {{schema}}.mailbox_jobs (
     job_json TEXT COLLATE "C" NOT NULL
 );
 
+CREATE INDEX mailbox_jobs_state ON {{schema}}.mailbox_jobs(state,owner,id);
+
 CREATE TABLE {{schema}}.mailbox_occurrences (
     job_id TEXT COLLATE "C" NOT NULL,
     ordinal BIGINT NOT NULL,
@@ -1670,7 +1674,7 @@ CREATE TABLE {{schema}}.photo_quality_signals (
     color_blue DOUBLE PRECISION,
     framing DOUBLE PRECISION,
     aesthetics DOUBLE PRECISION,
-    face_reports_json TEXT,
+    face_reports_json TEXT COLLATE "C",
     face_inputs TEXT COLLATE "C" NOT NULL DEFAULT '',
     PRIMARY KEY(content_version_id,evaluator_fingerprint)
 );
@@ -1741,6 +1745,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     suggestion_id        TEXT COLLATE "C" NOT NULL UNIQUE,
     content_version_id   TEXT COLLATE "C" NOT NULL,
     producer_fingerprint TEXT COLLATE "C" NOT NULL,
+    rotation             BIGINT,
     caption              TEXT COLLATE "C" NOT NULL DEFAULT '',
     tags_json            TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     visible_text         TEXT COLLATE "C" NOT NULL DEFAULT '',
@@ -1748,6 +1753,7 @@ CREATE TABLE {{schema}}.photo_suggestions (
     caption_resolved     BIGINT NOT NULL DEFAULT 0,
     resolved_tags_json   TEXT COLLATE "C" NOT NULL DEFAULT '[]',
     awaiting             BIGINT NOT NULL DEFAULT 0,
+    text_settled         BIGINT NOT NULL DEFAULT 0,
     created_at           TEXT COLLATE "C" NOT NULL,
     UNIQUE (content_version_id, producer_fingerprint)
 );
@@ -2174,6 +2180,17 @@ CREATE INDEX derivative_purge_suppressions_active_source
     ON {{schema}}.derivative_purge_suppressions(source_sha256, profile_fingerprint)
     WHERE active = 1;
 
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_change_head (
+    singleton BIGINT PRIMARY KEY,
+    epoch TEXT COLLATE "C" NOT NULL
+);
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_changes (
+    seq BIGINT PRIMARY KEY,
+    kind TEXT COLLATE "C" NOT NULL,
+    node_id BIGINT NOT NULL,
+    node_revision BIGINT NOT NULL
+);
+
 -- Derived event catalogs invalidated by provenance changes.
 CREATE TABLE {{schema}}.document_event_state (
     singleton BIGINT PRIMARY KEY, contract_version TEXT COLLATE "C" NOT NULL,
@@ -2252,10 +2269,45 @@ CREATE INDEX rendition_job_waiters_job ON {{schema}}.rendition_job_waiters(job_i
 CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_waiters(content_version_id, job_id);
 CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
 CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
+
+-- Blob deletion checks every referencing table.
+CREATE INDEX export_members_blob ON {{schema}}.export_members(blob_hash);
+CREATE INDEX export_role_roots_blob ON {{schema}}.export_role_roots(blob_hash);
+CREATE INDEX bates_artifacts_blob ON {{schema}}.bates_artifacts(blob_hash);
+CREATE INDEX page_images_blob ON {{schema}}.page_images(blob_hash);
+CREATE INDEX visual_preview_generations_source ON {{schema}}.visual_preview_generations(source_sha256);
+CREATE INDEX embedding_input_generations_blob ON {{schema}}.embedding_input_generations(generation_blob_hash);
+CREATE INDEX rendition_jobs_source ON {{schema}}.rendition_jobs(source_sha256);
+CREATE INDEX mailbox_chunks_blob ON {{schema}}.mailbox_chunks(blob_hash);
+CREATE INDEX visual_preview_generations_output
+    ON {{schema}}.visual_preview_generations(output_blob_hash, generation_id)
+    WHERE output_blob_hash IS NOT NULL;
+
+CREATE INDEX embedding_jobs_ready
+    ON {{schema}}.embedding_jobs(state,available_at,job_id);
+
+CREATE INDEX embedding_jobs_generation
+    ON {{schema}}.embedding_jobs(generation_id);
+
+CREATE INDEX embedding_jobs_vector_space
+    ON {{schema}}.embedding_jobs(vector_space_id);
+
+CREATE INDEX embedding_vector_sets_payload
+    ON {{schema}}.embedding_vector_sets(payload_blob_hash, vector_set_id);
+
+CREATE INDEX embedding_sets_input_generation
+    ON {{schema}}.embedding_sets(input_generation_id, embedding_set_id);
+
+CREATE INDEX embedding_sets_vector_set
+    ON {{schema}}.embedding_sets(vector_set_id, embedding_set_id);
+
+CREATE INDEX embedding_sets_vector_space
+    ON {{schema}}.embedding_sets(vector_space_id, embedding_set_id);
+
 CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
 CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
-CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
-CREATE INDEX email_document_relations_version ON {{schema}}.email_document_relations(child_version_id);
+CREATE INDEX email_document_publications_parent ON {{schema}}.email_document_publications(parent_version_id);
+CREATE INDEX email_document_relations_child ON {{schema}}.email_document_relations(child_version_id);
 CREATE INDEX custodian_assignments_node ON {{schema}}.custodian_assignments(node_id);
 CREATE INDEX custodian_assignments_version ON {{schema}}.custodian_assignments(content_version_id);
 CREATE INDEX document_people_node ON {{schema}}.document_people(node_id);
@@ -2266,3 +2318,74 @@ CREATE INDEX photo_assets_display_override_file ON {{schema}}.photo_assets(displ
 CREATE INDEX photo_faces_version ON {{schema}}.photo_faces(content_version_id, face_id);
 CREATE INDEX person_candidate_faces_version ON {{schema}}.person_candidate_faces(content_version_id, candidate_id);
 CREATE INDEX photo_checkout_entries_version ON {{schema}}.photo_checkout_entries(version_id);
+
+-- Exact cleanup survives removal of logical blob membership.
+CREATE TABLE {{schema}}.gc_loose_retirements (
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    blob_hash TEXT COLLATE "C" NOT NULL,
+    loose_encoding BIGINT NOT NULL,
+    PRIMARY KEY (store_id, blob_hash, loose_encoding)
+);
+
+CREATE TABLE {{schema}}.derivative_pack_purge_pending (
+    store_id TEXT COLLATE "C" NOT NULL,
+    pack_id TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (store_id, pack_id),
+    FOREIGN KEY (store_id, pack_id) REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
+);
+
+CREATE TABLE {{schema}}.photo_technical_metadata_state (
+    singleton         bigint PRIMARY KEY,
+    projection_recipe text COLLATE "C" NOT NULL
+);
+
+CREATE TABLE {{schema}}.document_event_builds (
+    operation_id text COLLATE "C" PRIMARY KEY, request_sha256 text COLLATE "C" NOT NULL, deriver_fingerprint text COLLATE "C" NOT NULL,
+    state text COLLATE "C" NOT NULL, target_epoch bigint NOT NULL,
+    scanned bigint NOT NULL, published bigint NOT NULL, unavailable bigint NOT NULL,
+    failed bigint NOT NULL, started_at text COLLATE "C" NOT NULL, updated_at text COLLATE "C" NOT NULL, finished_at text COLLATE "C"
+);
+
+CREATE TABLE {{schema}}.document_event_attempts (
+    content_version_id text COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    input_epoch bigint NOT NULL, input_revision bigint NOT NULL, inputs_sha256 text COLLATE "C" NOT NULL,
+    state text COLLATE "C" NOT NULL, diagnostic_json bytea NOT NULL, attempted_at text COLLATE "C" NOT NULL
+);
+
+CREATE INDEX processing_consent_grants_authority
+    ON {{schema}}.processing_consent_grants(
+        vault_uid, incarnation_id, principal, scope, profile_fingerprint,
+        disclosure_fingerprint, input_classes_json, retained_classes_json,
+        issued_at, grant_id
+    );
+
+CREATE INDEX processing_consent_grants_set
+    ON {{schema}}.processing_consent_grants(consent_set_id, grant_id);
+
+CREATE INDEX processing_consent_revocations_scope
+    ON {{schema}}.processing_consent_revocations(
+        vault_uid, incarnation_id, principal, scope, fence
+    );
+
+CREATE INDEX rendition_builds_source
+    ON {{schema}}.rendition_builds(source_sha256, build_id);
+
+CREATE INDEX rendition_artifacts_blob
+    ON {{schema}}.rendition_artifacts(blob_hash, build_id);
+
+CREATE INDEX rendition_jobs_claimable
+    ON {{schema}}.rendition_jobs(state, available_at, lease_expires_at, job_id);
+
+CREATE INDEX current_rendition_roots_target
+    ON {{schema}}.current_rendition_roots(target_kind, target_id, root_kind);
+
+CREATE INDEX current_rendition_roots_expiry
+    ON {{schema}}.current_rendition_roots(expires_at)
+    WHERE expires_at IS NOT NULL;
+
+CREATE INDEX page_render_jobs_pending ON {{schema}}.page_render_jobs(state,created_at,id);
+CREATE INDEX page_render_jobs_request ON {{schema}}.page_render_jobs(request_sha256);
+CREATE INDEX email_part_artifacts_blob ON {{schema}}.email_part_artifacts(blob_hash);
+CREATE INDEX email_attachments_generation ON {{schema}}.email_attachments(generation_id);
+CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_id)
+    WHERE strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0;

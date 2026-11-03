@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-31
 title: Organizing and tagging
 description: Browse, move, rename, and tag documents in the virtual tree.
 ---
@@ -7,21 +7,21 @@ description: Browse, move, rename, and tag documents in the virtual tree.
 # Organizing and tagging
 
 Move, rename, and tag documents without rewriting their stored bytes. The
-folders in `ls` and `tree` are database entries. Even moving a 4 GB archive
+folders in `document list` and `document tree` are database entries. Even moving a 4 GB archive
 changes only metadata. See [Storage](../architecture/storage.md) for how the
 folder tree relates to stored content.
 
 ## Browsing
 
 ```bash
-docbank ls /taxes          # one directory, with stable selectors, sizes, timestamps
-docbank tree /taxes        # whole subtree, with id:N selectors in brackets
-docbank cat /taxes/w2.pdf  # stream file bytes to stdout
-docbank get /taxes/w2.pdf ./w2.pdf  # verify, then atomically publish a local file
+docbank document list /taxes          # one directory, with stable selectors, sizes, timestamps
+docbank document tree /taxes        # whole subtree, with id:N selectors in brackets
+docbank document cat /taxes/w2.pdf  # stream file bytes to stdout
+docbank document get /taxes/w2.pdf ./w2.pdf  # verify, then atomically publish a local file
 ```
 
-Use `ls --json` for a directory envelope containing the resolved directory and
-its ordered children. `tree --json` returns the root plus a flat pre-order list
+Use `docbank document list --json` for a directory envelope containing the resolved directory and
+its ordered children. `docbank document tree --json` returns the root plus a flat pre-order list
 whose entries carry absolute paths and depths, so a script can walk a subtree
 without parsing indentation.
 
@@ -30,11 +30,11 @@ reorganize the tree, but `id:42` continues to select the same entry. Commands
 that target an existing node accept either form:
 
 ```bash
-docbank cat id:42
-docbank get id:42 ./document.pdf
-docbank mv id:42 /taxes/2026/w2.pdf
-docbank rm id:42
-docbank restore id:42
+docbank document cat id:42
+docbank document get id:42 ./document.pdf
+docbank document move id:42 /taxes/2026/w2.pdf
+docbank document remove id:42
+docbank document restore id:42
 ```
 
 Use a path to select whatever is at that location. Use `id:N` to select a
@@ -42,19 +42,20 @@ specific file or folder regardless of its current name. JSON uses numeric node
 IDs, and the [HTTP API](../architecture/http-api.md) uses IDs as its primary
 selectors.
 
-Live-tree commands such as `ls`, `tree`, `mv`, `rm`, `put`, `edit`, `revert`,
+Live-tree commands such as `document list`, `document tree`, `document move`,
+`document remove`, `document put`, `document edit`, `document revert`,
 version pruning, and tag assignment reject a trashed selector. You can still
 read a trashed node's content, versions, and audit history by stable ID. Use
-`restore id:N` before changing it again.
+`docbank document restore id:N` before changing it again.
 
 ## Moving and renaming
 
-`docbank mv` follows POSIX `mv` intuition:
+`docbank document move` follows POSIX `mv` intuition:
 
 ```bash
-docbank mv /inbox/scan.pdf /taxes/2026          # /taxes/2026 is a dir → move into it
-docbank mv /taxes/2026/scan.pdf /taxes/2026/w2.pdf   # dest doesn't exist → rename
-docbank mv /inbox/receipts /archive             # directories move with their subtree
+docbank document move /inbox/scan.pdf /taxes/2026          # /taxes/2026 is a dir → move into it
+docbank document move /taxes/2026/scan.pdf /taxes/2026/w2.pdf   # dest doesn't exist → rename
+docbank document move /inbox/receipts /archive             # directories move with their subtree
 ```
 
 Docbank checks these rules before committing a move:
@@ -73,7 +74,7 @@ in `If-Match` so the daemon can reject a decision based on older state.
 ## Trashed names don't block
 
 Sibling names must be unique among **live** nodes only. After
-`docbank rm /inbox/draft.pdf` you can immediately import or move a new
+`docbank document remove /inbox/draft.pdf` you can immediately import or move a new
 `draft.pdf` into `/inbox`. The trashed one can still be restored. It gets a
 suffix if its old name is occupied at restore time.
 
@@ -144,7 +145,7 @@ not current membership. See the
 
 ## Atomic bulk reorganization
 
-Use `mv batch` when a reorganization must either happen completely or leave the
+Use `docbank document move batch` when a reorganization must either happen completely or leave the
 tree untouched. The command reads a JSON plan from a file, or from standard
 input with `-`:
 
@@ -158,7 +159,7 @@ input with `-`:
 ```
 
 ```bash
-docbank mv batch reorganization.json
+docbank document move batch reorganization.json
 ```
 
 Docbank resolves every source against the tree at the start of the transaction.
@@ -179,7 +180,7 @@ and binds the plan to its current revision. Receipts preserve plan order and
 return each node's stable ID, prior path, final path, and resulting revision.
 Plans accept at most 1,000 moves so validation and responses remain bounded.
 
-Repeated `docbank mv` commands are independent transactions. Use `mv batch`
+Repeated `docbank document move` commands are independent transactions. Use `docbank document move batch`
 when partial completion is not acceptable.
 
 Next: find what you filed with [Searching](searching.md), or manage

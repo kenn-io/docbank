@@ -152,18 +152,12 @@ func (s *Store) resolveFilteredProcessingSourceFence(
 func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 	ctx context.Context, snapshot *sql.Tx, filters SearchOptions,
 ) (ProcessingSourceFenceResolution, error) {
-	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, snapshot, filters)
+	normalized, err := s.normalizeProcessingSearchFilters(ctx, snapshot, filters)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
-			return ProcessingSourceFenceResolution{}, err
-		}
-		return ProcessingSourceFenceResolution{}, fmt.Errorf("%w: %w",
-			ErrInvalidProcessingSourceFence, err)
+		return ProcessingSourceFenceResolution{}, err
 	}
-	filterSQL, args := searchFilterSQL(normalized)
-	var observed int
-	if err := snapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...).Scan(&observed); err != nil {
+	observed, err := liveSearchScopeCount(ctx, snapshot, normalized)
+	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("counting source-fence scope: %w", err)
 	}
 	if observed > MaxSearchSourceFenceIDs {
@@ -171,6 +165,7 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 			ObservedScopeCount: observed,
 		}
 	}
+	filterSQL, args := searchFilterSQL(normalized)
 	rows, err := snapshot.QueryContext(ctx, `SELECT cv.version_id FROM `+nodeFrom+`
 		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL+`
 		ORDER BY cv.version_id`, args...)
@@ -193,4 +188,20 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 		return ProcessingSourceFenceResolution{}, errors.New("source-fence scope count disagrees")
 	}
 	return ProcessingSourceFenceResolution{ContentVersionIDs: ids, ObservedScopeCount: observed}, nil
+}
+
+// NormalizeProcessingSearchFilters validates a filter-only live search population.
+func (s *Store) NormalizeProcessingSearchFilters(ctx context.Context, filters SearchOptions) (SearchOptions, error) {
+	return s.normalizeProcessingSearchFilters(ctx, s.db, filters)
+}
+
+func (s *Store) normalizeProcessingSearchFilters(ctx context.Context, queryer rowQuerier, filters SearchOptions) (SearchOptions, error) {
+	normalized, err := s.normalizeSearchOptionsWithQuerier(ctx, queryer, filters)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotDir) {
+			return SearchOptions{}, err
+		}
+		return SearchOptions{}, fmt.Errorf("%w: %w", ErrInvalidProcessingSourceFence, err)
+	}
+	return normalized, nil
 }

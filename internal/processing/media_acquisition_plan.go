@@ -141,7 +141,7 @@ func (service *Service) PlanMediaAcquisition(
 	now := service.clock().UTC()
 	referenceDigest := sha256.Sum256([]byte(request.ReferenceURL))
 	referenceSHA256 := hex.EncodeToString(referenceDigest[:])
-	consentProfileFingerprint := stableHash(
+	consentProfileFingerprint := store.LengthPrefixedSHA256(
 		"docbank/media-acquisition-consent/v1", configuration, referenceSHA256)
 	claim := mediaAcquisitionClaim{Version: "v1", Principal: service.principal,
 		IncarnationID: incarnation.ID, OriginID: policy.OriginID, Provider: policy.Provider,
@@ -265,7 +265,7 @@ func (service *Service) verifyCurrentMediaPlan(
 	}
 	policy, ok := service.mediaOrigins[claim.OriginID]
 	configuration, fingerprintErr := mediaOriginFingerprint(policy)
-	wantConsentProfile := stableHash(
+	wantConsentProfile := store.LengthPrefixedSHA256(
 		"docbank/media-acquisition-consent/v1", configuration, claim.ReferenceSHA256)
 	if fingerprintErr != nil || !ok || claim.Principal != service.principal || claim.IncarnationID != incarnation.ID ||
 		claim.Provider != policy.Provider || claim.ConfigurationFingerprint != configuration ||

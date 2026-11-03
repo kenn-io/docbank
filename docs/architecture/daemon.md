@@ -84,7 +84,7 @@ loopback listener so local server-path imports remain available. Its
 `network_address` metadata carries the concrete network listener's actual
 endpoint, including the assigned port when `api_port` is `0`. Remote clients
 that cannot read the record need a fixed port. The record's
-metadata also carries the process's create-time, a random shutdown token
+metadata also carries a random shutdown token
 generated at startup, and the daemon's effective API key (the configured
 `[server] api_key`, or a freshly generated one when it's unset).
 
@@ -100,7 +100,9 @@ stale state:
 
 - **PID-reuse guard.** A dead daemon's PID can be reused by an unrelated
   process before its runtime record is cleaned up. Every record carries the
-  process's create-time. Discovery compares it against the live process at
+  Kit process identity. On Linux, this combines the boot ID, PID namespace,
+  and process start ticks, so wall-clock changes and rounded uptime estimates
+  cannot change a live daemon's identity. Discovery compares it against the live process at
   that PID and treats a mismatch as a stale record. It never signals or
   trusts a process it didn't start.
   A sandbox can share `$DOCBANK_HOME` while seeing different PIDs, so a starter
@@ -149,8 +151,8 @@ client, within a two-second budget. After handoff, connection loss fails the
 request.
 
 The starter sends no secrets to a forged or pingless endpoint. It requests
-graceful process termination only after verifying the PID's create-time, waits
-for exit, then starts a replacement. A runtime record without create-time proof
+graceful process termination only after verifying the PID's process identity, waits
+for exit, then starts a replacement. A runtime record without matching identity proof
 cannot authorize this path. The same process handles shutdown and an
 uncoordinated slow start without launching into an owned vault or trusting a
 new listener that reused the port.

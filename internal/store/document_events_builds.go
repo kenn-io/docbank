@@ -38,25 +38,25 @@ var documentEventBuilds = rebuildReceiptTable{
 	conflict: ErrDocumentEventBuildConflict, invalid: errDocumentEventBuildInvalid,
 	selectSQL: `SELECT operation_id,request_sha256,deriver_fingerprint,
 		state,target_epoch,scanned,published,failed,unavailable,started_at,updated_at,finished_at
-		FROM document_event_builds WHERE operation_id=?`,
+		FROM document_event_builds WHERE operation_id=$1`,
 	insertSQL: `INSERT INTO document_event_builds(
 		operation_id,request_sha256,deriver_fingerprint,state,target_epoch,started_at,updated_at,
 		scanned,published,failed,unavailable,finished_at
-	) VALUES(?,?,?,?,?,?,?,0,0,0,0,NULL)`,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,0,0,0,0,NULL)`,
 	updateSQL: `UPDATE document_event_builds SET
-		state=?,scanned=?,published=?,failed=?,unavailable=?,updated_at=?,finished_at=?
-		WHERE operation_id=? AND state='running'`,
+		state=$1,scanned=$2,published=$3,failed=$4,unavailable=$5,updated_at=$6,finished_at=$7
+		WHERE operation_id=$8 AND state='running'`,
 	count: func(ctx context.Context, q metadataQuerier, b rebuildReceipt) (rebuildCounts, error) {
 		var c rebuildCounts
 		err := q.QueryRowContext(ctx, `SELECT count(*),
-			COALESCE(sum(CASE WHEN a.input_epoch>=? AND
+			COALESCE(sum(CASE WHEN a.input_epoch>=$1 AND
 				a.input_revision=COALESCE(d.revision,0) AND a.state='indexed' AND
 				h.input_epoch=a.input_epoch AND g.inputs_sha256=a.inputs_sha256
 				THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN a.input_epoch>=? AND
+			COALESCE(sum(CASE WHEN a.input_epoch>=$2 AND
 				a.input_revision=COALESCE(d.revision,0) AND a.state='failed'
 				THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN a.input_epoch>=? AND
+			COALESCE(sum(CASE WHEN a.input_epoch>=$3 AND
 				a.input_revision=COALESCE(d.revision,0) AND a.state='unavailable'
 				THEN 1 ELSE 0 END),0)
 			FROM content_versions cv

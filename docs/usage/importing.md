@@ -1,28 +1,28 @@
 ---
 title: Importing documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-last_edited: 2026-10-25
+last_edited: 2026-10-31
 ---
 
 # Importing documents
 
-Use `docbank add` to copy files or entire folders into the vault. Docbank
+Use `docbank document add` to copy files or entire folders into the vault. Docbank
 leaves the originals unchanged. After an interruption, run the same command
 again. It skips files whose content is already imported under a destination
 name.
 
 ## Mailbox archives
 
-For mailbox exports, use `docbank mailbox import` or **Import mailbox** in the
+For mailbox exports, use `docbank email mailbox import` or **Import mailbox** in the
 web app. Both keep the original archive and give each message occurrence its
 own document, even when content or a Message-ID repeats. Decoded attachment
 documents are published with the message and its receipt.
 
 ```bash
-docbank mailbox import ./All-mail.mbox --dest /mail --id mail-export --preview
-docbank mailbox import ./All-mail.mbox --dest /mail --id mail-export
-docbank mailbox watch mail-export
-docbank mailbox receipts mail-export --after 0 --limit 100
+docbank email mailbox import ./All-mail.mbox --dest /mail --id mail-export --preview
+docbank email mailbox import ./All-mail.mbox --dest /mail --id mail-export
+docbank email mailbox watch mail-export
+docbank email mailbox receipts mail-export --after 0 --limit 100
 ```
 
 To retry an interrupted upload, use the same `--id`, source bytes, and
@@ -76,8 +76,8 @@ An exporter can register an archive and supply its own stable occurrence
 reference without connecting Docbank to the source application:
 
 ```bash
-docbank mailbox register synthetic-export 'Explicit exported messages'
-docbank mailbox transfer ./message.eml --archive synthetic-export --reference item-1
+docbank email mailbox register synthetic-export 'Explicit exported messages'
+docbank email mailbox transfer ./message.eml --archive synthetic-export --reference item-1
 ```
 
 A retry with equal bytes returns the original receipt. Changed source bytes
@@ -90,7 +90,7 @@ container bytes survive portable backup and restore and have no silent
 retention deadline. There is no release command for these retry guarantees, and
 referenced versions and relations cannot be silently pruned. Emptying trash
 skips these messages, attachments, and containing folders while deleting
-unrelated eligible trash. Ordinary `docbank add message.eml` does not create an
+unrelated eligible trash. Ordinary `docbank document add message.eml` does not create an
 external transfer identity.
 
 ## Receive a numbered redaction package
@@ -100,6 +100,22 @@ with the supplied `mapping.json`. Follow the
 [numbered package import procedure](document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
 to import its PDFs, supplied text and received labels. This preserves the sender's
 numbering without allocating numbers locally.
+
+## Import from a URL
+
+```bash
+docbank document add https://example.com/filing.pdf --dest /inbox
+```
+
+Docbank downloads one URL before importing it and creates missing destination directories. HTTPS is required; `--allow-http` permits HTTP for the initial request and redirects. Other schemes are rejected, and downloads stop after ten redirects. There is no total download timeout; cancel the command to stop it.
+
+Downloads default to a 100,000,000-byte limit. Set `--max-bytes` to a positive byte count up to the vault's ingest limit. A response over the cap, an incomplete response, or any status other than HTTP 200 fails before import.
+
+The filename comes from a valid `Content-Disposition` filename, then the final URL's decoded last path component, then the requested URL's, or `download`. Query strings stay out of filenames. Repeating the exact requested URL with equal current bytes in the same destination skips the import, even after renaming the document or changing the response filename. Different URLs, including query variants and mirrors, retain distinct documents and origins. Changed bytes receive an ordinary collision suffix. A skip preserves the original provenance and revision.
+
+Provenance records the requested URL, final URL, completed fetch time in UTC, and the observed ETag and Last-Modified headers when supplied. URLs stay exactly as supplied. CLI and API JSON expose these values as `url_fetch`, with evidence version 1 and headers encoded as base64 to preserve their bytes. CLI and web views display readable header text, with reversible byte escapes for invalid UTF-8. Fetch time stays separate from import time; Last-Modified stays as observed, rather than becoming a document modification time.
+
+URL mode accepts `--dest` and `--json`. It validates `--progress` without rendering a progress bar. Supply one URL per command. Filters, `--preflight`, and `--replace` apply to local imports.
 
 ## Ordinary file imports
 
@@ -118,10 +134,10 @@ See [Storage](../architecture/storage.md) for the content records and
 
 ### MIME type detection
 
-Automatic MIME selection for local imports, `docbank put`, and load-file
+Automatic MIME selection for local imports, `docbank document put`, and load-file
 package staging inspects the first 512 bytes with Docbank's pinned signature
 detector. Recognized signatures take priority over the host's extension table,
-including JPEG, HEIC, and HEIF. `docbank put --mime-type` still overrides
+including JPEG, HEIC, and HEIF. `docbank document put --mime-type` still overrides
 automatic selection. The `.eml` rule runs first and always uses
 `message/rfc822`.
 
@@ -157,7 +173,7 @@ Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
 
 ```bash
-docbank add ~/old-laptop/Documents --dest /archive
+docbank document add ~/old-laptop/Documents --dest /archive
 # → /archive/Documents/... mirrors the source tree
 ```
 
@@ -177,7 +193,7 @@ failures. Selected non-regular entries are reported as failures.
 Inventory a source before Docbank opens any file content or changes the vault:
 
 ```bash
-docbank add ~/Dropbox --preflight \
+docbank document add ~/Dropbox --preflight \
   --include '*.pdf' \
   --exclude .git \
   --exclude .Trash \
@@ -206,7 +222,7 @@ job, while an interactive session succeeds. Docbank reports that failure for
 the individual file, names the cause, and suggests opening the file once from a
 user session (or marking it available offline) before retrying the import.
 Re-run preflight after changing selection, then pass the same `--include` and
-`--exclude` flags to the real `docbank add` command.
+`--exclude` flags to the real `docbank document add` command.
 
 Filesystem names and provenance paths must currently be valid UTF-8. On POSIX
 filesystems that permit other byte sequences, preflight and ingest report each
@@ -284,11 +300,11 @@ into one transport error.
 
 ## Follow a long import
 
-Human-mode `docbank add` performs a metadata-only scan to establish file and
+Human-mode `docbank document add` performs a metadata-only scan to establish file and
 byte totals, then reports content-read progress while it imports:
 
 ```bash
-docbank add ~/Dropbox --dest /archive --progress plain
+docbank document add ~/Dropbox --dest /archive --progress plain
 ```
 
 `auto` (the default) draws a progress bar on a terminal and prints periodic
@@ -344,7 +360,7 @@ preserves where each one came from.
 Use `--replace` when a repeated local add represents one changing source:
 
 ```bash
-docbank add ~/reports/summary.pdf --dest /archive --replace
+docbank document add ~/reports/summary.pdf --dest /archive --replace
 ```
 
 Docbank resolves the exact destination name and records its node revision
@@ -363,8 +379,8 @@ Docbank keeps the facts about where a document came from as provenance. Query a
 live file by vault path, or any retained file by stable node ID:
 
 ```bash
-docbank provenance /archive/Documents/report.pdf
-docbank provenance id:42 --json
+docbank document provenance /archive/Documents/report.pdf
+docbank document provenance id:42 --json
 ```
 
 The newest-first result identifies the ingest, its source kind and description,
@@ -408,7 +424,7 @@ source arguments.
 ## Sources are read-only
 
 Import never deletes or modifies source files, including a followed root
-directory symlink. Before deleting originals yourself, run `docbank verify`,
+directory symlink. Before deleting originals yourself, run `docbank vault verify`,
 spot-check the imported documents, and capture a [backup](backup.md).
 
 ## Remote API imports
@@ -431,14 +447,16 @@ the collection records.
 For a folder on another machine, use [folder push](pushing.md). It reads the
 folder on the client and uploads verified bytes to the daemon.
 
+First run `docbank tag create agent-sessions`.
 For directories that receive files over time, configure a daemon-owned
-`[[watch]]` entry instead of repeatedly running `docbank add`:
+`[[watch]]` entry instead of repeatedly running `docbank document add`:
 
 ```toml
 [[watch]]
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["agent-sessions"]
 settle_time = "30s"
 minimum_age = "168h"
 scan_interval = "5s"
@@ -550,7 +568,7 @@ configuration above. Docbank does not interpret a vendor's session format. It
 keeps the relative path and source facts unchanged, and each accepted byte
 change becomes a new version of that document.
 
-Use `docbank provenance <path-or-id>` to inspect the watch identity,
+Use `docbank document provenance <path-or-id>` to inspect the watch identity,
 source-relative path, and supersession history of an imported node. JSONL
 session content up to the normal extraction limit is indexed by the built-in
 plain-text worker, so ordinary `docbank search` can find archived session text

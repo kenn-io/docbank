@@ -232,7 +232,7 @@ func NewTextCitationTestFixture(t *testing.T) TextCitationTestFixture {
 	require.NoError(t, err)
 	versionID, err := uuid.Parse(f.versionID)
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
 		Gate: newTestOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 	start := utf8.RuneCountInString(prefix)

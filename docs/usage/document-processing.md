@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-24
+last_edited: 2026-10-31
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -132,6 +132,14 @@ Configure a [vision profile](../configuration.md#photo-descriptions), review `pr
 The first request to a provider checks it with a synthetic image, and a failed check retries no sooner than a minute later. If it fails when you grant consent, the error says consent was saved. Caption, tags, and visible text arrive as one [suggestion](photos.md#suggested-metadata). An invalid caption or an oversized tag is dropped alone; a non-JSON reply publishes nothing. A dropped connection, timeout, or daemon restart during a description call retries it with backoff, since a description has no side effects.
 
 Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
+
+## Embed photos for meaning search
+
+Image bindings serve Photos search. Documents search uses text bindings; a hybrid search with only image bindings uses filename and retained-text matches.
+
+An image embedding binding uses `input_kind = "image"` and the `docbank-standard-embedding-bridge/v2` adapter. Its descriptor must support image documents and text queries in the same vector space. The bridge receives a verified, stripped grid JPEG through derived-upload authority, with an empty filename. Original image bytes and embedded metadata stay in the vault.
+
+After consent, existing embedding reconciliation discovers eligible photo versions in bounded pages. Jobs use the existing retry, fencing, vector-generation activation, and retirement paths. Visibility, current content, preview identity, purge state, and consent are checked before upload and publication. Export and backup retain image authority with the existing embedding catalog. Configure the bridge's limits to match the provider; image inference runs through the configured bridge.
 
 ## Review and render a native PDF
 
@@ -429,7 +437,7 @@ To import the delivered ZIP, extract it first, then run:
 docbank package preflight ./recipient --profile dat-concordance-v1 \
   --page-map-profile opt-standard-v1 --encoding utf-8 \
   --map ./recipient/mapping.json --json
-docbank mkdir /received
+docbank document mkdir /received
 docbank package import <preflight-id> --name "Received delivery" \
   --into /received --index-supplied-text --json
 docbank package import status <operation-id> --json
@@ -481,9 +489,9 @@ that independent record.
 To retain the ZIP in a vault, use ordinary file storage:
 
 ```sh
-docbank mkdir /produced
-docbank add redacted.zip --dest /produced
-docbank get /produced/redacted.zip recovered.zip
+docbank document mkdir /produced
+docbank document add redacted.zip --dest /produced
+docbank document get /produced/redacted.zip recovered.zip
 docbank redaction verify preparation.json masks.json review.json recovered.zip
 ```
 
@@ -514,7 +522,7 @@ file is configured.
 Import the original, inspect its plan, and consent to the exact destination:
 
 ```bash
-docbank add /path/to/report.pdf --dest /inbox
+docbank document add /path/to/report.pdf --dest /inbox
 docbank processing plan /inbox/report.pdf --profile <configured-profile>
 docbank processing build /inbox/report.pdf \
   --profile <configured-profile> \
@@ -657,7 +665,7 @@ Use `stat --json` to obtain a file's `current_version_id`, then inspect that
 version without starting processing:
 
 ```bash
-docbank stat /inbox/notes.txt --json
+docbank document stat /inbox/notes.txt --json
 docbank processing coverage <version-uuid> --profile <name> --json
 docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
 ```

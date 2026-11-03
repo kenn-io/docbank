@@ -3,11 +3,13 @@ package emailmime
 import (
 	"github.com/stretchr/testify/require"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestSourceSpoolSharesOwnedRestartCleanup(t *testing.T) {
-	parent := t.TempDir()
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	source, err := NewSourceSpool(parent)
 	require.NoError(t, err)
 	_, err = source.WriteString("Synthetic source")

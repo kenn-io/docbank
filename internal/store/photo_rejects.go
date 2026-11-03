@@ -151,7 +151,7 @@ func photoRejectForMoveTx(
 		if file.Role != PhotoRoleSidecar && file.Flag != "reject" {
 			return PhotoAsset{}, nil, errPhotoRejectsStale
 		}
-		node, err := nodeByIDTx(tx, file.NodeID)
+		node, err := nodeByIDTx(ctx, tx, file.NodeID)
 		if errors.Is(err, ErrNotFound) {
 			return PhotoAsset{}, nil, errPhotoRejectsStale
 		}

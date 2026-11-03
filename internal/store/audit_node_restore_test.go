@@ -48,7 +48,7 @@ func TestAuditedRestoreRecordsSubtreeAndRoundTrips(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	roundTrip, err := Open(filepath.Join(t.TempDir(), "round-trip.db"))
+	roundTrip, err := Open(t.Context(), filepath.Join(t.TempDir(), "round-trip.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, roundTrip.Close()) })
 	require.NoError(t, roundTrip.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -134,7 +134,7 @@ func TestAuditedRestoreRejectsConflictThatRetargetsTrashOrigin(t *testing.T) {
 
 func TestAuditedRootScopeRestoreRecordsRootParentTouch(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -157,7 +157,7 @@ func TestAuditedRootScopeRestoreRecordsRootParentTouch(t *testing.T) {
 
 func TestAuditedRestoreRefusesFallbackFromTrashedOrigin(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	empty, err := s.Mkdir(t.Context(), s.RootID(), "Empty")
@@ -189,7 +189,7 @@ func TestAuditedRestoreRollsBackTreeAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	trashed, _, err := s.Trash(t.Context(), work.ID, work.Revision)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_restore_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_restore_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit restore failure'); END`)
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestAuditedRestoreRollsBackTreeAndHistory(t *testing.T) {
 	_, err = s.NodeByPath(t.Context(), "/Projects/Work")
 	require.ErrorIs(t, err, ErrNotFound)
 	var sequence int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&sequence))
 	assert.Equal(t, int64(2), sequence)

@@ -46,7 +46,9 @@ func TestPhotoEventsReachLockedStream(t *testing.T) {
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	// This stream carries no Hidden unlock.
-	response, err := ts.Client().Get(ts.URL + "/api/v1/photos/events")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
+	require.NoError(t, err)
+	response, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	defer func() { _ = response.Body.Close() }()
 	scanner := bufio.NewScanner(response.Body)
@@ -65,7 +67,9 @@ func TestPhotoEventsStreamLimitAndShutdown(t *testing.T) {
 		}
 	}()
 	for range 128 {
-		response, err := ts.Client().Get(ts.URL + "/api/v1/photos/events")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
+		require.NoError(t, err)
+		response, err := ts.Client().Do(request)
 		require.NoError(t, err)
 		bodies = append(bodies, response.Body)
 		require.Equal(t, http.StatusOK, response.StatusCode)
@@ -79,7 +83,9 @@ func TestPhotoEventsStreamLimitAndShutdown(t *testing.T) {
 	require.NoError(t, bodies[0].Close())
 	bodies = bodies[1:]
 	require.Eventually(t, func() bool {
-		response, err := ts.Client().Get(ts.URL + "/api/v1/photos/events")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
+		require.NoError(t, err)
+		response, err := ts.Client().Do(request)
 		if err != nil {
 			return false
 		}

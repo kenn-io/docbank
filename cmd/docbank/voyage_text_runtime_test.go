@@ -15,7 +15,7 @@ import (
 
 func TestConfigureVoyageRetainedTextRuntime(t *testing.T) {
 	cfg, profile := voyageTextRuntimeConfig(t)
-	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
 	descriptor := bundle.providers["voyage-text"].Descriptor()
 	assert.True(t, descriptor.SupportsTextQuery)

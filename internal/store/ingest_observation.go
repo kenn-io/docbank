@@ -119,10 +119,10 @@ func (s *Store) observeOperationalIngestTx(
 	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=$1 WHERE node_id=$2 AND source_provenance_identity IS NULL`, fact.Identity, prior.ID); err != nil {
 		return Node{}, fmt.Errorf("recording first photo source: %w", err)
 	}
-	if err := bumpRevisionTx(tx, prior.ID, operation.recordedAt); err != nil {
+	if err := bumpRevisionTx(ctx, tx, prior.ID, operation.recordedAt); err != nil {
 		return Node{}, err
 	}
-	resulting, err := nodeByIDTx(tx, prior.ID)
+	resulting, err := nodeByIDTx(ctx, tx, prior.ID)
 	if err != nil {
 		return Node{}, err
 	}

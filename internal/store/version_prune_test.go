@@ -23,7 +23,7 @@ func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
 	for index := range hashes {
 		hashes[index] = fmt.Sprintf("%064x", index+1)
 	}
-	stats, err := versionPruneBlobStatsTx(tx, hashes)
+	stats, err := versionPruneBlobStatsTx(t.Context(), tx, hashes)
 	require.NoError(t, err)
 	assert.Empty(t, stats)
 }
@@ -43,6 +43,8 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	_, beforePrune, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
 	preview, err := s.PruneContentVersions(ctx, created.ID, replaced.Revision,
 		VersionPruneSelector{KeepNewest: 2}, false)
 	require.NoError(t, err)
@@ -55,6 +57,9 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, preview.LooseBlobsPendingGC)
 	require.Len(t, preview.Candidates, 1)
 	assert.Equal(t, created.CurrentVersionID, preview.Candidates[0].ID)
+	changes, _, err := s.VaultChanges(ctx, beforePrune, 500)
+	require.NoError(t, err)
+	assert.Empty(t, changes, "dry runs must leave the feed unchanged")
 
 	_, err = s.PruneContentVersions(ctx, created.ID, created.Revision,
 		VersionPruneSelector{KeepNewest: 2}, true)
@@ -68,6 +73,21 @@ func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, 1, receipt.DeletedVersions)
 	assert.Equal(t, replaced.Revision+1, receipt.Node.Revision)
 	assert.Equal(t, current.ID, receipt.Node.CurrentVersionID)
+	assert.Nil(t, receipt.Checkpoint)
+	changes, afterPrune, err := s.VaultChanges(ctx, beforePrune, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "version_added", changes[0].Kind)
+	assert.Equal(t, created.ID, changes[0].NodeID)
+	assert.Equal(t, int64(4), changes[0].Revision)
+
+	empty, err := s.PruneContentVersions(ctx, created.ID, receipt.Node.Revision,
+		VersionPruneSelector{KeepNewest: 2}, true)
+	require.NoError(t, err)
+	assert.False(t, empty.Changed)
+	changes, _, err = s.VaultChanges(ctx, afterPrune, 500)
+	require.NoError(t, err)
+	assert.Empty(t, changes, "empty candidate sets must leave the feed unchanged")
 	_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
 	require.ErrorIs(t, err, ErrNotFound)
 	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
@@ -137,12 +157,12 @@ func checkPruneContentVersionsCancelsOrphanedRenditionJob(t *testing.T, postgres
 	_, err = s.RenditionJobByID(ctx, job.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	var waiters int
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM rendition_job_waiters WHERE job_id=$1`, job.ID,
 	).Scan(&waiters))
 	assert.Zero(t, waiters)
 	var roots int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM current_rendition_roots
 		WHERE root_id IN ($1,$2)`, renditionJobRootID("build", job.ID),
 		renditionJobRootID("generation", job.ID)).Scan(&roots))
 	assert.Zero(t, roots)
@@ -188,7 +208,7 @@ func TestPruneContentVersionKeepsCheckpointedProviderClaimWhileReselectingWaiter
 	assert.Empty(t, current.FailureCode)
 	assert.Equal(t, 1, current.WaiterCount)
 	var selectedWaiter string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT selected_waiter_id FROM rendition_jobs WHERE job_id=?`, job.ID,
 	).Scan(&selectedWaiter))
 	assert.Equal(t, secondWaiter.ID, selectedWaiter)
@@ -242,7 +262,7 @@ func checkPruneContentVersionClearsDeletedAuthorityFromOperatorRequiredJob(t *te
 	assert.Equal(t, RenditionFailureAmbiguous, current.FailureCode)
 	var selected, grant, incarnation sql.NullString
 	var revocationFence sql.NullInt64
-	require.NoError(t, s.db.QueryRow(`SELECT selected_waiter_id,authorization_grant_id,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence
 		FROM rendition_jobs WHERE job_id=$1`, job.ID).Scan(
 		&selected, &grant, &incarnation, &revocationFence))
@@ -299,10 +319,10 @@ func TestPruneContentVersionRequeuesSharedStagedJobAndRetainsRoot(t *testing.T) 
 	assert.Equal(t, 1, current.WaiterCount)
 	var active bool
 	var rootEpoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT active FROM current_rendition_roots
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT active FROM current_rendition_roots
 		WHERE root_id=?`, renditionJobRootID("build", job.ID)).Scan(&active))
 	assert.True(t, active)
-	require.NoError(t, s.db.QueryRow(`SELECT fencing_token FROM current_rendition_roots
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT fencing_token FROM current_rendition_roots
 		WHERE root_id=?`, renditionJobRootID("build", job.ID)).Scan(&rootEpoch))
 	assert.Equal(t, current.ClaimEpoch, rootEpoch)
 	var exported bytes.Buffer
@@ -444,7 +464,7 @@ func TestPruneContentVersionClearsDeletedAuthorityFromTerminalFailedJob(t *testi
 	assert.Equal(t, RenditionFailureTerminal, current.FailureCode)
 	var selected, grant, incarnation sql.NullString
 	var revocationFence sql.NullInt64
-	require.NoError(t, s.db.QueryRow(`SELECT selected_waiter_id,authorization_grant_id,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence
 		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
 		&selected, &grant, &incarnation, &revocationFence))
@@ -512,7 +532,7 @@ func TestPruneSelectedWaiterReleasesRootsWhenOnlyRejectedWaitersRemain(t *testin
 	assert.Equal(t, RenditionJobFailed, current.State)
 	assert.Equal(t, RenditionPhaseQueued, current.Phase)
 	var activeRoots int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM current_rendition_roots
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM current_rendition_roots
 		WHERE root_id IN (?,?) AND active=1`, renditionJobRootID("build", job.ID),
 		renditionJobRootID("generation", job.ID)).Scan(&activeRoots))
 	assert.Zero(t, activeRoots)
@@ -569,7 +589,7 @@ func TestPruneSoleWaiterKeepsAmbiguousJobSourceOutOfGC(t *testing.T) {
 		assert.NotEqual(t, catalogSourceHash, candidate.Hash,
 			"paged GC eligibility is shared by loose and packed storage")
 	}
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`INSERT INTO derivative_blob_purge_pending(blob_hash) VALUES(?)`, catalogSourceHash)
 	require.NoError(t, err)
 	exactPurge, err := s.UnreachableDerivativePurgeBlobs(ctx)
@@ -635,7 +655,7 @@ func TestPruneSoleWaiterKeepsRetriedProviderResumeFence(t *testing.T) {
 	assert.Equal(t, RenditionPhaseProvider, current.Phase)
 	assert.Equal(t, RenditionFailureAmbiguous, current.FailureCode)
 	var resumeHandle string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT provider_resume_handle FROM rendition_jobs WHERE job_id=?`, job.ID,
 	).Scan(&resumeHandle))
 	assert.Equal(t, "retained-provider-handle", resumeHandle)
@@ -842,7 +862,7 @@ func checkPruneContentVersionsAccountsForPageImages(t *testing.T, postgres bool)
 	}
 	addTestPack(t, s, "page-image-pack", 1, 6, nowRFC3339())
 	addTestPackEntry(t, s, fakeHash("c2"), "page-image-pack", 0, 6, 10)
-	_, err = s.db.Exec(`UPDATE blob_locations SET kind='packed',encoding=NULL,stored_size=6
+	_, err = s.db.ExecContext(t.Context(), `UPDATE blob_locations SET kind='packed',encoding=NULL,stored_size=6
 		WHERE blob_hash=$1 AND store_id=$2`, fakeHash("c2"), s.primaryStoreID)
 	require.NoError(t, err)
 
@@ -886,7 +906,7 @@ func TestPruneContentVersionsReportsPackedAndSharedConsequences(t *testing.T) {
 	require.NoError(t, err)
 	addTestPack(t, s, "pack-test", 1, 17, nowRFC3339())
 	addTestPackEntry(t, s, packedVersion.BlobHash, "pack-test", 0, 17, packedVersion.Size)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		UPDATE blob_locations
 		SET kind='packed',encoding=NULL,stored_size=17
 		WHERE blob_hash=? AND store_id=?`, packedVersion.BlobHash, s.primaryStoreID)
@@ -926,19 +946,19 @@ func checkPruneContentVersionsReportsMixedLocationsAcrossStores(t *testing.T, po
 
 	addTestPack(t, s, "mixed-pack", 1, 17, nowRFC3339())
 	addTestPackEntry(t, s, historical.BlobHash, "mixed-pack", 0, 17, historical.Size)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		UPDATE blob_locations
 		SET kind='packed',encoding=NULL,stored_size=17
 		WHERE blob_hash=$1 AND store_id=$2`, historical.BlobHash, s.primaryStoreID)
 	require.NoError(t, err)
 	const secondaryID = "40000000-0000-4000-8000-000000000001"
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_stores(
 			store_id,name,kind,role,lifecycle,binding,ownership_epoch,created_at
 		) VALUES($1, 'archive', 'filesystem', 'secondary', 'active', 'archive', $2, $3)`,
 		secondaryID, "40000000-0000-4000-8000-000000000002", nowRFC3339())
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
 		) VALUES($1, $2, $3, 'loose', 'zstd', 11, 1)`, historical.BlobHash, secondaryID,
@@ -997,7 +1017,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	)
 	require.NoError(t, err)
 	old := time.Now().UTC().Add(-2 * time.Hour).Format(timestampLayout)
-	_, err = s.db.Exec(`UPDATE content_versions SET recorded_at = ? WHERE version_id = ?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE content_versions SET recorded_at = ? WHERE version_id = ?`,
 		old, second.CurrentVersionID)
 	require.NoError(t, err)
 	preview, err := s.PruneContentVersions(ctx, second.ID, replaced.Revision,
@@ -1012,7 +1032,7 @@ func TestRetainMediaAuthorityVersionsBatchesCheckoutHolds(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			s, err := Open(filepath.Join(t.TempDir(), "catalog.db"), driver.driver)
+			s, err := Open(t.Context(), filepath.Join(t.TempDir(), "catalog.db"), driver.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
 			asset := albumAsset(t, s, "photo.jpg")
@@ -1028,7 +1048,7 @@ func TestRetainMediaAuthorityVersionsBatchesCheckoutHolds(t *testing.T) {
 			tx, err := s.db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
 			defer func() { _ = tx.Rollback() }()
-			require.NoError(t, retainMediaAuthorityVersionsTx(tx, candidates, retained))
+			require.NoError(t, retainMediaAuthorityVersionsTx(t.Context(), tx, candidates, retained))
 			require.Equal(t, map[string]bool{node.CurrentVersionID: true}, retained)
 			require.Len(t, candidates, 12000)
 			require.NotContains(t, candidates, node.CurrentVersionID)

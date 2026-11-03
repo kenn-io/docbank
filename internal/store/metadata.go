@@ -319,8 +319,8 @@ var coreMetadataTables = []metadataRecordCodec{
 		validate: func(v metadataBlobChecksum) error {
 			return validateBlobChecksumRecord(BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
 		},
-		insert: func(_ context.Context, tx *sql.Tx, v metadataBlobChecksum) error {
-			return ensureBlobChecksumTx(tx, BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
+		insert: func(ctx context.Context, tx *sql.Tx, v metadataBlobChecksum) error {
+			return ensureBlobChecksumTx(ctx, tx, BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
 		}}),
 	newMetadataTable(metadataTable[metadataSourceMetadataGeneration]{
 		record: metadataSourceMetadataGeneration{Type: metadataSourceMetadataGenerationType},
@@ -995,7 +995,7 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err := s.backfillPhotoSourcesTx(ctx, tx); err != nil {
 			return err
 		}
-		if err := refreshPhotoTechnicalMetadataTx(ctx, tx); err != nil {
+		if err := s.refreshPhotoTechnicalMetadataTx(ctx, tx); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,

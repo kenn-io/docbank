@@ -81,24 +81,24 @@ func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
 		Verb: "submit_supplied_media", RequestSHA256: strings.Repeat("b", 64),
 	}
 	_, err := s.withMediaOperation(t.Context(), op, func(tx *sql.Tx) (string, error) {
-		_, err := tx.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 			strings.Repeat("c", 64), nowRFC3339())
 		require.NoError(t, err)
 		return `{`, nil
 	})
 	require.Error(t, err)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_sources WHERE source_id='source'`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_sources WHERE source_id='source'`).Scan(&count))
 	require.Zero(t, count)
 
 	receipt, err := s.withMediaOperation(t.Context(), op, func(tx *sql.Tx) (string, error) {
-		_, err := tx.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 			strings.Repeat("c", 64), nowRFC3339())
 		return `{"source_id":"source"}`, err
 	})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"source_id":"source"}`, receipt)
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM media_sources WHERE source_id='source'`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_sources WHERE source_id='source'`).Scan(&count))
 	require.Equal(t, 1, count)
 }
 

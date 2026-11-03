@@ -67,7 +67,7 @@ func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
 		RequestDigest: fakeHash("92"), RequestJSON: `{}`, PlanJSON: `{}`,
 	})
 	require.NoError(t, err)
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
 		blobStoreLifecycleDetached, secondary.ID,
 	)
@@ -99,12 +99,12 @@ func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 	require.ErrorIs(t, s.UnregisterBlobStore(t.Context(), secondary.ID), ErrBlobStoreState)
 
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`INSERT INTO blobs(hash, size, created_at) VALUES(?, 1, ?)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
 		) VALUES(?, ?, ?, 'loose', 'raw', 1, 1)`,
@@ -392,12 +392,12 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	assert.Equal(t, "draining", draining.Lifecycle)
 
 	hash := fakeHash("d8")
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
 		) VALUES(?,?,?,'loose','raw',4,1)`,
@@ -410,7 +410,7 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	)
 	require.ErrorIs(t, err, ErrBlobStoreNotEmpty)
 
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
 		) VALUES(?,?,?,'loose','raw',4,1)`,
@@ -427,7 +427,7 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, remaining.Candidates, 2)
 
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`UPDATE storage_operations SET cancel_requested=0 WHERE operation_id=?`,
 		operation.ID,
 	)
@@ -632,7 +632,7 @@ func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T
 	require.NoError(t, err)
 	_, err = s.ClaimStorageOperation(ctx, operation.ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(t.Context(),
 		`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
 		blobStoreLifecycleDetached, secondary.ID,
 	)

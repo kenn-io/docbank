@@ -17,7 +17,7 @@ import (
 func TestPackageSuppliedTextSearchSurvivesBackupRestore(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -37,7 +37,7 @@ func TestPackageSuppliedTextSearchSurvivesBackupRestore(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(t.Context(), repository, "package-supplied-text", backup.RestoreOptions{TargetDir: target, Jobs: 1})
 	require.NoError(t, err)
-	restored, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+	restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	hits, _, err := restored.SearchPage(t.Context(), "quenchwood", 10)

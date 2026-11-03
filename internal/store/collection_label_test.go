@@ -90,7 +90,7 @@ func TestCollectionLabelNoOpClearAndRetainedEmptyAuthority(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), virtual.Revision)
 	var rows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM collection_labels`).Scan(&rows))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM collection_labels`).Scan(&rows))
 	assert.Zero(t, rows)
 
 	name := "Review set"
@@ -162,7 +162,7 @@ func TestCollectionLabelTimestampNeverMovesBackward(t *testing.T) {
 	created, err := s.SetCollectionLabel(t.Context(), run.ID(), 1, new("First"))
 	require.NoError(t, err)
 	const future = "2099-01-02T03:04:05.000000000Z"
-	_, err = s.db.Exec(`UPDATE collection_labels SET updated_at=? WHERE ingest_id=?`, future, run.ID())
+	_, err = s.db.ExecContext(t.Context(), `UPDATE collection_labels SET updated_at=? WHERE ingest_id=?`, future, run.ID())
 	require.NoError(t, err)
 
 	updated, err := s.SetCollectionLabel(t.Context(), run.ID(), created.Revision, new("Second"))
@@ -216,13 +216,13 @@ func TestBeginIngestWithLabelPublishesAtomically(t *testing.T) {
 	second, err := s.BeginIngestWithLabel(t.Context(), "cli", "Collision", &name)
 	require.NoError(t, err)
 	var unpublished int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM ingests WHERE id=?`, second.ID()).Scan(&unpublished))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=?`, second.ID()).Scan(&unpublished))
 	assert.Zero(t, unpublished, "preparing a labeled run grants no database authority")
 	_, _, err = s.IngestFile(t.Context(), second, s.RootID(), "second.txt", fakeHash("b2"),
 		8, "text/plain", "/synthetic/second.txt", "")
 	require.ErrorIs(t, err, ErrExists)
 	var ingests, nodes, blobs int
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM ingests WHERE id=?),
 		(SELECT COUNT(*) FROM nodes WHERE name='second.txt'),
 		(SELECT COUNT(*) FROM blobs WHERE hash=?)`, second.ID(), fakeHash("b2")).Scan(&ingests, &nodes, &blobs))
@@ -263,7 +263,7 @@ func TestBeginIngestWithLabelRejectsCallerSuppliedSourceKind(t *testing.T) {
 			)
 			require.ErrorIs(t, err, ErrInvalidCollectionLabel)
 			var ingests, labels int
-			require.NoError(t, s.db.QueryRow(`SELECT
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM ingests),
 				(SELECT COUNT(*) FROM collection_labels)`).Scan(&ingests, &labels))
 			require.Zero(t, ingests)
@@ -309,7 +309,7 @@ func TestCollectionLabelsRejectAllMutationsUnderAudit(t *testing.T) {
 		3, "text/plain", "/synthetic/rejected.txt", "")
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	var authority int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM ingests WHERE id=?`, run.ID()).Scan(&authority))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=?`, run.ID()).Scan(&authority))
 	assert.Zero(t, authority)
 	current, err := s.CollectionLabel(t.Context(), retained.ID())
 	require.NoError(t, err)

@@ -129,17 +129,14 @@
   import UploadDrawer from "./UploadDrawer.svelte";
   import VerifiedPreview from "./VerifiedPreview.svelte";
   import DocumentInspector from "./DocumentInspector.svelte";
+  import DocumentReader from "./DocumentReader.svelte";
+  import { hasDocumentReader } from "./documentReader.js";
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
-  import {
-    changeNodeTag,
-    documentSearch,
-    liveNodeTags,
-    resolveDocumentSourceFence,
-  } from "./receipts.js";
+  import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
   import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
@@ -1038,7 +1035,7 @@
             ],
           },
         });
-      } else if (affected.has(photos) && photos.dependsOnPeople) void photos.refresh();
+      } else if (affected.has(photos) && photos.dependsOnPeople) void refreshForPeople(photos);
     }
     queuePhotoDocumentsRefresh();
   }
@@ -1160,6 +1157,8 @@
   let selectedLiveNode = $state<Node | null>(null);
   let selectedLiveSourceKey = $state("");
   let inspectorGeneration = $state(0);
+  let reader = $state<{ source: SelectedSource; revision: number }>();
+  let readerRequest = 0;
   let loading = $state(false);
   let searchPending = $state(false);
   let naturalProfiles = $state<ProcessingProfileSummary[]>([]);
@@ -1876,6 +1875,8 @@
   }
 
   function resetLocalSessionUI(): void {
+    readerRequest++;
+    reader = undefined;
     clearToasts();
     taggingOutcomeUnknown = false;
     leaveSnapshotMode();
@@ -2140,29 +2141,29 @@
       }
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
-      const resolution = await resolveDocumentSourceFence(
-        session,
-        requestedTagID ? { tag_id: requestedTagID } : {},
-        controller.signal,
-      );
-      if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const baseRequest: generated.DocumentSearchRequest = {
         query,
         mode: mapped.mode,
         limit: 100,
         profile: profile.name,
         ...(mapped.binding_id ? { binding_id: mapped.binding_id } : {}),
-        fence: resolution.fence,
+        scope: {
+          kind: "all_live",
+          ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
+        },
         explain: true,
       };
-      const baseReport = resolution.fence.content_version_ids.length
-        ? await documentSearch(session, baseRequest, controller.signal)
-        : undefined;
+      const baseReport = await documentSearch(session, baseRequest, controller.signal);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nodes = new Map<number, Node | undefined>();
-      const baseRows = baseReport
-        ? await hydrateProcessingRows(baseReport, session, request, controller.signal, mode, nodes)
-        : [];
+      const baseRows = await hydrateProcessingRows(
+        baseReport,
+        session,
+        request,
+        controller.signal,
+        mode,
+        nodes,
+      );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nameReport = await generated.search(
         { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
@@ -2182,30 +2183,6 @@
         ...processingRows,
         ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),
       ];
-      if (!baseReport) {
-        applySearchRows(
-          nameRows,
-          query,
-          requestedTagID,
-          nameReport.truncated,
-          preferredSelectedID,
-          refreshing,
-        );
-        accepted = true;
-        if (requestedSort) applyResultSort(requestedSort);
-        naturalSearchNote = nameRows.length ? "" : "No documents match the current filter.";
-        loading = false;
-        // No document search ran, so there is no search_run to report.
-        if (submitted && nameRows.length === 0) {
-          try {
-            parseQuery(JSON.stringify({ text: query }));
-          } catch {
-            return;
-          }
-          reportAction(session, "search_empty", mapped.mode === "auto" ? "lexical" : mapped.mode);
-        }
-        return;
-      }
       applySearchRows(
         withNames(baseRows),
         query,
@@ -2219,7 +2196,12 @@
       naturalSearchNote =
         baseReport.degradations.length > 0
           ? `Search note: ${baseReport.degradations.join(", ")}`
-          : "";
+          : baseRows.length === 0 &&
+              nameRows.length === 0 &&
+              baseReport.coverage.state === "complete" &&
+              baseReport.coverage.scoped_documents === 0
+            ? "No documents match the current filter."
+            : "";
       loading = false;
       searchPending = false;
       // The base results are accepted, so the search counts however reranking ends.
@@ -2227,7 +2209,8 @@
         type: baseReport.actual_mode,
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
-      if (!naturalSearchRerank(profile, mode, naturalRerank)) return outcome;
+      if (baseReport.results.length === 0 || !naturalSearchRerank(profile, mode, naturalRerank))
+        return outcome;
       naturalRerankPending = true;
       try {
         const reranked = await documentSearch(
@@ -2654,9 +2637,41 @@
     else if (directory) void loadDirectory(directory.id, false);
   }
 
-  function activate(row: Row): void {
-    openDocument(row.node.id);
+  function activate(row: Row, alreadySelected = false): void {
+    if (!alreadySelected) openDocument(row.node.id);
     if (row.node.kind === "dir") void loadDirectory(row.node.id, true);
+    else openReader(selectedSourceFromNode(row.node, row.path), row.node.revision);
+  }
+
+  async function openReader(
+    source: SelectedSource | undefined,
+    revision: number | undefined,
+  ): Promise<void> {
+    if (!source || !hasDocumentReader(source)) return;
+    const request = ++readerRequest;
+    const session = webSession;
+    try {
+      const authorizedRevision =
+        revision ?? (await generated.getNode(source.nodeID, { session })).revision;
+      if (request === readerRequest && session === webSession && selectedSource?.key === source.key)
+        reader = { source, revision: authorizedRevision };
+    } catch (cause) {
+      if (request === readerRequest && session === webSession) handleFailure(cause);
+    }
+  }
+
+  function closeReader(): void {
+    readerRequest++;
+    reader = undefined;
+    tick().then(() =>
+      document
+        .querySelector<HTMLElement>(
+          snapshotActive
+            ? `tr[data-snapshot-node="${snapshot.selectedID}"]`
+            : `tr[data-live-node="${selectedID}"]`,
+        )
+        ?.focus(),
+    );
   }
 
   // The matched text, when it says more than the name the row already shows.
@@ -2671,6 +2686,9 @@
   }
 
   function openDocument(nodeID: number): void {
+    // Reselecting a folder keeps its metadata, including any load already in flight.
+    if (selectedID === nodeID && selected?.node.kind === "dir" && !selectedTagsError && !auditError)
+      return;
     if (rows.some((row) => row.node.id === nodeID && row.node.kind === "file"))
       reportAction(webSession, "document_opened");
     selectNode(nodeID);
@@ -2915,15 +2933,15 @@
     )
       void photoAlbums?.load();
     for (const photos of siblingPhotoLists()) {
-      const rotations = receipt ? photos.metadataChanged(receipt) : new Map<string, number>();
+      const rotations = receipt ? photos.metadataChanged(receipt) : undefined;
       const preparedChanged = receipt
         ? photos.authored.targets.some((target) =>
             receipt.after.some((file) => file.file_id === target.file_id),
           )
         : photos.authored.targets.length > 0;
       const refresh =
-        !receipt || photos.loading || photos.reloadsAfter(rotations)
-          ? photos.refresh()
+        photos.snapshotID || !rotations || photos.loading || photos.reloadsAfter(rotations)
+          ? photos.refreshAfterChange()
           : Promise.resolve();
       if (preparedChanged) void refresh.then(() => photos.authored.reload());
     }
@@ -2945,8 +2963,13 @@
     }
   }
 
+  function refreshForPeople(photos: Photos) {
+    return photos.refreshAfterChange();
+  }
+
   function handlePhotoFacesChanged(): void {
-    for (const photos of siblingPhotoLists()) if (photos.dependsOnPeople) void photos.refresh();
+    for (const photos of siblingPhotoLists())
+      if (photos.dependsOnPeople) void refreshForPeople(photos);
     queuePhotoDocumentsRefresh();
   }
 
@@ -4525,16 +4548,32 @@
                                 snapshot.selectedID = row.node_id;
                                 if (event.detail < 2) reportAction(webSession, "document_opened");
                               }}
+                              ondblclick={() =>
+                                openReader(
+                                  selectedSourceFromSnapshot(row, snapshotPage.observed_at),
+                                  currentInspectorNode?.id === row.node_id
+                                    ? currentInspectorNode.revision
+                                    : undefined,
+                                )}
                               onkeydown={(event) => {
                                 if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  event.stopPropagation();
                                   snapshot.selectedID = row.node_id;
                                   reportAction(webSession, "document_opened");
+                                  openReader(
+                                    selectedSourceFromSnapshot(row, snapshotPage.observed_at),
+                                    currentInspectorNode?.id === row.node_id
+                                      ? currentInspectorNode.revision
+                                      : undefined,
+                                  );
                                 }
                               }}
                             >
                               <td
                                 class="selection-column"
                                 onclick={(event) => event.stopPropagation()}
+                                ondblclick={(event) => event.stopPropagation()}
                               >
                                 <Checkbox
                                   checked={snapshot.selection.has(row.node_id)}
@@ -4799,7 +4838,7 @@
                         data-node-id={row.node.id}
                         tabindex="0"
                         aria-selected={row.node.id === selectedID}
-                        ondblclick={() => row.node.kind === "dir" && activate(row)}
+                        ondblclick={() => activate(row, true)}
                         onclick={(event) => event.detail < 2 && openDocument(row.node.id)}
                         onkeydown={(event) => {
                           if (event.key === "Enter") {
@@ -4870,7 +4909,10 @@
                           </td>
                         {/if}
                         {#if similarAvailable}
-                          <td onkeydown={(event) => event.stopPropagation()}>
+                          <td
+                            onkeydown={(event) => event.stopPropagation()}
+                            ondblclick={(event) => event.stopPropagation()}
+                          >
                             {#if row.node.kind === "file" && row.node.current_version_id}
                               <IconAction
                                 size="sm"
@@ -4926,6 +4968,9 @@
                 snapshot={selectedSnapshot}
                 collectionName={collectionNames[selectedSnapshot.display_collection_id ?? ""]}
                 snapshotID={snapshot.state.page?.snapshot_id}
+                onopen={selectedSource && hasDocumentReader(selectedSource)
+                  ? () => openReader(selectedSource, currentInspectorNode?.revision)
+                  : undefined}
                 previewAvailable={!!selectedSource &&
                   currentInspectorNode?.id === selectedSource.nodeID}
                 overlay={selectedSnapshotOverlay ?? undefined}
@@ -5031,7 +5076,9 @@
                   ? () => {
                       if (selected) void activate(selected);
                     }
-                  : undefined}
+                  : selectedSource && hasDocumentReader(selectedSource)
+                    ? () => openReader(selectedSource, currentInspectorNode?.revision)
+                    : undefined}
                 onversions={selected.node.kind === "file"
                   ? () => (activePanel = { kind: "versions" })
                   : undefined}
@@ -5122,6 +5169,17 @@
         {/if}
       {/if}
     </div>
+    {#if reader}
+      <DocumentReader
+        session={webSession}
+        source={reader.source}
+        authorizationRevision={reader.revision}
+        node={selectedTagsLoading ? undefined : (currentInspectorNode ?? undefined)}
+        actionsDisabled={liveSelectionNeedsRefresh}
+        onauthfailure={handleFailure}
+        onclose={closeReader}
+      />
+    {/if}
     {#if shortcutHelpOpen}
       <ShortcutHelpModal
         context={photoMode ? "photos" : "documents"}

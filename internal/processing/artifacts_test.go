@@ -99,7 +99,7 @@ func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
 func TestAuxiliaryChecksumBackfillResumesAndReadsPackedOnlyContent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -555,7 +555,7 @@ type publicationIDs struct {
 func newPublicationFixture(tb testing.TB) publicationFixture {
 	tb.Helper()
 	root := tb.TempDir()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(tb.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
@@ -585,11 +585,11 @@ func newPublicationFixture(tb testing.TB) publicationFixture {
 }
 
 func (f publicationFixture) stage(
-	t *testing.T,
+	tb testing.TB,
 	ids publicationIDs, lexicalText, markdown string,
 ) StagedRendition {
-	t.Helper()
-	return f.stageForSource(t, ids, lexicalText, markdown, f.versionID, f.mustSourceHash())
+	tb.Helper()
+	return f.stageForSource(tb, ids, lexicalText, markdown, f.versionID, f.mustSourceHash())
 }
 
 func (f publicationFixture) replacementStage(
@@ -608,10 +608,10 @@ func (f publicationFixture) replacementStage(
 }
 
 func (f publicationFixture) stageForSource(
-	t *testing.T,
+	tb testing.TB,
 	ids publicationIDs, lexicalText, markdown, versionID, sourceHash string,
 ) StagedRendition {
-	t.Helper()
+	tb.Helper()
 	normalizedEvidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1,
 		Completeness:    document.EvidenceComplete,
@@ -625,11 +625,11 @@ func (f publicationFixture) stageForSource(
 			},
 		}},
 	}, f.evidencePolicy)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	evidence, evidenceHash, err := document.MarshalNormalizedEvidenceV1(normalizedEvidence)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	rendition, err := document.BuildRenditionV1(normalizedEvidence, f.renditionPolicy)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	markdownBytes := rendition.Markdown
 	markdownHash := rendition.MarkdownChecksum
 	policy := jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)

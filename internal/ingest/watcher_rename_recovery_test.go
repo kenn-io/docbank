@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func promptRenameFixture(t *testing.T, mutate func(func() error) error) (*Watcher, *watchRoot, *Ingester, string, int64) {
+func promptRenameFixture(t *testing.T, mutate func(context.Context, func() error) error) (*Watcher, *watchRoot, *Ingester, string, int64) {
 	t.Helper()
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"draft.md": "first", "unstable/other.md": "other"})
@@ -121,7 +122,7 @@ func TestWatchRenameAdmissionRechecksIdentityAndOldPath(t *testing.T) {
 			watcher, root, ing, source, id := promptRenameFixture(t, runTestMutation)
 			candidate := filepath.Join(source, "notes", "final.md")
 			admitted := false
-			watcher.mutate = func(fn func() error) error {
+			watcher.mutate = func(_ context.Context, fn func() error) error {
 				if !admitted {
 					admitted = true
 					tc.admit(t, source, candidate)
@@ -232,7 +233,7 @@ func TestWatchOldPathMissingRequiresPinnedRoot(t *testing.T) {
 
 func TestWatchIncompletePassHonorsDirtyHintAndKeepsSubscription(t *testing.T) {
 	calls := 0
-	mutate := func(fn func() error) error { calls++; return fn() }
+	mutate := func(_ context.Context, fn func() error) error { calls++; return fn() }
 	watcher, root, ing, source, _ := promptRenameFixture(t, mutate)
 	// Keep the hinted file outside the subtree made unreadable below, whose
 	// interruption would otherwise independently reset its processed state.

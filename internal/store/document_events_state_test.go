@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"testing"
 
@@ -38,21 +39,21 @@ func TestDirtyRevisionDoesNotInvalidateOtherVersions(t *testing.T) {
 	mark(a.CurrentVersionID)
 	mark(a.CurrentVersionID)
 	var aRevision, bCount int64
-	require.NoError(t, s.db.QueryRow(
-		`SELECT revision FROM document_event_dirty WHERE content_version_id=?`,
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT revision FROM document_event_dirty WHERE content_version_id=$1`,
 		a.CurrentVersionID,
 	).Scan(&aRevision))
 	require.GreaterOrEqual(t, aRevision, int64(2))
-	require.NoError(t, s.db.QueryRow(
-		`SELECT count(*) FROM document_event_dirty WHERE content_version_id=?`,
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM document_event_dirty WHERE content_version_id=$1`,
 		b.CurrentVersionID,
 	).Scan(&bCount))
 	require.Zero(t, bCount)
 }
 
-func TestDocumentEventStateAndRecipeAreLazyAndIdempotent(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventStateAndRecipeAreLazyAndIdempotent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	firstFingerprint := fakeHash("f1")
 	secondFingerprint := fakeHash("f2")
@@ -90,7 +91,7 @@ func TestDocumentEventStateAndRecipeAreLazyAndIdempotent(t *testing.T) {
 	require.Equal(t, secondFingerprint, state.DeriverFingerprint)
 	var storedEpoch int64
 	var storedFingerprint string
-	require.NoError(t, s.db.QueryRow(`SELECT input_epoch,deriver_fingerprint
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT input_epoch,deriver_fingerprint
 		FROM document_event_state WHERE singleton=1`).Scan(&storedEpoch, &storedFingerprint))
 	require.Equal(t, int64(1), storedEpoch)
 	require.Equal(t, firstFingerprint, storedFingerprint)
@@ -133,9 +134,9 @@ func TestDocumentEventIdleMaintenanceNeedsNoWriteTransaction(t *testing.T) {
 	}
 }
 
-func TestMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("01"), 11, "text/plain")
 	require.NoError(t, err)
 	second, err := s.CreateFile(t.Context(), s.RootID(), "second.txt", fakeHash("02"), 12, "")
@@ -159,9 +160,9 @@ func TestMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t *testing.T)
 	_, err = s.MissingDocumentEventTargetsAfter(t.Context(), fingerprint, "", 0)
 	require.Error(t, err)
 
-	_, err = s.db.Exec(`INSERT INTO document_event_attempts(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_attempts(
 		content_version_id,input_epoch,input_revision,inputs_sha256,state,diagnostic_json,attempted_at
-	) VALUES(?,?,?,?,?,?,?)`, first.CurrentVersionID, 1, 0, fakeHash("a1"),
+	) VALUES($1,$2,$3,$4,$5,$6,$7)`, first.CurrentVersionID, 1, 0, fakeHash("a1"),
 		"unavailable", []byte(`[]`), "2020-01-01T00:00:00Z")
 	require.NoError(t, err)
 	targets, err = s.MissingDocumentEventTargetsAfter(t.Context(), fingerprint, "", 100)
@@ -169,9 +170,9 @@ func TestMissingDocumentEventTargetsUsesEpochRevisionAndUUIDCursor(t *testing.T)
 	require.Len(t, targets, 1)
 	require.Equal(t, second.CurrentVersionID, targets[0].ContentVersionID)
 	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), fingerprint))
-	_, err = s.db.Exec(`INSERT INTO document_event_attempts(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_attempts(
 		content_version_id,input_epoch,input_revision,inputs_sha256,state,diagnostic_json,attempted_at
-	) VALUES(?,?,?,?,?,?,?)`, second.CurrentVersionID, 1, 0, fakeHash("a2"),
+	) VALUES($1,$2,$3,$4,$5,$6,$7)`, second.CurrentVersionID, 1, 0, fakeHash("a2"),
 		"failed", []byte(`[]`), "2020-01-01T00:00:00Z")
 	require.NoError(t, err)
 	targets, err = s.MissingDocumentEventTargetsAfter(t.Context(), fingerprint, "", 100)
@@ -240,9 +241,9 @@ func TestDocumentEventRecipeSerializesConcurrentSameRecipe(t *testing.T) {
 	require.Equal(t, fingerprint, state.DeriverFingerprint)
 }
 
-func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	version, _ := ingestDocumentEventTarget(t, s, "attempt.txt", "a4")
 	fingerprint := DocumentEventsDeriverFingerprint
 	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), fingerprint))
@@ -256,7 +257,7 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 	err := s.RecordDocumentEventAttempt(t.Context(), target, digest, "unavailable", diagnostics)
 	require.ErrorIs(t, err, ErrDocumentEventInputsChanged)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_attempts`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_attempts`).Scan(&count))
 	require.Zero(t, count)
 
 	record := documentEventRecord(t, s.VaultID(), version.ID, "a")
@@ -266,7 +267,7 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 	canonical := mustMarshalDocumentEvents(t, record)
 	_, err = s.PublishDocumentEvents(t.Context(), target, fingerprint, digest, canonical)
 	require.ErrorIs(t, err, ErrDocumentEventInputsChanged)
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_heads`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_heads`).Scan(&count))
 	require.Zero(t, count)
 
 	target = requireDocumentEventTarget(t, s, version.ID)
@@ -277,26 +278,16 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, targets, "a matching terminal attempt must prevent hot retry")
 
-	_, err = s.db.Exec(`UPDATE document_event_attempts SET attempted_at=? WHERE content_version_id=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_attempts SET attempted_at=$1 WHERE content_version_id=$2`,
 		"2020-01-01T00:00:00Z", version.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.RecordDocumentEventAttempt(
 		t.Context(), target, digest, "unavailable", diagnostics,
 	))
 	var attemptedAt string
-	require.NoError(t, s.db.QueryRow(`SELECT attempted_at FROM document_event_attempts
-		WHERE content_version_id=?`, version.ID).Scan(&attemptedAt))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT attempted_at FROM document_event_attempts
+		WHERE content_version_id=$1`, version.ID).Scan(&attemptedAt))
 	require.Equal(t, "2020-01-01T00:00:00Z", attemptedAt, "unchanged replay must not churn")
-
-	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "indexed", []byte(`[]`))
-	require.Error(t, err, "indexed attempts require atomic publication proof")
-	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "retrying", []byte(`[]`))
-	require.Error(t, err)
-	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "failed", []byte(`[ ]`))
-	require.Error(t, err, "diagnostics must use canonical JSON")
-	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "failed",
-		make([]byte, maxDocumentEventDiagnosticBytes+1))
-	require.Error(t, err)
 
 	epoch, err := s.BumpDocumentEventInputEpoch(t.Context(), fingerprint)
 	require.NoError(t, err)
@@ -306,14 +297,14 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 	generation, err := s.PublishDocumentEvents(t.Context(), target, fingerprint, digest, canonical)
 	require.NoError(t, err)
 	require.NotEmpty(t, generation.GenerationID)
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_attempts
-		WHERE content_version_id=? AND input_epoch=? AND input_revision=?
-		AND inputs_sha256=? AND state='indexed'`, version.ID, target.InputEpoch,
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_attempts
+		WHERE content_version_id=$1 AND input_epoch=$2 AND input_revision=$3
+		AND inputs_sha256=$4 AND state='indexed'`, version.ID, target.InputEpoch,
 		target.InputRevision, digest).Scan(&count))
 	require.Equal(t, 1, count)
 	var indexedDiagnostics []byte
-	require.NoError(t, s.db.QueryRow(`SELECT diagnostic_json FROM document_event_attempts
-		WHERE content_version_id=?`, version.ID).Scan(&indexedDiagnostics))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT diagnostic_json FROM document_event_attempts
+		WHERE content_version_id=$1`, version.ID).Scan(&indexedDiagnostics))
 	require.JSONEq(t, `[{"code":"date_unparseable","detail":"\u003csynthetic\u003e\u0026\u2028\u2029","source_key":"metadata/a/created"}]`,
 		string(indexedDiagnostics))
 	targets, err = s.MissingDocumentEventTargetsAfter(t.Context(), fingerprint, "", 10)
@@ -330,9 +321,9 @@ func TestDocumentEventAttemptsFenceInputsAndStopTerminalRetry(t *testing.T) {
 	require.Equal(t, state.PublicationEpoch, replayedState.PublicationEpoch)
 }
 
-func TestDocumentEventRebuildReceiptIsAtomicAndIdempotent(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventRebuildReceiptIsAtomicAndIdempotent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "rebuild.txt", fakeHash("b1"), 1, "text/plain")
 	require.NoError(t, err)
 	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), fakeHash("a1")))
@@ -416,7 +407,7 @@ func TestDocumentEventRebuildRollsBackEpochWhenReceiptInsertFails(t *testing.T) 
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "rollback.txt", fakeHash("d1"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_document_event_build
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_document_event_build
 		BEFORE INSERT ON document_event_builds BEGIN SELECT RAISE(ABORT, 'reject build'); END`)
 	require.NoError(t, err)
 
@@ -426,9 +417,9 @@ func TestDocumentEventRebuildRollsBackEpochWhenReceiptInsertFails(t *testing.T) 
 	require.Zero(t, documentEventStateCount(t, s), "epoch creation must roll back with receipt")
 }
 
-func TestDocumentEventBuildRefreshCountsCurrentTerminalAttempts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentEventBuildRefreshCountsCurrentTerminalAttempts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first-build.txt", fakeHash("e1"), 1, "text/plain")
 	require.NoError(t, err)
 	second, err := s.CreateFile(t.Context(), s.RootID(), "second-build.txt", fakeHash("e2"), 1, "text/plain")
@@ -444,7 +435,7 @@ func TestDocumentEventBuildRefreshCountsCurrentTerminalAttempts(t *testing.T) {
 	_, err = s.PublishDocumentEvents(t.Context(), firstTarget, DocumentEventsDeriverFingerprint,
 		requireDocumentEventInputsSHA256(t, s, firstTarget), firstCanonical)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`DELETE FROM document_event_heads WHERE content_version_id=?`,
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM document_event_heads WHERE content_version_id=$1`,
 		first.CurrentVersionID)
 	require.NoError(t, err)
 	targets, err := s.MissingDocumentEventTargetsAfter(
@@ -519,6 +510,22 @@ func requireDocumentEventTarget(
 func documentEventStateCount(t *testing.T, s *Store) int {
 	t.Helper()
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM document_event_state`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_event_state`).Scan(&count))
 	return count
+}
+
+func TestDocumentEventAttemptValidation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, target := ingestDocumentEventTarget(t, s, "invalid-attempt.txt", "e6")
+	digest := requireDocumentEventInputsSHA256(t, s, target)
+	err := s.RecordDocumentEventAttempt(t.Context(), target, digest, "indexed", []byte(`[]`))
+	require.Error(t, err, "indexed attempts require atomic publication proof")
+	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "retrying", []byte(`[]`))
+	require.Error(t, err)
+	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "failed", []byte(`[ ]`))
+	require.Error(t, err, "diagnostics must use canonical JSON")
+	err = s.RecordDocumentEventAttempt(t.Context(), target, digest, "failed",
+		[]byte(`["`+strings.Repeat("x", maxDocumentEventDiagnosticBytes)+`"]`))
+	require.ErrorContains(t, err, "diagnostics exceed")
 }

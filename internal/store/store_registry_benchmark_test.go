@@ -16,7 +16,7 @@ import (
 func BenchmarkBlobStoreInventory(b *testing.B) {
 	for _, files := range []int{100, 10000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			for i := range files {
@@ -69,7 +69,7 @@ func BenchmarkBlobStoreInventory(b *testing.B) {
 func BenchmarkBlobStoreUnreadableObjects(b *testing.B) {
 	for _, objects := range []int{100, 10000, 100000} {
 		b.Run(fmt.Sprintf("objects=%d", objects), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive")
@@ -77,7 +77,7 @@ func BenchmarkBlobStoreUnreadableObjects(b *testing.B) {
 			require.NoError(b, s.RegisterBlobStore(b.Context(), secondary))
 			require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
 				for i := range objects {
-					if err := s.EnsureBlobTx(tx, fmt.Sprintf("%064x", i+1), 128); err != nil {
+					if err := s.EnsureBlobTx(b.Context(), tx, fmt.Sprintf("%064x", i+1), 128); err != nil {
 						return err
 					}
 				}

@@ -20,7 +20,8 @@ func auditRecordFixture(t *testing.T) map[string][]storedAuditRecord {
 	return records
 }
 
-func TestAuditRecordsPostgres(t *testing.T) {
+func checkAuditRecordsPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	destination := newPostgresQueryStore(t)
 	ctx := t.Context()

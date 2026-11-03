@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -102,7 +103,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 		Body SavedQueryCreateRequest
 	}) (*savedQueryOutput, error) {
 		var out *savedQueryOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			saved, err := d.Store.CreateSavedQuery(
 				ctx, in.Body.Name, in.Body.Description, in.Body.Kind, in.Body.Payload,
 			)
@@ -163,7 +164,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 			patch.Payload = &payload
 		}
 		var out *savedQueryOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			saved, err := d.Store.UpdateSavedQuery(ctx, in.SavedQueryID, revision, patch)
 			if err != nil {
 				return FromStoreError(err)
@@ -187,7 +188,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 			return nil, err
 		}
 		var out *savedQueryOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			saved, err := d.Store.DeleteSavedQuery(ctx, in.SavedQueryID, revision)
 			if err != nil {
 				return FromStoreError(err)
@@ -232,9 +233,28 @@ func registerSavedQueryRunRoute(
 		if snapshots == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
-		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, store.SnapshotRequest{
-			ReplacesSnapshotID: in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
-		}, g.mutate)
+		request := store.SnapshotRequest{ReplacesSnapshotID: in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets}
+		if request.Photos {
+			saved, err := d.Store.SavedQueryByID(ctx, in.SavedQueryID)
+			if err != nil {
+				return nil, workspaceQueryError(err)
+			}
+			if saved.Revision != revision {
+				return nil, workspaceQueryError(store.ErrStaleRevision)
+			}
+			value, err := query.Parse(saved.Payload)
+			if err != nil {
+				return nil, workspaceQueryError(err)
+			}
+			request.Query = value
+			value = photoRankingQuery(value)
+			if value.Mode != query.ModeLexical {
+				request.RankPhotos = func(buildCtx context.Context) (store.PhotoRanking, error) {
+					return photoQueryRanking(buildCtx, d, photoRankingRequest(value, false, coverage))
+				}
+			}
+		}
+		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, request, g.mutate)
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}

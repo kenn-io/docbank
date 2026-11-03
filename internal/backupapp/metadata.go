@@ -386,7 +386,7 @@ func (r metadataRestorer) RestoreMetadata(
 	if format != MetadataFormat && format != metadataFormatV1 {
 		return fmt.Errorf("backupapp: unsupported metadata format %q", format)
 	}
-	target, err := store.Open(targetPath, r.driver)
+	target, err := store.Open(ctx, targetPath, r.driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: creating restored metadata store: %w", err)
 	}

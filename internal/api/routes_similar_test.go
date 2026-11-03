@@ -91,9 +91,14 @@ func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
 		code   string
 	}{
 		{"/api/v1/search/similar", request, http.StatusConflict, "stale_index"},
-		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusInternalServerError, "processing_failed"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusConflict, "stale_index"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "hybrid", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusConflict, "stale_index"},
 	} {
-		t.Run(test.path+"/stale_index", func(t *testing.T) {
+		name := test.path + "/stale_index"
+		if request, ok := test.body.(api.DocumentSearchRequest); ok {
+			name += "/" + request.Mode
+		}
+		t.Run(name, func(t *testing.T) {
 			response, body := do(t, ts, http.MethodPost, test.path, nil, test.body)
 			assert.Equal(t, test.status, response.StatusCode, body)
 			assert.Contains(t, body, `"code":"`+test.code+`"`)
@@ -131,7 +136,7 @@ func TestSimilarMissingCoverageRequiresSourceFenceAndCurrentIdentity(t *testing.
 	response, body = do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, request)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	request.Selector.NodeID = node.ID
-	hash, size, err := catalog.Blobs.Write(strings.NewReader("changed synthetic source"))
+	hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("changed synthetic source"))
 	require.NoError(t, err)
 	updated, _, err := catalog.ReplaceContent(t.Context(), node.ID, store.UnconditionalRev, hash, size, node.MimeType)
 	require.NoError(t, err)

@@ -68,7 +68,7 @@ func TestIngestFileIdempotency(t *testing.T) {
 	assert.Equal(t, "report (3).pdf", n3.Name)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("a1"))
+		_, err := tx.ExecContext(t.Context(), `DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("a1"))
 		return err
 	}))
 	_, _, err = s.IngestFile(ctx, ing, s.RootID(),
@@ -242,7 +242,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 
 	var identity, origPath, origMtime string
 	var supersedes sql.NullString
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT identity, original_path, original_mtime, supersedes
 		 FROM provenance WHERE node_id = ?`,
 		n.ID).Scan(&identity, &origPath, &origMtime, &supersedes))
@@ -250,7 +250,7 @@ func TestIngestFileRecordsProvenance(t *testing.T) {
 	assert.Equal(t, "2026-01-02T03:04:05Z", origMtime)
 	assert.False(t, supersedes.Valid)
 	var storedIngestID string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT ingest_id FROM provenance WHERE node_id = ?`, n.ID,
 	).Scan(&storedIngestID))
 	assert.Equal(t, ing.ID(), storedIngestID)
@@ -317,7 +317,7 @@ func TestSyncWatchedContentFollowsMovedNodeWithoutOverwritingIndependentEdit(t *
 	assert.Empty(t, noVersion.ID)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("c3"))
+		_, err := tx.ExecContext(t.Context(), `DELETE FROM blob_locations WHERE blob_hash=?`, fakeHash("c3"))
 		return err
 	}))
 	missingNode, missingVersion, missingChanged, err := s.SyncWatchedContent(
@@ -413,14 +413,14 @@ func TestIngestAndProvenanceFactsAreImmutable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, added)
 
-	_, err = s.db.Exec(`UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID.ID())
+	_, err = s.db.ExecContext(t.Context(), `UPDATE ingests SET source_desc='rewritten' WHERE id=?`, ingestID.ID())
 	require.ErrorContains(t, err, "ingest records are immutable")
-	_, err = s.db.Exec(`UPDATE provenance SET original_path='/rewritten' WHERE node_id=?`, node.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE provenance SET original_path='/rewritten' WHERE node_id=?`, node.ID)
 	require.ErrorContains(t, err, "provenance records are immutable")
 
 	var sourceDesc, originalPath string
-	require.NoError(t, s.db.QueryRow(`SELECT source_desc FROM ingests WHERE id=?`, ingestID.ID()).Scan(&sourceDesc))
-	require.NoError(t, s.db.QueryRow(`SELECT original_path FROM provenance WHERE node_id=?`, node.ID).Scan(&originalPath))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT source_desc FROM ingests WHERE id=?`, ingestID.ID()).Scan(&sourceDesc))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT original_path FROM provenance WHERE node_id=?`, node.ID).Scan(&originalPath))
 	assert.Equal(t, "source", sourceDesc)
 	assert.Equal(t, "/source/a.txt", originalPath)
 }
@@ -437,7 +437,7 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 	require.True(t, added)
 
 	var priorIdentity string
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT identity FROM provenance WHERE node_id=?`, node.ID,
 	).Scan(&priorIdentity))
 	corrected := metadataProvenance{
@@ -446,7 +446,7 @@ func TestIngestIdempotencyUsesActiveProvenanceLeaf(t *testing.T) {
 	}
 	corrected.Identity, err = provenanceIdentity(corrected)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO provenance(
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(
 		identity,node_id,ingest_id,original_path,original_mtime,supersedes
 	) VALUES(?,?,?,?,?,?)`, corrected.Identity, corrected.NodeID, corrected.IngestID,
 		corrected.OriginalPath, corrected.OriginalMTime, corrected.Supersedes)
@@ -536,6 +536,39 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 	assert.False(t, added)
 }
 
+func TestIngestFileMatchesURLBySourceNotName(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	dir, err := s.Mkdir(ctx, s.RootID(), "urls")
+	require.NoError(t, err)
+	urlRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=7","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	original, added, err := s.IngestFile(ctx, urlRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	moved, _, err := s.Move(ctx, original.ID, dir.ID, "reviewed.txt", UnconditionalRev)
+	require.NoError(t, err)
+	before, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	retryRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=7","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	skipped, added, err := s.IngestFile(ctx, retryRun, dir.ID, "changed-name.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, moved.ID, skipped.ID)
+	assert.Equal(t, moved.Revision, skipped.Revision)
+	after, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	mirrorRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=8","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	_, added, err = s.IngestFile(ctx, mirrorRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
+	require.NoError(t, err)
+	require.True(t, added)
+}
+
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -620,6 +653,43 @@ func TestIngestMatchesOnlyLiveCurrentContentInDestination(t *testing.T) {
 			require.True(t, added)
 			require.NotEqual(t, original.ID, imported.ID)
 			require.Equal(t, wantName, imported.Name)
+		})
+	}
+}
+
+func TestIngestFileExactTaggedRollsBackOnMissingTag(t *testing.T) {
+	t.Parallel()
+	for _, audited := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "audited"}[audited], func(t *testing.T) {
+			s := newTestStore(t)
+			parent := s.RootID()
+			if audited {
+				dir, err := s.MkdirAll(t.Context(), "/Receipts")
+				require.NoError(t, err)
+				parent = dir.ID
+				seedInitialAuditAuthority(t, s, parent)
+			}
+			_, err := s.CreateTag(t.Context(), "café")
+			require.NoError(t, err)
+			_, err = s.CreateTag(t.Context(), "2026")
+			require.NoError(t, err)
+			run, err := s.BeginIngest(t.Context(), "watch", "receipts")
+			require.NoError(t, err)
+			for name, want := range map[string]error{"missing": ErrNotFound, "": ErrInvalidTag} {
+				_, err = s.IngestFileExactTagged(t.Context(), run, parent, "receipt.txt", fakeHash("a1"), 10, "text/plain", "receipt.txt", "", []string{"café", name})
+				require.ErrorIs(t, err, want)
+				require.ErrorAs(t, err, new(*TagResolutionError))
+				var retained int
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM nodes WHERE name = 'receipt.txt') + (SELECT COUNT(*) FROM provenance WHERE original_path = 'receipt.txt')`).Scan(&retained))
+				assert.Zero(t, retained)
+			}
+			node, err := s.IngestFileExactTagged(t.Context(), run, parent, "receipt.txt", fakeHash("a1"), 10, "text/plain", "receipt.txt", "", []string{"café", "cafe\u0301", "café", "2026"})
+			require.NoError(t, err)
+			tags, total, err := s.NodeTags(t.Context(), node.ID, 10, 0)
+			require.NoError(t, err)
+			require.Equal(t, 2, total)
+			assert.Equal(t, "café", tags[1].Name)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
 		})
 	}
 }

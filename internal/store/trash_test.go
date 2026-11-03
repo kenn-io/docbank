@@ -154,7 +154,7 @@ func TestNestedTrashRestoreKeepsEarlierTrash(t *testing.T) {
 // for "the original parent no longer exists".
 func deleteTrashRoot(t *testing.T, s *Store, id int64) {
 	t.Helper()
-	_, err := s.db.Exec(`DELETE FROM nodes WHERE id = ?`, id)
+	_, err := s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id = ?`, id)
 	require.NoError(t, err)
 }
 
@@ -277,7 +277,7 @@ func TestTrashEmpty(t *testing.T) {
 
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
 	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
+	child, err := s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, a.ID, -1)
 	require.NoError(t, err)
@@ -286,6 +286,8 @@ func TestTrashEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, roots, 1)
 
+	_, before, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
 	// Nothing older than an hour.
 	rep, err := s.TrashEmpty(ctx, time.Hour, false)
 	require.NoError(t, err)
@@ -308,11 +310,16 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, int64(1), rep.Deleted)
 	assert.True(t, rep.Run)
 
+	changes, _, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 2)
+	require.Equal(t, []string{"removed", "removed"}, []string{changes[0].Kind, changes[1].Kind})
+	require.ElementsMatch(t, []int64{a.ID, child.ID}, []int64{changes[0].NodeID, changes[1].NodeID})
 	// Subtree rows are gone (cascade), blob row remains (GC's job).
 	var nodeCount, blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
 	assert.Equal(t, 1, nodeCount) // just the root
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
 	assert.Equal(t, 1, blobCount)
 }
 
@@ -329,18 +336,18 @@ func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
 				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
 			require.NoError(t, err)
 			stamp := nowRFC3339()
-			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+			_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 				fakeHash("a1"), stamp)
 			require.NoError(t, err)
 			switch authority {
 			case "source version":
-				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
+				_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_source_versions VALUES(
 					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
 			case "input artifact":
-				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+				_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_occurrences VALUES(
 					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
 				require.NoError(t, err)
-				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+				_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_input_artifacts VALUES(
 					'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
 					protected.CurrentVersionID, protected.BlobHash, stamp)
 			}
@@ -388,9 +395,9 @@ func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 	assert.Equal(t, int64(1), report.Deleted)
 
 	var attachments, heads, builds int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
 	assert.Equal(t, []int{0, 0, 1}, []int{attachments, heads, builds},
 		"permanent document deletion revokes version authority while immutable builds remain for GC")
 }
@@ -501,7 +508,7 @@ func TestTrashEmptyWholeSecondTimestamp(t *testing.T) {
 	_, _, err = s.Trash(ctx, d.ID, -1)
 	require.NoError(t, err)
 	stamp := time.Now().UTC().Add(-time.Hour).Truncate(time.Second).Format(timestampLayout)
-	_, err = s.db.Exec(`UPDATE nodes SET trashed_at = ? WHERE id = ?`, stamp, d.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET trashed_at = ? WHERE id = ?`, stamp, d.ID)
 	require.NoError(t, err)
 
 	rep, err := s.TrashEmpty(ctx, time.Hour, true)

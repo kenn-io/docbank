@@ -75,7 +75,7 @@ func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {
 	})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, page, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{},
-		func(write func() error) error {
+		func(_ context.Context, write func() error) error {
 			assert.Equal(t, int64(1), materializedRows, "materialization must finish before mutation admission")
 			assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false), "receipt must not be written before mutation admission")
 			return write()
@@ -360,7 +360,7 @@ func TestSavedQueryRunCanceledAdmissionAndDefinitionDeletionLeaveNoAuthority(t *
 	_, err = s.DeleteSavedQuery(t.Context(), definition.ID, definition.Revision)
 	require.NoError(t, err)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM saved_query_runs WHERE run_id=?`, run.RunID).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM saved_query_runs WHERE run_id=?`, run.RunID).Scan(&count))
 	assert.Zero(t, count, "deleting the definition must cascade its receipts")
 }
 

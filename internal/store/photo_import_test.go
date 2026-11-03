@@ -117,7 +117,7 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	assert.Equal(t, PhotoRoleRAW, fileByRole(result.Asset.Files, PhotoRoleRAW).Role)
 
 	var nodes int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	bad := photoImportTestGroup(
 		photoImportTestMember(filepath.Join(root, "IMG_0002.ARW"), PhotoRoleRAW, fakeHash("raw2"), "image/x-sony-arw"),
 		photoImportTestMember(filepath.Join(root, "IMG_0002.JPG"), PhotoRoleImage, fakeHash("jpg2"), "image/jpeg"),
@@ -133,7 +133,7 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	_, err = s.NodeByPath(ctx, "/new")
 	require.ErrorIs(t, err, ErrNotFound)
 	var after int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
 	assert.Equal(t, nodes, after)
 
 	rerun, err := s.IngestPhotoGroup(ctx, run, group)
@@ -254,13 +254,13 @@ func TestPhotoImportMultipleRAWsImportAlone(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	assert.Empty(t, result.Ambiguity.Files[3].AssetID)
 	var files int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
 	rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng, jpeg, xmp))
 	require.NoError(t, err)
 	assert.True(t, rerun.Skipped)
 	require.NotNil(t, rerun.Ambiguity)
 	var after int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
 	assert.Equal(t, files, after)
 
 	// A second RAW arriving later leaves the established pair untouched.
@@ -350,7 +350,7 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 		photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng")))
 	require.NoError(t, err)
 	var nodes int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	assert.Equal(t, 1, nodes)
 	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
 		photoImportTestMember(filepath.Join(secondRoot, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg"),
@@ -360,7 +360,7 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, asset.Files, 2)
 	var observations int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
 	assert.Equal(t, 1, observations)
 }
 
@@ -381,7 +381,7 @@ func TestPhotoImportReusesOrdinaryRAWInAnotherFolder(t *testing.T) {
 	assert.True(t, result.Skipped)
 	assert.Equal(t, ordinary.ID, result.Nodes[0].ID)
 	var nodes int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	assert.Equal(t, 1, nodes)
 }
 
@@ -416,7 +416,7 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	}
 	assert.Equal(t, map[string]int{PhotoRoleRAW: 1, PhotoRoleImage: 1, PhotoRoleSidecar: 1}, roles)
 	var files int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
 	assert.Equal(t, 3, files)
 	current, err := s.NodeByID(ctx, sidecar.ID)
 	require.NoError(t, err)

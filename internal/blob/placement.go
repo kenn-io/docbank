@@ -49,17 +49,17 @@ type PlacementRunner struct {
 	Blobs    *Store
 	// Commit serializes short catalog-authority transitions with backup
 	// preservation. nil is intended only for direct embedded/test execution.
-	Commit func(func() error) error
+	Commit func(context.Context, func() error) error
 	// RetryDelay controls durable physical-cleanup retries. Zero uses the
 	// daemon default; tests may shorten it without changing production policy.
 	RetryDelay time.Duration
 }
 
-func (r PlacementRunner) commit(fn func() error) error {
+func (r PlacementRunner) commit(ctx context.Context, fn func() error) error {
 	if r.Commit == nil {
 		return fn()
 	}
-	return r.Commit(fn)
+	return r.Commit(ctx, fn)
 }
 
 func (r PlacementRunner) Start(
@@ -206,7 +206,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 	}
 	if operation.Kind == "evacuate" {
 		var finalized store.BlobStoreEvacuationFinalization
-		err := r.commit(func() error {
+		err := r.commit(ctx, func() error {
 			var finalizeErr error
 			finalized, finalizeErr = r.Metadata.FinalizeBlobStoreEvacuation(
 				ctx, operationID, plan.Request.SourceStoreID,
@@ -249,7 +249,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 			return retryStorageOperation(ctx, progressErr)
 		}
 		if !finalized.Detached {
-			err = r.commit(func() error {
+			err = r.commit(ctx, func() error {
 				var finalizeErr error
 				finalized, finalizeErr = r.Metadata.FinalizeBlobStoreEvacuation(
 					ctx, operationID, plan.Request.SourceStoreID,
@@ -463,7 +463,7 @@ func (r PlacementRunner) runRecovery(
 	if err != nil {
 		return r.fail(ctx, operation.ID, err)
 	}
-	if err := r.commit(func() error {
+	if err := r.commit(ctx, func() error {
 		return r.Metadata.CommitStorageRecovery(
 			context.WithoutCancel(ctx), operation.ID, plan, location,
 			string(encoded), time.Now().Add(storageOperationRetention),
@@ -651,7 +651,7 @@ func (r PlacementRunner) placeOne(
 		copied = true
 	}
 	var committed store.PlacementCommit
-	err = r.commit(func() error {
+	err = r.commit(ctx, func() error {
 		// Publication happens outside the daemon gate so remote transfers do
 		// not block unrelated writes. Re-verify under the physical-authority
 		// exclusion: GC cannot remove this still-untracked destination between

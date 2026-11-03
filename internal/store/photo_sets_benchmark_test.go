@@ -22,7 +22,7 @@ func BenchmarkPhotoSetSummaries(b *testing.B) {
 		{1, 1000, true}, {100, 100, true},
 	} {
 		b.Run(fmt.Sprintf("albums=%d/members=%d/excluded=%t", shape.albums, shape.members, shape.excluded), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()

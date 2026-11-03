@@ -32,8 +32,8 @@ type getReceipt struct {
 }
 
 var getCmd = &cobra.Command{
-	Example: `  docbank get id:12 ./invoice.pdf
-  docbank get /cases/acme/invoice.pdf ./invoice.pdf --overwrite --json`,
+	Example: `  docbank document get id:12 ./invoice.pdf
+  docbank document get /cases/acme/invoice.pdf ./invoice.pdf --overwrite --json`,
 	Long: `Download the current version to <local-file>, verifying size and sha256 before
 the file is kept. Refuses to overwrite unless --overwrite.
 Output: --json prints the receipt
@@ -250,5 +250,5 @@ func init() {
 		"print JSON to stdout (progress suppressed)")
 	getCmd.Flags().StringVar(&getProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
-	rootCmd.AddCommand(getCmd)
+	registerGroupedCommand(documentCmd, getCmd, "get")
 }

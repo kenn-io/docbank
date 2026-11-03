@@ -270,6 +270,9 @@
               <summary>Syntax help</summary>
               <p>Phrases, AND, OR, NOT, parentheses, suffix *, and NEAR/5.</p>
               <code>name:manual OR collection:archive</code>
+              <p>
+                PDF evidence: <code>pdf_embedded_file_count_min:1 OR pdf_has_javascript:true</code>.
+              </p>
               <p>References: <code>tag:</code>, <code>collection:</code>, <code>saved:</code>.</p>
             </details>{/if}
         </div>

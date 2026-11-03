@@ -60,7 +60,7 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		if err := service.Start(d.Jobs, c, root); err != nil {
+		if err := service.Start(ctx, d.Jobs, c, root); err != nil {
 			d.Logger.Error("start queued photo checkout", "operation_id", op.ID, "error", err)
 			return nil, FromStoreError(err)
 		}
@@ -92,7 +92,7 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		if err := service.StartOperation(d.Jobs, c); err != nil {
+		if err := service.StartOperation(ctx, d.Jobs, c); err != nil {
 			message := "start checkout verification"
 			if kind == store.StorageOperationKindPhotoCheckoutCommit {
 				message = "start queued checkout commit"

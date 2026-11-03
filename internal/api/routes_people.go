@@ -15,7 +15,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Create one canonical person", DefaultStatus: http.StatusCreated,
 	}, func(ctx context.Context, in *struct{ Body CreatePersonRequest }) (*personOutput, error) {
 		var out *personOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			person, err := d.Store.CreatePerson(ctx, in.Body.DisplayName, "operator")
 			if err != nil {
 				return FromStoreError(err)
@@ -55,7 +55,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *personOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			person, callErr := d.Store.UpdatePerson(browserPeopleScope(ctx), in.PersonID, revision, in.Body.DisplayName)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -78,7 +78,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *personOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			person, callErr := d.Store.RetirePerson(ctx, in.PersonID, revision)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -102,7 +102,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *personMergeOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			receipt, callErr := d.Store.MergePersons(browserPeopleScope(ctx), in.PersonID, in.Body.AbsorbedPersonID, in.Body.OperationID, revision, in.Body.AbsorbedRevision)
 			if callErr != nil {
 				return FromStoreError(callErr)
@@ -130,7 +130,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *personSplitOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			external := make([]store.PersonExternalUID, len(in.Body.ExternalIdentities))
 			for index, identity := range in.Body.ExternalIdentities {
 				external[index] = store.PersonExternalUID{System: identity.System, ArchiveID: identity.ArchiveID, UID: identity.UID}

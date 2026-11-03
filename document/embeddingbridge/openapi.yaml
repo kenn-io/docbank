@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Docbank Embedding Bridge
-  version: 1.0.0
+  version: 2.0.0
   description: >-
     Fixed synchronous provider-neutral embedding protocol. Implementations accept
     one deterministic manifest and zero or more authorization-held files at one
@@ -52,6 +52,59 @@ paths:
           content:
             application/vnd.docbank.embedding-result+json;version=1:
               schema: {$ref: './embedding-response-v1.schema.json'}
+        '400': {$ref: '#/components/responses/EmptyError'}
+        '401': {$ref: '#/components/responses/EmptyError'}
+        '403': {$ref: '#/components/responses/EmptyError'}
+        '413': {$ref: '#/components/responses/EmptyError'}
+        '429': {$ref: '#/components/responses/EmptyError'}
+        '500': {$ref: '#/components/responses/EmptyError'}
+        '502': {$ref: '#/components/responses/EmptyError'}
+        '503': {$ref: '#/components/responses/EmptyError'}
+        '504': {$ref: '#/components/responses/EmptyError'}
+  /docbank-embedding/v2/embeddings:
+    post:
+      operationId: embedDocbankImageInputs
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {$ref: '#/components/schemas/SHA256'}
+        - name: Docbank-Request-Checksum
+          in: header
+          required: true
+          schema: {$ref: '#/components/schemas/SHA256'}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [manifest]
+              properties:
+                manifest: {$ref: './embedding-request-v2.schema.json'}
+                file:
+                  type: array
+                  description: >-
+                    Original files or stripped JPEG image previews in ascending manifest file_index order. Every
+                    element uses the repeated fixed multipart part name file.
+                    Image inputs always use an empty filename and derived_upload authority.
+                  maxItems: 10000
+                  items: {type: string, format: binary}
+            encoding:
+              manifest:
+                contentType: application/vnd.docbank.embedding-manifest+json;version=2
+              file:
+                explode: true
+      responses:
+        '200':
+          description: One ordered, indexed vector for every manifest input.
+          content:
+            application/vnd.docbank.embedding-result+json;version=2:
+              schema: {$ref: './embedding-response-v2.schema.json'}
         '400': {$ref: '#/components/responses/EmptyError'}
         '401': {$ref: '#/components/responses/EmptyError'}
         '403': {$ref: '#/components/responses/EmptyError'}

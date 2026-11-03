@@ -21,15 +21,15 @@ func TestMailboxTransferAtomicPublicationAndConcurrentRetry(t *testing.T) {
 	p.Request.SHA256 = source.BlobHash
 	p.Request.Size = source.Size
 	var before int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&before))
-	_, err = s.db.Exec(`CREATE TRIGGER fail_mailbox_receipt BEFORE INSERT ON mailbox_transfer_receipts BEGIN SELECT RAISE(ABORT,'synthetic rollback between message and receipt'); END`)
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&before))
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_mailbox_receipt BEFORE INSERT ON mailbox_transfer_receipts BEGIN SELECT RAISE(ABORT,'synthetic rollback between message and receipt'); END`)
 	require.NoError(t, err)
 	_, err = s.PublishMailboxTransfer(ctx, p)
 	require.Error(t, err)
 	var after int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&after))
 	require.Equal(t, before, after)
-	_, err = s.db.Exec(`DROP TRIGGER fail_mailbox_receipt`)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_mailbox_receipt`)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	results := make([]MailboxTransferReceipt, 4)

@@ -95,7 +95,7 @@ func registerBackupScheduleRoutes(api huma.API, d Deps, g *gate) {
 			},
 		}
 		var out *backupScheduleOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			settings, err := d.Store.SetPhotoSettings(ctx, revision, update)
 			if err != nil {
 				if problem, ok := errors.AsType[*Error](err); ok {

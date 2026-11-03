@@ -28,7 +28,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		Path: "/api/v1/bates/namespaces", Summary: "Create or find a Bates namespace", DefaultStatus: http.StatusCreated,
 		MaxBodyBytes: 4096}, func(ctx context.Context, in *struct{ Body BatesNamespaceRequest }) (*struct{ Body BatesNamespace }, error) {
 		var result store.BatesNamespace
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var err error
 			result, err = d.Store.EnsureBatesNamespace(ctx, in.Body.Prefix, in.Body.Suffix, in.Body.Padding)
 			return err
@@ -83,7 +83,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 			return nil, FromStoreError(err)
 		}
 		var allocation store.BatesAllocation
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			var err error
 			allocation, err = d.Store.ReserveBatesRange(ctx, request)
 			return err

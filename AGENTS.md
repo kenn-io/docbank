@@ -69,6 +69,26 @@ Instructions for autonomous coding agents working in this repository.
   The manual production workflow deploys its selected branch or tag through
   the protected production environment.
 
+## Contexts
+
+- A function that does I/O, queries a database, calls a provider or
+  subprocess, or waits on a gate, lock, timer or channel takes
+  `ctx context.Context` first and passes it on. Do not add new context-free
+  wrappers around context-aware functions.
+- Create a root context only where no caller context exists: `main`, signal
+  handling, `TestMain`, a callback whose interface has no context, and owner
+  lifetimes that outlive a request (the job supervisor, server and session
+  lifetimes, vault workers). Say why in a short comment.
+- Cleanup that must finish after cancellation derives from
+  `context.WithoutCancel(ctx)`, usually with its own timeout: loose-blob
+  cleanup, systemd unit stop, connection rollback, and drains after shutdown.
+- Tests use `t.Context()` or `b.Context()`. A `t.Cleanup` function uses
+  `context.WithoutCancel(t.Context())` because the test context is already
+  canceled. Inside `synctest.Test`, use the bubble's `t`.
+- `make lint` enforces the mechanical rules with `noctx`, `fatcontext`,
+  `usetesting` and `govet`; `.golangci.yml` records why `containedctx` and
+  `contextcheck` stay off.
+
 ## Documentation
 
 - Use Superpowers specs and plans while designing and implementing work. Keep
@@ -223,6 +243,14 @@ Instructions for autonomous coding agents working in this repository.
   forward migrations, without changing msgvault's or SQLite's existing history.
   The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
+- Register PostgreSQL operation tests in `internal/store/backend_contract_test.go`;
+  `make backend-coverage` reports that executable inventory. Keep schema
+  differences explicit in the parity tests and effect ownership in the coverage
+  report. Verify catalog effects through operation tests.
+  Remove resolved exceptions when porting an operation. A copied retained catalog
+  qualifies validation, not its producer. The development guide's
+  [backend checks](docs/internal/development.md#backend-support-and-drift-checks)
+  own the commands and limits. Keep this machinery out of runtime query paths.
 - Changes to catalogs read by shared metadata validation must update both
   canonical schemas in the same change, even when the feature's PostgreSQL
   writes are not ported yet. Keep SQL added to qualified operations portable,

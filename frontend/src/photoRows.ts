@@ -1,5 +1,6 @@
 import type {
   PhotoBrowseRow as WirePhotoBrowseRow,
+  PhotoMapRow,
   PhotoStack,
   PhotoAuthoredReceipt,
 } from "./generated/docbank.js";
@@ -22,10 +23,10 @@ export function photoRows(page: {
 }
 
 /** Patch file values and authoritative asset revisions from an accepted receipt. */
-export function patchPhotoRows(
-  rows: PhotoBrowseRow[],
+export function patchPhotoRows<T extends PhotoBrowseRow | PhotoMapRow>(
+  rows: T[],
   receipt: Pick<PhotoAuthoredReceipt, "after" | "representatives">,
-): PhotoBrowseRow[] {
+): T[] {
   const files = new Map(receipt.after.map((file) => [file.file_id, file.values]));
   const choices = new Map(
     (receipt.representatives ?? []).map((change) => [change.asset_id, change]),

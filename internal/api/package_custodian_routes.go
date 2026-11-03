@@ -164,7 +164,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		var assignment store.CustodianAssignment
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			assignment, err = d.Store.ResolveCustodian(r.Context(), r.PathValue("assignment_id"), request.PersonID, request.IfMatchRevision)
 			return err
@@ -191,7 +191,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			scope.PackageRecordID, scope.HasPackageRecordID = *request.RowID, true
 		}
 		var assignment store.CustodianAssignment
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			assignment, err = d.Store.SetOperatorPackageCustodian(r.Context(), store.CustodianRequest{
 				Scope: scope, PersonID: request.PersonID, RawLabel: request.RawLabel, Rank: "primary",

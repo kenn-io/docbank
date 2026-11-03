@@ -130,7 +130,7 @@ func validateIngestDirectoryPlan(plan IngestDirectoryPlan) error {
 func prepareIngestDirectoryTx(
 	ctx context.Context, tx *sql.Tx, anchorID int64, segments []string,
 ) (IngestDirectoryPlan, error) {
-	anchor, err := liveDirTx(tx, anchorID)
+	anchor, err := liveDirTx(ctx, tx, anchorID)
 	if err != nil {
 		return IngestDirectoryPlan{}, err
 	}
@@ -160,7 +160,7 @@ func (s *Store) ensureIngestDirectoryTx(
 	if err := validateIngestDirectoryPlan(plan); err != nil {
 		return Node{}, IngestDirectoryResolution{}, err
 	}
-	leaf, err := liveDirTx(tx, plan.anchorID)
+	leaf, err := liveDirTx(ctx, tx, plan.anchorID)
 	if err != nil {
 		return Node{}, IngestDirectoryResolution{}, err
 	}

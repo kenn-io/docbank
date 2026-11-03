@@ -53,17 +53,19 @@ func TestSourceMetadataGenerationsAreImmutableAndAttachmentFactsStayJoined(t *te
 	require.NoError(t, err)
 	otherGeneration, err := s.PublishSourceMetadata(ctx, other.BlobHash, fakeHash("f1"), canonical)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE source_metadata_heads SET generation_id=? WHERE source_sha256=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_heads SET generation_id=? WHERE source_sha256=?`,
 		otherGeneration.GenerationID, version.BlobHash)
 	require.Error(t, err, "a head must not select another original's evidence")
 }
 
-func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	sourceSHA256 := fakeHash("a1")
-	_, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	node, err := s.CreateFile(ctx, s.RootID(), "source-a.pdf", sourceSHA256, 1, "application/pdf")
+	require.NoError(t, err)
+	_, before, err := s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	metadataA := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title",
@@ -90,6 +92,18 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, generationB.GenerationID, currentRetry.GenerationID)
 
+	// New extractor identity still selects a head, but identical facts stay silent.
+	_, unchangedCursor, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	fingerprintOnly, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f3"), canonicalB)
+	require.NoError(t, err)
+	active, _, err = s.ActiveSourceMetadata(ctx, sourceSHA256)
+	require.NoError(t, err)
+	require.Equal(t, fingerprintOnly.GenerationID, active.GenerationID)
+	unchanged, _, err := s.VaultChanges(ctx, unchangedCursor, 500)
+	require.NoError(t, err)
+	require.Empty(t, unchanged)
+
 	replayed, err := s.PublishSourceMetadata(ctx, sourceSHA256, fakeHash("f1"), canonicalA)
 	require.NoError(t, err)
 	assert.Equal(t, generationA.GenerationID, replayed.GenerationID)
@@ -100,8 +114,15 @@ func TestSourceMetadataRepublicationSelectsRecordedGeneration(t *testing.T) {
 	assert.Equal(t, "A", *activeMetadata.Fields[0].Value.String)
 	var generationCount int
 	require.NoError(t, s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=?`, sourceSHA256).Scan(&generationCount))
-	assert.Equal(t, 2, generationCount)
+		`SELECT COUNT(*) FROM source_metadata_generations WHERE source_sha256=$1`, sourceSHA256).Scan(&generationCount))
+	assert.Equal(t, 3, generationCount)
+	changes, _, err := s.VaultChanges(ctx, before, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 3) // A, B, then A again.
+	for _, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, node.ID, change.NodeID)
+	}
 }
 
 func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {
@@ -129,9 +150,9 @@ func TestSourceMetadataHeadAppearsWhenMissingForRecordedEvidence(t *testing.T) {
 	assert.Equal(t, generation.GenerationID, active.GenerationID)
 }
 
-func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
 	require.NoError(t, err)
@@ -162,9 +183,9 @@ func TestHistoricalSourceMetadataOmitsCurrentAttachmentFacts(t *testing.T) {
 	assert.Empty(t, view.Attachment.IngestedAt)
 }
 
-func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
 	require.NoError(t, err)
@@ -191,9 +212,9 @@ func TestTrashedSourceMetadataOmitsLiveAttachmentFacts(t *testing.T) {
 	assert.Empty(t, view.Attachment.IngestedAt)
 }
 
-func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "before.pdf", fakeHash("a1"), 12, "application/pdf")
 	require.NoError(t, err)
@@ -235,7 +256,7 @@ func TestNodeSourceMetadataViewPinsPathAndEvidenceAcrossWrites(t *testing.T) {
 	// Commit both changes after resolving the node, before the detail read
 	// loads its path and metadata. All three must retain the original snapshot.
 	view, err := s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
-		resolved, err := nodeByIDTx(tx, node.ID)
+		resolved, err := nodeByIDTx(t.Context(), tx, node.ID)
 		require.NoError(t, err)
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), "after.pdf", node.Revision)
 		require.NoError(t, err)
@@ -327,7 +348,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 		driver docsqlite.Driver
 	}{{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}}} {
 		t.Run(testCase.name, func(t *testing.T) {
-			source, err := Open(filepath.Join(t.TempDir(), "source.db"), testCase.driver)
+			source, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"), testCase.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, source.Close()) }()
 			node, err := source.CreateFile(t.Context(), source.RootID(), "report.pdf", fakeHash("a1"), 4, "application/pdf")
@@ -340,7 +361,7 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 			var exported bytes.Buffer
 			require.NoError(t, source.ExportMetadata(t.Context(), &exported))
 			assert.Contains(t, exported.String(), `"type":"source_metadata_generation"`)
-			target, err := Open(filepath.Join(t.TempDir(), "target.db"), testCase.driver)
+			target, err := Open(t.Context(), filepath.Join(t.TempDir(), "target.db"), testCase.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, target.Close()) }()
 			require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -352,9 +373,9 @@ func TestSourceMetadataJSONLRoundTripsAcrossSQLiteDrivers(t *testing.T) {
 	}
 }
 
-func TestMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMissingSourceMetadataTargetsAreFingerprintScopedAndResumable(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	ingest, err := s.BeginIngest(ctx, "cli", "/synthetic")
 	require.NoError(t, err)
@@ -395,9 +416,9 @@ func TestMissingSourceMetadataTargetsCanAdvancePastAFailingHash(t *testing.T) {
 	assert.Equal(t, []SourceMetadataTarget{{SourceSHA256: fakeHash("b2"), Size: 4}}, second)
 }
 
-func TestMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(ctx, s.RootID(), "history.pdf", fakeHash("a1"), 3, "application/pdf")
 	require.NoError(t, err)
@@ -410,7 +431,7 @@ func TestMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T
 	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 	// Stored bytes without a retained content version are not backfill work.
-	_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
+	_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES($1,$2,$3)`,
 		fakeHash("01"), 11, nowRFC3339())
 	require.NoError(t, err)
 

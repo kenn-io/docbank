@@ -66,7 +66,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     started = true;
     await run("add", path.join(scratch, "two-pages.pdf"), "--dest", "/", "--json");
     let sessionURL = "";
-    const open = async (name = "two-pages.pdf", reuseSession = false) => {
+    const open = async (name = "two-pages.pdf", reuseSession = false, fromReader = false) => {
       await page.goto("about:blank");
       const url = reuseSession ? sessionURL : await run("web", "--no-browser");
       sessionURL = url;
@@ -78,8 +78,21 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
           cause: new Error(String(cause).replaceAll(session, "[redacted]")),
         });
       }
-      await page.getByRole("cell", { name, exact: true }).click();
-      await page.getByRole("button", { name: "Redact PDF", exact: true }).click();
+      const file = page.getByRole("cell", { name, exact: true });
+      if (fromReader) {
+        await file.dblclick();
+        const reader = page.getByRole("dialog", { name: `Read ${name}`, exact: true });
+        await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
+        const zoom = reader.getByRole("textbox", { name: "Set zoom" });
+        await zoom.fill("125");
+        await zoom.press("Enter");
+        await reader.getByRole("button", { name: "Next Page", exact: true }).click();
+        await expect(reader.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
+        await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
+      } else {
+        await file.click();
+        await page.getByRole("button", { name: "Redact PDF", exact: true }).click();
+      }
       await expect(
         page.getByRole("button", { name: "Preview redaction", exact: true }),
       ).toBeVisible();
@@ -88,7 +101,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await page.addInitScript(() => {
       if (location.protocol === "http:") localStorage.setItem("docbank-theme", "dark");
     });
-    const session = await open();
+    const session = await open("two-pages.pdf", false, true);
     const drawer = page.getByRole("dialog", { name: "Redact two-pages.pdf", exact: true });
     const originalPage = async (n: number) => {
       const render = drawer.getByRole("button", { name: `Render page ${n}`, exact: true });
@@ -99,6 +112,15 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         ).toBeEnabled();
       }).toPass({ timeout: 60000 });
     };
+    await originalPage(1);
+    // Returning from review keeps the live reader, including its page and zoom.
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+    const reader = page.getByRole("dialog", { name: "Read two-pages.pdf", exact: true });
+    await expect(reader.getByRole("textbox", { name: "Set zoom" })).toHaveValue("125");
+    await expect(reader.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
+    await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeFocused();
+    await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     await originalPage(1);
     const expectFitPage = async () => {
       await expect(
@@ -141,6 +163,12 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     };
     // Cut a real glyph: the server must propose an expansion, never adopt it silently.
     await drag(10300, 9000, 10700, 9700);
+    await page.keyboard.press("Escape");
+    const discard = page.getByRole("dialog", { name: "Discard redaction?", exact: true });
+    await expect(discard).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(discard).toBeHidden();
+    await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
     await expect(drawer.getByRole("region", { name: "Proposed mask expansion" })).toBeVisible();
     await page.screenshot({

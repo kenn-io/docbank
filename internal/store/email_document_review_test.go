@@ -10,9 +10,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestEmailDocumentsBulkPurgeSkipsRetainedInventory(t *testing.T) {
+func checkEmailDocumentsBulkPurgeSkipsRetainedInventory(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	retained := newEmailFixture(t, s, "retained.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), retained.publication)
 	require.NoError(t, err)
@@ -35,7 +36,7 @@ func TestEmailDocumentsBulkPurgeSkipsRetainedInventory(t *testing.T) {
 	got, err := s.EmailDocumentPublication(t.Context(), receipt.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, receipt, got)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
 func TestEmailDocumentsProcessingClassifiesInvalidAndStaleRequests(t *testing.T) {
@@ -85,7 +86,7 @@ func TestEmailDocumentsProcessingClassifiesInvalidAndStaleRequests(t *testing.T)
 			require.ErrorIs(t, err, ErrInvalidEmailDocumentRequest)
 		})
 	}
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_job BEFORE INSERT ON rendition_jobs BEGIN SELECT RAISE(ABORT,'synthetic job write failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_job BEFORE INSERT ON rendition_jobs BEGIN SELECT RAISE(ABORT,'synthetic job write failure'); END`)
 	require.NoError(t, err)
 	_, err = s.RequestEmailDocumentProcessing(t.Context(), request)
 	require.ErrorContains(t, err, "synthetic job write failure")
@@ -135,11 +136,12 @@ func TestEmailDocumentsProcessingReportsNativeExtractionOutcomes(t *testing.T) {
 	}
 }
 
-func TestEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T) {
+func checkEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{"complete", "partial", "truncated", "partial_success", "none"} {
 		t.Run(state, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			f := newEmailFixture(t, s, "source.eml")
 			view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 			require.NoError(t, err)
@@ -149,7 +151,7 @@ func TestEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 				for _, hash := range []string{catalogEvidenceBlobHash, catalogMarkdownBlobHash} {
-					if err := s.EnsureBlobTx(tx, hash, int64(len(catalogBlobContents[hash]))); err != nil {
+					if err := s.EnsureBlobTx(t.Context(), tx, hash, int64(len(catalogBlobContents[hash]))); err != nil {
 						return err
 					}
 				}
@@ -203,9 +205,10 @@ func TestEmailDocumentsProcessingReportsServingRenditionOutcomes(t *testing.T) {
 	}
 }
 
-func TestEmailDocumentsRepublishReleasedReceiptReportsConflict(t *testing.T) {
+func checkEmailDocumentsRepublishReleasedReceiptReportsConflict(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -222,5 +225,5 @@ func TestEmailDocumentsRepublishReleasedReceiptReportsConflict(t *testing.T) {
 	page, err := s.EmailDocumentRelations(t.Context(), document.EmailDocumentRelationQuery{ParentVersionID: view.Version.ID})
 	require.NoError(t, err)
 	require.Empty(t, page.Items)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }

@@ -30,7 +30,7 @@ func TestTermReportRequiresUnambiguousProfile(t *testing.T) {
 				}
 				cfg = d.Cfg
 			})
-			hash, size, err := s.Blobs.Write(strings.NewReader("%PDF-1.4 synthetic source"))
+			hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("%PDF-1.4 synthetic source"))
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
 			require.NoError(t, err)

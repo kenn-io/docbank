@@ -219,7 +219,7 @@ func TestPhotoAuthoredCompleteManyFileReceipt(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, stored.After, 80)
 		var afterJSON string
-		require.NoError(t, s.db.QueryRow(`SELECT after_json FROM photo_change_receipts WHERE receipt_id=?`, large.ReceiptID).Scan(&afterJSON))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT after_json FROM photo_change_receipts WHERE receipt_id=?`, large.ReceiptID).Scan(&afterJSON))
 		assert.NotContains(t, afterJSON, `"before"`)
 		largeUndo, err := s.UndoPhotoAuthored(ctx, large.ReceiptID)
 		require.NoError(t, err)
@@ -310,16 +310,16 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	file := asset.Files[0]
-	_, err = s.db.Exec(`DELETE FROM photo_change_receipts WHERE asset_id=?`, asset.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM photo_change_receipts WHERE asset_id=?`, asset.ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`DELETE FROM photo_assets WHERE asset_id=?`, asset.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM photo_assets WHERE asset_id=?`, asset.ID)
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, auditFolder.ID)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO photo_assets(asset_id,kind,revision,display_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?)`, asset.ID, asset.Kind, asset.Revision, file.ID, asset.CreatedAt, asset.UpdatedAt); err != nil {
+		if _, err := tx.ExecContext(t.Context(), `INSERT INTO photo_assets(asset_id,kind,revision,display_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?)`, asset.ID, asset.Kind, asset.Revision, file.ID, asset.CreatedAt, asset.UpdatedAt); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,created_at) VALUES(?,?,?,?,?)`, file.ID, asset.ID, file.NodeID, file.Role, file.CreatedAt)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO photo_files(file_id,asset_id,node_id,role,created_at) VALUES(?,?,?,?,?)`, file.ID, asset.ID, file.NodeID, file.Role, file.CreatedAt)
 		return err
 	}))
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -397,7 +397,7 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	assert.True(t, currentAsset.Agreement["caption"])
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
@@ -411,7 +411,7 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cleared.After[0].Values, redo.After[0].Values)
 	require.NoError(t, restored.ValidateMetadata(ctx))
-	_, err = s.db.Exec(`CREATE TRIGGER reject_photo_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced photo audit failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_photo_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced photo audit failure'); END`)
 	require.NoError(t, err)
 	targets[0].Revision = 3
 	targets[0].Patch.Rating = new(4)
@@ -589,7 +589,7 @@ func TestPhotoAuthoredPurgeRemovesReceipts(t *testing.T) {
 			}
 			require.NoError(t, err)
 			if mode == "rollback" {
-				_, err = s.db.Exec(`CREATE TRIGGER reject_authored_purge BEFORE DELETE ON nodes BEGIN SELECT RAISE(ABORT,'forced purge failure'); END`)
+				_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_authored_purge BEFORE DELETE ON nodes BEGIN SELECT RAISE(ABORT,'forced purge failure'); END`)
 				require.NoError(t, err)
 				_, err = s.TrashEmpty(ctx, 0, true)
 				require.ErrorContains(t, err, "forced purge failure")
@@ -597,7 +597,7 @@ func TestPhotoAuthoredPurgeRemovesReceipts(t *testing.T) {
 					_, err = loadPhotoAuthoredReceipt(ctx, s.db, id)
 					require.NoError(t, err)
 				}
-				_, err = s.db.Exec(`DROP TRIGGER reject_authored_purge`)
+				_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER reject_authored_purge`)
 				require.NoError(t, err)
 			}
 			_, err = s.TrashEmpty(ctx, 0, true)
@@ -797,7 +797,7 @@ func TestPhotoAuthoredRestoreRejectsDecidedRevisionOne(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+			restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, restored.Close()) })
 			err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
@@ -861,9 +861,9 @@ func TestPhotoAuthoredRejectsXMLCharacters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, current.Caption)
 	// Simulate a value accepted by an older build, before XMP authoring checks.
-	_, err = s.db.Exec(`UPDATE photo_files SET caption=?,confirmed_fields=?,revision=2 WHERE file_id=?`, "legacy\x01", PhotoConfirmedCaption, f.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE photo_files SET caption=?,confirmed_fields=?,revision=2 WHERE file_id=?`, "legacy\x01", PhotoConfirmedCaption, f.ID)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE nodes SET revision=revision+1,modified_at=? WHERE id=?`, nowRFC3339(), f.NodeID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET revision=revision+1,modified_at=? WHERE id=?`, nowRFC3339(), f.NodeID)
 	require.NoError(t, err)
 	edit, err := editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 2, Patch: PhotoAuthoredPatch{Rating: new(4)}}})
 	require.NoError(t, err)

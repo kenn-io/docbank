@@ -17,8 +17,10 @@ explains how.
 ## Collect and organize
 
 - Import files and whole directory trees. Docbank never modifies the source.
+- Import a [URL](usage/importing.md#import-from-a-url) and retain its requested
+  URL, redirect destination, fetch time, and response headers.
 - Choose which files to import with include and exclude globs. Replace
-  existing content on purpose with `docbank add --replace`.
+  existing content on purpose with `docbank document add --replace`.
 - Import MBOX and Google Takeout archives. Each occurrence of a message is kept
   separately, and attachments become documents of their own.
 - Import load-file packages with their supplied text, page maps, labels,

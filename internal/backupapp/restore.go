@@ -270,7 +270,7 @@ func recordRestoredLooseContent(
 	if len(loose) == 0 {
 		return nil
 	}
-	metadata, err := store.OpenForRestore(databasePath, driver)
+	metadata, err := store.OpenForRestore(ctx, databasePath, driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: opening restored loose content catalog: %w", err)
 	}
@@ -286,7 +286,7 @@ func recordRestoredLooseContent(
 func verifyRestoredRenditionHeads(
 	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
 ) (retErr error) {
-	metadata, err := store.OpenForRestore(databasePath, driver)
+	metadata, err := store.OpenForRestore(ctx, databasePath, driver)
 	if err != nil {
 		return fmt.Errorf("backupapp: opening restored rendition catalog: %w", err)
 	}
@@ -451,7 +451,7 @@ func InspectRestoredStorage(
 	if !info.Mode().IsRegular() {
 		return stats, fmt.Errorf("restored database is not a regular file: %s", databasePath)
 	}
-	metadata, err := store.Open(databasePath, driver)
+	metadata, err := store.Open(ctx, databasePath, driver)
 	if err != nil {
 		return stats, fmt.Errorf("opening restored metadata: %w", err)
 	}

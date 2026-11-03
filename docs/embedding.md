@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-22
+last_edited: 2026-10-31
 title: Embed in Go
 description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
 ---
@@ -18,7 +18,7 @@ Use the HTTP API when independent processes need to share one standalone vault.
 
 `Vault.CallReadTool` runs `get_vault_info`, `list_documents`, and
 `search_documents` on the vault your application already owns. It uses the same
-handlers, schemas, authenticated cursors, search source-fence resolver, result
+handlers, schemas, authenticated cursors, search scope, result
 bounds and private-cache metadata as the standalone tools. It starts no
 listener, discovers no daemon and reads no owner credentials.
 
@@ -64,11 +64,11 @@ hold its admission fence through each call, including cursor continuations.
 The vault's lifecycle lock keeps it open until admitted operations return.
 
 Search requires a configured processing `profile` and exactly one of
-`content_version_ids` or `filters`. The native resolver rejects a population
-over 4,096 current versions with `scope_too_large` and its observed count;
-it never truncates the scope. Narrow the filters and retry. Empty selections
-still validate the query and profile. Vault info reports logical inventory for
-the admitted vault. Exact-document retrieval is outside this execution subset.
+`content_version_ids` or `filters`. Explicit version lists are capped at 4,096
+current versions. Filter searches cover every matching live file without that
+cap. Empty scopes run a normal search, including query and profile validation.
+Vault info reports logical inventory for the admitted vault.
+Exact-document retrieval is outside this execution subset.
 Cursors belong to the reader's vault and process lifetime; restart listing
 after reopening the vault. Responses retain `cacheScope: private` and
 `ttlMs: 0`.
@@ -610,7 +610,7 @@ filename collision returns `email_document_conflict` and leaves the
 publication uncommitted.
 
 CLI users can [inspect and release blocking receipts](usage/trash-and-gc.md#release-email-attachment-references)
-through the daemon with `docbank email-documents`.
+through the daemon with `docbank email documents`.
 
 The typed client names the principal/scope consent operations
 `GrantScopedProcessingConsent` and `RevokeScopedProcessingConsent` to distinguish
@@ -1191,3 +1191,7 @@ The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path
 into a daemon-owned vault. External agents should continue to use the
 [authenticated HTTP contract](agents/integration.md).
+
+## Idle embedding discovery
+
+A quiet vault skips embedding discovery. Any committed write other than search or vector-index coverage bookkeeping, a daemon restart, or expiry of a consent grant selected by discovery brings back one full pass. The worker's own enqueue and completion writes also cause another pass before discovery settles. Transient input failures keep discovery retrying once a minute until the input recovers or is permanently rejected.

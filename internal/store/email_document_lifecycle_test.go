@@ -63,15 +63,16 @@ func TestEmailDocumentsMetadataRoundTripAndTamper(t *testing.T) {
 			target := newTestStore(t)
 			require.Error(t, target.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte("\n")))))
 			var count int
-			require.NoError(t, target.db.QueryRow(`SELECT count(*) FROM email_document_publications`).Scan(&count))
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT count(*) FROM email_document_publications`).Scan(&count))
 			require.Zero(t, count)
 		})
 	}
 }
 
-func TestEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t *testing.T) {
+func checkEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nbody\r\n"
 	part := "--m\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"../same.bin\"\r\n\r\nduplicate\r\n"
 	raw += part + part + "--m--\r\n"
@@ -94,7 +95,7 @@ func TestEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t *testing.T
 		require.NotContains(t, node.Name, "/")
 		require.NotContains(t, node.Name, `\`)
 	}
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 	// Broken multipart termination is retained as partial, never promoted by
 	// successfully publishing the parts that were decoded before the failure.
 	partial := newEmailSourceFixture(t, s, "partial.eml", strings.TrimSuffix(raw, "--m--\r\n"))
@@ -103,12 +104,13 @@ func TestEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t *testing.T
 	partialReceipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, partialView, "partial"))
 	require.NoError(t, err)
 	require.Equal(t, "partial", partialReceipt.InventoryState)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t *testing.T) {
+func checkEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -167,12 +169,13 @@ func TestEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t *test
 	require.NoError(t, err)
 	require.Nil(t, node.TrashedAt)
 
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t *testing.T) {
+func checkEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -207,23 +210,27 @@ func TestEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t *testing.T) {
 	query.Limit = 251
 	_, err = s.EmailDocumentRelations(t.Context(), query)
 	require.ErrorIs(t, err, ErrInvalidEmailDocumentRequest)
+	if s.postgresSchema != "" {
+		return
+	} // PostgreSQL late-write failure has its own grant fixture.
 	// Fail only after the ordinary child was inserted: all audit, node, version,
 	// queue and relation writes must roll back with the failed receipt.
-	_, err = s.db.Exec(`CREATE TRIGGER fail_email_documents BEFORE INSERT ON email_document_publications BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`)
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_email_documents BEFORE INSERT ON email_document_publications BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`)
 	require.NoError(t, err)
 	var before, after int
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&before))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&before))
 	next = attachmentRequest(t, s, view, "rollback")
 	_, err = s.PublishEmailDocuments(t.Context(), next)
 	require.ErrorContains(t, err, "synthetic receipt failure")
-	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&after))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&after))
 	require.Equal(t, before, after)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t *testing.T) {
+func checkEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
 		"--m\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=unsupported.bin\r\nContent-Transfer-Encoding: unknown\r\n\r\nabc\r\n" +
 		"--m\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=failed.bin\r\nContent-Transfer-Encoding: base64\r\n\r\n!!!\r\n" +
@@ -238,5 +245,5 @@ func TestEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t *testing.T)
 		require.Equal(t, state, receipt.Relations[i].Outcome)
 		require.Nil(t, receipt.Relations[i].Child)
 	}
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }

@@ -38,7 +38,8 @@ func TestMain(m *testing.M) {
 		extension = ".exe"
 	}
 	testHelperBinary = filepath.Join(directory, "renderer-base"+extension)
-	command := exec.Command("go", "build", "-o", testHelperBinary, "./testdata/helper")
+	// TestMain has no test context; it is the root for the helper build.
+	command := exec.CommandContext(context.Background(), "go", "build", "-o", testHelperBinary, "./testdata/helper")
 	if output, buildErr := command.CombinedOutput(); buildErr != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "build PyMuPDF test helper: %v\n%s", buildErr, output)
 		_ = os.RemoveAll(directory)

@@ -729,7 +729,7 @@ func TestExtractSourceMetadataUsesSharedEmailInterpretation(t *testing.T) {
 				"Received: from sender.example.test\r\n\tby receiver.example.test\r\n\r\nbody")
 			digest := sha256.Sum256(payload)
 			decoded, err := emailmime.Decode(t.Context(), hex.EncodeToString(digest[:]),
-				int64(len(payload)), bytes.NewReader(payload), t.TempDir())
+				int64(len(payload)), bytes.NewReader(payload), sourceMetadataTestSpool(t))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, decoded.Close()) })
 			message := decoded.Evidence.Inventory.Messages[0]
@@ -1385,7 +1385,7 @@ func TestBackfillSourceMetadataPublishesOnlyAfterVerifiedEOF(t *testing.T) {
 func TestSourceMetadataPublishesPhotoTechnicalProjection(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	s, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	s, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	payload := syntheticRichExifTIFF()
@@ -1735,5 +1735,42 @@ func TestExtractSourceMetadataSkipsExportOnlyTIFFKinds(t *testing.T) {
 		iso, found := sourceMetadataInteger(metadata, "image.exif.iso")
 		require.True(t, found)
 		assert.Equal(t, int64(800), iso)
+	}
+}
+
+func TestSourceMetadataPDFFactsSearch(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	payload := syntheticMetadataPDF(1)
+	digest := sha256.Sum256(payload)
+	hash := hex.EncodeToString(digest[:])
+	node, err := s.CreateFile(ctx, s.RootID(), "review.pdf", hash, int64(len(payload)), "application/pdf")
+	require.NoError(t, err)
+	completed, err := BackfillSourceMetadataTargets(ctx, s, &sourceMetadataReaderStub{payload: payload}, sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: hash, Size: int64(len(payload))}})
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	payload = mediatest.PDFWithActionsAndAttachment()
+	digest = sha256.Sum256(payload)
+	hash = hex.EncodeToString(digest[:])
+	positive, err := s.CreateFile(ctx, s.RootID(), "active.pdf", hash, int64(len(payload)), "application/pdf")
+	require.NoError(t, err)
+	completed, err = BackfillSourceMetadataTargets(ctx, s, &sourceMetadataReaderStub{payload: payload}, sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: hash, Size: int64(len(payload))}})
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	hits, _, err := s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: "pdf_embedded_file_count:0 AND pdf_has_javascript:false", MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, node.ID, hits[0].Node.ID)
+	for _, filter := range []string{
+		"pdf_has_javascript:true",
+		"pdf_embedded_file_count_min:1",
+	} {
+		hits, _, err = s.SearchPageWithOptions(ctx, "", 50, store.SearchOptions{PDFFilter: filter, MIMEType: "application/pdf"})
+		require.NoError(t, err, filter)
+		require.Len(t, hits, 1, filter)
+		assert.Equal(t, positive.ID, hits[0].Node.ID, filter)
 	}
 }

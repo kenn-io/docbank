@@ -123,7 +123,7 @@ func TestRenditionTextWindowBindsTheCurrentLiveTuple(t *testing.T) {
 		"alpha écho 界🙂 omega", "Synthetic heading",
 	))
 	require.NoError(t, err)
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 
@@ -194,7 +194,7 @@ func TestRenditionTextWindowRejectsInactiveAndSupersededAuthority(t *testing.T) 
 			"synthetic authority", "Synthetic authority",
 		))
 		require.NoError(t, err)
-		service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 			Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 		require.NoError(t, err)
 		node, err := fixture.catalog.NodeByPath(t.Context(), "/source.pdf")
@@ -282,7 +282,7 @@ func TestRenditionTextWindowAcceptsAnEmptyActiveMarkdownArtifact(t *testing.T) {
 	require.NoError(t, fixture.catalog.PublishRenditionAndLexicalHeads(
 		t.Context(), staged.Attachment, staged.Head, generation.ID,
 	))
-	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 	node, err := fixture.catalog.NodeByPath(t.Context(), "/source.pdf")

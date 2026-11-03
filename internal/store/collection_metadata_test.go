@@ -73,7 +73,7 @@ func TestCollectionLabelMetadataRoundTripsAfterFinalMemberPurge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), emptied.Deleted)
 	var provenance int
-	require.NoError(t, source.db.QueryRow(`SELECT COUNT(*) FROM provenance
+	require.NoError(t, source.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance
 		WHERE ingest_id IN (?,?)`, named.ID(), cleared.ID()).Scan(&provenance))
 	require.Zero(t, provenance)
 	require.Equal(t, namedLabel, mustCollectionLabel(t, source, named.ID()))
@@ -141,7 +141,7 @@ func TestCollectionLabelMetadataRejectsMalformedAndCollidingRecordsAtomically(t 
 			err := target.ImportMetadata(t.Context(), strings.NewReader(test.mutate(exported.String())))
 			require.Error(t, err)
 			var ingests, labels int
-			require.NoError(t, target.db.QueryRow(`SELECT
+			require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT
 				(SELECT COUNT(*) FROM ingests), (SELECT COUNT(*) FROM collection_labels)`).Scan(&ingests, &labels))
 			assert.Zero(t, ingests)
 			assert.Zero(t, labels)
@@ -165,7 +165,7 @@ func TestCollectionLabelMetadataRejectsMaterializedVirtualState(t *testing.T) {
 	err = target.ImportMetadata(t.Context(), strings.NewReader(malformed))
 	require.Error(t, err)
 	var labels int
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM collection_labels`).Scan(&labels))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM collection_labels`).Scan(&labels))
 	assert.Zero(t, labels)
 }
 
@@ -183,12 +183,12 @@ func TestReleasedMetadataWithoutCollectionLabelsImports(t *testing.T) {
 		}
 	}
 	legacy := append(bytes.Join(filtered, []byte{'\n'}), '\n')
-	target, err := Open(filepath.Join(t.TempDir(), "legacy-target.db"))
+	target, err := Open(t.Context(), filepath.Join(t.TempDir(), "legacy-target.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, target.Close()) })
 	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(legacy)))
 	var labels int
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM collection_labels`).Scan(&labels))
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM collection_labels`).Scan(&labels))
 	assert.Zero(t, labels)
 }
 

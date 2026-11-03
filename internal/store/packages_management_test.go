@@ -31,7 +31,7 @@ func validPackageRequest(t *testing.T, s *Store) PackageRequest {
 	require.NoError(t, err)
 	manifestBlob := fakeHash("b2")
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return s.EnsureBlobTx(tx, manifestBlob, 12)
+		return s.EnsureBlobTx(t.Context(), tx, manifestBlob, 12)
 	}))
 	profileHash := sha256.Sum256([]byte("{}"))
 	packageID, err := newUUIDv4()
@@ -69,7 +69,7 @@ func TestPackageIdentityIsIdempotentAndImmutable(t *testing.T) {
 	request.PackageName = "changed-export"
 	_, err = s.CreatePackage(t.Context(), request)
 	require.ErrorIs(t, err, ErrPackageConflict)
-	_, err = s.db.Exec(`UPDATE packages SET package_name='altered' WHERE package_id=?`, request.PackageID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE packages SET package_name='altered' WHERE package_id=?`, request.PackageID)
 	require.ErrorContains(t, err, "package identity is immutable")
 }
 

@@ -40,7 +40,7 @@ func TestAuditedTagRenameWithoutAuditedAssignmentsAdvancesOnlyAllocation(t *test
 	assert.Equal(t, "renamed", renamed.Name)
 
 	var sequence, allocations, scopeEntries, mutations, deltas int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT operation_sequence_high_water FROM audit_authority),
 		(SELECT allocation_entry_count FROM audit_authority),
 		(SELECT entry_count FROM audit_scopes),
@@ -58,7 +58,7 @@ func TestAuditedTagRenameWithoutAuditedAssignmentsAdvancesOnlyAllocation(t *test
 
 func TestAuditedTagRenamePreservesUnscopedTopology(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -90,7 +90,7 @@ func TestAuditedTagRenameNoOpDoesNotAdvanceHistory(t *testing.T) {
 	assert.Equal(t, tag, unchanged)
 
 	var sequence int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&sequence))
 	assert.Equal(t, int64(1), sequence)
@@ -104,7 +104,7 @@ func TestAuditedTagDefinitionChangesAdvanceEveryAffectedScope(t *testing.T) {
 			s, tag, first, second := newMultiScopeAuditedTagStore(t)
 			beforeScopes := auditScopeEntryCounts(t, s)
 			var beforeSequence int64
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT operation_sequence_high_water FROM audit_authority`,
 			).Scan(&beforeSequence))
 
@@ -124,7 +124,7 @@ func TestAuditedTagDefinitionChangesAdvanceEveryAffectedScope(t *testing.T) {
 				assert.Equal(t, prior.Revision+1, node.Revision)
 			}
 			var afterSequence int64
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT operation_sequence_high_water FROM audit_authority`,
 			).Scan(&afterSequence))
 			assert.Equal(t, beforeSequence+1, afterSequence)
@@ -154,12 +154,12 @@ func TestAuditedTagDefinitionChangesAcrossScopesRollBackAtomically(t *testing.T)
 			beforeScopes := auditScopeEntryCounts(t, s)
 			scopeIDs := sortedStringKeys(beforeScopes)
 			require.Len(t, scopeIDs, 2)
-			_, err := s.db.Exec(fmt.Sprintf(`CREATE TRIGGER reject_second_scope_advance
+			_, err := s.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER reject_second_scope_advance
 				BEFORE UPDATE ON audit_scopes WHEN OLD.scope_id='%s' BEGIN
 				SELECT RAISE(ABORT, 'forced second scope failure'); END`, scopeIDs[1]))
 			require.NoError(t, err)
 			var beforeSequence int64
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT operation_sequence_high_water FROM audit_authority`,
 			).Scan(&beforeSequence))
 
@@ -179,7 +179,7 @@ func TestAuditedTagDefinitionChangesAcrossScopesRollBackAtomically(t *testing.T)
 			}
 			assert.Equal(t, beforeScopes, auditScopeEntryCounts(t, s))
 			var afterSequence int64
-			require.NoError(t, s.db.QueryRow(
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT operation_sequence_high_water FROM audit_authority`,
 			).Scan(&afterSequence))
 			assert.Equal(t, beforeSequence, afterSequence)
@@ -227,7 +227,7 @@ func auditEventScopeIDs(t *testing.T, events []audit.Record) []string {
 
 func auditScopeEntryCounts(t *testing.T, s *Store) map[string]int64 {
 	t.Helper()
-	rows, err := s.db.Query(`SELECT scope_id,entry_count FROM audit_scopes ORDER BY scope_id`)
+	rows, err := s.db.QueryContext(t.Context(), `SELECT scope_id,entry_count FROM audit_scopes ORDER BY scope_id`)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rows.Close() })
 	result := make(map[string]int64)
@@ -244,7 +244,7 @@ func auditScopeEntryCounts(t *testing.T, s *Store) map[string]int64 {
 
 func newMultiScopeAuditedTagStore(t *testing.T) (*Store, Tag, Node, Node) {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -276,7 +276,7 @@ func TestAuditedTagRenameRollsBackDefinitionNodesAndHistory(t *testing.T) {
 	s, tag, report := newAuditedTagStore(t)
 	assigned, err := s.AssignTag(t.Context(), tag.ID, report.ID, report.Revision)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER reject_audit_tag_rename_scope_advance
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_audit_tag_rename_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audit tag rename failure'); END`)
 	require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestAuditedTagRenameRollsBackDefinitionNodesAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, assigned.Node.Revision, currentNode.Revision)
 	var sequence int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT operation_sequence_high_water FROM audit_authority`,
 	).Scan(&sequence))
 	assert.Equal(t, int64(2), sequence)
@@ -306,13 +306,13 @@ func TestAuditedTagRenameImportRejectsMismatchedCurrentDefinition(t *testing.T) 
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	malformed := rewriteMetadataTagName(t, exported.Bytes(), tag.ID, tag.Name)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "replayed audit attachments do not match current metadata")
 	var tagRows, auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM tags),
 		(SELECT COUNT(*) FROM audit_records)`).Scan(&tagRows, &auditRows))
 	assert.Zero(t, tagRows)
@@ -366,7 +366,7 @@ func assertAuditMetadataRoundTrip(t *testing.T, s *Store) {
 	t.Helper()
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))

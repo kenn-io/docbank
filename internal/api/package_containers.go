@@ -66,7 +66,7 @@ func registerPackageContainerRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		var c store.MailboxContainer
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			c, err = d.Store.BeginMailboxContainer(r.Context(), store.MailboxContainerRequest{
 				ID: input.ContainerID, Owner: owner, SHA256: input.SHA256, Size: input.Size, Format: "zip",
@@ -100,7 +100,7 @@ func registerPackageContainerRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, size+1)
 		var c store.MailboxContainer
-		err = g.mutate(func() error {
+		err = g.mutate(r.Context(), func() error {
 			var err error
 			c, err = packageOwnedContainer(r, d)
 			if err != nil {
@@ -116,7 +116,7 @@ func registerPackageContainerRoutes(mux *http.ServeMux, d Deps, g *gate) {
 	})
 	mux.HandleFunc("POST /api/v1/packages/containers/{id}/seal", func(w http.ResponseWriter, r *http.Request) {
 		var c store.MailboxContainer
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			var err error
 			c, err = packageOwnedContainer(r, d)
 			if err != nil {
@@ -132,7 +132,7 @@ func registerPackageContainerRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		writeJSON(w, http.StatusOK, packageContainerOutput(c))
 	})
 	mux.HandleFunc("DELETE /api/v1/packages/containers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		err := g.mutate(func() error {
+		err := g.mutate(r.Context(), func() error {
 			c, err := packageOwnedContainer(r, d)
 			if err != nil {
 				return err

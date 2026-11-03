@@ -18,7 +18,7 @@ func handleWebMailboxChunk(ctx context.Context, conn *websocket.Conn, d Deps, g 
 	}
 	reader := &webUploadReader{ctx: ctx, conn: conn, requestID: begin.RequestID, inactivity: webUploadInactivity}
 	ready := false
-	err := g.mutate(func() error {
+	err := g.mutate(ctx, func() error {
 		if _, err := d.Store.MailboxContainer(ctx, mailboxOwner(d), begin.ContainerID); err != nil {
 			return err
 		}

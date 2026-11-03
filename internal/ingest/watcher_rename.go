@@ -209,7 +209,7 @@ func (w *Watcher) rebindCandidates(ctx context.Context, root *watchRoot, invento
 		}
 		stale := false
 		jobs.ReportBusy(ctx, true)
-		err = w.mutate(func() error {
+		err = w.mutate(ctx, func() error {
 			current, observeErr := source.observe(false)
 			if observeErr != nil {
 				stale = true

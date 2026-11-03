@@ -399,9 +399,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
-		if errors.Is(err, store.ErrVectorIndexSourceStale) {
-			return nil, NewError(http.StatusConflict, "stale_index", "vector index source changed")
-		}
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -423,7 +420,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	})
 	huma.Register(api, huma.Operation{
 		OperationID: "searchDocuments", Method: http.MethodPost,
-		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
+		Path: "/api/v1/search", Summary: "Search document versions by fence or live scope",
 		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
 		report, err := searchDocuments(ctx, d.Processing, input.Body)
@@ -796,6 +793,9 @@ func fromProcessingError(err error) error {
 	if errors.Is(err, processing.ErrConsentSaved) {
 		detailPrefix = "processing consent was saved: "
 	}
+	if imageSource, ok := errors.AsType[*processing.ImageSourceIneligibleError](err); ok {
+		return NewError(http.StatusUnprocessableEntity, "rendition_source_ineligible", detailPrefix+imageSource.Error())
+	}
 	for _, item := range []struct {
 		target error
 		status int
@@ -818,6 +818,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
+		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
@@ -842,7 +843,7 @@ func fromProcessingError(err error) error {
 		result.ObservedScopeCount = scopeError.ObservedScopeCount
 		return result
 	}
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
+	if errors.Is(err, store.ErrNotDir) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
@@ -854,9 +855,8 @@ func resolveDocumentSourceFence(ctx context.Context, service *processing.Service
 	}
 	var filters *store.SearchOptions
 	if input.Filters != nil {
-		filters = &store.SearchOptions{SourcePresent: input.Filters.SourcePresent, TagID: input.Filters.TagID,
-			MIMEType: input.Filters.MIMEType, UnderNodeID: input.Filters.UnderNodeID,
-			ModifiedSince: input.Filters.ModifiedSince, ModifiedBefore: input.Filters.ModifiedBefore}
+		options := searchFilterOptions(input.Filters)
+		filters = &options
 	}
 	resolved, err := service.ResolveSourceFence(ctx, processing.SourceFenceResolveRequest{
 		ContentVersionIDs: input.ContentVersionIDs, Filters: filters,
@@ -889,7 +889,12 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
 	}
-	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query,
+	var allLive *store.SearchOptions
+	if input.Scope != nil {
+		options := searchFilterOptions(input.Scope.Filters)
+		allLive = &options
+	}
+	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query, AllLive: allLive,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
 		BindingID: input.BindingID, Explain: input.Explain,
@@ -900,4 +905,13 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 		return DocumentSearchReport{}, fromProcessingError(err)
 	}
 	return fromDocumentSearchReport(report, input.Explain), nil
+}
+
+func searchFilterOptions(filters *DocumentSourceFenceFilters) store.SearchOptions {
+	if filters == nil {
+		return store.SearchOptions{}
+	}
+	return store.SearchOptions{SourcePresent: filters.SourcePresent, TagID: filters.TagID,
+		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID,
+		ModifiedSince: filters.ModifiedSince, ModifiedBefore: filters.ModifiedBefore}
 }

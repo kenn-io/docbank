@@ -157,7 +157,7 @@ func TestWatchEventRunnerCapturesObservableSaves(t *testing.T) {
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 		Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
 		SettleTime: config.Duration(30 * time.Second), ScanInterval: config.Duration(time.Hour),
-	}, func(fn func() error) error {
+	}, func(_ context.Context, fn func() error) error {
 		err := fn()
 		if err == nil {
 			commits <- struct{}{}
@@ -638,7 +638,7 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
 				Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
 				SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(100 * time.Millisecond),
-			}, func(fn func() error) error {
+			}, func(_ context.Context, fn func() error) error {
 				err := fn()
 				if err == nil {
 					select {

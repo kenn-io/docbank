@@ -226,7 +226,7 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 				expiresAt = &value
 			}
 			var receipt store.MediaConsentReceipt
-			err := g.mutate(func() error {
+			err := g.mutate(ctx, func() error {
 				var err error
 				receipt, err = d.Processing.GrantMediaAcquisition(ctx, input.Body.OperationID, input.Body.PlanToken, expiresAt)
 				if err != nil {
@@ -247,7 +247,7 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 				return nil, mediaUnavailable()
 			}
 			var receipt store.MediaConsentReceipt
-			err := g.mutate(func() error {
+			err := g.mutate(ctx, func() error {
 				var err error
 				receipt, err = d.Processing.RevokeMediaAcquisition(ctx, input.Body.OperationID, input.Body.OriginID)
 				if err != nil {

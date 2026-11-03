@@ -100,7 +100,7 @@ func TestAppendNodeProvenanceWatchKindStaysEvidenceOnly(t *testing.T) {
 	assert.Equal(t, "watch", appended.Fact.SourceKind, "the evidence string reads back verbatim")
 
 	var watchRows int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM watch_sources`).Scan(&watchRows))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM watch_sources`).Scan(&watchRows))
 	assert.Zero(t, watchRows, "a watch-kind fact must not create operational watch state")
 }
 

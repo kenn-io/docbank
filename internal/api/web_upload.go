@@ -304,7 +304,7 @@ func handleWebUploadConnection(
 		}
 		var result ingest.UploadResult
 		ready := false
-		uploadErr := g.mutate(func() error {
+		uploadErr := g.mutate(ctx, func() error {
 			if problem := validateWebUploadDestination(ctx, d, request.parentID); problem != nil {
 				return problem
 			}
@@ -394,7 +394,7 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 func handleWebPackageContainer(ctx context.Context, conn *websocket.Conn, d Deps, g *gate, owner string, request webUploadRequest) bool {
 	reader := &webUploadReader{ctx: ctx, conn: conn, requestID: request.requestID, inactivity: webUploadInactivity}
 	ready := false
-	err := g.mutate(func() (err error) {
+	err := g.mutate(ctx, func() (err error) {
 		c, err := d.Store.MailboxContainer(ctx, owner, request.containerID)
 		if err != nil {
 			return err
@@ -820,13 +820,13 @@ func handleWebPhotoGroup(
 	}
 	var reader *webUploadReader
 	var result store.PhotoImportResult
-	err := g.mutate(func() error {
+	err := g.mutate(ctx, func() error {
 		return d.Blobs.WithMutation(ctx, func() (retErr error) {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
 			prepared := make([]*ingest.PreparedUpload, 0, len(files))
 			defer func() {
 				for _, member := range prepared {
-					retErr = errors.Join(retErr, member.Discard())
+					retErr = errors.Join(retErr, member.Discard(ctx))
 				}
 			}()
 			for i, member := range files {

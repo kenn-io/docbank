@@ -20,7 +20,7 @@ func TestMediaOriginsHTTPReportsProbeEvidence(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		gate := api.NewOperationGate()
-		service, err := processing.NewService(processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"),
 			Principal: "daemon:operator", MediaTokenKey: [32]byte{1},
 			MediaOrigins: map[string]processing.MediaOriginPolicy{"team-cap": {

@@ -41,7 +41,9 @@ func TestEgressDialsResolvedIPWithoutASecondLookup(t *testing.T) {
 	transport := newHTTPTransport(t, port, resolver)
 	client := &http.Client{Transport: transport, CheckRedirect: providerhttp.RefuseRedirects}
 
-	response, err := client.Get("http://provider.invalid:" + strconv.Itoa(int(port)) + "/source")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port))+"/source", nil)
+	require.NoError(t, err)
+	response, err := client.Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
@@ -62,9 +64,9 @@ func TestEgressAcceptsAnEquivalentZeroPaddedPort(t *testing.T) {
 		answers: [][]netip.Addr{{netip.MustParseAddr(host)}},
 	})
 
-	response, err := (&http.Client{Transport: transport}).Get(
-		"http://provider.invalid:0" + strconv.Itoa(int(port)),
-	)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:0"+strconv.Itoa(int(port)), nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
@@ -92,9 +94,9 @@ func TestEgressIgnoresAmbientProxy(t *testing.T) {
 		answers: [][]netip.Addr{{netip.MustParseAddr(host)}},
 	})
 
-	response, err := (&http.Client{Transport: transport}).Get(
-		"http://provider.invalid:" + strconv.Itoa(int(port)),
-	)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
@@ -116,7 +118,9 @@ func TestEgressRejectsMixedAllowedAndDeniedDNSAnswers(t *testing.T) {
 	}, resolver)
 	require.NoError(t, err)
 
-	response, err := (&http.Client{Transport: transport}).Get("http://provider.invalid:8080/")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:8080/", nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Transport: transport}).Do(request)
 	if response != nil {
 		require.NoError(t, response.Body.Close())
 	}
@@ -139,10 +143,14 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 	client := &http.Client{Transport: transport}
 	url := "http://provider.invalid:" + strconv.Itoa(int(port)) + "/"
 
-	first, err := client.Get(url)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	first, err := client.Do(request)
 	require.NoError(t, err)
 	require.NoError(t, first.Body.Close())
-	second, err := client.Get(url)
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	second, err := client.Do(request)
 	if second != nil {
 		require.NoError(t, second.Body.Close())
 	}
@@ -163,9 +171,9 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	}}}
 	transport := newHTTPTransport(t, port, resolver)
 
-	response, err := (&http.Client{Transport: transport}).Get(
-		"http://provider.invalid:" + strconv.Itoa(int(port)),
-	)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
@@ -188,13 +196,15 @@ func TestEgressRejectsUnapprovedDestinationBeforeResolution(t *testing.T) {
 		"http://provider.invalid:8081/",
 		"https://provider.invalid:8080/",
 	} {
-		response, err := client.Get(rawURL)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, rawURL, nil)
+		require.NoError(t, err)
+		response, err := client.Do(request)
 		if response != nil {
 			require.NoError(t, response.Body.Close())
 		}
 		require.ErrorIs(t, err, providerhttp.ErrDestinationDenied, rawURL)
 	}
-	request, err := http.NewRequest(http.MethodGet, "http://provider.invalid:8080/", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:8080/", nil)
 	require.NoError(t, err)
 	request.Host = "other.invalid:8080"
 	response, err := client.Do(request)
@@ -218,7 +228,9 @@ func TestEgressUsesLiteralIPWithoutDNS(t *testing.T) {
 	}, resolver)
 	require.NoError(t, err)
 
-	response, err := (&http.Client{Transport: transport}).Get(server.URL)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Empty(t, resolver.hosts())
@@ -253,7 +265,9 @@ func TestEgressPreservesTLSIdentityAndEnforcesSPKIPin(t *testing.T) {
 	client := &http.Client{Transport: transport}
 	url := "https://provider.invalid:" + strconv.Itoa(int(port)) + "/result"
 
-	response, err := client.Get(url)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	response, err := client.Do(request)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, "provider.invalid", sni)
@@ -262,7 +276,9 @@ func TestEgressPreservesTLSIdentityAndEnforcesSPKIPin(t *testing.T) {
 	policy.TLS.SPKISHA256 = []string{hex.EncodeToString(make([]byte, sha256.Size))}
 	transport, err = providerhttp.NewTransport(policy, resolver)
 	require.NoError(t, err)
-	response, err = (&http.Client{Transport: transport}).Get(url)
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	response, err = (&http.Client{Transport: transport}).Do(request)
 	if response != nil {
 		require.NoError(t, response.Body.Close())
 	}
@@ -270,7 +286,7 @@ func TestEgressPreservesTLSIdentityAndEnforcesSPKIPin(t *testing.T) {
 }
 
 func TestEgressBoundsTLSHandshake(t *testing.T) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	accepted := make(chan net.Conn, 2)
 	acceptDone := make(chan struct{})
@@ -320,10 +336,10 @@ func TestEgressBoundsTLSHandshake(t *testing.T) {
 	t.Run("policy timeout", func(t *testing.T) {
 		transport := newTransport(t, 25*time.Millisecond)
 		result := make(chan error, 1)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://127.0.0.1:"+strconv.Itoa(int(port)), nil)
+		require.NoError(t, err)
 		go func() {
-			response, err := (&http.Client{Transport: transport}).Get(
-				"https://127.0.0.1:" + strconv.Itoa(int(port)),
-			)
+			response, err := (&http.Client{Transport: transport}).Do(request)
 			if response != nil {
 				_ = response.Body.Close()
 			}
@@ -379,9 +395,9 @@ func TestEgressPolicyIsImmutableAfterTransportCreation(t *testing.T) {
 	require.NoError(t, err)
 	allowed[0] = netip.MustParsePrefix("203.0.113.0/24")
 
-	response, err := (&http.Client{Transport: transport}).Get(
-		"http://provider.invalid:" + strconv.Itoa(int(port)),
-	)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 }
@@ -402,7 +418,9 @@ func TestEgressRefusesRedirectReplay(t *testing.T) {
 	})
 	client := &http.Client{Transport: transport, CheckRedirect: providerhttp.RefuseRedirects}
 
-	response, err := client.Get("http://provider.invalid:" + strconv.Itoa(int(port)))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
+	require.NoError(t, err)
+	response, err := client.Do(request)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusTemporaryRedirect, response.StatusCode)

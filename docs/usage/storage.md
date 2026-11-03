@@ -113,12 +113,12 @@ separately because their recovery actions differ.
 Two reports provide the counts used to diagnose primary coverage:
 
 ```bash
-docbank info --json
+docbank vault info --json
 docbank storage list --json
 ```
 
 The `authoritative_objects` value for the store whose `role` is `primary` can
-be compared with `tracked_blobs` from `docbank info`. A lower primary count is
+be compared with `tracked_blobs` from `docbank vault info`. A lower primary count is
 a warning that content is held elsewhere. Matching counts are not proof. The
 endpoints use separate live snapshots, and watches, ingests, clients, or
 storage jobs can change placement before shutdown. `sole_authority_objects`

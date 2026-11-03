@@ -99,7 +99,7 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 			if action == "lock" {
 				err = d.Store.LockPhotoHidden(ctx)
 			} else {
-				err = g.mutate(mutate)
+				err = g.mutate(ctx, mutate)
 			}
 			if err != nil {
 				return nil, hiddenError(err)
@@ -125,7 +125,7 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 				return nil, err
 			}
 			var asset store.PhotoAsset
-			err = g.mutate(func() error {
+			err = g.mutate(ctx, func() error {
 				var err error
 				asset, err = d.Store.SetPhotoAssetHidden(ctx, in.AssetID, revision, action == "hide")
 				return err

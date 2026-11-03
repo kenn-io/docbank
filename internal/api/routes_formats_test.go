@@ -127,12 +127,14 @@ func TestFormatCapabilitiesSnapshotIsFrozenAndDeepCopied(t *testing.T) {
 func TestFormatsRouteRequiresAuthentication(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	r, err := http.Get(ts.URL + "/api/v1/formats/capabilities")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/formats/capabilities", nil)
+	require.NoError(t, err)
+	r, err := http.DefaultClient.Do(request)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusUnauthorized, r.StatusCode)
 	require.NoError(t, r.Body.Close())
 
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/formats/capabilities", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/formats/capabilities", nil)
 	require.NoError(t, err)
 	req.Header.Set("X-Api-Key", testAPIKey)
 	r, err = http.DefaultClient.Do(req)
@@ -168,7 +170,7 @@ func TestFormatsRouteBrowserPolicyBoundsSelectors(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &issued))
 
 	request := func(rawQuery string) int {
-		req, err := http.NewRequest(http.MethodGet,
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
 			ts.URL+"/api/v1/formats/capabilities"+rawQuery, nil)
 		require.NoError(t, err)
 		req.Header["X-Api-Key"] = []string{""}

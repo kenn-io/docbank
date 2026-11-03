@@ -21,7 +21,7 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
-	catalog, err := store.Open((home.Layout{Root: dir}).DBPath())
+	catalog, err := store.Open(t.Context(), (home.Layout{Root: dir}).DBPath())
 	require.NoError(t, err)
 	seed, err := catalog.CreatePerson(t.Context(), "Synthetic seed", "operator")
 	require.NoError(t, err)

@@ -1613,7 +1613,7 @@ type RepackScanPage struct {
 func (s *Store) HasBlob(ctx context.Context, hash string) (bool, error) {
 	var recorded bool
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = ?)`, hash,
+		`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = $1)`, hash,
 	).Scan(&recorded); err != nil {
 		return false, fmt.Errorf("checking blob authority for %s: %w", hash, err)
 	}
@@ -1629,7 +1629,7 @@ func (s *Store) HasPrimaryLooseAuthority(ctx context.Context, hash string) (bool
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM blob_locations
-			WHERE blob_hash=? AND store_id=? AND kind='loose'
+			WHERE blob_hash=$1 AND store_id=$2 AND kind='loose'
 		)`, hash, s.primaryStoreID).Scan(&recorded); err != nil {
 		return false, fmt.Errorf("checking primary loose authority for %s: %w", hash, err)
 	}
@@ -1745,7 +1745,7 @@ var unreachableBlobsStartPageSQL = `
 		  ON l.blob_hash = b.hash
 		 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 		 AND l.kind = 'loose'
-		ORDER BY b.hash LIMIT ?
+		ORDER BY b.hash LIMIT $1
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       ` + blobUnreferencedSQL("p.hash", blobRootReferences, blobGCHolds) + `
@@ -1759,7 +1759,7 @@ var unreachableBlobsResumePageSQL = `
 		  ON l.blob_hash = b.hash
 		 AND l.store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 		 AND l.kind = 'loose'
-		WHERE b.hash > ? ORDER BY b.hash LIMIT ?
+		WHERE b.hash > $1 ORDER BY b.hash LIMIT $2
 	)
 	SELECT p.hash, p.loose_stored_size,
 	       ` + blobUnreferencedSQL("p.hash", blobRootReferences, blobGCHolds) + `
@@ -1775,7 +1775,7 @@ func unreachableBlobScanQuery(after *string, limit int) (string, []any) {
 // BlobsPage returns one bounded hash-keyset page of recorded blob identities.
 func (s *Store) BlobsPage(ctx context.Context, after string, limit int) ([]BlobInfo, bool, error) {
 	return s.blobPage(ctx, `
-		SELECT hash, size FROM blobs WHERE hash > ? ORDER BY hash LIMIT ?`,
+		SELECT hash, size FROM blobs WHERE hash > $1 ORDER BY hash LIMIT $2`,
 		after, limit, "listing blobs")
 }
 
@@ -1821,8 +1821,8 @@ func (s *Store) BlobHashesPageFrom(
 	return result, more, nil
 }
 
-const blobHashesStartPageSQL = `SELECT hash FROM blobs ORDER BY hash LIMIT ?`
-const blobHashesResumePageSQL = `SELECT hash FROM blobs WHERE hash > ? ORDER BY hash LIMIT ?`
+const blobHashesStartPageSQL = `SELECT hash FROM blobs ORDER BY hash LIMIT $1`
+const blobHashesResumePageSQL = `SELECT hash FROM blobs WHERE hash > $1 ORDER BY hash LIMIT $2`
 
 func blobHashesPageQuery(after *string, limit int) (string, []any) {
 	if after == nil {
@@ -1863,7 +1863,8 @@ func (s *Store) SparseRepackPage(
 	minAge time.Duration,
 	minDeadBytes int64,
 ) ([]RepackCandidate, bool, error) {
-	page, err := s.SparseRepackScanPage(ctx, after, "\xff", limit, now, minAge, minDeadBytes)
+	// Pack IDs are ASCII hex. Use a valid UTF-8 upper sentinel on both engines.
+	page, err := s.SparseRepackScanPage(ctx, after, "~", limit, now, minAge, minDeadBytes)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1876,15 +1877,21 @@ func (s *Store) SparseRepackPage(
 	return result, page.More, nil
 }
 
-const sparseRepackScanPageSQL = `
+func (s *Store) sparseRepackScanPageSQL() string {
+	table := "blob_packs"
+	if s.postgresSchema == "" {
+		table += " INDEXED BY blob_packs_live_scan"
+	}
+	return `
 	SELECT scan_hash, pack_id, entry_count, stored_bytes, created_at,
 	       live_entries, live_stored_bytes, live_raw_bytes,
 	       max_live_stored_len, max_live_raw_len
-	FROM blob_packs INDEXED BY blob_packs_live_scan
+	FROM ` + table + `
 	WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 	  AND live_entries > 0
-	  AND (scan_hash > ? OR (scan_hash = ? AND pack_id > ?))
-	ORDER BY scan_hash, pack_id LIMIT ?`
+	  AND (scan_hash > $1 OR (scan_hash = $2 AND pack_id > $3))
+	ORDER BY scan_hash, pack_id LIMIT $4`
+}
 
 // SparseRepackScanPage examines at most limit persisted pack summaries. Packs
 // that do not satisfy the caller's thresholds still consume the finite scan
@@ -1902,7 +1909,7 @@ func (s *Store) SparseRepackScanPage(
 	if err != nil {
 		return RepackScanPage{}, fmt.Errorf("repack page limit: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, sparseRepackScanPageSQL,
+	rows, err := s.db.QueryContext(ctx, s.sparseRepackScanPageSQL(),
 		afterHash, afterHash, afterPackID, queryLimit)
 	if err != nil {
 		return RepackScanPage{}, fmt.Errorf("scanning sparse repack candidates: %w", err)
@@ -1990,7 +1997,7 @@ const unreferencedMappingsStartPageSQL = `
 	WITH raw_page AS MATERIALIZED (
 		SELECT blob_hash FROM blob_pack_entries
 		WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
-		ORDER BY blob_hash LIMIT ?
+		ORDER BY blob_hash LIMIT $1
 	)
 	SELECT p.blob_hash,
 	       NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = p.blob_hash)
@@ -2000,7 +2007,7 @@ const unreferencedMappingsResumePageSQL = `
 	WITH raw_page AS MATERIALIZED (
 		SELECT blob_hash FROM blob_pack_entries
 		WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
-		  AND blob_hash > ? ORDER BY blob_hash LIMIT ?
+		  AND blob_hash > $1 ORDER BY blob_hash LIMIT $2
 	)
 	SELECT p.blob_hash,
 	       NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = p.blob_hash)
@@ -2021,9 +2028,9 @@ func (s *Store) DeleteUnreferencedPackMappings(ctx context.Context, hashes []str
 		for _, hash := range hashes {
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM blob_pack_entries
-				WHERE blob_hash = ?
+				WHERE blob_hash = $1
 				  AND store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
-				  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = ?)`, hash, hash)
+				  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash = $2)`, hash, hash)
 			if err != nil {
 				return fmt.Errorf("deleting unreferenced pack mapping %s: %w", hash, err)
 			}
@@ -2041,14 +2048,20 @@ func (s *Store) DeleteUnreferencedPackMappings(ctx context.Context, hashes []str
 // DeadPackUsagePage returns a bounded set of packs with no live mappings.
 // Successful repack retirement deletes each returned candidate, so callers can
 // resume this phase without an identity cursor.
-const deadPackUsagePageSQL = `
+func (s *Store) deadPackUsagePageSQL() string {
+	table := "blob_packs"
+	if s.postgresSchema == "" {
+		table += " INDEXED BY blob_packs_dead_scan"
+	}
+	return `
 	SELECT pack_id, entry_count, stored_bytes, created_at,
 	       live_entries, live_stored_bytes, live_raw_bytes,
 	       max_live_stored_len, max_live_raw_len
-	FROM blob_packs INDEXED BY blob_packs_dead_scan
+	FROM ` + table + `
 	WHERE store_id = (SELECT store_id FROM blob_stores WHERE role = 'primary')
 	  AND live_entries = 0
-	ORDER BY scan_hash, pack_id LIMIT ?`
+	ORDER BY scan_hash, pack_id LIMIT $1`
+}
 
 func (s *Store) DeadPackUsagePage(
 	ctx context.Context, limit int,
@@ -2057,7 +2070,7 @@ func (s *Store) DeadPackUsagePage(
 	if err != nil {
 		return nil, false, fmt.Errorf("dead-pack page limit: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, deadPackUsagePageSQL, queryLimit)
+	rows, err := s.db.QueryContext(ctx, s.deadPackUsagePageSQL(), queryLimit)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing dead packs: %w", err)
 	}
@@ -2115,6 +2128,10 @@ func (s *Store) deleteBlobRows(
 	packRetirements []GCPackRetirement,
 ) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		packs, err := s.packSummaryKeysTx(ctx, tx, hashes)
+		if err != nil {
+			return err
+		}
 		for _, retirement := range looseRetirements {
 			if retirement.StoreID == "" {
 				return errors.New("GC loose retirement store ID is required")
@@ -2126,9 +2143,9 @@ func (s *Store) deleteBlobRows(
 				retirement.Encoding != packstore.LooseEncodingZstd {
 				return fmt.Errorf("invalid GC loose retirement encoding %d", retirement.Encoding)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO gc_loose_retirements(
+			if _, err := tx.ExecContext(ctx, `INSERT INTO gc_loose_retirements(
 				store_id,blob_hash,loose_encoding
-			) VALUES(?,?,?)`, retirement.StoreID, retirement.Hash.String(), retirement.Encoding); err != nil {
+			) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, retirement.StoreID, retirement.Hash.String(), retirement.Encoding); err != nil {
 				return fmt.Errorf("recording GC loose retirement: %w", err)
 			}
 		}
@@ -2136,29 +2153,32 @@ func (s *Store) deleteBlobRows(
 			if retirement.StoreID == "" || retirement.PackID == "" {
 				return errors.New("GC pack retirement identity is required")
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO derivative_pack_purge_pending(
+			if _, err := tx.ExecContext(ctx, `INSERT INTO derivative_pack_purge_pending(
 				store_id,pack_id
-			) VALUES(?,?)`, retirement.StoreID, retirement.PackID); err != nil {
+			) VALUES($1,$2) ON CONFLICT DO NOTHING`, retirement.StoreID, retirement.PackID); err != nil {
 				return fmt.Errorf("recording derivative pack retirement: %w", err)
 			}
 		}
 		for _, h := range hashes {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM text_extraction_queue WHERE blob_hash = ?`, h); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM text_extraction_queue WHERE blob_hash = $1`, h); err != nil {
 				return fmt.Errorf("deleting extraction queue row of %s: %w", h, err)
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
-				SELECT rowid FROM extracted_text WHERE blob_hash = ?
+			if s.postgresSchema == "" {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
+				SELECT rowid FROM extracted_text WHERE blob_hash = $1
 			)`, h); err != nil {
-				return fmt.Errorf("deleting content search rows of %s: %w", h, err)
+					return fmt.Errorf("deleting content search rows of %s: %w", h, err)
+				}
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM extracted_text WHERE blob_hash = ?`, h); err != nil {
+
+			if _, err := tx.ExecContext(ctx, `DELETE FROM extracted_text WHERE blob_hash = $1`, h); err != nil {
 				return fmt.Errorf("deleting extracted text of %s: %w", h, err)
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM blobs WHERE hash = ?`, h); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM blobs WHERE hash = $1`, h); err != nil {
 				return fmt.Errorf("deleting blob row %s: %w", h, err)
 			}
 		}
-		return nil
+		return s.refreshPackSummariesTx(ctx, tx, packs)
 	})
 }
 
@@ -2175,6 +2195,7 @@ func (s *Store) PendingDerivativePackRetirements(
 	if err != nil {
 		return nil, err
 	}
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.pack_id,p.entry_count,p.stored_bytes,p.created_at,
 		       p.live_entries,p.live_stored_bytes,p.live_raw_bytes,
@@ -2182,8 +2203,8 @@ func (s *Store) PendingDerivativePackRetirements(
 		FROM derivative_pack_purge_pending r
 		JOIN blob_packs p ON p.store_id=r.store_id AND p.pack_id=r.pack_id
 		WHERE r.store_id=(SELECT store_id FROM blob_stores WHERE role='primary')
-		AND (? OR p.pack_id IN (SELECT value FROM json_each(?)))
-		ORDER BY p.created_at,p.pack_id LIMIT ?`, packIDs == nil, string(encoded), limit)
+		AND ($1 OR p.pack_id IN (SELECT value FROM `+d.arrayValues("$2")+`))
+		ORDER BY p.created_at,p.pack_id LIMIT $3`, packIDs == nil, string(encoded), limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing derivative pack retirements: %w", err)
 	}
@@ -2219,25 +2240,29 @@ func (s *Store) PruneDerivativePackRetirementMappings(
 	if len(packIDs) == 0 {
 		return 0, nil
 	}
-	args := make([]any, 0, len(packIDs)+1)
-	args = append(args, s.primaryStoreID)
-	for _, packID := range packIDs {
-		if packID == "" {
-			return 0, errors.New("derivative pack retirement ID is required")
+	if slices.Contains(packIDs, "") {
+		return 0, errors.New("derivative pack retirement ID is required")
+	}
+	encoded, err := json.Marshal(packIDs)
+	if err != nil {
+		return 0, err
+	}
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	var removed int64
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `DELETE FROM blob_pack_entries
+            WHERE store_id=$1 AND pack_id IN (SELECT value FROM `+d.arrayValues("$2")+`)
+            AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash=blob_pack_entries.blob_hash)`, s.primaryStoreID, string(encoded))
+		if err != nil {
+			return fmt.Errorf("pruning derivative pack retirement mappings: %w", err)
 		}
-		args = append(args, packID)
-	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM blob_pack_entries
-		WHERE store_id=? AND pack_id IN (`+placeholders(len(packIDs))+`)
-		  AND NOT EXISTS (SELECT 1 FROM blobs b WHERE b.hash=blob_pack_entries.blob_hash)`, args...)
-	if err != nil {
-		return 0, fmt.Errorf("pruning derivative pack retirement mappings: %w", err)
-	}
-	removed, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting pruned derivative pack retirement mappings: %w", err)
-	}
-	return removed, nil
+		removed, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("counting pruned derivative pack retirement mappings: %w", err)
+		}
+		return nil
+	})
+	return removed, err
 }
 
 // PendingGCLooseRetirements lists a bounded stable page of cleanup authority.
@@ -2250,7 +2275,7 @@ func (s *Store) PendingGCLooseRetirements(
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT store_id,blob_hash,loose_encoding
 		FROM gc_loose_retirements
-		ORDER BY store_id,blob_hash,loose_encoding LIMIT ?`, limit)
+		ORDER BY store_id,blob_hash,loose_encoding LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing GC loose retirements: %w", err)
 	}
@@ -2291,8 +2316,8 @@ func (s *Store) PrepareGCLooseRetirement(
 		var exists, authorized bool
 		if err := tx.QueryRowContext(ctx, `SELECT
 			EXISTS(SELECT 1 FROM gc_loose_retirements
-			 WHERE store_id=? AND blob_hash=? AND loose_encoding=?),
-			EXISTS(SELECT 1 FROM blob_locations WHERE store_id=? AND blob_hash=?)`,
+			 WHERE store_id=$1 AND blob_hash=$2 AND loose_encoding=$3),
+			EXISTS(SELECT 1 FROM blob_locations WHERE store_id=$4 AND blob_hash=$5)`,
 			item.StoreID, item.Hash.String(), item.Encoding,
 			item.StoreID, item.Hash.String()).Scan(&exists, &authorized); err != nil {
 			return fmt.Errorf("checking GC loose retirement: %w", err)
@@ -2322,7 +2347,7 @@ func completeGCLooseRetirementTx(
 	ctx context.Context, tx *sql.Tx, item GCLooseRetirement,
 ) error {
 	result, err := tx.ExecContext(ctx, `DELETE FROM gc_loose_retirements
-		WHERE store_id=? AND blob_hash=? AND loose_encoding=?`,
+		WHERE store_id=$1 AND blob_hash=$2 AND loose_encoding=$3`,
 		item.StoreID, item.Hash.String(), item.Encoding)
 	if err != nil {
 		return fmt.Errorf("completing GC loose retirement: %w", err)
@@ -2375,7 +2400,7 @@ func (s *Store) AllBlobHashes(ctx context.Context) ([]string, error) {
 func (s *Store) PackedBlobStoredBytes(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT blob_hash, stored_len FROM blob_pack_entries
-		WHERE store_id = ?`, s.primaryStoreID)
+		WHERE store_id = $1`, s.primaryStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("listing packed blob sizes: %w", err)
 	}
@@ -2400,7 +2425,7 @@ func (s *Store) PackedBlobStoredByte(ctx context.Context, hash string) (int64, b
 	var size int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT stored_len FROM blob_pack_entries
-		 WHERE blob_hash = ? AND store_id = ?`,
+		 WHERE blob_hash = $1 AND store_id = $2`,
 		hash, s.primaryStoreID).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil

@@ -62,7 +62,7 @@ func TestPhotoHiddenInvocationUnlock(t *testing.T) {
 	for _, passcode := range []string{"synthetic-passcode", "wrong-passcode", "", "\n"} {
 		t.Run(passcode, func(t *testing.T) {
 			dir := t.TempDir()
-			s, err := store.Open(filepath.Join(dir, "docbank.db"))
+			s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
 			ctx := t.Context()

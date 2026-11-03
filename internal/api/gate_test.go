@@ -36,7 +36,7 @@ func TestGateFreezerBlocksMutationOnlyUntilEnd(t *testing.T) {
 
 		mutated := make(chan struct{})
 		go func() {
-			_ = g.mutate(func() error {
+			_ = g.mutate(t.Context(), func() error {
 				close(mutated)
 				return nil
 			})
@@ -77,7 +77,7 @@ func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
 	commitStarted := make(chan struct{})
 	commitDone := make(chan error, 1)
 	go func() {
-		commitDone <- g.PhysicalMutate(func() error {
+		commitDone <- g.PhysicalMutate(t.Context(), func() error {
 			close(commitStarted)
 			return nil
 		})
@@ -125,7 +125,7 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 		g.admission.RUnlock()
 		assert.True(t, maintenanceQueued)
 
-		err := g.mutate(func() error {
+		err := g.mutate(t.Context(), func() error {
 			t.Fatal("route mutation ran while maintenance was queued")
 			return nil
 		})
@@ -169,7 +169,7 @@ func TestMaintenanceWaitingForBackupCaptureAdmitsRouteMutation(t *testing.T) {
 		synctest.Wait()
 
 		mutated := false
-		require.NoError(t, g.mutate(func() error { mutated = true; return nil }))
+		require.NoError(t, g.mutate(t.Context(), func() error { mutated = true; return nil }))
 		assert.True(t, mutated)
 		assert.False(t, maintenanceRan, "maintenance must still wait for the capture")
 
@@ -191,7 +191,7 @@ func TestDaemonLogicalMutationDoesNotFailCloseRouteMutations(t *testing.T) {
 		go func() { done <- g.MutateContext(t.Context(), func() error { close(entered); <-release; return nil }) }()
 		<-entered
 		reached := false
-		require.NoError(t, g.mutate(func() error { reached = true; return nil }))
+		require.NoError(t, g.mutate(t.Context(), func() error { reached = true; return nil }))
 		assert.True(t, reached)
 		close(release)
 		synctest.Wait()
@@ -233,7 +233,7 @@ func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 		cancel()
 		synctest.Wait()
 		require.ErrorIs(t, <-maintenanceDone, context.Canceled)
-		require.NoError(t, g.mutate(func() error { return nil }),
+		require.NoError(t, g.mutate(t.Context(), func() error { return nil }),
 			"canceled maintenance must stop rejecting mutations before the held mutation finishes")
 		releaseOnce.Do(func() { close(releaseMutation) })
 		synctest.Wait()
@@ -243,7 +243,7 @@ func TestCanceledQueuedMaintenanceStopsRejectingRouteMutation(t *testing.T) {
 func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	metadata, err := store.Open(filepath.Join(root, "docbank.db"))
+	metadata, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = metadata.Close() })
 	blobsDir := filepath.Join(root, "blobs")
@@ -252,7 +252,7 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
 
-	hash, size, err := blobs.Write(strings.NewReader("scheduled pack capture"))
+	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader("scheduled pack capture"))
 	require.NoError(t, err)
 	_, err = metadata.CreateFile(t.Context(), metadata.RootID(), "capture.txt", hash, size, "text/plain")
 	require.NoError(t, err)
@@ -428,7 +428,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 
 	// The short exclusive freeze is over: an ordinary mutation can remove
 	// the live node while the pinned snapshot still requires its blob.
-	require.NoError(t, g.mutate(func() error {
+	require.NoError(t, g.mutate(t.Context(), func() error {
 		if _, _, err := metadata.Trash(ctx, node.ID, node.Revision); err != nil {
 			return err
 		}

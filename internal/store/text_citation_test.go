@@ -131,7 +131,7 @@ func TestRetainedTextCitationSuppression(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
 	citation := citationForAttachment(t, s, attachmentID)
-	chunk := embeddingSetFixture(s, versionID, profile.Fingerprint,
+	chunk := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), chunk))
 	require.NoError(t, s.PutCurrentRenditionRoot(t.Context(), CurrentRenditionRoot{

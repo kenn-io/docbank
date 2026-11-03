@@ -129,7 +129,7 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 		}
 	}) (*tagOutput, error) {
 		var out *tagOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			tag, err := d.Store.CreateTag(ctx, in.Body.Name)
 			if err != nil {
 				return FromStoreError(err)
@@ -155,7 +155,7 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *tagOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			tag, err := d.Store.RenameTag(ctx, in.TagID, revision, in.Body.Name)
 			if err != nil {
 				return FromStoreError(err)
@@ -178,7 +178,7 @@ func registerTagRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *tagDeletionOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			tag, err := d.Store.DeleteTag(ctx, in.TagID, revision)
 			if err != nil {
 				return FromStoreError(err)
@@ -219,7 +219,7 @@ func registerTagAssignmentRoute(api huma.API, d Deps, g *gate, method string, as
 			return nil, err
 		}
 		var out *tagAssignmentOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			var change store.TagAssignmentChange
 			if assign {
 				change, err = d.Store.AssignTag(ctx, in.TagID, in.ID, revision)
@@ -255,7 +255,7 @@ func registerTagPathAssignmentRoute(api huma.API, d Deps, g *gate, method string
 				fmt.Sprintf("path %q must be absolute (start with /)", in.Body.Path))
 		}
 		var out *tagAssignmentOutput
-		err := g.mutate(func() error {
+		err := g.mutate(ctx, func() error {
 			var change store.TagAssignmentChange
 			var err error
 			if assign {

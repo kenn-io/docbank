@@ -26,7 +26,7 @@ func TestBatesExportPublishesSelectedPagesBeforeCommittingAllocation(t *testing.
 	ctx := t.Context()
 	vault := t.TempDir()
 	dbPath := filepath.Join(vault, "docbank.db")
-	catalog, err := store.Open(dbPath)
+	catalog, err := store.Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
@@ -156,7 +156,7 @@ func TestBatesExportPublishesSelectedPagesBeforeCommittingAllocation(t *testing.
 
 	var metadata bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(ctx, &metadata))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
@@ -216,7 +216,7 @@ func newBatesExportFixture(t *testing.T) batesExportFixtureValue {
 	ctx := t.Context()
 	vault := t.TempDir()
 	dbPath := filepath.Join(vault, "docbank.db")
-	catalog, err := store.Open(dbPath)
+	catalog, err := store.Open(t.Context(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))

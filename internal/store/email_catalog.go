@@ -202,13 +202,13 @@ func emailVersion(ctx context.Context, q metadataQuerier, id string) (ContentVer
 	return scanContentVersion(q.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, id))
 }
 func (s *Store) EmailGenerationForSource(ctx context.Context, sourceSHA256 string, sourceSize int64, recipeFingerprint string) (EmailGenerationRecord, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return EmailGenerationRecord{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	var id string
-	err = tx.QueryRowContext(ctx, `SELECT generation_id FROM email_generations WHERE source_sha256=? AND source_size=? AND recipe_fingerprint=?`, sourceSHA256, sourceSize, recipeFingerprint).Scan(&id)
+	err = tx.QueryRowContext(ctx, `SELECT generation_id FROM email_generations WHERE source_sha256=$1 AND source_size=$2 AND recipe_fingerprint=$3`, sourceSHA256, sourceSize, recipeFingerprint).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EmailGenerationRecord{}, ErrNotFound
 	}
@@ -269,7 +269,7 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
 			return err
 		}
 		var existing string
-		err = tx.QueryRowContext(ctx, `SELECT generation_id FROM email_generations WHERE source_sha256=? AND source_size=? AND recipe_fingerprint=?`, g.SourceSHA256, g.SourceSize, g.RecipeFingerprint).Scan(&existing)
+		err = tx.QueryRowContext(ctx, `SELECT generation_id FROM email_generations WHERE source_sha256=$1 AND source_size=$2 AND recipe_fingerprint=$3`, g.SourceSHA256, g.SourceSize, g.RecipeFingerprint).Scan(&existing)
 		switch {
 		case err == nil:
 			stored, _, err := loadEmailGeneration(ctx, tx, existing)
@@ -281,11 +281,11 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
 			}
 			g = stored
 		case errors.Is(err, sql.ErrNoRows):
-			if _, err = tx.ExecContext(ctx, `INSERT INTO email_generations(generation_id,source_sha256,source_size,recipe_fingerprint,canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`, g.ID, g.SourceSHA256, g.SourceSize, g.RecipeFingerprint, g.CanonicalJSON, g.Checksum, g.CreatedAt); err != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO email_generations(generation_id,source_sha256,source_size,recipe_fingerprint,canonical_json,checksum,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, g.ID, g.SourceSHA256, g.SourceSize, g.RecipeFingerprint, g.CanonicalJSON, g.Checksum, g.CreatedAt); err != nil {
 				return err
 			}
 			for _, a := range g.Artifacts {
-				if _, err = tx.ExecContext(ctx, `INSERT INTO email_part_artifacts(generation_id,part_path,role,blob_hash,size) VALUES(?,?,?,?,?)`, g.ID, a.PartPath, a.Role, a.BlobSHA256, a.Size); err != nil {
+				if _, err = tx.ExecContext(ctx, `INSERT INTO email_part_artifacts(generation_id,part_path,role,blob_hash,size) VALUES($1,$2,$3,$4,$5)`, g.ID, a.PartPath, a.Role, a.BlobSHA256, a.Size); err != nil {
 					return err
 				}
 			}
@@ -296,7 +296,7 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO email_attachments(attachment_id,content_version_id,generation_id,attached_at) VALUES(?,?,?,?) ON CONFLICT(content_version_id,generation_id) DO NOTHING`, attachmentID, version.ID, g.ID, nowRFC3339()); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO email_attachments(attachment_id,content_version_id,generation_id,attached_at) VALUES($1,$2,$3,$4) ON CONFLICT(content_version_id,generation_id) DO NOTHING`, attachmentID, version.ID, g.ID, nowRFC3339()); err != nil {
 			return err
 		}
 		attachment, err := loadEmailAttachment(ctx, tx, attachmentID)
@@ -306,14 +306,24 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
 		// Re-selecting the same inventory leaves its valid body and timestamps alone.
 		if _, err = tx.ExecContext(ctx, `DELETE FROM rendition_heads WHERE attachment_id IN (
    SELECT b.rendition_attachment_id FROM email_body_results b JOIN email_attachments a ON a.attachment_id=b.email_attachment_id
-   WHERE a.content_version_id=? AND a.attachment_id<>?) AND NOT EXISTS (SELECT 1 FROM email_heads WHERE content_version_id=? AND attachment_id=?)`, version.ID, attachment.ID, version.ID, attachment.ID); err != nil {
+   WHERE a.content_version_id=$1 AND a.attachment_id<>$2) AND NOT EXISTS (SELECT 1 FROM email_heads WHERE content_version_id=$3 AND attachment_id=$4)`, version.ID, attachment.ID, version.ID, attachment.ID); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO email_heads(content_version_id,attachment_id,published_at) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET attachment_id=excluded.attachment_id,published_at=excluded.published_at WHERE email_heads.attachment_id<>excluded.attachment_id`, version.ID, attachment.ID, attachment.AttachedAt); err != nil {
+		headResult, err := tx.ExecContext(ctx, `INSERT INTO email_heads(content_version_id,attachment_id,published_at) VALUES($1,$2,$3) ON CONFLICT(content_version_id) DO UPDATE SET attachment_id=excluded.attachment_id,published_at=excluded.published_at WHERE email_heads.attachment_id<>excluded.attachment_id`, version.ID, attachment.ID, attachment.AttachedAt)
+		if err != nil {
 			return err
+		}
+		changed, err := headResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 0 {
+			if err := recordProcessedTx(ctx, tx, version.ID, ""); err != nil {
+				return err
+			}
 		}
 		for _, a := range g.Artifacts {
-			if _, err = tx.ExecContext(ctx, `DELETE FROM rendition_blob_staging WHERE blob_hash=?`, a.BlobSHA256); err != nil {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM rendition_blob_staging WHERE blob_hash=$1`, a.BlobSHA256); err != nil {
 				return err
 			}
 		}
@@ -335,7 +345,7 @@ func (s *Store) EmailMetadataGeneration(ctx context.Context, versionID, generati
 	return s.emailMetadata(ctx, versionID, generationID)
 }
 func (s *Store) emailMetadata(ctx context.Context, versionID, generationID string) (EmailMetadataView, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return EmailMetadataView{}, err
 	}
@@ -452,7 +462,7 @@ func (s *Store) MissingEmailTargetsAfter(
 	if err := validateCatalogSHA256(bodyProfileFingerprint, "email body profile"); err != nil {
 		return nil, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +471,7 @@ func (s *Store) MissingEmailTargetsAfter(
 	// validators as publication without materializing the entire retained vault.
 	result := []EmailTarget{}
 	for len(result) < limit {
-		versionIDs, err := readMissingEmailVersionIDsPage(ctx, tx, recipeFingerprint, afterVersionID)
+		versionIDs, err := s.readMissingEmailVersionIDsPage(ctx, tx, recipeFingerprint, afterVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -513,22 +523,27 @@ func selectedEmailRecipeFingerprint(
 	err := q.QueryRowContext(ctx, `SELECT g.recipe_fingerprint FROM email_heads h
 		JOIN email_attachments a ON a.attachment_id=h.attachment_id
 		JOIN email_generations g ON g.generation_id=a.generation_id
-		WHERE h.content_version_id=?`, versionID).Scan(&fingerprint)
+		WHERE h.content_version_id=$1`, versionID).Scan(&fingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
 	return fingerprint, err
 }
 
-const missingEmailVersionIDsQuery = `SELECT version_id FROM content_versions
-		WHERE version_id>?
-		AND instr(lower(COALESCE(mime_type,'')),'message/rfc822')>0
+func (s *Store) missingEmailVersionIDsQuery() string {
+	mime := "instr(lower(COALESCE(mime_type,'')),'message/rfc822')>0"
+	if s.postgresSchema != "" {
+		mime = "strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0"
+	}
+	return `SELECT version_id FROM content_versions
+		WHERE version_id>$1
+		AND ` + mime + `
 		AND NOT EXISTS (
 			SELECT 1 FROM email_heads h
 			JOIN email_attachments a ON a.attachment_id=h.attachment_id
 				AND a.content_version_id=content_versions.version_id
 			JOIN email_generations g ON g.generation_id=a.generation_id
-				AND g.recipe_fingerprint=?
+				AND g.recipe_fingerprint=$2
 			JOIN email_body_results b ON b.email_attachment_id=a.attachment_id
 			WHERE h.content_version_id=content_versions.version_id
 			AND (b.state='unavailable' OR EXISTS (
@@ -540,11 +555,12 @@ const missingEmailVersionIDsQuery = `SELECT version_id FROM content_versions
 			))
 		)
 		ORDER BY version_id LIMIT 100`
+}
 
-func readMissingEmailVersionIDsPage(
+func (s *Store) readMissingEmailVersionIDsPage(
 	ctx context.Context, q metadataQuerier, recipeFingerprint, after string,
 ) (versionIDs []string, retErr error) {
-	rows, err := q.QueryContext(ctx, missingEmailVersionIDsQuery, after, recipeFingerprint)
+	rows, err := q.QueryContext(ctx, s.missingEmailVersionIDsQuery(), after, recipeFingerprint)
 	if err != nil {
 		return nil, err
 	}

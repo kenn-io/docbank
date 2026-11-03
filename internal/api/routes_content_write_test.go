@@ -21,7 +21,7 @@ func sendContentReplacement(
 	content []byte, expectedHash string, expectedSize int64, contentType string,
 ) (*http.Response, []byte) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPut,
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut,
 		fmt.Sprintf("%s/api/v1/nodes/%d/content", tsURL, nodeID), bytes.NewReader(content))
 	require.NoError(t, err)
 	req.Header.Set("If-Match", fmt.Sprintf("%q", strconv.FormatInt(revision, 10)))
@@ -61,7 +61,9 @@ func TestContentReplacementCreatesVerifiedImmutableHead(t *testing.T) {
 	assert.Equal(t, hash, receipt.Version.BlobHash)
 	assert.Equal(t, "application/octet-stream", receipt.Version.MimeType)
 
-	contentResp, err := ts.Client().Get(fmt.Sprintf("%s/api/v1/nodes/%d/content", ts.URL, created.ID))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/nodes/%d/content", ts.URL, created.ID), nil)
+	require.NoError(t, err)
+	contentResp, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	currentBody, err := io.ReadAll(contentResp.Body)
 	require.NoError(t, err)
@@ -70,7 +72,9 @@ func TestContentReplacementCreatesVerifiedImmutableHead(t *testing.T) {
 	assert.Equal(t, content, currentBody, "opaque binary bytes must bypass JSON text validation unchanged")
 	assert.Equal(t, receipt.Version.ID, contentResp.Header.Get(api.ContentVersionHeader))
 
-	oldResp, err := ts.Client().Get(ts.URL + "/api/v1/versions/" + oldVersion + "/content")
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/versions/"+oldVersion+"/content", nil)
+	require.NoError(t, err)
+	oldResp, err := ts.Client().Do(request)
 	require.NoError(t, err)
 	oldBody, err := io.ReadAll(oldResp.Body)
 	require.NoError(t, err)
@@ -145,7 +149,7 @@ func TestContentReplacementRequiresPreconditionAndFileTarget(t *testing.T) {
 	content := []byte("replacement")
 	hash := uploadIdentity(content)
 
-	req, err := http.NewRequest(http.MethodPut,
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut,
 		fmt.Sprintf("%s/api/v1/nodes/%d/content", ts.URL, s.RootID()), bytes.NewReader(content))
 	require.NoError(t, err)
 	req.Header.Set(api.BlobHashHeader, hash)

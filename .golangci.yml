@@ -33,6 +33,7 @@ linters:
     - errorlint
     - exhaustive
     - exptostd
+    - fatcontext
     - forbidigo
     - forcetypeassert
     - ginkgolinter
@@ -67,6 +68,7 @@ linters:
     - nilerr
     - nilnesserr
     - nilnil
+    - noctx
     - nolintlint
     - nosprintfhostport
     - paralleltest
@@ -97,12 +99,14 @@ linters:
   # Deliberately not enabled (kept here so an upgrade cannot quietly re-add them):
   #   style/opinionated: nlreturn, wsl, wsl_v5, varnamelen, ireturn, lll,
   #     tagliatelle, exhaustruct, nonamedreturns, tagalign, noinlineerr, dupl,
-  #     dupword, fatcontext, funcorder, containedctx, godox, interfacebloat, unqueryvet
+  #     dupword, funcorder, godox, interfacebloat, unqueryvet
   #   complexity (trust reviewer judgment): funlen, cyclop, gocognit, maintidx, gocyclo, nestif
   #   project misfit: depguard, mnd, gochecknoglobals, gochecknoinits, testpackage,
   #     tparallel, gosmopolitan, prealloc, err113
   #   deprecated: gomodguard (use gomodguard_v2)
-  #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
+  #   context false positives: containedctx (io.Reader/Writer adapters and
+  #     owner lifetimes such as the job supervisor deliberately hold a context),
+  #     contextcheck (flags those lifetimes and every closure passed to a gate)
 
   settings:
     nolintlint:

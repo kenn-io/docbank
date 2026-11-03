@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
@@ -82,7 +83,7 @@ func TestSearcherSemanticUsesExactDescriptorAndExhaustsLeasedGeneration(t *testi
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
 		InputKind: document.EmbeddingInputOriginalFile, BindingRequired: true,
-		ScopedDocuments: 1, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation),
+		ANNRows: retrievalANNRows(t, generation),
 	}, semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
 		ContentVersionID: "version-semantic", Path: "/semantic.pdf",
 		VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
@@ -111,6 +112,13 @@ func TestSearcherSemanticUsesExactDescriptorAndExhaustsLeasedGeneration(t *testi
 	require.Len(t, report.Results, 1)
 	assert.Empty(t, report.Results[0].Excerpt)
 	assert.Equal(t, document.EmbeddingInputOriginalFile, report.Results[0].Evidence[0].InputKind)
+	backend.authority.WholeSpace, backend.authority.ANNRows = true, nil
+	backend.neighborCount = 0
+	_, err = searcher.Search(t.Context(), Query{Text: "semantic query", Mode: ModeSemantic,
+		Limit: 1, ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
+		Authorization: retrievalAuthorization(descriptor)})
+	require.NoError(t, err)
+	assert.Equal(t, generation.Metadata().RowCount, backend.neighborCount)
 }
 
 func TestSearcherRejectsChangedQueryModelInputBeforeProviderOrIndex(t *testing.T) {
@@ -134,7 +142,7 @@ func TestSearcherRejectsChangedQueryModelInputBeforeProviderOrIndex(t *testing.T
 				SourceManifestChecksum: strings.Repeat("c", 64),
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
-		ScopedDocuments: 1, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation)}}
+		ANNRows: retrievalANNRows(t, generation)}}
 	provider := &retrievalProvider{descriptor: changed, vector: []float32{1, 0}}
 	searcher, err := NewSearcher(SearcherConfig{Backend: backend,
 		Encoders: &retrievalResolver{provider: provider}, Owner: "retrieval-test",
@@ -179,7 +187,7 @@ func TestSearcherRevalidatesTheNameItMatched(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, backend.revalidated, 1)
 	require.NotEmpty(t, backend.revalidated[0].Evidence)
-	assert.Equal(t, store.SearchEvidenceIdentity{Kind: "node_name", NodeName: "semantic.pdf"},
+	assert.Equal(t, store.SearchEvidenceIdentity{NodeID: 8, ContentVersionID: "version-semantic", Kind: "node_name", NodeName: "semantic.pdf"},
 		backend.revalidated[0].Evidence[0])
 }
 
@@ -322,27 +330,6 @@ func TestSearcherSemanticReportsAbsentAuthority(t *testing.T) {
 	assert.Zero(t, backend.lexicalCalls)
 }
 
-func TestSearcherSemanticReportsFinalCoverage(t *testing.T) {
-	t.Parallel()
-	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
-	backend.finalScopedDocuments = 2
-	backend.finalCompleteDocuments = 1
-	backend.finalCoverageSet = true
-	backend.lexical = []store.ExplainedLexicalCandidate{{Node: store.Node{ID: 5,
-		CurrentVersionID: "version-lexical", Name: "lexical.pdf"}, Path: "/lexical.pdf",
-		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "lexical.pdf"}}
-
-	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 3,
-		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
-		Authorization: retrievalAuthorization(descriptor)})
-
-	require.NoError(t, err)
-	assert.Equal(t, ModeSemantic, report.ActualMode)
-	assert.Equal(t, CoverageIncomplete, report.Coverage.State)
-	assert.Equal(t, 2, report.Coverage.ScopedDocuments)
-	assert.Equal(t, 1, report.Coverage.CompleteDocuments)
-}
-
 func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 	*Searcher, *retrievalBackendStub, *retrievalProvider, document.EmbeddingDescriptor,
 ) {
@@ -357,12 +344,13 @@ func retrievalSearcherFixture(t *testing.T, required bool, scoped int) (
 				IndexManifestChecksum:  generation.Metadata().Manifest.Checksum,
 				RowCount:               generation.Metadata().RowCount}},
 		BindingRequired: required,
-		ScopedDocuments: scoped, CompleteDocuments: 1, ANNRows: retrievalANNRows(t, generation),
-	}, semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
-		ContentVersionID: "version-semantic", Path: "/semantic.pdf",
-		VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
-		InputGenerationID: "generation", InputID: "input",
-		InputKind: document.EmbeddingInputOriginalFile, Score: 999}}}
+		ANNRows:         retrievalANNRows(t, generation),
+	}, revalidationCoverage: &store.SearchCoverageSnapshot{ScopedDocuments: scoped, CompleteDocuments: 1},
+		semantic: []store.SemanticSearchCandidate{{VaultID: "vault", NodeID: 8,
+			ContentVersionID: "version-semantic", Path: "/semantic.pdf",
+			VectorSpaceID: generation.Metadata().VectorSpaceID, EmbeddingSetID: "set",
+			InputGenerationID: "generation", InputID: "input",
+			InputKind: document.EmbeddingInputOriginalFile, Score: 999}}}
 	provider := &retrievalProvider{descriptor: descriptor, vector: []float32{1, 0}}
 	searcher, err := NewSearcher(SearcherConfig{Backend: backend,
 		Encoders: &retrievalResolver{provider: provider}, Owner: "retrieval-test",
@@ -394,28 +382,26 @@ func retrievalANNRows(t *testing.T, generation *vectorindex.Generation) []vector
 }
 
 type retrievalBackendStub struct {
-	revalidated            []store.SearchCandidateIdentity
-	lexicalTruncated       bool
-	semanticTruncated      bool
-	vaultID                string
-	lexical                []store.ExplainedLexicalCandidate
-	authority              store.SemanticSearchAuthority
-	semantic               []store.SemanticSearchCandidate
-	semanticPages          []store.SemanticSearchResolution
-	excludedNodes          map[int64]struct{}
-	acquireErr             error
-	neighborCount          int
-	sourceManifest         string
-	acquiredAt             time.Time
-	releasedAt             time.Time
-	lexicalCalls           int
-	lexicalLimit           int
-	vectorLimit            int
-	releaseErr             error
-	releaseContextErr      error
-	finalScopedDocuments   int
-	finalCompleteDocuments int
-	finalCoverageSet       bool
+	revalidated          []store.SearchCandidateIdentity
+	lexicalTruncated     bool
+	semanticTruncated    bool
+	vaultID              string
+	lexical              []store.ExplainedLexicalCandidate
+	authority            store.SemanticSearchAuthority
+	semantic             []store.SemanticSearchCandidate
+	semanticPages        []store.SemanticSearchResolution
+	excludedNodes        map[int64]struct{}
+	acquireErr           error
+	neighborCount        int
+	sourceManifest       string
+	acquiredAt           time.Time
+	releasedAt           time.Time
+	lexicalCalls         int
+	lexicalLimit         int
+	vectorLimit          int
+	releaseErr           error
+	releaseContextErr    error
+	revalidationCoverage *store.SearchCoverageSnapshot
 }
 
 func (backend *retrievalBackendStub) AcquireSemanticSearchAuthority(_ context.Context, _, _, _ string,
@@ -439,15 +425,10 @@ func (backend *retrievalBackendStub) ResolveSemanticCandidates(_ context.Context
 		page.SourceManifestChecksum = sourceManifest
 		return page, nil
 	}
-	scoped, complete := backend.finalScopedDocuments, backend.finalCompleteDocuments
-	if !backend.finalCoverageSet {
-		scoped, complete = backend.authority.ScopedDocuments, backend.authority.CompleteDocuments
-	}
 	return store.SemanticSearchResolution{
 		Truncated:              backend.semanticTruncated,
 		SourceManifestChecksum: sourceManifest,
 		Candidates:             append([]store.SemanticSearchCandidate(nil), backend.semantic...),
-		ScopedDocuments:        scoped, CompleteDocuments: complete,
 	}, nil
 }
 
@@ -474,7 +455,7 @@ func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Contex
 			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,
 		})
 	}
-	return store.SearchCandidateRevalidation{Candidates: candidates}, nil
+	return store.SearchCandidateRevalidation{Candidates: candidates, Coverage: backend.revalidationCoverage}, nil
 }
 
 type retrievalResolver struct {
@@ -629,6 +610,44 @@ func TestFuseReciprocalRankPreservesExactLaneContributions(t *testing.T) {
 	assert.InDelta(t, 1.0/62.0, results[0].Explanation[1].Contribution, 1e-12)
 	assert.Equal(t, semanticOnly, results[1].Document,
 		"equal RRF scores use stable document identity, never raw lane score")
+}
+
+func TestFuseReciprocalRankCollapsesCopiesOfOneDisplayedPhotoWithinLane(t *testing.T) {
+	t.Parallel()
+
+	scope := store.SearchOptions{PhotoScope: &store.PhotoBrowseRequest{},
+		PhotoLexicalQuery: &query.Query{Filters: query.Filters{CollapseDuplicates: true}}}
+	displayHash := photoFusionBlob(scope, strings.Repeat("a", 64))
+	original := DocumentIdentity{VaultID: "vault", NodeID: 7, ContentVersionID: "version-raw"}
+	duplicate := DocumentIdentity{VaultID: "vault", NodeID: 8, ContentVersionID: "version-dng"}
+	semanticOnly := DocumentIdentity{VaultID: "vault", NodeID: 9, ContentVersionID: "version-semantic"}
+	results, truncated, err := FuseReciprocalRank([]Candidate{
+		{Document: original, Lane: LaneLexical, Rank: 1, Path: "/original/photo.jpg", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "node_name", NodeID: 7}}},
+		{Document: duplicate, Lane: LaneLexical, Rank: 2, Path: "/copy/photo.jpg", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "node_name", NodeID: 8}}},
+	}, []Candidate{
+		{Document: semanticOnly, Lane: LaneSemantic, Rank: 1, VectorSpaceID: "space",
+			photoBlobHash: photoFusionBlob(scope, strings.Repeat("b", 64))},
+		{Document: duplicate, Lane: LaneSemantic, Rank: 2, VectorSpaceID: "space", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "embedding", NodeID: 8, VectorSpaceID: "space"}}},
+		{Document: original, Lane: LaneSemantic, Rank: 3, VectorSpaceID: "space", photoBlobHash: displayHash,
+			Evidence: []EvidenceReference{{Kind: "embedding", NodeID: 7, VectorSpaceID: "space"}}},
+	}, 2)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, results, 2)
+	assert.Equal(t, original, results[0].Document)
+	assert.Equal(t, "/original/photo.jpg", results[0].Path)
+	assert.Equal(t, 1, results[0].LexicalRank)
+	assert.Equal(t, 2, results[0].SemanticRank)
+	assert.InDelta(t, 1.0/61.0+1.0/62.0, results[0].Score, 1e-12)
+	assert.Equal(t, []EvidenceReference{
+		{Kind: "node_name", NodeID: 7},
+		{Kind: "embedding", NodeID: 8, VectorSpaceID: "space"},
+	}, results[0].Evidence)
+	assert.Equal(t, semanticOnly, results[1].Document)
+	assert.Equal(t, 1, results[1].SemanticRank)
 }
 
 func TestFuseReciprocalRankKeepsLexicalPathAfterConcurrentMove(t *testing.T) {

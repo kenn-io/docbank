@@ -13,7 +13,7 @@ import (
 var restoreJSON bool
 
 var restoreCmd = &cobra.Command{
-	Example: `  docbank restore id:12`,
+	Example: `  docbank document restore id:12`,
 	Long:    `Accepts id:N from docbank trash list (bare N still works).`,
 	GroupID: groupDocuments,
 	Use:     "restore <id:N>",
@@ -50,5 +50,5 @@ var restoreCmd = &cobra.Command{
 func init() {
 	restoreCmd.Flags().BoolVar(&restoreJSON, "json", false,
 		"print JSON to stdout")
-	rootCmd.AddCommand(restoreCmd)
+	registerGroupedCommand(documentCmd, restoreCmd, "restore")
 }

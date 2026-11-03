@@ -118,7 +118,7 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 				return ErrBatesPageCountMismatch
 			}
 		}
-		if err := s.EnsureBlobTx(tx, publication.BlobSHA256, publication.Size, physical); err != nil {
+		if err := s.EnsureBlobTx(ctx, tx, publication.BlobSHA256, publication.Size, physical); err != nil {
 			return err
 		}
 		createdAt := nowRFC3339()

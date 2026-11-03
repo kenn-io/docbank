@@ -15,7 +15,7 @@ import (
 func BenchmarkNodeTags(b *testing.B) {
 	for _, definitions := range []int{1, 100, 1000} {
 		b.Run(fmt.Sprintf("tags=%d", definitions), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
@@ -74,7 +74,7 @@ func BenchmarkNodeTags(b *testing.B) {
 func BenchmarkTags(b *testing.B) {
 	for _, definitions := range []int{100, 1000} {
 		b.Run(fmt.Sprintf("tags=%d", definitions), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			tags := make([]Tag, definitions)
@@ -127,7 +127,7 @@ func BenchmarkTags(b *testing.B) {
 func BenchmarkTaggedNodes(b *testing.B) {
 	for _, files := range []int{0, 100, 10000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			tag, err := s.CreateTag(b.Context(), "records")

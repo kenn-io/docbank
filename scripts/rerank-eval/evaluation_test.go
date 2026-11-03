@@ -219,7 +219,7 @@ type comparisonFixture struct {
 func newComparisonFixture(t *testing.T, corpus embeddingeval.Corpus) *comparisonFixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "synthetic-vault.db")
-	vault, err := store.Open(path)
+	vault, err := store.Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
 	fixture := &comparisonFixture{store: vault, vectorSpace: strings.Repeat("a", 64), syntheticQueryVectors: map[string][]float32{

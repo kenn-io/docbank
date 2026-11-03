@@ -277,7 +277,7 @@
       </div>
     {:else if items.length === 0}
       <p class="tool-muted">
-        No imports yet. Run <code>docbank add &lt;directory&gt; --dest /documents</code>.
+        No imports yet. Run <code>docbank document add &lt;directory&gt; --dest /documents</code>.
       </p>
     {:else if selected}
       {@const current = selected}
@@ -320,7 +320,7 @@
             { label: "Imported", value: formatDate(current.started_at) },
           ]}
         />
-        <p class="tool-muted">{current.source_description}</p>
+        <p class="tool-muted">{current.url_fetch?.requested_url ?? current.source_description}</p>
         <div class="tool-field">
           <label for="import-label">Label</label>
           {#if labelLoading && !observedLabel}
@@ -425,7 +425,7 @@
                 class="import-summary"
                 type="button"
                 aria-label={`Browse import ${displayName(collection)}`}
-                title={collection.source_description}
+                title={collection.url_fetch?.requested_url ?? collection.source_description}
                 onclick={() => void browse(collection)}
               >
                 <span class="tool-row-main">

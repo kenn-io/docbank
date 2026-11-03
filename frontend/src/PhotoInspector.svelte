@@ -252,6 +252,30 @@
           />
         </div>
       {/each}
+      {#if count === 1 && editor.rotationSuggestion}
+        {@const suggestion = editor.rotationSuggestion}
+        <div class="rotation-suggestion">
+          <div>
+            <span>Suggested {suggestion.rotation}°</span><small
+              >from {suggestion.rotation_source === "faces"
+                ? "face tilt"
+                : "photo description"}</small
+            >
+          </div>
+          <Button
+            size="sm"
+            disabled={disabled || editor.dirty || editor.conflict}
+            onclick={() => void editor.respondSuggestion(suggestion, false, [], false, onresponse)}
+            >Rotate {suggestion.rotation}°</Button
+          >
+          <Button
+            size="sm"
+            disabled={disabled || editor.dirty || editor.conflict}
+            onclick={() => void editor.respondSuggestion(suggestion, false, [], true, onresponse)}
+            >Dismiss</Button
+          >
+        </div>
+      {/if}
     </div>
     {#each fields as field}
       {@const value = editor.value(field)}
@@ -414,6 +438,27 @@
 </section>
 
 <style>
+  .rotation-suggestion {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    font-size: var(--font-size-xs);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+  .rotation-suggestion > div {
+    flex: 1;
+  }
+  .rotation-suggestion span {
+    white-space: nowrap;
+  }
+  .rotation-suggestion small {
+    display: block;
+    color: var(--text-muted);
+  }
   .suggestions {
     display: flex;
     flex-direction: column;

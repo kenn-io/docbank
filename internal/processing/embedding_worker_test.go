@@ -25,7 +25,9 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestEmbeddingWorkerPublishesBindingsAndInputKindsIndependently(t *testing.T) {
@@ -537,7 +539,7 @@ func TestEmbeddingRuntimeRegistryClassifiesPerProfileBinding(t *testing.T) {
 }
 
 type embeddingWorkerFixture struct {
-	t               *testing.T
+	t               testing.TB
 	now             time.Time
 	descriptor      document.EmbeddingDescriptor
 	profile         store.ProcessingProfileRecord
@@ -549,12 +551,12 @@ type embeddingWorkerFixture struct {
 	totalWait       time.Duration
 }
 
-func newEmbeddingWorkerFixture(t *testing.T) *embeddingWorkerFixture {
-	t.Helper()
-	descriptor := embeddingWorkerDescriptor(t)
-	profile := embeddingWorkerProfile(t, descriptor)
+func newEmbeddingWorkerFixture(tb testing.TB) *embeddingWorkerFixture {
+	tb.Helper()
+	descriptor := embeddingWorkerDescriptor(tb)
+	profile := embeddingWorkerProfile(tb, descriptor)
 	fixture := &embeddingWorkerFixture{
-		t: t, now: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC), descriptor: descriptor,
+		t: tb, now: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC), descriptor: descriptor,
 		profile: profile, catalog: newEmbeddingWorkerFakeCatalog(), blobs: &embeddingWorkerFakeBlobs{},
 		runtime: &embeddingWorkerFakeRuntime{failures: map[string][]error{}, capacityAbove: map[string]int{}, mutate: map[string]func(document.EmbeddingResult) document.EmbeddingResult{}, callsByBinding: map[string]int{}, preparesByBinding: map[string]int{}, batchesByBinding: map[string][]int{}},
 		gate:    newTestOperationGate(),
@@ -673,6 +675,9 @@ func mutateEmbeddingWorkerBinding(t *testing.T, work EmbeddingWork,
 // The rest of this file is a deterministic authority harness. Assertions are
 // made on worker-visible catalog state, never on fake call existence alone.
 type embeddingWorkerFakeCatalog struct {
+	revision                        uint64
+	writeRevision                   func() uint64
+	reconcilePage                   func(store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	reconcileError                  func() error
 	mu                              sync.Mutex
 	queue                           []EmbeddingWork
@@ -697,11 +702,24 @@ func (c *embeddingWorkerFakeCatalog) enqueue(work ...EmbeddingWork) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.queue = append(c.queue, work...)
+	c.revision++
 }
-func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(context.Context, store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+func (c *embeddingWorkerFakeCatalog) WriteRevision() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.writeRevision != nil {
+		return c.writeRevision()
+	}
+	return c.revision
+}
+
+func (c *embeddingWorkerFakeCatalog) ReconcileEmbeddingJobs(_ context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.events = append(c.events, "reconcile")
+	if c.reconcilePage != nil {
+		return c.reconcilePage(request)
+	}
 	if c.reconcileError != nil {
 		if err := c.reconcileError(); err != nil {
 			return store.EmbeddingReconcileResult{}, err
@@ -1010,7 +1028,7 @@ type embeddingRuntimeTestBlobs struct {
 	opens   int
 }
 
-func (blobs *embeddingRuntimeTestBlobs) OpenContext(context.Context, string) (io.ReadSeekCloser, error) {
+func (blobs *embeddingRuntimeTestBlobs) OpenContext(_ context.Context, _ string) (io.ReadSeekCloser, error) {
 	blobs.opens++
 	if blobs.openErr != nil {
 		return nil, blobs.openErr
@@ -1088,17 +1106,17 @@ func headKeyParts(version, binding string, kind document.EmbeddingInputKind) str
 func workerHash(value string) string { return workerHashBytes([]byte(value)) }
 func workerHex(value string) string  { return workerHash(value) }
 
-func embeddingWorkerDescriptor(t *testing.T) document.EmbeddingDescriptor {
-	t.Helper()
+func embeddingWorkerDescriptor(tb testing.TB) document.EmbeddingDescriptor {
+	tb.Helper()
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-space", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"}})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: workerHash("policy"), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "synthetic", ModelRevision: "v1", Dimension: 2, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone, ScalarEncoding: "float32", DocumentFormatter: "document/v1", QueryFormatter: "query/v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk}, CompatibilityID: "synthetic-space", SupportsTextQuery: true, ModelInput: contract, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return descriptor
 }
 
-func embeddingWorkerProfile(t *testing.T, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
-	t.Helper()
+func embeddingWorkerProfile(tb testing.TB, descriptor document.EmbeddingDescriptor) store.ProcessingProfileRecord {
+	tb.Helper()
 	makeBinding := func(name string, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{Activation: document.EmbeddingOptional, AuthorizationFingerprint: workerHash("auth"), CompatibilityID: descriptor.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}, Dimensions: descriptor.Dimension, DisclosureFingerprint: workerHash("disclosure"), DocumentFormatter: descriptor.DocumentFormatter, InputKind: kind, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20, Metric: descriptor.Metric, ModelInput: descriptor.ModelInput, Model: descriptor.Model, Name: name, Normalization: descriptor.Normalization, QueryFormatter: descriptor.QueryFormatter, ScalarEncoding: descriptor.ScalarEncoding, TrustBoundary: string(descriptor.TrustBoundary)}
 		if kind == document.EmbeddingInputRenditionChunk {
@@ -1116,7 +1134,7 @@ func embeddingWorkerProfile(t *testing.T, descriptor document.EmbeddingDescripto
 			TrustBoundary: "local_process", UploadOptionsFingerprint: workerHash("upload-options")},
 		EvidenceLexical: document.EvidenceLexicalPolicyV1{MaxDocumentChars: 10000, CompletenessFingerprint: workerHash("complete"), LexicalSegmenterFingerprint: workerHash("lexical"), MaxSegmentRunes: 1000, MaxUnitRunes: 1000, NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, NormalizerFingerprint: workerHash("normalizer"), RenditionContract: document.RenditionContractV1, SanitizerFingerprint: workerHash("sanitizer"), SourceEvidenceContract: document.SourceEvidenceContractV1}, RetentionDisclosure: document.RetentionDisclosurePolicyV1{AttachmentPolicyFingerprint: workerHash("attachment"), ConsentFingerprint: workerHash("consent"), TrustBoundary: string(document.EmbeddingTrustLocalProcess)}, Retrieval: document.RetrievalPolicyV1{LexicalLimit: 10, VectorLimit: 10}, Embeddings: []document.EmbeddingBindingV1{makeBinding("chunk", document.EmbeddingInputRenditionChunk), makeBinding("direct", document.EmbeddingInputOriginalFile)}}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return store.ProcessingProfileRecord{Fingerprint: fingerprints.Profile, CanonicalProfile: canonical, EvidenceLexicalFingerprint: fingerprints.EvidenceLexical, RetentionDisclosureFingerprint: fingerprints.RetentionDisclosure, AttachmentPolicyFingerprint: profile.RetentionDisclosure.AttachmentPolicyFingerprint, ConsentFingerprint: profile.RetentionDisclosure.ConsentFingerprint, TrustBoundary: profile.RetentionDisclosure.TrustBoundary}
 }
 
@@ -1198,25 +1216,25 @@ func (embeddingIntegrationTokenizer) Tokenize(text string, limit int) ([]documen
 	return result, nil
 }
 
-func newRealEmbeddingWorker(t *testing.T, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
-	t.Helper()
-	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(t, kind, nil, additionalBindings...)
+func newRealEmbeddingWorker(tb testing.TB, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
+	tb.Helper()
+	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(tb, kind, nil, additionalBindings...)
 	return fixture, fake, worker, request
 }
 
-func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
-	t.Helper()
-	fixture := newPublicationFixture(t)
-	fake := newEmbeddingWorkerFixture(t)
+func newRealEmbeddingWorkerWithDescriptor(tb testing.TB, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
+	tb.Helper()
+	fixture := newPublicationFixture(tb)
+	fake := newEmbeddingWorkerFixture(tb)
 	if descriptor != nil {
 		fake.descriptor = *descriptor
-		fake.profile = embeddingWorkerProfile(t, *descriptor)
+		fake.profile = embeddingWorkerProfile(tb, *descriptor)
 	}
 	var portable, embeddingProfile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(fixture.profile.CanonicalProfile, &portable))
-	require.NoError(t, json.Unmarshal(fake.profile.CanonicalProfile, &embeddingProfile))
+	require.NoError(tb, json.Unmarshal(fixture.profile.CanonicalProfile, &portable))
+	require.NoError(tb, json.Unmarshal(fake.profile.CanonicalProfile, &embeddingProfile))
 	if descriptor != nil {
-		rendition := newWorkerProvider(t).Descriptor()
+		rendition := newWorkerProvider(tb).Descriptor()
 		portable.Rendition.TrustBoundary = string(rendition.TrustBoundary)
 		portable.Rendition.Descriptor = document.ProviderDescriptorV1{ID: rendition.ID, Fingerprint: rendition.Fingerprint}
 	}
@@ -1234,7 +1252,7 @@ func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingI
 		portable.Embeddings = append(portable.Embeddings, additional)
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(portable)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	fixture.profile.CanonicalProfile, fixture.profile.Fingerprint = canonical, fingerprints.Profile
 	fixture.profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
 	fixture.profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
@@ -1246,38 +1264,38 @@ func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingI
 	}
 	if kind == document.EmbeddingInputOriginalFile {
 		data := mediatest.PNG(2, 2, color.White)
-		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
-		require.NoError(t, err)
-		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "synthetic.png", receipt.Hash, receipt.Size,
-			"image/png", processingBlobPhysical(t, receipt))
-		require.NoError(t, err)
+		receipt, err := fixture.blobs.WriteDetailedContext(tb.Context(), bytes.NewReader(data))
+		require.NoError(tb, err)
+		node, err := fixture.catalog.CreateFile(tb.Context(), fixture.catalog.RootID(), "synthetic.png", receipt.Hash, receipt.Size,
+			"image/png", processingBlobPhysical(tb, receipt))
+		require.NoError(tb, err)
 		generation.SourceVersionID = node.CurrentVersionID
 		generation.GenerationChecksum = receipt.Hash
 		generation.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
 	} else {
-		staged := fixture.stage(t, publicationIDs{"b8", "58", "98"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
+		staged := fixture.stage(tb, publicationIDs{"b8", "58", "98"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
-		require.NoError(t, err)
-		_, err = publisher.PublishRendition(t.Context(), staged)
-		require.NoError(t, err)
+		require.NoError(tb, err)
+		_, err = publisher.PublishRendition(tb.Context(), staged)
+		require.NoError(tb, err)
 		artifact := staged.Build.Artifacts[0]
-		evidenceJSON, err := readExactEmbeddingBlob(t.Context(), fixture.blobs, artifact.BlobHash, artifact.Size)
-		require.NoError(t, err)
+		evidenceJSON, err := readExactEmbeddingBlob(tb.Context(), fixture.blobs, artifact.BlobHash, artifact.Size)
+		require.NoError(tb, err)
 		var evidence document.NormalizedEvidenceV1
-		require.NoError(t, json.Unmarshal(evidenceJSON, &evidence))
+		require.NoError(tb, json.Unmarshal(evidenceJSON, &evidence))
 		evidence.Checksum = artifact.BlobHash
 		policy, err := document.NewInputPolicy(binding, embeddingIntegrationTokenizer{}, fingerprints.EvidenceLexical, nil)
-		require.NoError(t, err)
+		require.NoError(tb, err)
 		generated, err := document.BuildEmbeddingInputs(evidence, policy, document.GenerationLimits{
 			MaxInputs: 100, MaxTotalContentTokens: 10000, MaxTotalRenderedTokens: 10000,
 			MaxTotalContentBytes: 1 << 20, MaxTotalRenderedBytes: 1 << 20, MaxFittingWorkTokens: 100000, MaxFittingWorkBytes: 1 << 20,
 		})
-		require.NoError(t, err)
+		require.NoError(tb, err)
 		generation.GenerationJSON, err = document.MarshalEmbeddingInputGeneration(generated)
-		require.NoError(t, err)
-		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(generation.GenerationJSON))
-		require.NoError(t, err)
-		require.NoError(t, fixture.catalog.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(t, receipt)))
+		require.NoError(tb, err)
+		receipt, err := fixture.blobs.WriteDetailedContext(tb.Context(), bytes.NewReader(generation.GenerationJSON))
+		require.NoError(tb, err)
+		require.NoError(tb, fixture.catalog.RecordRenditionBlob(tb.Context(), receipt.Hash, receipt.Size, processingBlobPhysical(tb, receipt)))
 		generation.SourceVersionID, generation.AttachmentID = fixture.versionID, staged.Attachment.ID
 		generation.ID = workerHash("embedding-generation-attachment/v1\x00" + generated.Checksum + "\x00" + generation.AttachmentID)
 		generation.GenerationBlobHash, generation.GenerationEncodedSize = receipt.Hash, receipt.Size
@@ -1296,27 +1314,27 @@ func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingI
 	// Enqueue installs the profile before checking consent. Register it through
 	// the existing source-authority path for direct input, which has no rendition.
 	if kind == document.EmbeddingInputOriginalFile {
-		staged := fixture.stage(t, publicationIDs{"b9", "59", "99"}, "synthetic evidence", "Example")
+		staged := fixture.stage(tb, publicationIDs{"b9", "59", "99"}, "synthetic evidence", "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
-		require.NoError(t, err)
-		_, err = publisher.PublishRendition(t.Context(), staged)
-		require.NoError(t, err)
+		require.NoError(tb, err)
+		_, err = publisher.PublishRendition(tb.Context(), staged)
+		require.NoError(tb, err)
 	}
-	_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+	_, err = fixture.catalog.GrantConsent(tb.Context(), store.ProcessingConsentGrantRequest{
 		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
 		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	request := store.EmbeddingJobRequest{
 		ContentVersionID: generation.SourceVersionID, Profile: fixture.profile, BindingID: binding.Name,
 		Descriptor: fake.descriptor, InputGeneration: generation, Authorization: consent,
 	}
 	if descriptor == nil {
-		_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
-		require.NoError(t, err)
+		_, err = fixture.catalog.EnqueueEmbeddingJob(tb.Context(), request)
+		require.NoError(tb, err)
 	}
-	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), fake.runtime.Classify)
-	require.NoError(t, err)
+	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: fake.descriptor}, fixture.blobs, tb.TempDir(), fake.runtime.Classify)
+	require.NoError(tb, err)
 	config := EmbeddingWorkerConfig{Catalog: fixture.catalog, Authority: fixture.catalog,
 		Blobs: fixture.blobs, GenerationBlobs: fixture.blobs, Runtime: runtime, Gate: newTestOperationGate(), Owner: "integration-worker",
 		LeaseDuration: 3 * time.Second, IdleDelay: time.Millisecond, RetryLimit: 3, MaxRetryDelay: time.Second,
@@ -1324,7 +1342,7 @@ func newRealEmbeddingWorkerWithDescriptor(t *testing.T, kind document.EmbeddingI
 		DescriptorFingerprints: []string{fake.descriptor.Fingerprint},
 	}
 	worker, err := NewEmbeddingWorker(config)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return fixture, fake, worker, request, config
 }
 
@@ -2048,4 +2066,529 @@ func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing
 		require.NoError(t, err)
 		require.Equal(t, 2, passes)
 	})
+}
+
+func TestImageEmbeddingRuntimePreviewValidation(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	registry := x.service.EmbeddingRuntimes()
+	profile := x.service.profiles["images"].record
+	generation, _, err := registry.ImageGeneration(t.Context(), profile, x.binding, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	work := EmbeddingWork{ContentVersionID: f.node.CurrentVersionID, ProcessingProfile: profile, Binding: x.binding, Descriptor: x.descriptor,
+		VectorSpaceID: x.service.profiles["images"].vectorSpaces[x.binding.Name], InputGeneration: generation}
+	execution, err := registry.Prepare(t.Context(), work)
+	require.NoError(t, err)
+	defer closeEmbeddingInputs(execution.Inputs)
+	require.Len(t, execution.Inputs, 1)
+	assert.Equal(t, document.EmbeddingInputImage, execution.Inputs[0].Kind)
+	metadata := execution.Inputs[0].Source.Metadata()
+	assert.Equal(t, document.RenditionInputDerivedUpload, metadata.InputKind)
+	data, err := io.ReadAll(execution.Inputs[0].Source)
+	require.NoError(t, err)
+	assert.NotEqual(t, f.written.Hash, workerHashBytes(data))
+	assert.Equal(t, metadata.SHA256, workerHashBytes(data))
+	rejected := publishRejectedPreview(t, f)("invalid-preview.jpg")
+	work = EmbeddingWork{ContentVersionID: rejected.CurrentVersionID, ProcessingProfile: profile, Binding: x.binding, Descriptor: x.descriptor,
+		VectorSpaceID: x.service.profiles["images"].vectorSpaces[x.binding.Name]}
+	_, err = registry.Prepare(t.Context(), work)
+	require.ErrorIs(t, err, ErrEmbeddingInputRejected)
+}
+
+func TestImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t *testing.T) {
+	t.Parallel()
+	f := newPhotoDescriptionFixture(t)
+	x := newImageEmbeddingService(t, f)
+	// Two profiles that share a descriptor register one runtime for it.
+	sibling := x.portable
+	sibling.Embeddings = slices.Clone(x.portable.Embeddings)
+	sibling.Embeddings[0].DisclosureFingerprint = workerHash("sibling-disclosure")
+	shared, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: x.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}, "sibling": {Profile: sibling, EmbeddingProviders: map[string]document.EmbeddingProvider{x.binding.Name: x.provider}}}})
+	require.NoError(t, err)
+	assert.True(t, shared.EmbeddingRuntimes().Ready())
+	assert.Equal(t, []string{x.descriptor.Fingerprint}, shared.EmbeddingRuntimes().Fingerprints())
+}
+
+func newImageEmbeddingService(t *testing.T, f *photoDescriptionFixture, wrapProvider ...func(*embeddingWorkerProvider) document.EmbeddingProvider) photoSearchFixture {
+	t.Helper()
+	fake := newEmbeddingWorkerFixture(t)
+	descriptor := fake.descriptor
+	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(fake.profile.CanonicalProfile, &portable))
+	binding := portable.Embeddings[1]
+	binding.InputKind = document.EmbeddingInputImage
+	binding.Descriptor.Fingerprint = descriptor.Fingerprint
+	portable.Rendition = nil
+	portable.Embeddings = []document.EmbeddingBindingV1{binding}
+	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: binding.Name, descriptor: descriptor}
+	var selected document.EmbeddingProvider = provider
+	if len(wrapProvider) > 0 {
+		selected = wrapProvider[0](provider)
+	}
+	fake.runtime.consumeOriginal = true
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: selected}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){binding.Name: fake.runtime.Classify}}}})
+	require.NoError(t, err)
+	return photoSearchFixture{f: f, fake: fake, descriptor: descriptor, portable: portable, binding: binding, provider: provider, service: service}
+}
+
+type photoSearchFixture struct {
+	f          *photoDescriptionFixture
+	fake       *embeddingWorkerFixture
+	descriptor document.EmbeddingDescriptor
+	portable   document.ProcessingProfileV1
+	binding    document.EmbeddingBindingV1
+	provider   *embeddingWorkerProvider
+	service    *Service
+	indexer    *vectorworker.IndexWorker
+}
+
+func newPhotoSearchFixture(t *testing.T, wrapProvider ...func(*embeddingWorkerProvider) document.EmbeddingProvider) photoSearchFixture {
+	t.Helper()
+	f := newPhotoDescriptionFixture(t)
+	_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
+	require.NoError(t, err)
+	f.node, err = f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "last-photo.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+	require.NoError(t, err)
+	f.asset, err = f.catalog.PhotoAssetForNode(t.Context(), f.node.ID)
+	require.NoError(t, err)
+	_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, f.node.CurrentVersionID, f.recipe)
+	require.NoError(t, err)
+	x := newImageEmbeddingService(t, f, wrapProvider...)
+	fake, descriptor, portable, binding, provider, service := x.fake, x.descriptor, x.portable, x.binding, x.provider, x.service
+	f.grant(t, service, "images")
+	worker, err := NewEmbeddingWorker(EmbeddingWorkerConfig{Catalog: f.catalog, Authority: f.catalog, Blobs: f.blobs, GenerationBlobs: f.blobs, Runtime: service.EmbeddingRuntimes(), Gate: newTestOperationGate(), Owner: "synthetic-images", RetryLimit: 3, RetryBaseDelay: time.Millisecond, MaxRetryDelay: time.Second, AttemptLifetime: 10 * time.Minute, MaxRows: 100, MaxDimensions: 100, MaxVectorBlobBytes: 1 << 20, LeaseDuration: time.Minute, IdleDelay: time.Millisecond, DescriptorFingerprints: []string{descriptor.Fingerprint}})
+	require.NoError(t, err)
+	processed, err := worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, processed)
+	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog, Owner: "synthetic-image-index", Mutate: newTestOperationGate().MutateContext, BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+		return readExactEmbeddingBlob(ctx, f.blobs, member.PayloadBlobHash, member.PayloadSize)
+	}})
+	require.NoError(t, err)
+	_, err = indexer.Rebuild(t.Context(), spaces[0])
+	require.NoError(t, err)
+	return photoSearchFixture{f, fake, descriptor, portable, binding, provider, service, indexer}
+}
+
+func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Service, *embeddingWorkerProvider) {
+	t.Helper()
+	f, descriptor, portable, binding, provider, service, indexer := x.f, x.descriptor, x.portable, x.binding, x.provider, x.service, x.indexer
+	// Search selection follows active image index authority across profiles.
+	alternateDescriptor := descriptor
+	alternateDescriptor.ModelRevision += "-alternate"
+	alternateDescriptor, err := document.NewEmbeddingDescriptor(alternateDescriptor)
+	require.NoError(t, err)
+	alternate := portable
+	alternate.Embeddings = slices.Clone(portable.Embeddings)
+	alternate.Embeddings[0].Descriptor.Fingerprint = alternateDescriptor.Fingerprint
+	alternateProvider := &embeddingWorkerProvider{runtime: x.fake.runtime, binding: binding.Name, descriptor: alternateDescriptor}
+	two, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), Principal: service.principal, Scope: service.scope, Profiles: map[string]ProfileConfig{"z-images": {Profile: portable, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: provider}}, "a-images": {Profile: alternate, EmbeddingSimilarityFloors: map[string]float64{binding.Name: 0.2}, EmbeddingProviders: map[string]document.EmbeddingProvider{binding.Name: alternateProvider}}}})
+	require.NoError(t, err)
+	if consent || indexed {
+		f.grant(t, two, "a-images")
+	}
+	if indexed {
+		alternateProfile := two.profiles["a-images"]
+		rows, err := f.catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Mode: "lexical", Syntax: "advanced", Filters: query.Filters{AssetIDs: []string{f.asset.ID}}, Sort: query.Sort{Field: "name", Direction: "asc"}}, PageSize: 1}, nil)
+		require.NoError(t, err)
+		version, err := f.catalog.ContentVersionByID(t.Context(), rows.Items[0].ContentVersionID)
+		require.NoError(t, err)
+		_, err = two.runEmbeddings(t.Context(), version, alternateProfile, two.principal, two.scope, "", nil)
+		require.NoError(t, err)
+
+		_, alternateIDs, err := document.CanonicalProfile(alternate)
+		require.NoError(t, err)
+		_, err = indexer.Rebuild(t.Context(), alternateIDs.VectorSpace[binding.Name])
+		require.NoError(t, err)
+		if !consent {
+			_, err = two.RevokeConsent(t.Context())
+			require.NoError(t, err)
+			f.grant(t, two, "z-images")
+		}
+	}
+	return two, alternateProvider
+}
+
+func TestSearchPhotosMeaningOmitsPhotosBelowSimilarityFloor(t *testing.T) {
+	t.Parallel()
+	x := newPhotoSearchFixture(t)
+	// The indexed image is [1, 2]; this query has zero cosine similarity.
+	x.fake.runtime.mutate[x.binding.Name] = func(result document.EmbeddingResult) document.EmbeddingResult {
+		result.Vectors[0].Values = []float32{2, -1}
+		return result
+	}
+	request := store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "a dog", Sort: query.Sort{Field: "relevance", Direction: "desc"}}}
+	ranked, err := x.service.SearchPhotos(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "semantic", ranked.ActualMode)
+	require.Empty(t, ranked.FallbackReason)
+	require.Empty(t, ranked.Members)
+
+	request.Query.Mode, request.Query.Text = "hybrid", "last-photo"
+	ranked, err = x.service.SearchPhotos(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "hybrid", ranked.ActualMode)
+	require.Empty(t, ranked.FallbackReason)
+	require.Len(t, ranked.Members, 1)
+	require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
+}
+
+func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
+	t.Parallel()
+	x := newPhotoSearchFixture(t)
+	f, service := x.f, x.service
+	filtered, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Filters: query.Filters{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+	require.NoError(t, err)
+	require.Equal(t, "semantic", filtered.ActualMode)
+	require.Empty(t, filtered.Members)
+	// Use one indexed fixture for syntax and lexical-before-semantic ordering.
+	names := []string{"sunset (dune.jpg", "sunset OR zzz.jpg", "sunset beach.jpg", "sunset distant beach.jpg"}
+	_, _, err = f.catalog.Move(t.Context(), f.node.ID, f.catalog.RootID(), names[0], f.node.Revision)
+	require.NoError(t, err)
+	for _, name := range names[1:] {
+		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+		require.NoError(t, err)
+		_, err = EnsureVisualPreview(t.Context(), f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+		require.NoError(t, err)
+		version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, err)
+		_, err = service.runEmbeddings(t.Context(), version, service.profiles["images"], service.principal, service.scope, "", nil)
+		require.NoError(t, err)
+	}
+	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
+	require.NoError(t, err)
+	for _, space := range spaces {
+		_, err = x.indexer.Rebuild(t.Context(), space)
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		syntax, text string
+		lexical      []string
+	}{
+		{"simple", `"sunset beach"`, names[2:]},
+		{"advanced", `"sunset beach"`, names[2:3]},
+	} {
+		t.Run(tc.syntax+" "+tc.text, func(t *testing.T) {
+			ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: tc.syntax, Mode: "hybrid", Text: tc.text, Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+			require.NoError(t, err)
+			require.Equal(t, "hybrid", ranked.ActualMode)
+			require.Empty(t, ranked.FallbackReason)
+			require.Len(t, ranked.Members, 4)
+			var lexical []string
+			for _, member := range ranked.Members[:len(tc.lexical)] {
+				node, err := f.catalog.NodeByID(t.Context(), member.NodeID)
+				require.NoError(t, err)
+				lexical = append(lexical, node.Name)
+			}
+			require.ElementsMatch(t, tc.lexical, lexical)
+		})
+	}
+	t.Run("partial semantic index", func(t *testing.T) {
+		_, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "unindexed.jpg", workerHash("unindexed"), 20, "image/jpeg")
+		require.NoError(t, err)
+		ranked, err := service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+		require.NoError(t, err)
+		require.Equal(t, "semantic", ranked.ActualMode)
+		require.Empty(t, ranked.FallbackReason)
+		require.True(t, ranked.CoverageIncomplete)
+		require.Len(t, ranked.Members, 4)
+	})
+}
+
+func TestSearchPhotosFallsBackToLexical(t *testing.T) {
+	t.Parallel()
+	semantic := func() store.PhotoBrowseRequest {
+		return store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: "semantic", Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}}
+	}
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode+" provider deadline", func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				x := newPhotoSearchFixture(t)
+				x.f.server.Close() // The unused vision listener would keep the fake clock from advancing.
+				calls := x.fake.runtime.callCount(x.binding.Name)
+				x.fake.runtime.block = true
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				request := semantic()
+				request.Query.Mode = mode
+				ranked, err := x.service.SearchPhotos(ctx, request)
+				require.NoError(t, err)
+				require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+				require.Equal(t, calls+1, x.fake.runtime.callCount(x.binding.Name))
+				require.Equal(t, mode, ranked.RequestedMode)
+				require.Equal(t, "lexical", ranked.ActualMode)
+				require.Equal(t, "provider_unavailable", ranked.FallbackReason)
+				require.Empty(t, ranked.Members)
+			})
+		})
+	}
+
+	t.Run("consent_required", func(t *testing.T) {
+		t.Parallel()
+		x := newPhotoSearchFixture(t)
+		_, err := x.service.RevokeConsent(t.Context())
+		require.NoError(t, err)
+		ranked, err := x.service.SearchPhotos(t.Context(), semantic())
+		require.NoError(t, err)
+		require.Equal(t, "lexical", ranked.ActualMode)
+		require.Equal(t, "consent_required", ranked.FallbackReason)
+		require.Empty(t, ranked.Members)
+	})
+	t.Run("unsupported_query", func(t *testing.T) {
+		t.Parallel()
+		x := newPhotoSearchFixture(t)
+		calls := x.fake.runtime.callCount(x.binding.Name)
+		request := semantic()
+		request.Query.Syntax, request.Query.Text = "advanced", "sunset OR harbor"
+		ranked, err := x.service.SearchPhotos(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, "unsupported_query", ranked.FallbackReason)
+		require.Equal(t, calls, x.fake.runtime.callCount(x.binding.Name))
+	})
+	t.Run("missing similarity floor", func(t *testing.T) {
+		t.Parallel()
+		x := newPhotoSearchFixture(t)
+		delete(x.service.profiles["images"].embeddingSimilarityFloors, x.binding.Name)
+		calls := x.fake.runtime.callCount(x.binding.Name)
+		request := semantic()
+		request.Query.Text = "a dog"
+		ranked, err := x.service.SearchPhotos(t.Context(), request)
+		require.NoError(t, err)
+		require.Equal(t, "lexical", ranked.ActualMode)
+		require.Equal(t, "similarity_floor_unset", ranked.FallbackReason)
+		require.Empty(t, ranked.Members)
+		require.Equal(t, calls, x.fake.runtime.callCount(x.binding.Name))
+	})
+	t.Run("provider_unavailable", func(t *testing.T) {
+		x := newPhotoSearchFixture(t)
+		binding, provider, service := x.binding, x.provider, x.service
+		prior := provider.runtime
+		unavailable := newEmbeddingWorkerFixture(t).runtime
+		unavailable.failures[binding.Name] = []error{errors.New("synthetic query provider failure")}
+		provider.runtime = unavailable
+		defer func() { provider.runtime = prior }()
+		ranked, err := service.SearchPhotos(t.Context(), semantic())
+		require.NoError(t, err)
+		require.Equal(t, "lexical", ranked.ActualMode)
+		require.Equal(t, "provider_unavailable", ranked.FallbackReason)
+	})
+}
+
+func TestSearchPhotosUsesLaterAvailableProfile(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, mode       string
+		consent, indexed bool
+		failure          error
+	}{
+		{name: "no consent", mode: "semantic", indexed: true},
+		{name: "no index", mode: "hybrid", consent: true},
+		{name: "transient failure", mode: "semantic", consent: true, indexed: true, failure: embeddingTransientError{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			x := newPhotoSearchFixture(t)
+			two, provider := x.alternate(t, tc.consent, tc.indexed)
+			if tc.failure != nil {
+				unavailable := newEmbeddingWorkerFixture(t).runtime
+				unavailable.failures[x.binding.Name] = []error{tc.failure}
+				provider.runtime = unavailable
+			}
+			ranked, err := two.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "simple", Mode: tc.mode, Text: "sunset", Sort: query.Sort{Field: "relevance", Direction: "desc"}}})
+			require.NoError(t, err)
+			require.Equal(t, tc.mode, ranked.ActualMode)
+			require.Len(t, ranked.Members, 1)
+			require.Equal(t, x.f.asset.ID, ranked.Members[0].AssetID)
+			require.Empty(t, ranked.FallbackReason)
+		})
+	}
+}
+
+func TestEmbeddingWorkerCompletesUnalignedDiscoveryStreams(t *testing.T) {
+	t.Parallel()
+	for _, textFirst := range []bool{true, false} {
+		t.Run(strconv.FormatBool(textFirst), func(t *testing.T) {
+			x := newImageEmbeddingService(t, newPhotoDescriptionFixture(t))
+			f := x.fake
+			f.runtimeRegistry = x.service.embeddings
+			f.descriptor = x.descriptor
+			worker := f.worker(t)
+			now := time.Now().UTC()
+			worker.clock = func() time.Time { return now }
+			calls := 0
+			f.catalog.reconcilePage = func(request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+				calls++
+				if !request.SkipImages {
+					// Real reconciliation pages images only with profiles and a preparer.
+					require.NotEmpty(t, request.ImageProfiles)
+					require.NotNil(t, request.PrepareImageGeneration)
+				}
+				switch calls {
+				case 1:
+					require.False(t, request.SkipGenerations)
+					require.False(t, request.SkipImages)
+					return store.EmbeddingReconcileResult{Next: "text-page-1", ImageNext: store.ImageReconcilePosition{ProfileFingerprint: "images", ContentVersionID: "image-page-1"}}, nil
+				case 2:
+					require.Equal(t, "text-page-1", request.After)
+					require.Equal(t, "image-page-1", request.ImageAfter.ContentVersionID)
+					if textFirst {
+						return store.EmbeddingReconcileResult{ImageNext: store.ImageReconcilePosition{ProfileFingerprint: "images", ContentVersionID: "image-page-2"}}, nil
+					}
+					return store.EmbeddingReconcileResult{Next: "text-page-2"}, nil
+				case 3:
+					require.Equal(t, textFirst, request.SkipGenerations)
+					require.Equal(t, !textFirst, request.SkipImages)
+					return store.EmbeddingReconcileResult{}, nil
+				case 4:
+					require.False(t, request.SkipGenerations)
+					require.False(t, request.SkipImages)
+					require.Empty(t, request.After)
+					require.Empty(t, request.ImageAfter)
+					return store.EmbeddingReconcileResult{}, nil
+				default:
+					t.Fatal("unexpected discovery page")
+					return store.EmbeddingReconcileResult{}, nil
+				}
+			}
+			for range 3 {
+				_, err := worker.ScanOnce(t.Context())
+				require.NoError(t, err)
+			}
+			_, err := worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 3, calls, "completed cycle waits without rescanning")
+			f.catalog.revision++
+			now = now.Add(time.Minute)
+			_, err = worker.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 4, calls, "catalog write starts a fresh cycle")
+		})
+	}
+}
+
+type rejectedPreviewFixture struct {
+	f       *photoDescriptionFixture
+	fake    *embeddingWorkerFixture
+	worker  *EmbeddingWorker
+	now     time.Time
+	calls   int
+	publish func(name string) store.PhotoAsset
+}
+
+// publishRejectedPreview returns a publisher that adds a photo whose ready
+// preview names a hash-valid blob that is not a JPEG.
+func publishRejectedPreview(t *testing.T, f *photoDescriptionFixture) func(name string) store.Node {
+	t.Helper()
+	rejected, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader([]byte("hash-valid bytes that are not JPEG")))
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, SourceSHA256: f.written.Hash, Recipe: f.recipe, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: rejected.Hash, Size: rejected.Size, MediaType: "image/jpeg", Width: 24, Height: 24}})
+	require.NoError(t, err)
+	return func(name string) store.Node {
+		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
+		require.NoError(t, err)
+		_, err = f.catalog.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, new(processingBlobPhysical(t, rejected)))
+		require.NoError(t, err)
+		return node
+	}
+}
+
+func newRejectedPreviewFixture(t *testing.T) *rejectedPreviewFixture {
+	t.Helper()
+	f := newPhotoDescriptionFixture(t)
+	_, err := f.catalog.SetPhotoAssetExcluded(t.Context(), f.asset.ID, f.asset.Revision, true)
+	require.NoError(t, err)
+	publishRejected := publishRejectedPreview(t, f)
+	x := newImageEmbeddingService(t, f)
+	fake, descriptor, binding, service := x.fake, x.descriptor, x.binding, x.service
+	configured := service.profiles["images"]
+	_, err = f.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{Principal: service.principal, Scope: service.scope, ProfileFingerprint: configured.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{"image"}, RetainedArtifactClasses: []string{"embedding_vector_set"}})
+	require.NoError(t, err)
+
+	fake.runtimeRegistry = service.embeddings
+	fake.descriptor = descriptor
+	fake.catalog.writeRevision = f.catalog.WriteRevision
+	fixture := &rejectedPreviewFixture{f: f, fake: fake, now: time.Now().UTC()}
+	fake.catalog.reconcilePage = func(request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
+		prepare := request.PrepareImageGeneration
+		request.PrepareImageGeneration = func(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+			fixture.calls++
+			return prepare(ctx, profile, binding, version)
+		}
+		return f.catalog.ReconcileEmbeddingJobs(t.Context(), request)
+	}
+	fixture.publish = func(name string) store.PhotoAsset {
+		asset, err := f.catalog.PhotoAssetForNode(t.Context(), publishRejected(name).ID)
+		require.NoError(t, err)
+		return asset
+	}
+	fixture.worker = fake.worker(t)
+	fixture.worker.clock = func() time.Time { return fixture.now }
+	return fixture
+}
+
+func (x *rejectedPreviewFixture) scan(t *testing.T) {
+	t.Helper()
+	_, err := x.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	x.now = x.now.Add(time.Minute)
+}
+
+func TestEmbeddingWorkerBoundsProcessLocalRejectedPreviewCache(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		verify func(*testing.T, *rejectedPreviewFixture)
+	}{
+		{name: "remembered until restart", verify: func(t *testing.T, x *rejectedPreviewFixture) {
+			t.Helper()
+			x.publish("rejected-preview.jpg")
+			x.scan(t)
+			x.scan(t)
+			_, err := x.f.catalog.Mkdir(t.Context(), x.f.catalog.RootID(), "wake-discovery")
+			require.NoError(t, err)
+			x.scan(t)
+			require.Equal(t, 1, x.calls)
+
+			restarted := x.fake.worker(t)
+			restarted.clock = x.worker.clock
+			_, err = restarted.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 2, x.calls)
+			var metadata bytes.Buffer
+			require.NoError(t, x.f.catalog.ExportMetadata(t.Context(), &metadata))
+			require.NotContains(t, metadata.String(), `"type":"embedding_input_generation"`)
+			require.NotContains(t, metadata.String(), `"type":"embedding_failure"`)
+		}},
+		{name: "evicts after the bound", verify: func(t *testing.T, x *rejectedPreviewFixture) {
+			t.Helper()
+			const limit = 1024
+			for i := range limit + 1 {
+				x.publish("rejected-" + strconv.Itoa(i) + ".jpg")
+			}
+			for range 30 {
+				if x.calls > limit {
+					break
+				}
+				x.scan(t)
+				require.LessOrEqual(t, len(x.worker.imageRejections), limit)
+			}
+			require.Greater(t, x.calls, limit, "scans reach every rejected preview")
+			settled := x.calls
+			_, err := x.f.catalog.Mkdir(t.Context(), x.f.catalog.RootID(), "wake-discovery")
+			require.NoError(t, err)
+			x.scan(t)
+			require.Greater(t, x.calls, settled, "evicted rejections are prepared again after a write")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.verify(t, newRejectedPreviewFixture(t))
+		})
+	}
 }

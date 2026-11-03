@@ -33,7 +33,7 @@ func registerContentRevertRoute(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		var out *contentReversionOutput
-		err = g.mutate(func() error {
+		err = g.mutate(ctx, func() error {
 			node, version, source, revertErr := d.Store.RevertContent(
 				ctx, in.ID, revision, in.Body.SourceVersionID,
 			)

@@ -17,7 +17,7 @@ import (
 func BenchmarkListPackUsage(b *testing.B) {
 	for _, entries := range []int{100, 10000, 100000} {
 		b.Run(fmt.Sprintf("blobs=%d", entries), func(b *testing.B) {
-			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			catalog := NewPackCatalog(s)
@@ -33,7 +33,7 @@ func BenchmarkListPackUsage(b *testing.B) {
 					if err != nil {
 						return fmt.Errorf("creating benchmark hash: %w", err)
 					}
-					if err := s.EnsureBlobTx(tx, hash.String(), 128); err != nil {
+					if err := s.EnsureBlobTx(b.Context(), tx, hash.String(), 128); err != nil {
 						return err
 					}
 					adoptions[i].Entry = packstore.IndexEntry{Hash: hash, PackID: record.PackID,

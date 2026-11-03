@@ -103,7 +103,7 @@ func TestPhotoBurstAuditRollback(t *testing.T) {
 			if action == "decision" {
 				trigger = `CREATE TRIGGER reject_stack_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced stack audit failure'); END`
 			}
-			_, err := s.db.Exec(trigger)
+			_, err := s.db.ExecContext(t.Context(), trigger)
 			require.NoError(t, err)
 			switch action {
 			case "choice":
@@ -159,7 +159,7 @@ func TestPhotoBurstAuditDetectsUnexplainedState(t *testing.T) {
 				s = restored
 				require.NoError(t, s.ValidateMetadata(t.Context()))
 			}
-			_, err = s.db.Exec(mutation.statement)
+			_, err = s.db.ExecContext(t.Context(), mutation.statement)
 			require.NoError(t, err)
 			require.Error(t, s.ValidateMetadata(t.Context()))
 		})

@@ -27,7 +27,7 @@ func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 		{"docbank-other.localhost:1234", "synthetic-key", 403}, {"127.0.0.1:8485", "synthetic-key", 204},
 	} {
 		t.Run(test.host+test.key, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/info", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/info", nil)
 			r.Host = test.host
 			r.Header.Set("X-Api-Key", test.key)
 			w := httptest.NewRecorder()
@@ -52,7 +52,7 @@ func TestNetworkServerPathRoutesIgnoreForwardingHeaders(t *testing.T) {
 		{path: "/api/v1/photos/checkouts", deniedReason: "daemon's computer"},
 		{path: "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001/rebind", deniedReason: "daemon's computer"},
 	} {
-		r := httptest.NewRequest(http.MethodPost, "http://docbank:8485"+test.path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://docbank:8485"+test.path, nil)
 		r.RemoteAddr = "192.0.2.20:1234"
 		r.Header.Set("X-Forwarded-For", "127.0.0.1")
 		r.Header.Set("Forwarded", "for=127.0.0.1")

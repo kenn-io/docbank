@@ -34,7 +34,7 @@ var mcpCmd = &cobra.Command{
 	Long: `Runs a Model Context Protocol server for the selected vault (DOCBANK_HOME),
 read-only by default; --allow-* flags expose specific write tools.
 stdio (default): one JSON-RPC message per line on stdin/stdout; logs on stderr.
-Client config: {"command":"docbank","args":["mcp"]}
+Client config: docbank mcp config --client claude-code|codex
 http: needs --listen 127.0.0.1:<port> and, in config.toml, [mcp.http]
 credential_binding = "credential:NAME" naming a [credential_bindings.NAME]
 whose environment_variable holds the bearer token.`,
@@ -153,16 +153,11 @@ func loadMCPHTTPConfig(root string) (config.Config, string, error) {
 
 // resolveMCPHTTPBearer reads the bearer named by an already validated config.
 func resolveMCPHTTPBearer(cfg config.Config) (string, error) {
-	reference := cfg.MCP.HTTP.CredentialBinding
-	if reference == "" {
-		return "", errMCPHTTPCredentialUnset
+	variable, err := mcpHTTPCredentialVariable(cfg)
+	if err != nil {
+		return "", err
 	}
-	name := strings.TrimPrefix(reference, "credential:")
-	binding, ok := cfg.CredentialBindings[name]
-	if !ok {
-		return "", errors.New("MCP HTTP credential binding is not configured")
-	}
-	token, selected, err := config.EnvironmentSecret(binding.EnvironmentVariable)
+	token, selected, err := config.EnvironmentSecret(variable)
 	if err != nil {
 		return "", err
 	}
@@ -175,21 +170,34 @@ func resolveMCPHTTPBearer(cfg config.Config) (string, error) {
 	return token, nil
 }
 
+func mcpHTTPCredentialVariable(cfg config.Config) (string, error) {
+	reference := cfg.MCP.HTTP.CredentialBinding
+	if reference == "" {
+		return "", errMCPHTTPCredentialUnset
+	}
+	name := strings.TrimPrefix(reference, "credential:")
+	binding, ok := cfg.CredentialBindings[name]
+	if !ok {
+		return "", errors.New("MCP HTTP credential binding is not configured")
+	}
+	return binding.EnvironmentVariable, nil
+}
+
 func init() {
-	mcpCmd.Flags().StringVar(&mcpTransport, "transport", "stdio", "transport: stdio or http")
-	mcpCmd.Flags().StringVar(&mcpListen, "listen", "", "explicit IP and port for authenticated HTTP (plain HTTP requires a trusted network)")
+	mcpCmd.PersistentFlags().StringVar(&mcpTransport, "transport", "stdio", "transport: stdio or http")
+	mcpCmd.PersistentFlags().StringVar(&mcpListen, "listen", "", "explicit IP and port for authenticated HTTP (plain HTTP requires a trusted network)")
 	mcpCmd.Flags().StringSliceVar(&mcpAllowedHosts, "allowed-host", nil, "additional HTTP Host values, optionally with ports (repeatable)")
-	mcpCmd.Flags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
 		"expose guarded start_processing (still requires prior operator consent)")
-	mcpCmd.Flags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
 		"allow load-file preflight, import, package custodian writes, and Bates exports")
-	mcpCmd.Flags().BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
 		"expose guarded photo asset mutations")
-	mcpCmd.Flags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
 		"allow native export preview, start, cancel, local download, and explicit release")
-	mcpCmd.Flags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
 		"allow frozen report creation, reviewed revisions, verified downloads, and explicit release")
-	mcpCmd.Flags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
 		"allow quoting exact verified Docbank passages into Kata issues")
 	rootCmd.AddCommand(mcpCmd)
 }

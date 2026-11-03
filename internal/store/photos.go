@@ -59,21 +59,6 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 	return asset, nil
 }
 
-func (s *Store) photoReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return fmt.Errorf("beginning photo read transaction: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing photo read transaction: %w", err)
-	}
-	return nil
-}
-
 func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, error) {
 	var settings PhotoSettings
 	var preference sql.NullString
@@ -100,7 +85,7 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 // PhotoAssetByID returns one bounded photo graph.
 func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, error) {
 	var asset PhotoAsset
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
@@ -116,7 +101,7 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 		return PhotoAsset{}, fmt.Errorf("invalid photo node: %w", ErrNotFound)
 	}
 	var asset PhotoAsset
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var id string
 		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -132,10 +117,37 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 	return asset, nil
 }
 
+// PhotoAssetIDsForNodes resolves photo membership in one read transaction.
+func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64, collapseDuplicates bool) (map[int64]string, error) {
+	ids := make(map[int64]string, len(nodeIDs))
+	encoded, err := json.Marshal(nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	population := selectCompiledPopulation(compiledQueryFragment{sql: `n.id IN (SELECT value FROM json_each(?))`, args: []any{string(encoded)}}, collapseDuplicates)
+	err = s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+		rows, err := tx.QueryContext(ctx, `SELECT pf.node_id,pf.asset_id FROM photo_files pf JOIN (`+population.sql+`) accepted ON accepted.node_id=pf.node_id WHERE pf.asset_id IS NOT NULL`, population.args...)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		for rows.Next() {
+			var nodeID int64
+			var assetID string
+			if err := rows.Scan(&nodeID, &assetID); err != nil {
+				return err
+			}
+			ids[nodeID] = assetID
+		}
+		return rows.Err()
+	})
+	return ids, err
+}
+
 // PhotoSettings returns the virtual or stored vault preference.
 func (s *Store) PhotoSettings(ctx context.Context) (PhotoSettings, error) {
 	var settings PhotoSettings
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		settings, err = photoSettingsTx(ctx, tx)
 		return err
@@ -453,8 +465,8 @@ func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID
 	return asset, nil
 }
 
-func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
-	node, err := nodeByIDTx(tx, nodeID)
+func photoNodeForMutationTx(ctx context.Context, tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, error) {
+	node, err := nodeByIDTx(ctx, tx, nodeID)
 	if err != nil {
 		return Node{}, PhotoNodeFacts{}, err
 	}
@@ -467,7 +479,7 @@ func photoNodeForMutationTx(tx *sql.Tx, nodeID int64) (Node, PhotoNodeFacts, err
 // photoAssetCreateTx creates a singleton asset on an explicit request and
 // reports every refusal as an error.
 func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64, explicitRole, explicitKind string) (PhotoAsset, error) {
-	_, facts, err := photoNodeForMutationTx(tx, nodeID)
+	_, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -723,7 +735,7 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			if kind != "" && asset.Kind != kind {
 				return false, fmt.Errorf("%w: existing asset kind is %s, requested %s", ErrInvalidPhotoAsset, asset.Kind, kind)
 			}
-			if _, _, err := photoNodeForMutationTx(tx, nodeID); err != nil {
+			if _, _, err := photoNodeForMutationTx(ctx, tx, nodeID); err != nil {
 				return false, err
 			}
 			if asset.ExcludedAt == nil {
@@ -749,7 +761,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		return PhotoAsset{}, fmt.Errorf("%w: unknown role %q", ErrInvalidPhotoAsset, role)
 	}
 	return s.mutatePhotoAsset(ctx, assetID, revision, "attach", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
-		node, facts, err := photoNodeForMutationTx(tx, nodeID)
+		node, facts, err := photoNodeForMutationTx(ctx, tx, nodeID)
 		if err != nil {
 			return false, err
 		}

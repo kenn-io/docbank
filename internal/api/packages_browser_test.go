@@ -11,23 +11,23 @@ import (
 
 func TestPackagesBrowserRuleRefusesChunksAndServerPaths(t *testing.T) {
 	t.Parallel()
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPut, "/api/v1/packages/containers/c1/chunks/0", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/containers", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/containers/c1/preflight", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/containers/c1/seal", nil)))
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/imports?source_kind=root", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/imports", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages?limit=50", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/field-catalog", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/label-candidates?label=EXT000001", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/by-id/package-id", nil)))
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/by-id/package-id/members?limit=50", nil)))
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/by-id/package-id/timeline-inputs", nil)))
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/imports/op/resume", nil)))
-	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/by-id/package-id/records/row-id", nil)))
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/by-id/package-id", nil)))
-	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/packages/a/b/c/d/e", nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/packages/preflights", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/packages/containers/c1/chunks/0", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/containers", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/containers/c1/preflight", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/containers/c1/seal", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/imports?source_kind=root", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/imports", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages?limit=50", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/field-catalog", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/label-candidates?label=EXT000001", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/by-id/package-id", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/by-id/package-id/members?limit=50", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/by-id/package-id/timeline-inputs", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/imports/op/resume", nil)))
+	require.True(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/by-id/package-id/records/row-id", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/by-id/package-id", nil)))
+	require.False(t, packagesBrowserRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/packages/a/b/c/d/e", nil)))
+	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/packages/preflights", nil)))
 }
 
 func TestPackageContainerByteOperationsAreNotCutOffByRequestTimeout(t *testing.T) {
@@ -41,6 +41,6 @@ func TestPackageContainerByteOperationsAreNotCutOffByRequestTimeout(t *testing.T
 		if strings.HasSuffix(path, "/seal") || strings.HasSuffix(path, "/preflight") {
 			method = http.MethodPost
 		}
-		require.True(t, timeoutExemptRequest(httptest.NewRequest(method, path, nil)), path)
+		require.True(t, timeoutExemptRequest(httptest.NewRequestWithContext(t.Context(), method, path, nil)), path)
 	}
 }

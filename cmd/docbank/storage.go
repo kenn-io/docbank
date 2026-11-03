@@ -17,6 +17,7 @@ import (
 )
 
 var storageCmd = &cobra.Command{
+	Example: `  docbank storage status --json`,
 	Long: `Inspect physical blob placement. Most users need only status, pack and repack.
 Commands marked "Preview, then ..." run twice: first without --run (prints a
 one-use token), then with --run --token T. Store names/IDs come from list;
@@ -433,7 +434,7 @@ func newStorageRecoveryCommand(
 	kind string, flags *storageRecoveryFlags,
 ) *cobra.Command {
 	command := &cobra.Command{
-		Example: "  docbank stat id:12 --json # blob_hash\n  docbank storage " + kind + " <sha256> --store secondary\n  docbank storage " + kind + " --run --token <preview-token>",
+		Example: "  docbank document stat id:12 --json # blob_hash\n  docbank storage " + kind + " <sha256> --store secondary\n  docbank storage " + kind + " --run --token <preview-token>",
 		Use:     kind + " <blob-hash>",
 		Short:   "Preview, then " + kind + ", one physical blob location",
 		Args:    cobra.MaximumNArgs(1),

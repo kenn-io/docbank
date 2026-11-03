@@ -16,6 +16,7 @@ import (
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
+	ingest "go.kenn.io/docbank/internal/ingest"
 	kataclient "go.kenn.io/docbank/internal/kataclient"
 	kataevidence "go.kenn.io/docbank/internal/kataevidence"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
@@ -2273,6 +2274,46 @@ func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// VaultChanges Read resumable vault changes
+func (c *Client) VaultChanges(ctx context.Context, options *VaultChangesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VaultChangesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/changes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VaultChangesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VaultChangesResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[VaultChangesErrorResponse](resp, "VaultChangesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/changes")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13383,6 +13424,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
@@ -13432,7 +13474,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 	return responseParser(ctx, resp)
 }
 
-// SearchDocuments Search exact source-fenced document versions
+// SearchDocuments Search document versions by fence or live scope
 func (c *Client) SearchDocuments(ctx context.Context, options *SearchDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchDocumentsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -17312,6 +17354,37 @@ func (o *PlanBatesStampRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *PlanBatesStampRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// VaultChangesRequestOptions is the options needed to make a request to VaultChanges.
+type VaultChangesRequestOptions struct {
+	Query *VaultChangesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *VaultChangesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *VaultChangesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *VaultChangesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *VaultChangesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26685,6 +26758,9 @@ type RenameTagHeaders struct {
 }
 
 type UploadFileHeaders struct {
+	// XDocbankURLFetch JSON URL fetch evidence
+	XDocbankURLFetch *string `json:"X-Docbank-URL-Fetch,omitempty"`
+
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 
@@ -27773,6 +27849,11 @@ type ListBatesNamespacesQuery struct {
 	Limit  *int64  `json:"limit,omitempty"`
 }
 
+type VaultChangesQuery struct {
+	After  *string `json:"after,omitempty"`
+	Follow *bool   `json:"follow,omitempty"`
+}
+
 type ListCollectionsQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
@@ -28046,6 +28127,7 @@ type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
 	Fuzzy          *bool   `json:"fuzzy,omitempty"`
 	SourcePresent  *bool   `json:"source_present,omitempty"`
+	PdfFilter      *string `json:"pdf_filter,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`
@@ -28088,8 +28170,11 @@ type ListTrashQuery struct {
 }
 
 type UploadFileQuery struct {
+	// ParentPath Absolute destination directory path; creates missing parents; exclusive with parent_id
+	ParentPath *string `json:"parent_path,omitempty"`
+
 	// ParentID Stable destination directory node ID
-	ParentID int64 `json:"parent_id"`
+	ParentID *int64 `json:"parent_id,omitempty"`
 
 	// Name Virtual filename; must equal the multipart filename
 	Name string `json:"name"`
@@ -28267,6 +28352,12 @@ type PlanBatesStampResponse = api.BatesPlan
 
 type PlanBatesStampErrorResponse = Error
 
+type VaultChangesResponse = []byte
+
+type VaultChangesErrorResponse api.Error
+
+type VaultChangesErrorResponseApplicationProblemPlusJSON api.Error
+
 type ListCollectionsResponse = api.CollectionPage
 
 type ListCollectionsErrorResponse = Error
@@ -28389,6 +28480,7 @@ type GetExportJobEventsErrorResponse struct {
 	BackupForget *BackupForgetReport `json:"backup_forget,omitempty"`
 	BackupPrune  *BackupPruneReport  `json:"backup_prune,omitempty"`
 	Code         *string             `json:"code,omitempty"`
+	Cursor       *string             `json:"cursor,omitempty"`
 	Detail       *string             `json:"detail,omitempty"`
 	Errors       []string            `json:"errors,omitempty"`
 	FaceIds      []string            `json:"face_ids,omitempty"`
@@ -29991,6 +30083,8 @@ type DocumentSearchRerankingReceipt = api.DocumentSearchRerankingReceipt
 
 type DocumentSearchResult = api.DocumentSearchResult
 
+type DocumentSearchScope = api.DocumentSearchScope
+
 type DocumentSearchTrace = api.DocumentSearchTrace
 
 type DocumentSearchValidation = api.DocumentSearchValidation
@@ -31305,6 +31399,8 @@ type TrashPathRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Path   string  `json:"path"`
 }
+
+type URLFetch = ingest.URLFetch
 
 type UnassignTagPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.

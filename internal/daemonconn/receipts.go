@@ -37,6 +37,7 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
@@ -47,6 +48,10 @@ type Connection struct {
 	key  string
 	hc   *http.Client
 }
+
+// ErrBackupRepositoryNotConfigured identifies only the absent configuration
+// problem, not other backup_repository failures such as permissions or I/O.
+var ErrBackupRepositoryNotConfigured = errors.New("no backup repository configured; pass repo or set [backup] repo in config.toml")
 
 // WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
 // scoped browser credential and a daemon-lifetime upload proof secret, then
@@ -493,7 +498,13 @@ func apiProblemError(e api.Error) error {
 	var cause error
 	detail := ""
 	observedScopeCount := 0
-	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
+	if e.Code == "changes_cursor_expired" && e.Status == http.StatusGone {
+		cause = &ChangeCursorExpiredError{Cursor: e.Cursor}
+	} else if e.Code == "backup_repository" && e.Detail == ErrBackupRepositoryNotConfigured.Error() {
+		// Preserve the existing message and wire detail while providing a
+		// cause that survives wrapping at the CLI process boundary.
+		cause = fmt.Errorf("daemon error (%d %s): %w", e.Status, e.Code, ErrBackupRepositoryNotConfigured)
+	} else if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
 		observedScopeCount = e.ObservedScopeCount
 	} else if e.Code == "hidden_lockout" {
@@ -980,6 +991,7 @@ func IsCanonicalUUIDv4(value string) bool {
 // live directory's descendants, and an optional half-open modification-time
 // interval.
 type SearchOptions struct {
+	PDFFilter      string
 	SourcePresent  bool
 	Fuzzy          bool
 	TagID          string
@@ -1015,6 +1027,9 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	params := apiclient.SearchQuery{}
+	if opts.PDFFilter != "" {
+		params.PdfFilter = new(opts.PDFFilter)
+	}
 	if opts.SourcePresent {
 		params.SourcePresent = new(true)
 	}
@@ -1043,7 +1058,7 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
-	if out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
+	if out.PDFFilter != opts.PDFFilter || out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
 		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
@@ -2613,9 +2628,21 @@ func (c *Connection) Upload(
 	ctx context.Context, parentID int64, name, mimeType, expectedHash string,
 	expectedSize int64, content io.Reader,
 ) (api.UploadReceipt, error) {
+	return c.upload(ctx, parentID, "", name, mimeType, expectedHash, expectedSize, content, "")
+}
+
+func (c *Connection) UploadURL(ctx context.Context, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetch ingest.URLFetch) (api.UploadReceipt, error) {
+	encoded, err := json.Marshal(fetch)
+	if err != nil {
+		return api.UploadReceipt{}, err
+	}
+	return c.upload(ctx, 0, parentPath, name, mimeType, expectedHash, expectedSize, content, string(encoded))
+}
+
+func (c *Connection) upload(ctx context.Context, parentID int64, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetchJSON string) (api.UploadReceipt, error) {
 	var receipt api.UploadReceipt
-	if parentID <= 0 {
-		return receipt, errors.New("upload parent ID must be positive")
+	if parentID <= 0 && parentPath == "" {
+		return receipt, errors.New("upload requires a positive parent ID or a destination path")
 	}
 	mimeType, err := validateUploadRequest(name, mimeType, expectedHash, expectedSize, content)
 	if err != nil {
@@ -2624,7 +2651,17 @@ func (c *Connection) Upload(
 	resp, err := streamUpload(ctx, name, mimeType, content, func(
 		ctx context.Context, response **http.Response, editor runtime.RequestEditorFn,
 	) error {
-		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, editor)
+		query := &apiclient.UploadFileQuery{Name: name}
+		if parentPath != "" {
+			query.ParentPath = new(parentPath)
+		} else {
+			query.ParentID = new(parentID)
+		}
+		headers := &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}
+		if fetchJSON != "" {
+			headers.XDocbankURLFetch = new(fetchJSON)
+		}
+		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: query, Header: headers}, editor)
 		return callErr
 	})
 	if err != nil {
@@ -2632,7 +2669,25 @@ func (c *Connection) Upload(
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
-		return receipt, fmt.Errorf("decoding upload response: %w", err)
+		return api.UploadReceipt{}, &responseDecodeError{err: fmt.Errorf("decoding upload response: %w", err)}
+	}
+	return validateUploadReceipt(receipt, expectedHash, expectedSize)
+}
+
+// validateUploadReceipt returns receipt only when it binds an added or skipped
+// file node to the declared bytes; anything else is an unknown outcome.
+func validateUploadReceipt(receipt api.UploadReceipt, expectedHash string, expectedSize int64) (api.UploadReceipt, error) {
+	node := receipt.Node
+	switch {
+	case receipt.Status != "added" && receipt.Status != "skipped":
+		return api.UploadReceipt{}, &responseDecodeError{err: fmt.Errorf("upload receipt has unknown status %q", receipt.Status)}
+	case node.ID <= 0 || node.Kind != "file" || node.Revision <= 0:
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("upload receipt does not name an addressable file node")}
+	case receipt.ComputedHash != expectedHash || receipt.ComputedSize != expectedSize ||
+		node.BlobHash != expectedHash || node.Size != expectedSize:
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("upload receipt disagrees with declared bytes")}
+	case receipt.Status == "added" && receipt.IngestID == "":
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("added upload receipt is missing its ingest ID")}
 	}
 	return receipt, nil
 }

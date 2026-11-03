@@ -15,7 +15,7 @@ import (
 
 func TestProvenanceCorrectionsUpdateOnlyTheirObservedVersion(t *testing.T) {
 	t.Parallel()
-	s, err := store.Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	run, err := s.BeginCallerSuppliedIngest(t.Context(), "test", "synthetic import")
@@ -105,7 +105,7 @@ func TestProvenanceCorrectionsUpdateOnlyTheirObservedVersion(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))

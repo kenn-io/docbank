@@ -72,7 +72,7 @@ func TestReleaseReclaimsCapacityWithoutRemovingLeasedArchives(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 	require.ErrorIs(t, w.Release(t.Context(), "master", first.ID), store.ErrNotFound)
 	var retainedUntil string
-	require.NoError(t, driver.dbs[0].QueryRow(`SELECT expires_at FROM export_plans WHERE id=?`, first.PlanID).Scan(&retainedUntil))
+	require.NoError(t, driver.dbs[0].QueryRowContext(t.Context(), `SELECT expires_at FROM export_plans WHERE id=?`, first.PlanID).Scan(&retainedUntil))
 	require.Equal(t, second.ExpiresAt, retainedUntil, "the other completed job keeps its retention")
 
 	third, err := s.QueueExportJob(t.Context(), "master", request)
@@ -86,7 +86,7 @@ func TestReleaseReclaimsCapacityWithoutRemovingLeasedArchives(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, w.Release(t.Context(), "master", second.ID))
 	require.NoError(t, w.Release(t.Context(), "master", third.ID))
-	require.NoError(t, driver.dbs[0].QueryRow(`SELECT expires_at FROM export_plans WHERE id=?`, first.PlanID).Scan(&retainedUntil))
+	require.NoError(t, driver.dbs[0].QueryRowContext(t.Context(), `SELECT expires_at FROM export_plans WHERE id=?`, first.PlanID).Scan(&retainedUntil))
 	require.Equal(t, plan.ExpiresAt, retainedUntil, "release restores the original admission deadline")
 }
 
@@ -95,7 +95,7 @@ func TestReleaseRetriesAfterArchiveRemovalAndStoreFailure(t *testing.T) {
 	_, err := w.RunOne(t.Context())
 	require.NoError(t, err)
 	db := driver.dbs[0]
-	_, err = db.Exec(`CREATE TRIGGER fail_release BEFORE DELETE ON export_jobs BEGIN SELECT RAISE(ABORT, 'synthetic delete failure'); END`)
+	_, err = db.ExecContext(t.Context(), `CREATE TRIGGER fail_release BEFORE DELETE ON export_jobs BEGIN SELECT RAISE(ABORT, 'synthetic delete failure'); END`)
 	require.NoError(t, err)
 	require.ErrorContains(t, w.Release(t.Context(), "master", job.ID), "synthetic delete failure")
 	require.NoFileExists(t, filepath.Join(filepath.Dir(dbPath), "export-archives", job.ID+".zip"))
@@ -106,7 +106,7 @@ func TestReleaseRetriesAfterArchiveRemovalAndStoreFailure(t *testing.T) {
 		t.Cleanup(unlease)
 	}
 	require.ErrorIs(t, err, bundle.ErrExpired)
-	_, err = db.Exec(`DROP TRIGGER fail_release`)
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_release`)
 	require.NoError(t, err)
 	require.NoError(t, w.Release(t.Context(), "master", job.ID))
 }
@@ -130,7 +130,7 @@ func TestReleaseTerminalAndExpiredJobs(t *testing.T) {
 				job.ExpiresAt = "2000-01-01T00:00:00.000000000Z"
 				raw, err := json.Marshal(job)
 				require.NoError(t, err)
-				_, err = driver.dbs[0].Exec(`UPDATE export_jobs SET expires_at=?,canonical_json=? WHERE id=?`, job.ExpiresAt, raw, job.ID)
+				_, err = driver.dbs[0].ExecContext(t.Context(), `UPDATE export_jobs SET expires_at=?,canonical_json=? WHERE id=?`, job.ExpiresAt, raw, job.ID)
 				require.NoError(t, err)
 			}
 			require.NoError(t, w.Release(t.Context(), "master", job.ID))

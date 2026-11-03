@@ -11,7 +11,7 @@ the daemon, source-file access, or stored content.
 
 ```bash
 docbank daemon status --json
-docbank verify
+docbank vault verify
 ```
 
 If a command prints a specific error, preserve it. CLI errors go to stderr and
@@ -58,7 +58,7 @@ in the [Agent integration guide](agents/integration.md).
 
 ## Import completed with failures
 
-`docbank add` continues past unreadable files inside a directory and reports
+`docbank document add` continues past unreadable files inside a directory and reports
 each failure. Its exit status is non-zero if any file failed, even when other
 files were added successfully.
 
@@ -67,7 +67,7 @@ command. Docbank skips matching content already imported under a destination
 name, so the completed files do not need another entry.
 
 ```bash
-docbank add ~/Documents/archive --dest /imports
+docbank document add ~/Documents/archive --dest /imports
 ```
 
 A missing or unreadable top-level argument is reported as a failed source, and
@@ -105,7 +105,7 @@ directory to keep the source name.
 
 Restore handles name reuse automatically by adding a numeric suffix. If its
 original parent was permanently removed, it restores at `/`. Use the path
-printed by `docbank restore` rather than assuming the old path returned.
+printed by `docbank document restore` rather than assuming the old path returned.
 
 HTTP clients must also distinguish:
 

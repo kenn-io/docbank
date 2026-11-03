@@ -6,31 +6,66 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document"
 )
 
+// ImagePreparationError distinguishes retryable input/runtime failures from a
+// rejection of bytes verified against the named preview.
+type ImagePreparationError struct {
+	EvidenceFingerprint string
+	Rejected            bool
+	Err                 error
+}
+
+func (e *ImagePreparationError) Error() string { return "preparing image embedding: " + e.Err.Error() }
+func (e *ImagePreparationError) Unwrap() error { return e.Err }
+
+// ImagePreparationRejectionKey identifies verified preview bytes rejected by a worker.
+type ImagePreparationRejectionKey struct {
+	ProfileFingerprint string
+	BindingID          string
+	ContentVersionID   string
+	PreviewChecksum    string
+}
+
+// ImageReconcilePosition is the last profile/version examined by discovery.
+type ImageReconcilePosition struct {
+	ProfileFingerprint string
+	ContentVersionID   string
+}
+
 // EmbeddingReconcileRequest bounds one durable discovery page. Descriptor
 // fingerprints are process-local executable authority, never catalog intent.
 type EmbeddingReconcileRequest struct {
+	SkipGenerations        bool
+	SkipImages             bool
+	ImageRejections        map[ImagePreparationRejectionKey]struct{}
+	ImageProfiles          []ProcessingProfileRecord
+	ImageAfter             ImageReconcilePosition
+	PrepareImageGeneration func(context.Context, ProcessingProfileRecord, document.EmbeddingBindingV1, string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
 	After                  string
 	Limit                  int
 	At                     time.Time
 	DescriptorFingerprints []string
 	VectorSpaces           map[string]EmbeddingVectorSpaceRecord
 	HydrateGeneration      func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error)
-	// Mutate guards only enqueue mutations; discovery and blob reads run outside it.
+	// Mutate guards catalog writes; discovery and blob reads run outside it.
 	Mutate func(context.Context, func() error) error
 }
 
 // EmbeddingReconcileResult reports work materialized from existing portable
 // authority. Next is empty when the scan reached the end.
 type EmbeddingReconcileResult struct {
-	Next     string
-	Examined int
-	Enqueued int
-	Skipped  int
+	ConsentExpiresAt time.Time
+	ImageNext        ImageReconcilePosition
+	Next             string
+	Examined         int
+	Enqueued         int
+	Skipped          int
 }
 
 type embeddingReconcileCandidate struct {
@@ -56,22 +91,38 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 	}
 	var generationIDs []string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if request.SkipGenerations {
+			return nil
+		}
 		var err error
 		generationIDs, err = stringColumnTx(ctx, tx, "embedding reconciliation generations", `
 			SELECT g.generation_id FROM embedding_input_generations g
 			JOIN content_versions v ON v.version_id=g.source_version_id
 			JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-			WHERE g.generation_id>? ORDER BY g.generation_id LIMIT ?`, request.After, request.Limit+1)
+			WHERE g.generation_id>$1 ORDER BY g.generation_id LIMIT $2`, request.After, request.Limit+1)
 		return err
 	})
 	if err != nil {
 		return EmbeddingReconcileResult{}, err
 	}
 	result := EmbeddingReconcileResult{}
+	if !request.SkipImages && request.PrepareImageGeneration != nil {
+		var err error
+		result.ImageNext, err = s.discoverImageEmbeddingJobs(ctx, request, executable, &result.ConsentExpiresAt)
+		if err != nil {
+			return result, err
+		}
+	}
 	more := len(generationIDs) > request.Limit
 	if more {
 		generationIDs = generationIDs[:request.Limit]
 	}
+	type cachedProfile struct {
+		record       ProcessingProfileRecord
+		portable     document.ProcessingProfileV1
+		fingerprints document.FingerprintSet
+	}
+	profiles := make(map[string]cachedProfile)
 	var candidates []embeddingReconcileCandidate
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, generationID := range generationIDs {
@@ -79,20 +130,26 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 			if err != nil {
 				return err
 			}
-			profile, err := loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
-			if err != nil {
-				return err
+			cached, ok := profiles[generation.ProcessingProfileFingerprint]
+			if !ok {
+				cached.record, err = loadProcessingProfile(ctx, tx, generation.ProcessingProfileFingerprint)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(cached.record.CanonicalProfile, &cached.portable); err != nil {
+					return err
+				}
+				_, cached.fingerprints, err = document.CanonicalProfile(cached.portable)
+				if err != nil {
+					return err
+				}
+				profiles[generation.ProcessingProfileFingerprint] = cached
 			}
-			var portable document.ProcessingProfileV1
-			if err := json.Unmarshal(profile.CanonicalProfile, &portable); err != nil {
-				return err
-			}
-			_, fingerprints, err := document.CanonicalProfile(portable)
-			if err != nil {
-				return err
-			}
+			profile, portable, fingerprints := cached.record, cached.portable, cached.fingerprints
+			// Image generations carry the image producer policy; original-file generations never do.
+			imageGeneration := generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint()
 			for _, binding := range portable.Embeddings {
-				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
+				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") || (binding.InputKind == document.EmbeddingInputOriginalFile && imageGeneration) {
 					continue
 				}
 				selected := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
@@ -118,6 +175,11 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
+				if binding.InputKind == document.EmbeddingInputImage {
+					if err := validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name); err != nil {
+						continue
+					}
+				}
 				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
 				if err != nil {
 					return err
@@ -142,7 +204,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					continue
 				}
 				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
-					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC())
+					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC(), &result.ConsentExpiresAt)
 				if err != nil {
 					return err
 				}
@@ -159,7 +221,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				var state string
 				var failure sql.NullString
 				err = tx.QueryRowContext(ctx, `SELECT state,failure_code
-					FROM embedding_jobs WHERE job_id=?`, jobID).Scan(&state, &failure)
+					FROM embedding_jobs WHERE job_id=$1`, jobID).Scan(&state, &failure)
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
@@ -228,7 +290,7 @@ func embeddingGenerationCurrentTx(ctx context.Context, tx *sql.Tx, generation Em
 	}
 	var current string
 	err := tx.QueryRowContext(ctx, `SELECT h.attachment_id FROM rendition_heads h
-		WHERE h.content_version_id=? AND h.profile_fingerprint=?`, generation.SourceVersionID, profile).Scan(&current)
+		WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2`, generation.SourceVersionID, profile).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -241,28 +303,30 @@ func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, prof
 	var exists bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads h
 		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
-		WHERE h.content_version_id=? AND h.binding_id=? AND h.input_kind=?
-		AND s.profile_fingerprint=? AND s.input_generation_id=? AND s.vector_space_id=?)`,
+		WHERE h.content_version_id=$1 AND h.binding_id=$2 AND h.input_kind=$3
+		AND h.profile_fingerprint=$4
+		AND s.profile_fingerprint=$4 AND s.input_generation_id=$5 AND s.vector_space_id=$6)`,
 		versionID, binding.Name, binding.InputKind, profile, generationID, spaceID).Scan(&exists)
 	return exists, err
 }
 
 func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profile, disclosure string,
-	inputKind document.EmbeddingInputKind, at time.Time,
+	inputKind document.EmbeddingInputKind, at time.Time, expiry *time.Time,
 ) (ProviderOperationAuthorizationRequest, bool, error) {
 	inputs, _ := json.Marshal([]string{string(inputKind)})
 	retained, _ := json.Marshal([]string{"embedding_vector_set"})
 	rows, err := tx.QueryContext(ctx, `SELECT g.principal,g.scope FROM processing_consent_grants g
 		JOIN current_processing_incarnation c ON c.incarnation_id=g.incarnation_id
-		WHERE g.vault_uid=? AND g.profile_fingerprint=? AND g.disclosure_fingerprint=?
-		AND g.input_classes_json=? AND g.retained_classes_json=?
-		AND (g.expires_at IS NULL OR g.expires_at>?)
+		WHERE g.vault_uid=$1 AND g.profile_fingerprint=$2 AND g.disclosure_fingerprint=$3
+		AND g.input_classes_json=$4 AND g.retained_classes_json=$5
+		AND (g.expires_at IS NULL OR g.expires_at>$6)
 		ORDER BY g.issued_at DESC,g.grant_id DESC`, vaultID, profile, disclosure,
 		string(inputs), string(retained), at.Format(timestampLayout))
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, false, err
 	}
 	defer func() { _ = rows.Close() }()
+	var candidates []ProviderOperationAuthorizationRequest
 	for rows.Next() {
 		var principal, scope string
 		if err := rows.Scan(&principal, &scope); err != nil {
@@ -271,12 +335,213 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 		candidate := ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile, DisclosureFingerprint: disclosure,
 			InputClasses: []string{string(inputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+		candidates = append(candidates, candidate)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return ProviderOperationAuthorizationRequest{}, false, err
+	}
+	for _, candidate := range candidates {
 		if authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at); err == nil {
+			if value := authorization.expiresAt; !value.IsZero() && (expiry.IsZero() || value.Before(*expiry)) {
+				*expiry = value
+			}
 			candidate.PriorAuthorization = &authorization
 			return candidate, true, nil
 		} else if !errors.Is(err, ErrProcessingConsentRequired) && !errors.Is(err, ErrProcessingConsentExpired) && !errors.Is(err, ErrProcessingConsentRevoked) {
 			return ProviderOperationAuthorizationRequest{}, false, err
 		}
 	}
-	return ProviderOperationAuthorizationRequest{}, false, rows.Err()
+	return ProviderOperationAuthorizationRequest{}, false, nil
+}
+
+func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request EmbeddingReconcileRequest, executable map[string]struct{}, consentExpiry *time.Time) (ImageReconcilePosition, error) {
+	type target struct {
+		version  string
+		profile  ProcessingProfileRecord
+		binding  document.EmbeddingBindingV1
+		checksum string
+		consent  ProviderOperationAuthorizationRequest
+	}
+	quality, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return ImageReconcilePosition{}, err
+	}
+	profiles := map[string]ProcessingProfileRecord{}
+	for _, profile := range request.ImageProfiles {
+		profiles[profile.Fingerprint] = profile
+	}
+	var targets []target
+	type pair struct{ profile, version string }
+	var pairs []pair
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		names := slices.Sorted(maps.Keys(profiles))
+		for _, name := range names {
+			if name < request.ImageAfter.ProfileFingerprint {
+				continue
+			}
+			var portable document.ProcessingProfileV1
+			if err := json.Unmarshal(profiles[name].CanonicalProfile, &portable); err != nil {
+				return err
+			}
+			if !slices.ContainsFunc(portable.Embeddings, func(b document.EmbeddingBindingV1) bool {
+				_, ok := executable[b.Descriptor.Fingerprint]
+				return b.InputKind == document.EmbeddingInputImage && ok
+			}) {
+				continue
+			}
+			after := ""
+			if name == request.ImageAfter.ProfileFingerprint {
+				after = request.ImageAfter.ContentVersionID
+			}
+			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+` ORDER BY v.version_id LIMIT $2`, after, request.Limit+1-len(pairs))
+			if err != nil {
+				return err
+			}
+			for _, version := range versions {
+				pairs = append(pairs, pair{name, version})
+			}
+			if len(pairs) > request.Limit {
+				break
+			}
+		}
+		for i, p := range pairs {
+			if i == request.Limit {
+				break
+			}
+			profile := profiles[p.profile]
+			var portable document.ProcessingProfileV1
+			if err := json.Unmarshal(profile.CanonicalProfile, &portable); err != nil {
+				return err
+			}
+			for _, binding := range portable.Embeddings {
+				if binding.InputKind != document.EmbeddingInputImage {
+					continue
+				}
+				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
+					continue
+				}
+				missing, err := imageEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				if err != nil {
+					return err
+				}
+				if !missing {
+					continue
+				}
+				preview, err := visualPreviewGenerationByRecipeTx(ctx, tx, p.version, quality.GridRecipe)
+				if err != nil {
+					return err
+				}
+				key := ImagePreparationRejectionKey{profile.Fingerprint, binding.Name, p.version, preview.Checksum}
+				if _, rejected := request.ImageRejections[key]; rejected {
+					continue
+				}
+				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, consentExpiry)
+				if err != nil {
+					return err
+				}
+				if found {
+					targets = append(targets, target{version: p.version, profile: profile, binding: binding, checksum: preview.Checksum, consent: consent})
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return ImageReconcilePosition{}, err
+	}
+	for _, target := range targets {
+		generation, descriptor, err := request.PrepareImageGeneration(ctx, target.profile, target.binding, target.version)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ImageReconcilePosition{}, ctx.Err()
+			}
+			var preparation *ImagePreparationError
+			if !errors.As(err, &preparation) {
+				return ImageReconcilePosition{}, err
+			}
+			if preparation.Rejected && preparation.EvidenceFingerprint == target.checksum && request.ImageRejections != nil {
+				if len(request.ImageRejections) >= 1024 {
+					clear(request.ImageRejections)
+				}
+				request.ImageRejections[ImagePreparationRejectionKey{target.profile.Fingerprint, target.binding.Name, target.version, target.checksum}] = struct{}{}
+			}
+			continue
+		}
+		err = request.Mutate(ctx, func() error {
+			_, err := s.EnqueueEmbeddingJob(ctx, EmbeddingJobRequest{ContentVersionID: target.version, Profile: target.profile, BindingID: target.binding.Name, VectorSpaceID: request.VectorSpaces[target.profile.Fingerprint+"/"+target.binding.Name].ID, Descriptor: descriptor, InputGeneration: generation, Authorization: target.consent})
+			return err
+		})
+		if err != nil && !errors.Is(err, ErrEmbeddingJobFenced) && !errors.Is(err, ErrProcessingConsentRevoked) && !errors.Is(err, ErrProcessingConsentExpired) && !errors.Is(err, ErrProcessingConsentRequired) {
+			return ImageReconcilePosition{}, err
+		}
+	}
+	if len(pairs) > request.Limit {
+		p := pairs[request.Limit-1]
+		return ImageReconcilePosition{ProfileFingerprint: p.profile, ContentVersionID: p.version}, nil
+	}
+	return ImageReconcilePosition{}, nil
+}
+
+// imageEmbeddingMissingTx reports whether the version's ready preview still
+// lacks a head or job for the binding and no derivative purge suppresses it.
+func imageEmbeddingMissingTx(ctx context.Context, tx *sql.Tx, version, profile string, binding document.EmbeddingBindingV1, recipe string) (bool, error) {
+	var missing bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations vp WHERE vp.content_version_id=$1 AND vp.recipe_fingerprint=$2 AND vp.state='ready'
+                  AND NOT EXISTS(SELECT 1 FROM embedding_heads eh JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id WHERE eh.content_version_id=vp.content_version_id AND eh.profile_fingerprint=$3 AND eh.binding_id=$4 AND eh.input_kind='image' AND eig.evidence_fingerprint=vp.checksum)
+                  AND NOT EXISTS(SELECT 1 FROM embedding_jobs j JOIN embedding_input_generations eig ON eig.generation_id=j.generation_id WHERE j.content_version_id=vp.content_version_id AND j.profile_fingerprint=$5 AND j.binding_id=$6 AND j.input_kind='image' AND eig.evidence_fingerprint=vp.checksum))`, version, recipe, profile, binding.Name, profile, binding.Name).Scan(&missing); err != nil || !missing {
+		return false, err
+	}
+	suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx, EmbeddingHeadKey{version, binding.Name, binding.InputKind}, profile)
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	return err == nil && !suppression.active, err
+}
+
+func validateImageEmbeddingGeneration(generation EmbeddingInputGenerationRecord, bindingID string) error {
+	if generation.ChunkPolicyFingerprint != ImageEmbeddingPolicyFingerprint() {
+		return errors.New("unknown image embedding producer policy")
+	}
+	if generation.ID != ImageEmbeddingGenerationID(generation.SourceVersionID, generation.ProcessingProfileFingerprint, bindingID, generation.EvidenceFingerprint) {
+		return errors.New("image generation does not match exact processing profile binding identity")
+	}
+	return nil
+}
+
+func validateImageEmbeddingGenerationTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord, bindingID string) error {
+	if err := validateImageEmbeddingGeneration(generation, bindingID); err != nil {
+		return err
+	}
+	return validateImageEmbeddingPreviewTx(ctx, tx, generation)
+}
+
+// imageEmbeddingPreviewEligibilitySQL checks retained preview eligibility for
+// source capture. g names the generation.
+func imageEmbeddingPreviewEligibilitySQL(inputs, recipe string) string {
+	return `COALESCE(g.attachment_id,'')='' AND COALESCE(g.generation_blob_hash,'')='' AND g.input_count=1 AND
+		EXISTS(SELECT 1 FROM ` + inputs + ` i WHERE i.generation_id=g.generation_id
+			AND i.input_id=g.source_version_id AND i.rendered_checksum=g.generation_checksum) AND
+		` + currentImageEmbeddingRecipeSQL("g.source_version_id", "g.evidence_fingerprint", recipe)
+}
+
+func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord) error {
+	eligible, err := photoDescriptionEligibleTx(ctx, tx, generation.SourceVersionID)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrEmbeddingJobFenced
+	}
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return err
+	}
+	preview, err := visualPreviewGenerationByRecipeTx(ctx, tx, generation.SourceVersionID, fingerprints.GridRecipe)
+	if err != nil {
+		return err
+	}
+	if preview.Preview.State != document.VisualPreviewReady || generation.EvidenceFingerprint != preview.Checksum || generation.AttachmentID != "" || generation.GenerationBlobHash != "" || len(generation.Inputs) != 1 || generation.Inputs[0] != (EmbeddingInputReference{ID: generation.SourceVersionID, RenderedChecksum: generation.GenerationChecksum}) {
+		return ErrEmbeddingJobFenced
+	}
+	return nil
 }

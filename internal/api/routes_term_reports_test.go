@@ -30,7 +30,7 @@ func TestTermReportRoutesWithoutStoreReturnUnavailable(t *testing.T) {
 		{http.MethodGet, "/api/v1/search-exports/example/bundle", ""},
 	} {
 		t.Run(request.method+request.path, func(t *testing.T) {
-			req := httptest.NewRequest(request.method, "http://localhost"+request.path, strings.NewReader(request.body))
+			req := httptest.NewRequestWithContext(t.Context(), request.method, "http://localhost"+request.path, strings.NewReader(request.body))
 			req.Header.Set("X-Api-Key", testAPIKey)
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -239,7 +239,7 @@ func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	createFileWithContent(t, ts, s, "/synthetic-alpha.txt", "synthetic alpha")
-	sessionRequest, err := http.NewRequest(http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
+	sessionRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/daemon/web-session", nil)
 	require.NoError(t, err)
 	sessionResponse, err := ts.Client().Do(sessionRequest)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
 	require.NoError(t, sessionResponse.Body.Close())
 	webRequest := func(method, path, body string) (*http.Response, string) {
 		t.Helper()
-		request, requestErr := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+		request, requestErr := http.NewRequestWithContext(t.Context(), method, ts.URL+path, strings.NewReader(body))
 		require.NoError(t, requestErr)
 		request.Header["X-Api-Key"] = []string{""}
 		request.Header.Set("X-Docbank-Web-Session", session.Token)
@@ -283,14 +283,18 @@ func TestTermReportBrowserTicketIsOneUseAndOwnerBound(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &ticket))
 	require.Contains(t, ticket.URL, "ticket=")
-	first, err := http.Get(ts.URL + ticket.URL)
+	httpRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
+	require.NoError(t, err)
+	first, err := http.DefaultClient.Do(httpRequest)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, first.StatusCode)
 	content, err := io.ReadAll(first.Body)
 	require.NoError(t, err)
 	require.NoError(t, first.Body.Close())
 	require.Equal(t, summary.CSVBytes, int64(len(content)))
-	second, err := http.Get(ts.URL + ticket.URL)
+	httpRequest, err = http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+ticket.URL, nil)
+	require.NoError(t, err)
+	second, err := http.DefaultClient.Do(httpRequest)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNotFound, second.StatusCode)
 	require.NoError(t, second.Body.Close())

@@ -19,7 +19,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 	s := newTestStore(t)
 	seedMetadataRoundTrip(t, s)
 	s.vaultID = "99999999-9999-4999-8999-999999999999"
-	_, err := s.db.Exec(`UPDATE vault_metadata SET vault_uid=?`, s.vaultID)
+	_, err := s.db.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid=?`, s.vaultID)
 	require.NoError(t, err)
 	scope, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 	}
 	var created Node
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		prior, err := liveDirTx(tx, scope.ID)
+		prior, err := liveDirTx(t.Context(), tx, scope.ID)
 		if err != nil {
 			return err
 		}
@@ -65,13 +65,13 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`INSERT INTO provenance(
+		if _, err = tx.ExecContext(t.Context(), `INSERT INTO provenance(
 			identity,node_id,ingest_id,original_path,original_mtime,supersedes
 		) VALUES(?,?,?,?,?,?)`, provenance.Identity, provenance.NodeID, provenance.IngestID,
 			provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
 			return err
 		}
-		resulting, err := nodeByIDTx(tx, scope.ID)
+		resulting, err := nodeByIDTx(t.Context(), tx, scope.ID)
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 
 	var bindings int64
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance_version_bindings`).Scan(&bindings))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance_version_bindings`).Scan(&bindings))
 	assert.Zero(t, bindings)
 	records, err := loadInitialAuditRecords(t.Context(), s.db)
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	require.NoError(t, restored.db.QueryRow(
+	require.NoError(t, restored.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM provenance_version_bindings`,
 	).Scan(&bindings))
 	assert.Zero(t, bindings)
@@ -179,7 +179,7 @@ func makeLegacyAuditedIngestCreationMetadata(
 
 func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -190,7 +190,7 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 	run, err := s.BeginIngest(t.Context(), "cli", "/source/reports")
 	require.NoError(t, err)
 	var runRows int64
-	require.NoError(t, s.db.QueryRow(
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM ingests WHERE id=?`, run.ID(),
 	).Scan(&runRows))
 	assert.Zero(t, runRows, "preparing a run must not publish metadata authority")
@@ -218,7 +218,7 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 
 	var ingests, provenance, sequence, membership int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM ingests WHERE id=?),
 		(SELECT COUNT(*) FROM provenance WHERE ingest_id=?),
 		(SELECT operation_sequence_high_water FROM audit_authority),
@@ -230,7 +230,7 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 	assert.Equal(t, int64(3), sequence)
 	assert.Equal(t, int64(2), membership)
 
-	rows, err := s.db.Query(`SELECT record_json FROM audit_records
+	rows, err := s.db.QueryContext(t.Context(), `SELECT record_json FROM audit_records
 		WHERE kind='canonical_mutation' AND operation_sequence>1 ORDER BY operation_sequence`)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -259,7 +259,7 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
@@ -274,7 +274,7 @@ func TestAuditedIngestRecordsProvenanceAndRoundTrips(t *testing.T) {
 
 func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -284,8 +284,8 @@ func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 	run, err := s.BeginIngest(t.Context(), "cli", "/source")
 	require.NoError(t, err)
 	var dirtyRowsBefore int64
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM document_event_dirty`).Scan(&dirtyRowsBefore))
-	_, err = s.db.Exec(`CREATE TRIGGER reject_ingest_scope_advance
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM document_event_dirty`).Scan(&dirtyRowsBefore))
+	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER reject_ingest_scope_advance
 		BEFORE UPDATE ON audit_scopes BEGIN
 		SELECT RAISE(ABORT, 'forced audited ingest failure'); END`)
 	require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 	_, err = s.NodeByPath(t.Context(), "/Projects/rollback.txt")
 	require.ErrorIs(t, err, ErrNotFound)
 	var ingestRows, provenanceRows, bindingRows, dirtyRows, orphanDirtyRows int64
-	require.NoError(t, s.db.QueryRow(`SELECT
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM ingests WHERE id=?),
 		(SELECT COUNT(*) FROM provenance WHERE ingest_id=?),
 		(SELECT COUNT(*) FROM provenance_version_bindings b
@@ -318,7 +318,7 @@ func TestAuditedIngestRollsBackFileAndAttachments(t *testing.T) {
 
 func TestAuditedIngestImportRejectsOmittedProvenance(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)
@@ -337,19 +337,19 @@ func TestAuditedIngestImportRejectsOmittedProvenance(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	malformed := omitMetadataProvenance(t, exported.Bytes(), created.ID)
 
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	restored, err := Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	err = restored.ImportMetadata(t.Context(), bytes.NewReader(malformed))
 	require.ErrorContains(t, err, "replayed audit attachments do not match current metadata")
 	var auditRows int64
-	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&auditRows))
 	assert.Zero(t, auditRows)
 }
 
 func TestAuditReplayRejectsGenesisProvenanceFromLaterIngest(t *testing.T) {
 	t.Parallel()
-	s, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	seedMetadataRoundTrip(t, s)

@@ -69,8 +69,8 @@ func TestResolveProcessingSourceFenceMetadataFiltersReuseSearchNormalization(t *
 		return change.Node, assignErr
 	}()
 	require.NoError(t, err)
-	require.NoError(t, setProcessingFenceModifiedAt(s, inside.ID, "2026-08-28T10:00:00.000000000Z"))
-	require.NoError(t, setProcessingFenceModifiedAt(s, outside.ID, "2026-08-28T11:00:00.000000000Z"))
+	require.NoError(t, setProcessingFenceModifiedAt(t.Context(), s, inside.ID, "2026-08-28T10:00:00.000000000Z"))
+	require.NoError(t, setProcessingFenceModifiedAt(t.Context(), s, outside.ID, "2026-08-28T11:00:00.000000000Z"))
 
 	filters := SearchOptions{TagID: tag.ID, MIMEType: "TEXT/PLAIN", UnderNodeID: scope.ID,
 		ModifiedSince: "2026-08-28T12:00:00+02:00", ModifiedBefore: "2026-08-28T10:00:01Z"}
@@ -212,8 +212,8 @@ func insertProcessingFenceFiles(t *testing.T, s *Store, count int) []string {
 	return ids
 }
 
-func setProcessingFenceModifiedAt(s *Store, nodeID int64, value string) error {
-	result, err := s.db.Exec(`UPDATE nodes SET modified_at=? WHERE id=?`, value, nodeID)
+func setProcessingFenceModifiedAt(ctx context.Context, s *Store, nodeID int64, value string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=? WHERE id=?`, value, nodeID)
 	if err != nil {
 		return err
 	}

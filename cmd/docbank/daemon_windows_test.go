@@ -44,7 +44,7 @@ func TestConfiguredWatchStoresAllowUnavailableSecondaryDrive(t *testing.T) {
 		Lifecycle: "active", Binding: "archive",
 	}}
 
-	require.NoError(t, validateConfiguredWatchStores(cfg, stores))
+	require.NoError(t, validateConfiguredWatchStores(t.Context(), cfg, stores))
 }
 
 func TestConfiguredCheckoutStartupDefersInaccessibleDestination(t *testing.T) {

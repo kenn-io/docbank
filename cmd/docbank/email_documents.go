@@ -22,7 +22,7 @@ Output: show and relations print JSON; release prints a text confirmation.`,
 		Short:   "Inspect and release email attachment relationships",
 	}
 	show := &cobra.Command{
-		Example: `  docbank email-documents show <operation-id>`,
+		Example: `  docbank email documents show <operation-id>`,
 		Use:     "show <operation-id>",
 		Short:   "Read a publication receipt as JSON",
 		Args:    cobra.ExactArgs(1),
@@ -43,7 +43,7 @@ Output: show and relations print JSON; release prints a text confirmation.`,
 	}
 	var query document.EmailDocumentRelationQuery
 	relations := &cobra.Command{
-		Example: `  docbank email-documents relations --parent-version <version-uuid>`,
+		Example: `  docbank email documents relations --parent-version <version-uuid>`,
 		Use:     "relations",
 		Short:   "Read one page of exact parent or child relationships as JSON",
 		Args:    cobra.NoArgs,
@@ -69,7 +69,7 @@ Output: show and relations print JSON; release prints a text confirmation.`,
 	relations.Flags().IntVar(&query.AfterOrder, "after-order", 0, "next_order from a previous page")
 	var digest string
 	release := &cobra.Command{
-		Example: `  docbank email-documents release <operation-id> --request-digest <sha256>`,
+		Example: `  docbank email documents release <operation-id> --request-digest <sha256>`,
 		Use:     "release <operation-id>",
 		Short:   "Remove a receipt and its relationships, keeping the child documents",
 		Long: `Remove a receipt and its relationships, keeping the child documents. This
@@ -98,5 +98,5 @@ a mailbox transfer receipt or an export cannot be released (HTTP 409).`,
 	release.Flags().StringVar(&digest, "request-digest", "", "exact request_digest from the receipt")
 	_ = release.MarkFlagRequired("request-digest")
 	command.AddCommand(show, relations, release)
-	rootCmd.AddCommand(command)
+	registerGroupedCommand(emailCmd, command, "documents")
 }

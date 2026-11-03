@@ -48,13 +48,13 @@ func TestResolveTextCitationPhysicalRestore(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(t.Context(), repo, "test", backup.RestoreOptions{TargetDir: target, Jobs: 2})
 	require.NoError(t, err)
-	catalog, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+	catalog, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(target, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	service, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs,
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs,
 		Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
 	got, err := service.ResolveTextCitation(t.Context(), f.Citation)

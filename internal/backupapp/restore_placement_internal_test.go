@@ -24,7 +24,7 @@ func TestRecordRestoredLooseContent(t *testing.T) {
 	for _, fault := range []string{"none", "encoding", "missing", "size"} {
 		t.Run(fault, func(t *testing.T) {
 			databasePath := filepath.Join(t.TempDir(), "docbank.db")
-			metadata, err := store.Open(databasePath)
+			metadata, err := store.Open(t.Context(), databasePath)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 			first, second := strings.Repeat("a", 64), strings.Repeat("b", 64)
@@ -115,7 +115,7 @@ func TestClaimRestoreBackendFencesPostClaimPublication(t *testing.T) {
 func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	target := t.TempDir()
 	databasePath := filepath.Join(target, "docbank.db")
-	metadata, err := store.Open(databasePath)
+	metadata, err := store.Open(t.Context(), databasePath)
 	require.NoError(t, err)
 	file, err := metadata.CreateFile(t.Context(), metadata.RootID(), "people.txt", strings.Repeat("a", 64), 1, "text/plain")
 	require.NoError(t, err)
@@ -131,7 +131,7 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	require.NoError(t, verifyRestoredRenditionHeads(
 		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
 	))
-	metadata, err = store.Open(databasePath)
+	metadata, err = store.Open(t.Context(), databasePath)
 	require.NoError(t, err)
 	_, head, err := metadata.DocumentPeopleForVersion(t.Context(), file.CurrentVersionID)
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestInterruptedRestoreResetsControlsOnlyAfterPublication(t *testing.T) {
 		t.Run(fmt.Sprintf("published=%t", published), func(t *testing.T) {
 			target := t.TempDir()
 			path := filepath.Join(target, "docbank.db")
-			metadata, err := store.Open(path)
+			metadata, err := store.Open(t.Context(), path)
 			require.NoError(t, err)
 			paused, err := metadata.SetLaneControl(t.Context(), store.LaneControl{Lane: store.VisualPreviewLane, Paused: true, Concurrency: 3}, 1)
 			require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestInterruptedRestoreResetsControlsOnlyAfterPublication(t *testing.T) {
 			priorDigest, err := restoreDatabaseDigest(path)
 			require.NoError(t, err)
 			staged := filepath.Join(target, "replacement.db")
-			nextMetadata, err := store.Open(staged)
+			nextMetadata, err := store.Open(t.Context(), staged)
 			require.NoError(t, err)
 			next := store.NewPackCatalog(nextMetadata).PrimaryOwnership()
 			require.NoError(t, nextMetadata.Close())
@@ -182,7 +182,7 @@ func TestInterruptedRestoreResetsControlsOnlyAfterPublication(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, controls, retained)
 			}
-			metadata, err = store.Open(path)
+			metadata, err = store.Open(t.Context(), path)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, metadata.Close()) }()
 			current, err := metadata.LaneControl(t.Context(), store.VisualPreviewLane)
@@ -223,7 +223,7 @@ func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing
 	}
 
 	_, err := prepareRestoreMappings(
-		filepath.Join(root, "restore"), mapping, manifest, bindings, nil,
+		t.Context(), filepath.Join(root, "restore"), mapping, manifest, bindings, nil,
 	)
 	require.ErrorContains(t, err, "overlaps")
 }
@@ -242,7 +242,7 @@ func TestPrepareRestoreMappingsRejectsInvalidAndPrimaryStoreNames(t *testing.T) 
 				}},
 			}
 			_, err := prepareRestoreMappings(
-				t.TempDir(), mapping, manifest,
+				t.Context(), t.TempDir(), mapping, manifest,
 				map[string]config.StoreBindingConfig{
 					"archive": {Kind: "filesystem", Path: t.TempDir()},
 				}, nil,
@@ -279,7 +279,7 @@ func TestPrepareRestoreMappingsRejectsOverlappingS3Prefixes(t *testing.T) {
 		},
 	}
 
-	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings, nil)
+	_, err := prepareRestoreMappings(t.Context(), t.TempDir(), mapping, manifest, bindings, nil)
 	require.ErrorContains(t, err, "overlaps")
 }
 
@@ -310,7 +310,7 @@ func TestPrepareRestoreMappingsRejectsImplicitAndExplicitAWSEndpoints(t *testing
 		},
 	}
 
-	_, err := prepareRestoreMappings(t.TempDir(), mapping, manifest, bindings, nil)
+	_, err := prepareRestoreMappings(t.Context(), t.TempDir(), mapping, manifest, bindings, nil)
 	require.ErrorContains(t, err, "overlaps")
 }
 
@@ -333,7 +333,7 @@ func TestPrepareRestoreMappingsRejectsProtectedFilesystemNamespaces(t *testing.T
 				"archive": {Kind: "filesystem", Path: filepath.Join(protected, "secondary")},
 			}
 			_, err := prepareRestoreMappings(
-				filepath.Join(root, "restore"), mapping, manifest, bindings,
+				t.Context(), filepath.Join(root, "restore"), mapping, manifest, bindings,
 				[]string{
 					filepath.Join(root, "live-vault"),
 					filepath.Join(root, "backup-repository"),

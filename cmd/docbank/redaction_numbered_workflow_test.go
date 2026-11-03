@@ -115,7 +115,7 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 		// Seed a pending pre-upgrade reservation through the real storage contract.
 		// The daemon is stopped; no admission bypass is exposed to callers.
 		stop()
-		catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+		catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 		require.NoError(t, err)
 		ns := store.BatesNamespace{NamespaceID: namespace.NamespaceID, Prefix: "QUAL", Padding: 6}
 		recipe, err := processing.BuildNumberedRecipe(
@@ -259,7 +259,7 @@ func recoverNumberedPDF(t *testing.T, r processing.NumberedReservation, expected
 
 func assertNumberedOriginalRetained(t *testing.T, root string, prep processing.RedactionPreparation, expected []byte) {
 	t.Helper()
-	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
 	view, err := catalog.ContentVersionViewByID(t.Context(), prep.Selection.NodeID, prep.Selection.Source.VersionID)

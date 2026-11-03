@@ -41,7 +41,7 @@ func newCollectionBackupServer(
 	t.Helper()
 	vaultRoot := t.TempDir()
 	dbPath := filepath.Join(vaultRoot, "docbank.db")
-	s, err := store.Open(dbPath, driver)
+	s, err := store.Open(t.Context(), dbPath, driver)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	blobsDir := filepath.Join(vaultRoot, "blobs")
@@ -125,7 +125,7 @@ func TestCollectionAuthoritySurvivesPhysicalBackupRestore(t *testing.T) { //noli
 			assert.True(t, terminal.Report.Proof.ContentVerified)
 
 			func() {
-				restoredStore, err := store.Open(filepath.Join(target, "docbank.db"), driver)
+				restoredStore, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"), driver)
 				require.NoError(t, err)
 				defer func() { require.NoError(t, restoredStore.Close()) }()
 				restoredBlobs, err := blob.New(

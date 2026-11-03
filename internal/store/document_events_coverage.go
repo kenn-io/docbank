@@ -33,7 +33,7 @@ type DocumentEventCoverage struct {
 // DocumentEventCoverageReport counts current file heads and browser-safe
 // diagnostics. It reads effective initial state without creating the singleton.
 func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventCoverage, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return DocumentEventCoverage{}, fmt.Errorf("starting document event coverage: %w", err)
 	}
@@ -47,32 +47,30 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		ContractVersion: state.ContractVersion, DeriverFingerprint: state.DeriverFingerprint,
 		InputEpoch: state.InputEpoch, PublicationEpoch: state.PublicationEpoch,
 	}
-	const freshIndexed = `a.input_epoch=? AND a.input_revision=COALESCE(d.revision,0)
+	const freshIndexed = `a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
 		AND a.state='indexed' AND h.input_epoch=a.input_epoch
-		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=?
-		AND g.deriver_fingerprint=?`
+		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=$2
+		AND g.deriver_fingerprint=$3`
 	query := `SELECT count(*),
 		COALESCE(sum(CASE WHEN ` + freshIndexed + ` THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN a.input_epoch=? AND a.input_revision=COALESCE(d.revision,0)
+		COALESCE(sum(CASE WHEN a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
 			AND a.state='failed' THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN a.input_epoch=? AND a.input_revision=COALESCE(d.revision,0)
+		COALESCE(sum(CASE WHEN a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
 			AND a.state='unavailable' THEN 1 ELSE 0 END),0),
 		COALESCE(sum(CASE WHEN NOT EXISTS (
 			SELECT 1 FROM source_metadata_heads smh JOIN source_metadata_generations smg
 			ON smg.generation_id=smh.generation_id WHERE smh.source_sha256=cv.blob_hash
-			AND smg.contract_version=?
+			AND smg.contract_version=$4
 		) THEN 1 ELSE 0 END),0),
 		COALESCE(sum(CASE WHEN NOT EXISTS (
 			SELECT 1 FROM provenance_version_bindings pvb
 			WHERE pvb.content_version_id=cv.version_id
 		) THEN 1 ELSE 0 END),0),
 		COALESCE(sum(CASE WHEN ` + freshIndexed + ` AND EXISTS (
-			SELECT 1 FROM json_each(CAST(g.canonical_json AS TEXT),'$.primaries') dep
-			JOIN json_each(CAST(g.canonical_json AS TEXT),'$.events') de
-			ON json_extract(de.value,'$.event_id')=json_extract(dep.value,'$.event_id')
-			WHERE json_extract(dep.value,'$.scope_class')='vault'
-			AND json_extract(dep.value,'$.disclosure')='safe'
-			AND json_extract(de.value,'$.date_kind') IN ('imported','vault_recorded')
+			SELECT 1 FROM document_event_primaries dep
+			JOIN document_events de ON de.generation_id=dep.generation_id AND de.event_id=dep.event_id
+			WHERE dep.generation_id=g.generation_id AND dep.scope_class='vault'
+			AND dep.disclosure='safe' AND de.date_kind IN ('imported','vault_recorded')
 		) THEN 1 ELSE 0 END),0)
 		FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
@@ -82,9 +80,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		WHERE n.kind='file'`
 	err = tx.QueryRowContext(ctx, query,
 		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint,
-		state.InputEpoch, state.InputEpoch,
 		document.SourceMetadataContractV1,
-		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint,
 	).Scan(&coverage.Selected, &coverage.Indexed, &coverage.Failed, &coverage.Unavailable,
 		&coverage.MissingMetadata, &coverage.UnboundProvenance, &coverage.OperationalFallbacks)
 	if err != nil {
@@ -112,11 +108,11 @@ func countSafeInvalidDateDiagnostics(
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
-		WHERE n.kind='file' AND a.input_epoch=?
+		WHERE n.kind='file' AND a.input_epoch=$1
 		AND a.input_revision=COALESCE(d.revision,0) AND (
 			a.state IN ('failed','unavailable') OR (a.state='indexed'
 			AND h.input_epoch=a.input_epoch AND g.inputs_sha256=a.inputs_sha256
-			AND g.contract_version=? AND g.deriver_fingerprint=?))`,
+			AND g.contract_version=$2 AND g.deriver_fingerprint=$3))`,
 		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint)
 	if err != nil {
 		return fmt.Errorf("listing document event diagnostics: %w", err)
@@ -157,7 +153,7 @@ func countSafeInvalidDateDiagnostics(
 // DocumentEventRebuildCoverage counts terminal state over every retained
 // version, including historical versions that are not current file heads.
 func (s *Store) DocumentEventRebuildCoverage(ctx context.Context) (DocumentEventCoverage, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return DocumentEventCoverage{}, fmt.Errorf("starting document event rebuild coverage: %w", err)
 	}
@@ -172,14 +168,14 @@ func (s *Store) DocumentEventRebuildCoverage(ctx context.Context) (DocumentEvent
 		InputEpoch: state.InputEpoch, PublicationEpoch: state.PublicationEpoch,
 	}
 	err = tx.QueryRowContext(ctx, `SELECT count(*),
-		COALESCE(sum(CASE WHEN a.input_epoch=? AND
+		COALESCE(sum(CASE WHEN a.input_epoch=$1 AND
 			a.input_revision=COALESCE(d.revision,0) AND a.state='indexed' AND
 			h.input_epoch=a.input_epoch AND g.inputs_sha256=a.inputs_sha256
 			THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN a.input_epoch=? AND
+		COALESCE(sum(CASE WHEN a.input_epoch=$2 AND
 			a.input_revision=COALESCE(d.revision,0) AND a.state='failed'
 			THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN a.input_epoch=? AND
+		COALESCE(sum(CASE WHEN a.input_epoch=$3 AND
 			a.input_revision=COALESCE(d.revision,0) AND a.state='unavailable'
 			THEN 1 ELSE 0 END),0)
 		FROM content_versions cv

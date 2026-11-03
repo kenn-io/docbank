@@ -48,11 +48,11 @@ func SupportsTextExtractionMIME(value string) bool {
 		mediaType == "application/yaml" || mediaType == "application/x-tex"
 }
 
-func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
+func markTextSearchableVersionTx(ctx context.Context, tx *sql.Tx, versionID, mimeType string) error {
 	if !SupportsTextExtractionMIME(mimeType) {
 		return nil
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO text_searchable_versions(version_id) VALUES($1)
 		ON CONFLICT(version_id) DO NOTHING`, versionID); err != nil {
 		return fmt.Errorf("recording text-search eligibility for %s: %w", versionID, err)
@@ -60,8 +60,8 @@ func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
 	return nil
 }
 
-func enqueueTextBlobTx(tx *sql.Tx, blobHash string) error {
-	if _, err := tx.Exec(`
+func enqueueTextBlobTx(ctx context.Context, tx *sql.Tx, blobHash string) error {
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES($1,$2)
 		ON CONFLICT(blob_hash) DO UPDATE SET next_attempt_at=excluded.next_attempt_at`,
 		blobHash, nowRFC3339()); err != nil {
@@ -83,10 +83,10 @@ func queueTextExtractionTx(
 	if suppressed {
 		return nil
 	}
-	if err := markTextSearchableVersionTx(tx, versionID, mimeType); err != nil {
+	if err := markTextSearchableVersionTx(ctx, tx, versionID, mimeType); err != nil {
 		return err
 	}
-	return enqueueTextBlobTx(tx, blobHash)
+	return enqueueTextBlobTx(ctx, tx, blobHash)
 }
 
 func legacyTextExtractionSuppressedTx(
@@ -213,7 +213,7 @@ func rebuildImportedTextExtractionStateTx(ctx context.Context, tx *sql.Tx) error
 		if suppressed {
 			continue
 		}
-		if err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
+		if err := markTextSearchableVersionTx(ctx, tx, item.versionID, item.mimeType); err != nil {
 			return err
 		}
 		if item.hasExtraction {
@@ -223,7 +223,7 @@ func rebuildImportedTextExtractionStateTx(ctx context.Context, tx *sql.Tx) error
 			continue
 		}
 		queued[item.hash] = struct{}{}
-		if err := enqueueTextBlobTx(tx, item.hash); err != nil {
+		if err := enqueueTextBlobTx(ctx, tx, item.hash); err != nil {
 			return err
 		}
 	}
@@ -296,7 +296,7 @@ func (s *Store) SeedTextExtractionQueue(
 					continue
 				}
 			}
-			if err := markTextSearchableVersionTx(tx, item.versionID, item.mimeType); err != nil {
+			if err := markTextSearchableVersionTx(ctx, tx, item.versionID, item.mimeType); err != nil {
 				return err
 			}
 			if !item.needsExtraction {
@@ -306,7 +306,7 @@ func (s *Store) SeedTextExtractionQueue(
 				continue
 			}
 			queued[item.hash] = struct{}{}
-			if err := enqueueTextBlobTx(tx, item.hash); err != nil {
+			if err := enqueueTextBlobTx(ctx, tx, item.hash); err != nil {
 				return err
 			}
 		}
@@ -475,10 +475,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		}
 		var storedVersion int64
 		var storedStatus string
+		var storedText sql.NullString
 		err := tx.QueryRowContext(ctx, `
-			SELECT extractor_version,status FROM extracted_text
+			SELECT extractor_version,status,text FROM extracted_text
 			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
-		).Scan(&storedVersion, &storedStatus)
+		).Scan(&storedVersion, &storedStatus, &storedText)
 		if err == nil && result.ExtractorVersion < storedVersion {
 			return fmt.Errorf(
 				"extractor %s result version %d is older than stored version %d",
@@ -526,6 +527,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 				return publishErr
 			}
 			publishRendition = published
+		}
+		if !publishRendition && storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
+			if err := recordProcessedTx(ctx, tx, "", result.BlobHash); err != nil {
+				return err
+			}
 		}
 		if !publishRendition {
 			if _, err := tx.ExecContext(ctx,

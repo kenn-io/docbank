@@ -76,11 +76,11 @@ func (s *Store) CreateSavedQuery(
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO saved_queries(
 			id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?)`, created.ID, created.Name, created.Description,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, created.ID, created.Name, created.Description,
 			created.Kind, created.Payload, created.Fingerprint, created.Revision,
 			created.CreatedAt, created.UpdatedAt)
 		if err != nil {
-			if s.driver.IsUniqueViolation(err) {
+			if s.isUniqueViolation(err) {
 				return fmt.Errorf("saved query %q: %w", name, ErrExists)
 			}
 			return fmt.Errorf("creating saved query %q: %w", name, err)
@@ -100,7 +100,7 @@ func (s *Store) SavedQueryByID(ctx context.Context, id string) (SavedQuery, erro
 	}
 	record, err := scanSavedQuery(s.db.QueryRowContext(ctx, `
 		SELECT id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		FROM saved_queries WHERE id=?`, id))
+		FROM saved_queries WHERE id=$1`, id))
 	if err != nil {
 		return SavedQuery{}, fmt.Errorf("saved query %q: %w", id, err)
 	}
@@ -123,15 +123,20 @@ func (s *Store) listSavedQueries(ctx context.Context, kind string, limit, offset
 	if err := validateSavedQueryPage(kind, limit, offset); err != nil {
 		return nil, 0, err
 	}
+	photoKinds := `json_array_length(payload,'$.filters.kinds')>0
+		AND NOT EXISTS(SELECT 1 FROM json_each(payload,'$.filters.kinds') WHERE value NOT IN ('photo','video'))`
+	if s.postgresSchema != "" {
+		photoKinds = `jsonb_array_length(convert_from(payload,'UTF8')::jsonb #> '{filters,kinds}')>0
+		AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(convert_from(payload,'UTF8')::jsonb #> '{filters,kinds}') AS kinds(value) WHERE value NOT IN ('photo','video'))`
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH filtered AS (
 		  SELECT id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		  FROM saved_queries WHERE (?='' OR kind=?) AND (NOT ? OR (
-		    kind='query' AND json_array_length(payload,'$.filters.kinds')>0
-		    AND NOT EXISTS(SELECT 1 FROM json_each(payload,'$.filters.kinds') WHERE value NOT IN ('photo','video'))
+		  FROM saved_queries WHERE ($1='' OR kind=$2) AND (NOT $3 OR (
+		    kind='query' AND `+photoKinds+`
 		  ))
 		), page AS (
-		  SELECT * FROM filtered ORDER BY name,id LIMIT ? OFFSET ?
+		  SELECT * FROM filtered ORDER BY name,id LIMIT $4 OFFSET $5
 		), totals AS (SELECT COUNT(*) AS total FROM filtered)
 		SELECT totals.total, COALESCE(page.id,''), COALESCE(page.name,''),
 		       COALESCE(page.description,''), COALESCE(page.kind,''), page.payload,
@@ -220,11 +225,11 @@ func (s *Store) UpdateSavedQuery(
 		updated.Revision++
 		updated.UpdatedAt = max(current.UpdatedAt, nowRFC3339())
 		result, err := tx.ExecContext(ctx, `UPDATE saved_queries SET
-			name=?,description=?,payload=?,fingerprint=?,revision=?,updated_at=?
-			WHERE id=? AND revision=?`, updated.Name, updated.Description, updated.Payload,
+			name=$1,description=$2,payload=$3,fingerprint=$4,revision=$5,updated_at=$6
+			WHERE id=$7 AND revision=$8`, updated.Name, updated.Description, updated.Payload,
 			updated.Fingerprint, updated.Revision, updated.UpdatedAt, id, revision)
 		if err != nil {
-			if s.driver.IsUniqueViolation(err) {
+			if s.isUniqueViolation(err) {
 				return fmt.Errorf("saved query %q: %w", updated.Name, ErrExists)
 			}
 			return fmt.Errorf("updating saved query %s: %w", id, err)
@@ -261,7 +266,7 @@ func (s *Store) DeleteSavedQuery(
 			return err
 		}
 		result, err := tx.ExecContext(ctx,
-			`DELETE FROM saved_queries WHERE id=? AND revision=?`, id, revision)
+			`DELETE FROM saved_queries WHERE id=$1 AND revision=$2`, id, revision)
 		if err != nil {
 			return fmt.Errorf("deleting saved query %s: %w", id, err)
 		}
@@ -296,7 +301,7 @@ func scanSavedQuery(row interface{ Scan(dest ...any) error }) (SavedQuery, error
 func savedQueryByIDTx(ctx context.Context, tx *sql.Tx, id string) (SavedQuery, error) {
 	record, err := scanSavedQuery(tx.QueryRowContext(ctx, `
 		SELECT id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		FROM saved_queries WHERE id=?`, id))
+		FROM saved_queries WHERE id=$1`, id))
 	if err != nil {
 		return SavedQuery{}, fmt.Errorf("saved query %q: %w", id, err)
 	}

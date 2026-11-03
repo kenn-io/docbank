@@ -122,7 +122,7 @@ func TestCollectionCoverageStagedAndMismatchedGenerationAreUnprocessed(t *testin
 	require.NoError(t, err)
 	// Deliberately damage derivative membership; a read must neither repair it
 	// nor count a retained catalog head outside the generation that serves search.
-	_, err = s.db.Exec(`DELETE FROM rendition_lexical_generation_builds WHERE generation_id=?`, active.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_lexical_generation_builds WHERE generation_id=?`, active.ID)
 	require.NoError(t, err)
 	mismatch, err := s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func TestCollectionCoverageStagedAndMismatchedGenerationAreUnprocessed(t *testin
 	require.NoError(t, err)
 	require.Empty(t, hits)
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_generation_builds WHERE generation_id=?`, active.ID).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_generation_builds WHERE generation_id=?`, active.ID).Scan(&count))
 	require.Zero(t, count)
 }
 
@@ -140,7 +140,7 @@ func TestCollectionCoverageBrokenGenerationIsNotMissingCollection(t *testing.T) 
 	t.Parallel()
 	s, run, nodes, profile := collectionCoverageFixture(t, 1)
 	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
-	_, err := s.db.Exec(`DELETE FROM rendition_lexical_generation_manifests`)
+	_, err := s.db.ExecContext(t.Context(), `DELETE FROM rendition_lexical_generation_manifests`)
 	require.NoError(t, err)
 	t.Run("browsing ignores processing catalog", func(t *testing.T) {
 		_, _, err := s.Collections(t.Context(), 10, 0)
@@ -176,7 +176,7 @@ func TestCollectionCoverageSupersessionMultiImportAndEmptyRetainedCollection(t *
 	_, err = s.SetCollectionLabel(t.Context(), first.ID(), 1, new("Retained synthetic collection"))
 	require.NoError(t, err)
 	var prior string
-	require.NoError(t, s.db.QueryRow(`SELECT identity FROM provenance WHERE ingest_id=?`, first.ID()).Scan(&prior))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT identity FROM provenance WHERE ingest_id=?`, first.ID()).Scan(&prior))
 	addCollectionMembership(t, s, second, nodes[0].ID, "corrected.pdf", &prior)
 	got, err := s.CollectionQuality(t.Context(), first.ID(), selection, nil)
 	require.NoError(t, err)
@@ -223,23 +223,23 @@ func TestCollectionCoverageLatestExactAttemptUsesWaiterAndJobTimes(t *testing.T)
 	require.NotEqual(t, oldJob.ID, newJob.ID)
 	// Only mutable attempt timestamps are controlled; jobs and exact waiters
 	// were created by their catalog APIs. New waiter activity beats old failure.
-	_, err = s.db.Exec(`UPDATE rendition_jobs SET updated_at='2026-01-01T00:00:00.000000000Z'`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_jobs SET updated_at='2026-01-01T00:00:00.000000000Z'`)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE rendition_job_waiters SET updated_at='2026-01-01T00:00:00.000000000Z'`)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_job_waiters SET updated_at='2026-01-01T00:00:00.000000000Z'`)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE rendition_job_waiters SET updated_at='2026-01-02T00:00:00.000000000Z' WHERE waiter_id=?`, newWaiter.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_job_waiters SET updated_at='2026-01-02T00:00:00.000000000Z' WHERE waiter_id=?`, newWaiter.ID)
 	require.NoError(t, err)
 	got, err := s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 	require.NoError(t, err)
 	require.Equal(t, CoverageCounts{Unprocessed: 1}, *got.Collection.Coverage.Counts)
 	// A later job transition also counts even if its waiter timestamp is older.
-	_, err = s.db.Exec(`UPDATE rendition_jobs SET updated_at='2026-01-03T00:00:00.000000000Z' WHERE job_id=?`, oldJob.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_jobs SET updated_at='2026-01-03T00:00:00.000000000Z' WHERE job_id=?`, oldJob.ID)
 	require.NoError(t, err)
 	got, err = s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 	require.NoError(t, err)
 	require.Equal(t, CoverageCounts{Failed: 1}, *got.Collection.Coverage.Counts)
 	// Rejection is waiter-local and outranks a queued job for that exact waiter.
-	_, err = s.db.Exec(`UPDATE rendition_job_waiters SET state='rejected', updated_at='2026-01-04T00:00:00.000000000Z' WHERE waiter_id=?`, newWaiter.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE rendition_job_waiters SET state='rejected', updated_at='2026-01-04T00:00:00.000000000Z' WHERE waiter_id=?`, newWaiter.ID)
 	require.NoError(t, err)
 	got, err = s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 	require.NoError(t, err)
@@ -259,7 +259,7 @@ func collectionCoverageFixture(t *testing.T, count int) (*Store, IngestRun, []No
 	}
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		for _, hash := range []string{catalogEvidenceBlobHash, catalogMarkdownBlobHash} {
-			if err := s.EnsureBlobTx(tx, hash, int64(len(catalogBlobContents[hash]))); err != nil {
+			if err := s.EnsureBlobTx(t.Context(), tx, hash, int64(len(catalogBlobContents[hash]))); err != nil {
 				return err
 			}
 		}

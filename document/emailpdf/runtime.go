@@ -206,7 +206,7 @@ func (r *Runtime) Render(ctx context.Context, input HTML) (_ []byte, pages int64
 	err = cmd.Run()
 	// systemd-run is a client, not the browser's parent. Always explicitly stop
 	// the unit, including cancellation during submission, before reading output.
-	if cleanupErr := stopUnit(context.Background(), unit); cleanupErr != nil {
+	if cleanupErr := stopUnit(context.WithoutCancel(ctx), unit); cleanupErr != nil {
 		return nil, 0, cleanupErr
 	}
 	cleanupSafe = true

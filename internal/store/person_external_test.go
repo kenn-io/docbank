@@ -34,7 +34,7 @@ func TestRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T) {
 func TestPersonExternalAliasCycle(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.db.Exec(`INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
 		VALUES('msgvault','synthetic','a','b','2026-09-12T00:00:00Z'),
 		      ('msgvault','synthetic','b','a','2026-09-12T00:00:00Z')`)
 	require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing
 	require.NoError(t, err)
 	for index := range document.MaxPersonExternalIdentities {
 		uid := fmt.Sprintf("uid-%02d", index)
-		_, err = s.db.Exec(`INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,display_name_snapshot,linked_at,updated_at) VALUES(?,'msgvault','synthetic',?,'vcard_uid','retired','','2026-09-12T00:00:00Z','2026-09-12T00:00:00Z')`, person.PersonID, uid)
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,display_name_snapshot,linked_at,updated_at) VALUES(?,'msgvault','synthetic',?,'vcard_uid','retired','','2026-09-12T00:00:00Z','2026-09-12T00:00:00Z')`, person.PersonID, uid)
 		require.NoError(t, err)
 	}
 	identity := PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic",
@@ -272,17 +272,17 @@ func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
 	require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "b", []string{"a"}))
 	require.NoError(t, s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "a", []string{"c"}))
 	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch))
 	err = s.RecordExternalUIDAliases(t.Context(), "msgvault", "synthetic", "c", []string{"extra", "a"})
 	require.ErrorContains(t, err, "cycle")
 	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM person_external_uid_aliases WHERE retired_uid='extra'`).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_external_uid_aliases WHERE retired_uid='extra'`).Scan(&count))
 	require.Zero(t, count)
 	var target string
-	require.NoError(t, s.db.QueryRow(`SELECT surviving_uid FROM person_external_uid_aliases WHERE retired_uid='a'`).Scan(&target))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT surviving_uid FROM person_external_uid_aliases WHERE retired_uid='a'`).Scan(&target))
 	require.Equal(t, "b", target)
 	var unchangedEpoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&unchangedEpoch))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&unchangedEpoch))
 	require.Equal(t, epoch, unchangedEpoch)
 	identities, err := s.PersonExternalIdentities(t.Context(), person.PersonID)
 	require.NoError(t, err)

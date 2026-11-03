@@ -153,7 +153,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			return nil, estimate, err
 		}
 	}
-	base := query.Query{V: 1, Syntax: "simple", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}
+	base := query.Query{V: 1, Syntax: "simple", Mode: query.ModeLexical, Sort: query.Sort{Field: "name", Direction: "asc"}}
 	var queries []query.Query
 	if selection.All {
 		queries = append(queries, base)
@@ -305,7 +305,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 
 func (s *Store) EstimatePhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection) (PhotoCheckoutEstimate, error) {
 	var out PhotoCheckoutEstimate
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		_, estimate, err := s.checkoutEntriesTx(ctx, tx, selection)
 		out = estimate
 		return err
@@ -329,7 +329,7 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 	}
 	var entries []PhotoCheckoutEntry
 	var estimate PhotoCheckoutEstimate
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		entries, estimate, err = s.checkoutEntriesTx(ctx, tx, selection)
 		return err
@@ -477,7 +477,7 @@ func (s *Store) PhotoCheckout(ctx context.Context, id string) (PhotoCheckout, er
 
 func (s *Store) PhotoCheckoutStatus(ctx context.Context, id, after string, limit int) (PhotoCheckoutStatus, error) {
 	var out PhotoCheckoutStatus
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		out.Checkout, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
 		if err != nil {
@@ -516,7 +516,7 @@ func (s *Store) PhotoCheckoutWorkingSummary(ctx context.Context, id string, limi
 	}
 	counts := make(map[string]int64)
 	var entries []PhotoCheckoutEntry
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT working_state,COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? GROUP BY working_state`, id)
 		if err != nil {
 			return err

@@ -269,7 +269,7 @@ func placementStoresTx(
 func placementMembersTx(
 	ctx context.Context, tx *sql.Tx, targetID int64,
 ) ([]int64, error) {
-	node, err := nodeByIDTx(tx, targetID)
+	node, err := nodeByIDTx(ctx, tx, targetID)
 	if err != nil {
 		return nil, err
 	}

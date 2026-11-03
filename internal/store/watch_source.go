@@ -53,7 +53,7 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 		case retry && errors.Is(err, ErrNotFound):
 			return fmt.Errorf("watched source %q/%q: %w", watchName, oldRef, ErrNotFound)
 		}
-		node, err = nodeByIDTx(tx, expectedNodeID)
+		node, err = nodeByIDTx(ctx, tx, expectedNodeID)
 		if err != nil {
 			return err
 		}

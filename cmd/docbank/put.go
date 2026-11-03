@@ -33,8 +33,9 @@ var (
 )
 
 var putCmd = &cobra.Command{
-	Example: `  docbank put ./invoice-v2.pdf id:12`,
-	Long:    `Adds a new current version; prior versions stay readable via docbank versions.`,
+	Example: `  docbank document put ./invoice-v2.pdf id:12`,
+	Long: `Adds a new current version; prior versions stay readable via
+"docbank document versions".`,
 	GroupID: groupDocuments,
 	Use:     "put <local-file> <path-or-id>",
 	Short:   "Replace a file's content while retaining its immutable history",
@@ -260,5 +261,5 @@ func init() {
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	putCmd.Flags().StringVar(&putMIMEType, "mime-type", "",
 		"override the media type detected from the source file")
-	rootCmd.AddCommand(putCmd)
+	registerGroupedCommand(documentCmd, putCmd, "put")
 }

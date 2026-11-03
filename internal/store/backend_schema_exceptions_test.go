@@ -1,0 +1,85 @@
+package store
+
+// These exact exceptions describe the current boundary, not permission to omit
+// future objects. The comparison fails when an exception is stale or resolved.
+var sqliteOnlyBackendTables = map[string]string{
+	"vector_membership_epochs":           "vector index lifecycle is unqualified",
+	"photo_description_explicit_waiters": "description worker publication is unqualified",
+	"photo_face_scans":                   "face detection publication is unqualified",
+	"photo_timeline_pending":             "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
+	"photo_xmp_unsettled_pending":        "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
+	"storage_operation_cleanup":          "multi-store operations are unqualified",
+	"storage_operation_stores":           "multi-store operations are unqualified",
+	"vector_index_build_jobs":            "vector index lifecycle is unqualified",
+	"vector_index_generations":           "vector index lifecycle is unqualified",
+	"vector_index_heads":                 "vector index lifecycle is unqualified",
+	"vector_index_reader_leases":         "vector index lifecycle is unqualified",
+	"vector_index_unavailable_coverage":  "vector index lifecycle is unqualified",
+}
+
+// Secondary access paths await their query/workload qualification. Tables also
+// used by native operations are not exempt from the shared structural checks.
+// Index expressions and predicates still need operation-specific plan checks.
+var deferredBackendIndexes = map[string]string{
+	"bates_allocations_namespace":                 "bates_allocations",
+	"bates_artifact_pages_label":                  "bates_artifact_pages",
+	"bates_artifacts_history":                     "bates_artifacts",
+	"collection_snapshot_representations_version": "collection_snapshot_representations",
+	"content_versions_photo_media_type":           "content_versions",
+	"content_versions_photo_size":                 "content_versions",
+	"custodian_assignments_person":                "custodian_assignments",
+	"document_people_person":                      "document_people",
+	"export_jobs_pending":                         "export_jobs",
+	"mailbox_containers_owner":                    "mailbox_containers",
+	"mailbox_transfer_receipts_source":            "mailbox_transfer_receipts",
+	"mailbox_transfer_versions":                   "mailbox_transfer_receipts",
+	"media_occurrences_principal":                 "media_occurrences",
+	"media_occurrences_source":                    "media_occurrences",
+	"media_operations_source_admission":           "media_operations",
+	"nodes_photo_import":                          "nodes",
+	"nodes_photo_name":                            "nodes",
+	"package_import_jobs_pending":                 "package_import_jobs",
+	"package_labels_lookup":                       "package_labels",
+	"package_preflights_expiry":                   "package_preflights",
+	"packages_history":                            "packages",
+	"person_candidate_faces_face":                 "person_candidate_faces",
+	"person_candidate_state":                      "person_match_candidates",
+	"person_document_assertions_person":           "person_document_assertions",
+	"person_external_alias_target":                "person_external_uid_aliases",
+	"person_external_person":                      "person_external_identities",
+	"person_identities_person":                    "person_identities",
+	"person_identities_value":                     "person_identities",
+	"persons_name_folded":                         "persons",
+	"photo_change_receipts_checkout_commit":       "photo_change_receipts",
+	"photo_faces_assertion":                       "photo_faces",
+	"photo_set_members_added":                     "photo_set_members",
+	"photo_set_members_asset":                     "photo_set_members",
+	"rendition_lexical_generation_builds_build":   "rendition_lexical_generation_builds",
+	"storage_operations_retention":                "storage_operations",
+	"storage_operations_state":                    "storage_operations",
+	"term_report_history_recent":                  "term_report_history",
+	"visual_preview_generations_ready":            "visual_preview_generations",
+	// This is a write invariant, not a deferred access optimization. The
+	// multi-store port must enforce active evacuation uniqueness in Go; copying
+	// SQLite's closed state list into the new schema is forbidden.
+	"one_active_evacuation_per_store": "storage_operations",
+}
+
+// Extra PostgreSQL indexes support foreign-key cascades. Pin their shape so an
+// exception cannot hide their removal or a change to an unrelated access path.
+var postgresOnlyBackendIndexes = map[string]struct{ table, column string }{
+	"custodian_assignments_node":          {"custodian_assignments", "node_id"},
+	"custodian_assignments_version":       {"custodian_assignments", "content_version_id"},
+	"document_event_generations_version":  {"document_event_generations", "content_version_id"},
+	"document_people_generations_version": {"document_people_generations", "content_version_id"},
+	"document_people_node":                {"document_people", "node_id"},
+	"mailbox_transfer_receipts_version":   {"mailbox_transfer_receipts", "target_version_id"},
+	"media_input_artifacts_version":       {"media_input_artifacts", "content_version_id"},
+	"nodes_trash_parent":                  {"nodes", "trash_parent"},
+	"package_import_receipts_version":     {"package_import_receipts", "content_version_id"},
+	"package_labels_version":              {"package_labels", "content_version_id"},
+	"page_render_jobs_node":               {"page_render_jobs", "node_id"},
+	"page_render_jobs_version":            {"page_render_jobs", "version_id"},
+	"photo_assets_display_file":           {"photo_assets", "display_file_id"},
+	"photo_assets_display_override_file":  {"photo_assets", "display_override_file_id"},
+}

@@ -10,7 +10,7 @@ import (
 
 var checkAnswerTool = toolDefinition{
 	name: "check_answer", title: "Check answer figures",
-	description: "Resolve citations and compare whole answer figures by exact spelling with any cited text. A match confirms occurrence only. Send plain text with at most 512 figures and 512 [n] markers.",
+	description: "Resolve citations and compare answer figures with any cited text, normalizing recognized dates and currency amounts. A match confirms occurrence only. Send plain text with at most 512 figures and 512 [n] markers.",
 	schemas:     checkAnswerSchemas, idempotent: true,
 }
 
