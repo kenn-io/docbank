@@ -1269,7 +1269,7 @@ func TestExtractRejectsIdentifierContinuations(t *testing.T) {
 	}
 	for _, text := range []string{
 		"Policy number: AB-1234-.", "Policy number: 1234-.",
-		"Policy: AB-1234-.", "Policy: USD1234-.", "Policy: 2026-07-01-.",
+		"Policy: AB-1234-.", "Policy: USD1234-.", "Policy: 2026-07-01-.", "Policy: AB/2026-07-01.",
 	} {
 		got := Extract(text + " The fee is $5.")
 		if len(got) != 1 || got[0].Text != "$5" {
@@ -2563,6 +2563,7 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. prior to at least 10 min.",
 		"The deadline is 7 min. before no more than 10 min.",
 		"The deadline is 7 min. After ~10 min.",
+		"The deadline is 7 min. before 10 minutes and $5 is charged.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("relative duration comparison retained exact figures for %q: %+v", text, got)
@@ -2613,6 +2614,27 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 	}
 }
 
+func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperands(t *testing.T) {
+	for _, text := range []string{
+		"The wait is 7 min. After 1/2 hour customers pay $5.",
+		"The wait is 7 min. After 1/2 hour, $5 is charged.",
+		"The wait is 7 min. After seven point five minutes customers pay $5.",
+		"The wait is 7 min. After seven point five minutes, $5 is charged.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := Extract(text)
+			if len(got) != 2 || got[0].Text != "7 min" || got[1].Text != "$5" {
+				t.Fatalf("unsupported relative operand corrupted independent assertions for %q: %+v", text, got)
+			}
+			for i, want := range []string{"7 min", "$5"} {
+				if string([]rune(text)[got[i].Start:got[i].End]) != want {
+					t.Errorf("incorrect source span for %q: %+v", want, got[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExtractRejectsSymbolicRelativeDurationBounds(t *testing.T) {
 	for _, text := range []string{
 		"The deadline is 7 minutes before ≥10 minutes.",
@@ -2622,6 +2644,7 @@ func TestExtractRejectsSymbolicRelativeDurationBounds(t *testing.T) {
 		"The deadline is 7 min. before [at least 10 min.].",
 		"The deadline is 7 days before (about 10 days).",
 		"The deadline is (7 days) before (about 10 days).",
+		"The deadline is (7 days ) before (about 10 days).",
 		"The deadline is 7 days before (at least 10 days).",
 		"The deadline is 7 days before ( about 10 days ).",
 		"The deadline is 7 days before (( at least 10 days )).",
@@ -2675,6 +2698,7 @@ func TestExtractRejectsVerbalComparisonsWithWordOperands(t *testing.T) {
 		"The fee is $5/month higher than thirty dollars/month.",
 		"The service fee is $5/month higher than thirty.",
 		"The service fee is $5/month lower than thirty.",
+		"The fee is $5/month higher than half a dollar.",
 		"The service fee is $5/month higher than negative thirty.",
 		"The service fee is $5/month lower than minus thirty.",
 		"The deadline is 7 days before thirty days.",

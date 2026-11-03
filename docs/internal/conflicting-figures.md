@@ -36,7 +36,9 @@ than this passage-level figure and period extraction. Both use Go date parsing.
 Date parsing accepts spaces and tabs while preserving the original quote.
 Continued date tokens such as `2026-07-01-02` and `1 July 2026/2027` supply
 neither a date value nor a period bound, including two dates joined by a slash.
-A complete date can precede an independent typed figure in the same clause.
+A short code prefix in a labelled identifier also prevents an embedded date
+from becoming a date value, as in `Policy: AB/2026-07-01`. A complete date can
+precede an independent typed figure in the same clause.
 An accepted date after `to` supplies an end bound, even when its day follows a
 money amount, unless its scope is uncertain.
 
@@ -65,15 +67,25 @@ with ASCII or typographic apostrophes. `no more than` and
 as are `maximum of` and `minimum of`. `Exceed`, `exceeds`, `exceeded`,
 and `exceeding` mark an exclusive lower bound when they precede a figure.
 Comparison continuations omit the clause even when the right operand cannot be
-parsed, including symbolic comparisons after a rate, word-number operands such
-as `$5/month higher than thirty` or `$5/month greater than thirty dollars`,
-spelled-out duration operands such as `7 days before thirty days` or
-`7 min. before thirty-five min.`, fractional or spoken-decimal durations such
-as `7 min. before 1/2 hour` or `7 min. before seven point five minutes`, and
+parsed. This includes symbolic comparisons after a rate; word-number or
+fraction-word operands such as `$5/month higher than thirty`, `$5/month greater
+than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
+duration operands such as `7 days before thirty days` or
+`7 min. before thirty-five min.`; fractional or spoken-decimal durations such
+as `7 min. before 1/2 hour` or `7 min. before seven point five minutes`; and
 wrapped bounds such as `7 min. before (about 10 min.)` or
-`(7 days) before (about 10 days)`. An independent temporal assertion after an
-abbreviated duration remains separate, including when a typed figure is the
-subject: `The wait is 7 min. After 10 minutes, $5 is charged.`
+`(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
+the connector, so `(7 days ) before (about 10 days)` remains one unsupported
+comparison.
+
+An independent temporal assertion after an abbreviated duration remains
+separate when it starts with its own subject and predicate, or with a typed
+figure followed directly by an assertion predicate. For example, `The wait is
+7 min. After 10 minutes, $5 is charged.`, `The wait is 7 min. After 1/2 hour
+customers pay $5.`, and `The wait is 7 min. After seven point five minutes,
+$5 is charged.` keep both figures. A coordinated continuation such as
+`The deadline is 7 min. before 10 minutes and $5 is charged.` remains one
+ambiguous clause and yields no figures.
 Sentence punctuation followed by closing quotes or brackets ends a clause. Soft
 line wraps stay in the same clause; blank lines and list or table rows separate
 clauses.
