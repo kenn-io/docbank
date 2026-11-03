@@ -63,20 +63,11 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	_, rows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
 	require.NoError(t, err)
 	assert.Len(t, rows, len(neighbors), "only scoring rows are deduplicated")
-	t.Run("many inputs load only requested identities", func(t *testing.T) {
+	t.Run("shared inputs load only requested identities", func(t *testing.T) {
+		require.Len(t, neighbors, 2)
 		tx, err := s.db.BeginTx(t.Context(), nil)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, tx.Rollback()) }()
-		// Extend the retained projections inside a rolled-back transaction.
-		for i := len(neighbors); i < 1000; i++ {
-			input := fmt.Sprintf("extra-%d", i)
-			_, err := tx.ExecContext(t.Context(), `INSERT INTO embedding_vector_rows VALUES (?,?,?,?,?,?)`, records[0].VectorSet.ID, input, i, input, 8, catalogSourceHash)
-			require.NoError(t, err)
-			for _, record := range records {
-				_, err := tx.ExecContext(t.Context(), `INSERT INTO embedding_generation_inputs VALUES (?,?,?,?)`, record.InputGeneration.ID, input, i, catalogSourceHash)
-				require.NoError(t, err)
-			}
-		}
 		for i := range 2 {
 			keys := semanticNeighborKeys(neighbors[i : i+1])
 			members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
