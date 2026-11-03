@@ -221,6 +221,9 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
+					defer func() {
+						require.NoError(b, s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, now))
+					}()
 					current, _, _, err := s.semanticSearchAuthorityFence(ctx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, SearchOptions{}, nil)
 					if err != nil {
 						b.Fatal(err)
@@ -234,6 +237,9 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 				for b.Loop() {
 					acquire()
 				}
+				var leases int
+				require.NoError(b, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+				require.Zero(b, leases, "acquisition must release reader leases")
 			})
 			b.Run("cold-fenced", func(b *testing.B) {
 				opts := SearchOptions{}

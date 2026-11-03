@@ -747,16 +747,20 @@ func countVectorSourceCaptures(t *testing.T, s *Store) *atomic.Int64 {
 	var captures atomic.Int64
 	release := make(chan struct{})
 	close(release)
-	readDB := s.db
-	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
-		if strings.Contains(query, "JOIN embedding_vector_sets") {
-			captures.Add(1)
-		}
-	}})
-	t.Cleanup(func() {
-		require.NoError(t, s.db.Close())
-		require.NoError(t, readDB.Close())
-	})
+	for _, pool := range []**sql.DB{&s.db, &s.writeDB} {
+		db := *pool
+		wrapped := sql.OpenDB(photoSearchBeginConnector{db: db, start: func() {}, release: release, query: func(query string) {
+			if strings.Contains(query, "FROM embedding_heads") || strings.Contains(query, "JOIN embedding_vector_sets") {
+				captures.Add(1)
+			}
+		}})
+		wrapped.SetMaxOpenConns(1)
+		*pool = wrapped
+		t.Cleanup(func() {
+			require.NoError(t, wrapped.Close())
+			require.NoError(t, db.Close())
+		})
+	}
 	return &captures
 }
 

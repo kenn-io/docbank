@@ -834,21 +834,20 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 
 // LiveSearchScopeExists reports whether normalized search filters match a live file.
 func (s *Store) LiveSearchScopeExists(ctx context.Context, opts SearchOptions) (bool, error) {
-	scopeSQL, args := liveSearchScopeSQL(opts)
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 `+scopeSQL+` LIMIT 1)`, args...).Scan(&exists)
 	return exists, err
 }
 
 func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
-	scopeSQL, args := liveSearchScopeSQL(opts)
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
 	var count int
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) `+scopeSQL, args...).Scan(&count)
 	return count, err
 }
 
-func liveSearchScopeSQL(opts SearchOptions) (string, []any) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
+func liveSearchScopeSQL(filterSQL string, filterArgs []any) (string, []any) {
 	return `FROM ` + nodeFrom + `
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL ` + filterSQL, filterArgs
 }
@@ -1063,13 +1062,12 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	} else if versionFence {
 		// Explicit version fences are bounded to 4096 IDs. Other filters keep
 		// the embedding scan so unembedded files do not drive their cost.
+		scopeSQL, scopeArgs := liveSearchScopeSQL(filterSQL, filterArgs)
 		prefix = `WITH scoped_nodes AS MATERIALIZED (
-   SELECT n.id,n.current_version_id FROM nodes n
-   JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-   WHERE n.kind='file' AND n.trashed_at IS NULL ` + filterSQL + `) `
+   SELECT n.id,n.current_version_id ` + scopeSQL + `) `
 		driver = `FROM scoped_nodes scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
    ON es.content_version_id=scope.current_version_id`
-		args = append(args, filterArgs...)
+		args = append(args, scopeArgs...)
 		filterSQL, filterArgs = "", nil
 	}
 	args = append(args, space, profile, binding, kind)
