@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -19,17 +20,7 @@ func BenchmarkSettledLegacyMigration(b *testing.B) {
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			ctx := b.Context()
 			text := strings.Repeat("searchable migration benchmark ", 256)
-			var last Node
-			for i := range files {
-				hash := fmt.Sprintf("%064x", i+1)
-				last, err = s.CreateFile(ctx, s.RootID(), fmt.Sprintf("text-%04d.txt", i),
-					hash, int64(len(text)), "text/plain")
-				require.NoError(b, err)
-				require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
-					BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
-					Status: ExtractionOK, Text: text,
-				}))
-			}
+			last := populateLegacyMigrationBenchmark(ctx, b, s, files, text)
 			_, _, err = s.ReplaceContent(ctx, last.ID, last.Revision,
 				fmt.Sprintf("%064x", files+1), 1, "application/octet-stream")
 			require.NoError(b, err)
@@ -59,24 +50,18 @@ func BenchmarkPostCutoverTextExtraction(b *testing.B) {
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			text := strings.Repeat("searchable migration benchmark ", 64)
-			for i := range files {
-				hash := fmt.Sprintf("%064x", i+1)
-				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("text-%04d.txt", i), hash, int64(len(text)), "text/plain")
-				require.NoError(b, err)
-				require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
-					BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
-					Status: ExtractionOK, Text: text,
-				}))
-			}
+			populateLegacyMigrationBenchmark(ctx, b, s, files, text)
 			_, err = s.MigrateLegacyPlainText(ctx)
 			require.NoError(b, err)
 			next := files
 			b.ReportAllocs()
 			for b.Loop() {
+				b.StopTimer()
 				next++
 				hash := fmt.Sprintf("%064x", next)
 				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("text-%04d.txt", next), hash, int64(len(text)), "text/plain")
 				require.NoError(b, err)
+				b.StartTimer()
 				require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
 					BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 					Status: ExtractionOK, Text: text,
@@ -84,4 +69,20 @@ func BenchmarkPostCutoverTextExtraction(b *testing.B) {
 			}
 		})
 	}
+}
+
+func populateLegacyMigrationBenchmark(ctx context.Context, b *testing.B, s *Store, files int, text string) Node {
+	b.Helper()
+	var last Node
+	for i := range files {
+		hash := fmt.Sprintf("%064x", i+1)
+		var err error
+		last, err = s.CreateFile(ctx, s.RootID(), fmt.Sprintf("text-%04d.txt", i), hash, int64(len(text)), "text/plain")
+		require.NoError(b, err)
+		require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
+			BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: ExtractionOK, Text: text,
+		}))
+	}
+	return last
 }

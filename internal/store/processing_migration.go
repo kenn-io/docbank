@@ -83,6 +83,7 @@ func (s *Store) MigrateLegacyPlainText(
 }
 
 // migrateLegacyPlainTextTx publishes one blob, or the whole vault when blobHash is empty.
+// A scoped caller must have established that the lexical head exists in tx.
 func (s *Store) migrateLegacyPlainTextTx(
 	ctx context.Context, tx *sql.Tx, blobHash string,
 ) (LegacyMigrationReport, error) {
@@ -93,9 +94,12 @@ func (s *Store) migrateLegacyPlainTextTx(
 	report := LegacyMigrationReport{ProfileFingerprint: profile.Fingerprint}
 	// The first cutover queues legacy failures for repair. Once published,
 	// the current extractor owns terminal outcomes and retry scheduling.
-	published, err := hasPublishedLexicalHeadTx(ctx, tx)
-	if err != nil {
-		return LegacyMigrationReport{}, err
+	published := true
+	if blobHash == "" {
+		published, err = hasPublishedLexicalHeadTx(ctx, tx)
+		if err != nil {
+			return LegacyMigrationReport{}, err
+		}
 	}
 	rows, err := readLegacyPlainTextRows(ctx, tx, blobHash)
 	if err != nil {
