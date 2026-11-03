@@ -48,6 +48,7 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 
 func checkMediaOperationReplaysWithoutRepeatingMutation(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	calls := 0
 	op := MediaOperation{
@@ -104,6 +105,7 @@ func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
 
 func checkMediaOperationConcurrentReplayRunsMutationOnce(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	op := MediaOperation{
 		ID: "00000000-0000-4000-8000-000000000003", Principal: "operator",
@@ -146,6 +148,7 @@ func TestMediaOperationRespectsAuditedVaultGuard(t *testing.T) {
 
 func checkRemoteRecordingReceiptScopesPrincipalAndVerb(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	_, operation := remoteStoreReference(t, s, testSHA256([]byte("receipt-source")),

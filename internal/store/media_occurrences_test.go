@@ -12,6 +12,7 @@ import (
 
 func checkMediaRevokeIsPrincipalScopedAndIdempotent(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',$1,$2)`,
@@ -55,6 +56,7 @@ func checkMediaRevokeIsPrincipalScopedAndIdempotent(t *testing.T, open func(*tes
 
 func checkMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',$1,$2)`,
@@ -74,6 +76,7 @@ func checkMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t *te
 
 func checkMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	_, err := s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',$1,$2)`,
@@ -102,6 +105,7 @@ func checkMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t *testing.T, o
 
 func checkPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.mp3", fakeHash("a1"), 10, "audio/mpeg")

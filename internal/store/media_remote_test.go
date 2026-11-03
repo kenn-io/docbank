@@ -41,6 +41,7 @@ func remoteStoreArtifact(
 
 func checkRetainRemoteRecordingMedia(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	sourceID := testSHA256([]byte("remote-source"))
 	retained, _ := remoteStoreReference(t, s, sourceID,

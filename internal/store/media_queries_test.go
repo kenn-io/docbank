@@ -13,6 +13,7 @@ import (
 
 func checkMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -92,6 +93,7 @@ func checkMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T, open fun
 
 func checkMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
+	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.wav", fakeHash("a1"), 11, "audio/wav")
