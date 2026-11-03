@@ -83,7 +83,7 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 		return VectorIndexSource{}, err
 	}
 	var source VectorIndexSource
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		return err
@@ -463,12 +463,8 @@ type VectorIndexHead struct {
 }
 
 func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string) (VectorIndexHead, error) {
-	return activeVectorIndexHeadTx(ctx, s.db, vectorSpaceID)
-}
-
-func activeVectorIndexHeadTx(ctx context.Context, query metadataQuerier, vectorSpaceID string) (VectorIndexHead, error) {
 	var head VectorIndexHead
-	err := query.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
+	err := s.db.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
 		FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return head, ErrNotFound

@@ -778,14 +778,14 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 ) (source string, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
-		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
-		if err != nil {
-			return err
-		}
 		if similar != nil {
 			if err := similar.load(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
 				return err
 			}
+		}
+		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
+		if err != nil {
+			return err
 		}
 		filterSQL, filterArgs := searchFilterSQL(opts)
 		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,

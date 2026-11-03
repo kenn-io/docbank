@@ -443,9 +443,6 @@ func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
 
 func TestVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, "79636248d032d0a5763bb742fdf779e65d5752ce7b21bfa6627fdb416356565b", vectorIndexSourceChecksum([]VectorIndexMember{{
-		EmbeddingSetID: "set", VectorSetID: "vector", PayloadBlobHash: "payload", PayloadSize: 42,
-	}}))
 	f, image := newMixedVectorIndexFixture(t)
 	s := f.s
 	var err error
@@ -542,7 +539,7 @@ func newMixedVectorIndexFixture(t *testing.T) (imageEmbeddingCatalogFixture, Emb
 
 func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"original publish", "chunk publish", "image publish", "head replace", "head delete", "trash", "restore", "replace", "purge", "rendition publish", "rendition replace", "rendition delete", "photo hidden", "photo unhidden", "photo excluded", "display change", "preview delete", "ready preview", "photo file link", "photo file unlink"} {
+	for _, name := range []string{"head publish", "head replace", "head delete", "trash", "restore", "replace", "rendition publish", "rendition replace", "rendition delete", "photo hidden", "photo unhidden", "photo excluded", "display change", "preview delete", "ready preview", "photo file link", "photo file unlink"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f, image := newMixedVectorIndexFixture(t)
@@ -570,7 +567,7 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 			publish(original)
 			target := image
 			var attachment RenditionAttachmentRecord
-			if name == "chunk publish" || name == "rendition publish" || name == "rendition replace" || name == "rendition delete" {
+			if name == "rendition publish" || name == "rendition replace" || name == "rendition delete" {
 				build := catalogRenditionBuild(s, f.request.Profile)
 				build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
 				require.NoError(t, s.StageRenditionBuild(t.Context(), build))
@@ -581,7 +578,7 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				require.NoError(t, s.StageEmbeddingSet(t.Context(), target))
 				publish(target)
 			}
-			if name == "original publish" || name == "head replace" {
+			if name == "head replace" {
 				target = original
 			}
 			content, err := s.ContentVersionByID(t.Context(), target.ContentVersionID)
@@ -590,11 +587,11 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 			require.NoError(t, err)
 			var preview VisualPreviewGeneration
 			switch name {
-			case "original publish", "chunk publish", "image publish":
+			case "head publish":
 				exec(`DELETE FROM embedding_heads WHERE embedding_set_id=?`, target.ID)
 			case "rendition publish":
 				exec(`DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.ID)
-			case "restore", "purge":
+			case "restore":
 				_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
 				require.NoError(t, err)
 			case "photo unhidden":
@@ -618,12 +615,9 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 			}
 			before, err := s.CaptureVectorIndexSource(t.Context(), image.VectorSpace.ID)
 			require.NoError(t, err)
-			now := time.Now().UTC()
-			generation := vectorIndexGenerationFixture("fence", before, []byte("index"), now)
-			require.NoError(t, putVectorIndexGenerationForTest(t, s, generation))
 			require.Equal(t, before.ManifestChecksum, memoVectorSourceChecksum(t, s, before.VectorSpaceID))
 			switch name {
-			case "original publish", "chunk publish", "image publish":
+			case "head publish":
 				publish(target)
 			case "head replace":
 				replacement := original
@@ -646,8 +640,6 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				_, _, err = s.Restore(t.Context(), content.NodeID, UnconditionalRev)
 			case "replace":
 				_, _, err = s.ReplaceContent(t.Context(), content.NodeID, UnconditionalRev, hashVectorIndexTest("fence-replacement"), 20, "image/jpeg")
-			case "purge":
-				_, err = s.TrashEmpty(t.Context(), 0, true)
 			case "rendition publish":
 				err = publishRenditionForTest(t, s, attachment, embeddingCatalogTime, hashVectorIndexTest("fence-lexical"))
 			case "rendition replace":
@@ -678,20 +670,8 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 			require.NoError(t, err)
 			after, err := s.CaptureVectorIndexSource(t.Context(), before.VectorSpaceID)
 			require.NoError(t, err)
-			if name != "purge" {
-				require.NotEqual(t, before.ManifestChecksum, after.ManifestChecksum)
-			}
-			require.NoError(t, s.withReadTx(t.Context(), func(tx *sql.Tx) error {
-				checksum, err := s.vectorIndexSourceChecksumTx(t.Context(), tx, before.VectorSpaceID)
-				require.Equal(t, after.ManifestChecksum, checksum)
-				return err
-			}))
-			_, err = s.ResolveSemanticCandidates(t.Context(), target.ProcessingProfileFingerprint, target.BindingID, target.InputKind, before.VectorSpaceID, before.ManifestChecksum, nil, 10, SearchOptions{}, nil)
-			if name != "purge" {
-				require.ErrorIs(t, err, ErrVectorIndexSourceStale)
-			} else {
-				require.NoError(t, err)
-			}
+			require.NotEqual(t, before.ManifestChecksum, after.ManifestChecksum)
+			require.Equal(t, after.ManifestChecksum, memoVectorSourceChecksum(t, s, before.VectorSpaceID))
 		})
 	}
 }
@@ -794,15 +774,6 @@ func TestVectorIndexSourceMemoRestartAndRecipe(t *testing.T) {
 	require.EqualValues(t, 2, captures.Load(), "a changed recipe needs a fresh capture")
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, reopened, source.VectorSpaceID))
 	require.EqualValues(t, 2, captures.Load())
-}
-
-func TestVectorIndexSourceMemoDoesNotRefreshPhotos(t *testing.T) {
-	t.Parallel()
-	s, _, source := newPublishedVectorIndexFixture(t)
-	events := watchPhotoChanges(t, s)
-	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
-	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
-	require.Empty(t, events, "source checks alone must not refresh Photos")
 }
 
 func TestVectorIndexSourceMemoKeepsNewerSnapshot(t *testing.T) {

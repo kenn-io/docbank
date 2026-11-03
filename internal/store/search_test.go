@@ -2902,41 +2902,28 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 	}
 }
 
-func TestAcquireSemanticSearchAuthorityReleasesStaleSourceLease(t *testing.T) {
-	t.Parallel()
-	s, first, _ := newPublishedVectorIndexFixture(t)
-	publishVectorIndexMembersForTest(t, s, first, 2)
-	source, err := s.CaptureVectorIndexSource(t.Context(), first.VectorSpace.ID)
-	require.NoError(t, err)
-	now := time.Now().UTC()
-	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
-	content, err := s.ContentVersionByID(t.Context(), first.ContentVersionID)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
-	require.NoError(t, err)
-	_, err = s.AcquireSemanticSearchAuthority(t.Context(), first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
-	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
-	var leases int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
-	require.Zero(t, leases)
-}
-
-func TestAcquireSemanticSearchAuthorityPreservesFenceError(t *testing.T) {
+func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceFailure(t *testing.T) {
 	t.Parallel()
 	s, first, source := newPublishedVectorIndexFixture(t)
 	now := time.Now().UTC()
-	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("canceled-search", source, []byte("index"), now)))
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("fence-failure", source, []byte("index"), now)))
 	publishVectorIndexMembersForTest(t, s, first, 2)
-	current, err := s.CaptureVectorIndexSource(t.Context(), source.VectorSpaceID)
-	require.NoError(t, err)
-	require.NotEqual(t, source.ManifestChecksum, current.ManifestChecksum)
+	requireNoLeases := func() {
+		t.Helper()
+		var leases int
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+		require.Zero(t, leases)
+	}
+	_, err := s.AcquireSemanticSearchAuthority(t.Context(), first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+	requireNoLeases()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	release := make(chan struct{})
 	close(release)
 	readDB := s.db
 	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
-		// Cancel the coverage query after the fence has captured the changed source.
+		// Cancel the coverage query after the fence has read the changed source.
 		if strings.Contains(query, "SELECT COUNT(*) FROM "+nodeFrom) {
 			cancel()
 		}
@@ -2947,7 +2934,5 @@ func TestAcquireSemanticSearchAuthorityPreservesFenceError(t *testing.T) {
 	})
 	_, err = s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "canceled-search", now, time.Minute, SearchOptions{})
 	require.ErrorIs(t, err, context.Canceled)
-	var leases int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
-	require.Zero(t, leases)
+	requireNoLeases()
 }

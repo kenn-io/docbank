@@ -475,16 +475,18 @@ func (worker *IndexWorker) scan(ctx context.Context) error {
 // refresh checks immutable publication metadata before loading any generation
 // bytes. Full validation remains at candidate publication and reader acquisition.
 func (worker *IndexWorker) refresh(ctx context.Context, space string) error {
-	head, err := worker.catalog.ActiveVectorIndexHead(ctx, space)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
 	source, err := worker.catalog.CaptureVectorIndexSource(ctx, space)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	if err == nil && head.SourceManifestChecksum == source.ManifestChecksum {
-		return nil
+	if err == nil {
+		head, err := worker.catalog.ActiveVectorIndexHead(ctx, space)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if err == nil && head.SourceManifestChecksum == source.ManifestChecksum {
+			return nil
+		}
 	}
 	jobs.ReportBusy(ctx, true)
 	defer jobs.ReportBusy(ctx, false)
