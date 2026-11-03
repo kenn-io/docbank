@@ -112,6 +112,14 @@ func TestSearcherSemanticUsesExactDescriptorAndExhaustsLeasedGeneration(t *testi
 	require.Len(t, report.Results, 1)
 	assert.Empty(t, report.Results[0].Excerpt)
 	assert.Equal(t, document.EmbeddingInputOriginalFile, report.Results[0].Evidence[0].InputKind)
+	backend.authority.WholeSpace, backend.authority.ANNRows = true, nil
+	backend.neighborCount = 0
+	wholeReport, err := searcher.Search(t.Context(), Query{Text: "semantic query", Mode: ModeSemantic,
+		Limit: 1, ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
+		Authorization: retrievalAuthorization(descriptor)})
+	require.NoError(t, err)
+	assert.Equal(t, report.Results, wholeReport.Results)
+	assert.Equal(t, generation.Metadata().RowCount, backend.neighborCount)
 }
 
 func TestSearcherRejectsChangedQueryModelInputBeforeProviderOrIndex(t *testing.T) {

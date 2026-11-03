@@ -60,8 +60,9 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	assert.Equal(t, 1, resolution.Candidates[0].DuplicateCount, "duplicate_count=1")
 	t.Log("duplicate_count=1 after shared row expansion and source exclusion")
 	assert.False(t, resolution.Truncated)
-	_, rows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
+	_, rows, wholeSpace, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{ContentVersionIDs: versions}, nil)
 	require.NoError(t, err)
+	assert.False(t, wholeSpace)
 	assert.Len(t, rows, len(neighbors), "only scoring rows are deduplicated")
 	t.Run("shared inputs load only requested identities", func(t *testing.T) {
 		require.Len(t, neighbors, 2)
@@ -253,9 +254,10 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			lexicalQuery := scope.Query
 			lexicalQuery.Filters.CollapseDuplicates = true
 			options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
-			_, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+			_, annRows, wholeSpace, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
 				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
 			require.NoError(t, err)
+			assert.False(t, wholeSpace)
 			wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
 			for _, name := range tc.wantNodeNames {
 				for _, node := range indexedNodes {
@@ -396,16 +398,11 @@ func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCovera
 			_, fingerprints, err := embeddingProfileBindingAuthority(t.Context(), s.db, test.profile, test.binding)
 			require.NoError(t, err)
 			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
-			_, rows, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
+			_, rows, wholeSpace, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
 				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{}, nil)
 			require.NoError(t, err)
-			if test.want {
-				require.Len(t, rows, 1)
-				assert.Equal(t, record.VectorSet.ID, rows[0].SetID)
-			} else {
-				assert.NotNil(t, rows)
-				assert.Empty(t, rows, "authority must exclude other bindings before vector scoring")
-			}
+			require.True(t, wholeSpace)
+			require.Nil(t, rows)
 			result, err := s.ResolveSemanticCandidates(t.Context(), test.profile, test.binding, test.kind,
 				record.VectorSpace.ID, source.ManifestChecksum, []vectorindex.Neighbor{{
 					SetID: record.VectorSet.ID, InputKey: versionID,
@@ -859,6 +856,13 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 	assert.Equal(t, record.VectorSet.ID, authority.ANNRows[0].SetID)
 	assert.Equal(t, versionID, authority.ANNRows[0].InputKey)
 	assert.Equal(t, stored.ID, authority.Lease.Generation.ID)
+	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
+		authority.Lease.FencingToken, now))
+	authority, err = s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "whole-space-reader", now, time.Minute, SearchOptions{})
+	require.NoError(t, err)
+	assert.True(t, authority.WholeSpace)
+	assert.Nil(t, authority.ANNRows)
 	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), authority.Lease.ID,
 		authority.Lease.FencingToken, now))
 
@@ -3027,4 +3031,184 @@ func (q semanticMembershipCountingQuerier) QueryContext(ctx context.Context, que
 		*q.loaded += len(keys)
 	}
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
+func TestSemanticWholeSpaceEquivalence(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	ctx := t.Context()
+	first, err := s.ContentVersionByID(ctx, version)
+	require.NoError(t, err)
+	versions := []string{version}
+	for _, name := range []string{"second.txt", "other-binding.txt"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(name)), 20, "text/plain")
+		require.NoError(t, err)
+		versions = append(versions, node.CurrentVersionID)
+	}
+	records := make(map[string]EmbeddingSetRecord)
+	var space string
+	publish := func(t *testing.T, record EmbeddingSetRecord, fence int64) {
+		t.Helper()
+		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			return s.EnsureBlobTx(ctx, tx, record.VectorSet.PayloadBlobHash, int64(len(record.VectorSet.Payload)))
+		}))
+		require.NoError(t, s.StageEmbeddingSet(ctx, record))
+		require.NoError(t, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{FencingToken: fence,
+			Key:   EmbeddingHeadKey{ContentVersionID: record.ContentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		records[record.ID], space = record, record.VectorSpace.ID
+	}
+	for i, version := range versions {
+		binding := "optional"
+		if i == 2 {
+			binding = "required"
+		}
+		record := embeddingSetFixture(ctx, s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, binding, "")
+		if i == 2 {
+			vectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
+				VectorSpaceFingerprint: record.VectorSpace.ID, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
+				Dimension: 8, InputKeys: []string{version}, InputChecksums: []string{record.InputGeneration.Inputs[0].RenderedChecksum}, Values: [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}},
+			})
+			require.NoError(t, err)
+			payload, checksum, err := document.EncodeVectorSetV1(vectors)
+			require.NoError(t, err)
+			record.VectorSet.ID, record.VectorSet.PayloadChecksum = checksum, checksum
+			record.VectorSet.Payload, record.VectorSet.PayloadBlobHash = payload, testSHA256(payload)
+		}
+		publish(t, record, 1)
+	}
+	var previousSource string
+	var previousRows []vectorindex.RowIdentity
+	for _, change := range []string{"initial", "trash", "restore", "rename", "tag", "re-embed", "replace content"} {
+		t.Run(change, func(t *testing.T) {
+			switch change {
+			case "trash":
+				_, _, err = s.Trash(ctx, first.NodeID, UnconditionalRev)
+			case "restore":
+				_, _, err = s.Restore(ctx, first.NodeID, UnconditionalRev)
+			case "rename":
+				_, _, err = s.Move(ctx, first.NodeID, s.RootID(), "renamed.pdf", UnconditionalRev)
+			case "tag":
+				var tag Tag
+				tag, err = s.CreateTag(ctx, "selected")
+				require.NoError(t, err)
+				_, err = s.AssignTag(ctx, tag.ID, first.NodeID, UnconditionalRev)
+			case "re-embed":
+				record := embeddingSetFixture(ctx, s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+				vectors, vectorErr := document.NewVectorSetV1(document.VectorSetV1Input{
+					VectorSpaceFingerprint: space, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
+					Dimension: 8, InputKeys: []string{version}, InputChecksums: []string{first.BlobHash}, Values: [][]float64{{8, 7, 6, 5, 4, 3, 2, 1}},
+				})
+				require.NoError(t, vectorErr)
+				payload, checksum, vectorErr := document.EncodeVectorSetV1(vectors)
+				require.NoError(t, vectorErr)
+				record.ID = testSHA256([]byte("re-embedded-set"))
+				record.VectorSet.ID, record.VectorSet.PayloadChecksum = checksum, checksum
+				record.VectorSet.Payload, record.VectorSet.PayloadBlobHash = payload, testSHA256(payload)
+				publish(t, record, 2)
+			case "replace content":
+				_, _, err = s.ReplaceContent(ctx, first.NodeID, UnconditionalRev, testSHA256([]byte("replacement")), 11, "text/plain")
+			}
+			require.NoError(t, err)
+			source, err := s.CaptureVectorIndexSource(ctx, space)
+			require.NoError(t, err)
+			var sets []document.VectorSetV1
+			var ids []string
+			for _, member := range source.Members {
+				record := records[member.EmbeddingSetID]
+				set, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{MaxRows: 100, MaxDimension: 8, MaxBytes: len(record.VectorSet.Payload)})
+				require.NoError(t, err)
+				sets, ids = append(sets, set), append(ids, member.VectorSetID)
+			}
+			manifest, err := vectorindex.NewManifest(ids)
+			require.NoError(t, err)
+			generation, err := vectorindex.BuildGeneration(manifest, sets, vectorindex.Options{})
+			require.NoError(t, err)
+			var allowed []vectorindex.RowIdentity
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				allowed, err = semanticANNRowsTx(ctx, tx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
+				return err
+			}))
+			counted := &semanticQueryCountingQuerier{metadataQuerier: s.db}
+			rows, wholeSpace, err := semanticANNRowsForSourceTx(ctx, counted, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
+			require.NoError(t, err)
+			require.True(t, wholeSpace)
+			require.Nil(t, rows)
+			require.Zero(t, counted.queries, "unscoped acquisition must not read the catalog")
+			lexical := query.Query{Filters: query.Filters{CollapseDuplicates: true}}
+			for _, opts := range []SearchOptions{
+				{MIMEType: "application/pdf"},
+				{ContentVersionIDs: versions},
+				{PhotoScope: &PhotoBrowseRequest{}, PhotoLexicalQuery: &lexical},
+			} {
+				counted.queries = 0
+				rows, wholeSpace, err = semanticANNRowsForSourceTx(ctx, counted, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, opts)
+				require.NoError(t, err)
+				require.False(t, wholeSpace)
+				require.Positive(t, counted.queries)
+				if len(opts.ContentVersionIDs) != 0 {
+					filter, args := searchFilterSQL(opts)
+					args = append([]any{space, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile}, args...)
+					oldRows, err := s.db.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+semanticMembershipSQL(`FROM embedding_sets es`)+filter, args...)
+					require.NoError(t, err)
+					defer func() { require.NoError(t, oldRows.Close()) }()
+					var want []vectorindex.RowIdentity
+					for oldRows.Next() {
+						var row vectorindex.RowIdentity
+						require.NoError(t, oldRows.Scan(&row.SetID, &row.InputKey, &row.InputChecksum))
+						want = append(want, row)
+					}
+					require.NoError(t, oldRows.Err())
+					require.ElementsMatch(t, want, rows)
+				}
+			}
+			if source.ManifestChecksum == previousSource {
+				require.Equal(t, previousRows, allowed, "eligibility changed without moving the source manifest")
+			}
+			previousSource, previousRows = source.ManifestChecksum, allowed
+			query := []float32{1, 0, 0, 0, 0, 0, 0, 0}
+			all, err := generation.Search(query, generation.Metadata().RowCount)
+			require.NoError(t, err)
+			require.Equal(t, versions[2], all[0].InputKey, "the top neighbor belongs to another binding")
+			scoped, err := generation.SearchRows(query, allowed)
+			require.NoError(t, err)
+			for _, limit := range []int{1, 2} {
+				wholeResult, err := s.ResolveSemanticCandidates(ctx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, source.ManifestChecksum, all, limit, SearchOptions{}, nil)
+				require.NoError(t, err)
+				scopedResult, err := s.ResolveSemanticCandidates(ctx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, source.ManifestChecksum, scoped, limit, SearchOptions{}, nil)
+				require.NoError(t, err)
+				require.Equal(t, scopedResult.Candidates, wholeResult.Candidates)
+				require.Equal(t, scopedResult.Truncated, wholeResult.Truncated)
+				want := 2
+				if change == "trash" || change == "replace content" {
+					want = 1
+				}
+				require.Len(t, wholeResult.Candidates, min(limit, want), "paging must fill the page past the ineligible top neighbor")
+				if change == "trash" || change == "replace content" {
+					for _, candidate := range wholeResult.Candidates {
+						require.NotEqual(t, first.NodeID, candidate.NodeID)
+					}
+				}
+			}
+		})
+		if t.Failed() {
+			return
+		}
+	}
+}
+
+type semanticQueryCountingQuerier struct {
+	metadataQuerier
+
+	queries int
+}
+
+func (q *semanticQueryCountingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	q.queries++
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
+func (q *semanticQueryCountingQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	q.queries++
+	return q.metadataQuerier.QueryRowContext(ctx, query, args...)
 }

@@ -691,14 +691,15 @@ type SemanticSearchResolution struct {
 }
 
 // SemanticSearchAuthority pins the exact persisted vector-space descriptor and
-// one active local index generation for a query. ANNRows is the source-fenced
-// subset that must be supplied to vector search before it scores any row.
+// one active local index generation for a query. WholeSpace permits scoring the
+// entire generation; otherwise ANNRows limits scoring to the source-fenced scope.
 type SemanticSearchAuthority struct {
 	VectorSpace     EmbeddingVectorSpaceRecord
 	Lease           VectorIndexReaderLease
 	InputKind       document.EmbeddingInputKind
 	BindingRequired bool
 	ANNRows         []vectorindex.RowIdentity
+	WholeSpace      bool
 }
 
 // AcquireSemanticSearchAuthority resolves the query contract from durable E1
@@ -755,7 +756,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	release := func() {
 		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
-	current, annRows, err := s.semanticSearchAuthorityFence(ctx,
+	current, annRows, wholeSpace, err := s.semanticSearchAuthorityFence(ctx,
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
 	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
 		release()
@@ -774,12 +775,12 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
 		BindingRequired: binding.Activation == document.EmbeddingRequired,
-		ANNRows:         annRows}, nil
+		ANNRows:         annRows, WholeSpace: wholeSpace}, nil
 }
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
-) (source VectorIndexSource, annRows []vectorindex.RowIdentity, retErr error) {
+) (source VectorIndexSource, annRows []vectorindex.RowIdentity, wholeSpace bool, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
@@ -791,14 +792,25 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		if err != nil {
 			return err
 		}
-		annRows, err = semanticANNRowsTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		annRows, wholeSpace, err = semanticANNRowsForSourceTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
 		return err
 	})
-	return source, annRows, err
+	return source, annRows, wholeSpace, err
 }
 
-// semanticANNRowsTx reads the whole eligible space because SearchRows scores only
-// the supplied rows. This allowlist excludes other bindings, trashed, non-current,
+func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space string, opts SearchOptions,
+) ([]vectorindex.RowIdentity, bool, error) {
+	filter, _ := searchFilterSQL(opts)
+	if filter == "" && !opts.CollapsesPhotoDuplicates() {
+		return nil, true, nil
+	}
+	rows, err := semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts)
+	return rows, false, err
+}
+
+// semanticANNRowsTx reads eligible rows in the requested scope for SearchRows.
+// This allowlist excludes other bindings, trashed, non-current,
 // out-of-scope, and non-representative rows before scoring.
 func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
@@ -1044,6 +1056,7 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	blobHashes []string, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
 ) (retErr error) {
 	driver := `FROM embedding_sets es`
+	prefix := ""
 	var args []any
 	if blobHashes != nil {
 		encoded, err := json.Marshal(blobHashes)
@@ -1053,6 +1066,16 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 		args = append(args, string(encoded))
 		driver = `FROM json_each(?) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
    CROSS JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
+	} else if filterSQL != "" {
+		// An inner current-version join lets version fences use keyed lookups.
+		prefix = `WITH scoped_nodes AS MATERIALIZED (
+   SELECT n.id,n.current_version_id FROM nodes n
+   JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+   WHERE n.kind='file' AND n.trashed_at IS NULL ` + filterSQL + `) `
+		driver = `FROM scoped_nodes scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
+   ON es.content_version_id=scope.current_version_id`
+		args = append(args, filterArgs...)
+		filterSQL, filterArgs = "", nil
 	}
 	args = append(args, space, profile, binding, kind)
 	args = append(args, filterArgs...)
@@ -1060,7 +1083,7 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	if representativeOrder {
 		order = " ORDER BY cv.blob_hash," + DuplicateRepresentativeOrder
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
+	rows, err := tx.QueryContext(ctx, prefix+`SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
 		semanticMembershipSQL(driver)+filterSQL+order, args...)
 	if err != nil {
 		return err

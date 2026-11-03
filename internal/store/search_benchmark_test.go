@@ -212,6 +212,29 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 			tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 			require.NoError(b, err)
 			defer func() { require.NoError(b, tx.Rollback()) }()
+			for _, acquisition := range []string{"unscoped-acquisition", "cold-fenced"} {
+				b.Run(acquisition, func(b *testing.B) {
+					opts, want := SearchOptions{}, count
+					if acquisition == "cold-fenced" {
+						for _, neighbor := range neighbors[:20] {
+							opts.ContentVersionIDs = append(opts.ContentVersionIDs, neighbor.InputKey)
+						}
+						want = 20
+					}
+					b.ReportAllocs()
+					for b.Loop() {
+						rows, wholeSpace, err := semanticANNRowsForSourceTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
+						require.NoError(b, err)
+						if acquisition == "unscoped-acquisition" {
+							require.True(b, wholeSpace)
+							require.Nil(b, rows)
+						} else {
+							require.False(b, wholeSpace)
+							require.Len(b, rows, want)
+						}
+					}
+				})
+			}
 			for _, scope := range []string{"all", "narrow", "collapse"} {
 				b.Run(scope, func(b *testing.B) {
 					opts := SearchOptions{}
