@@ -46,6 +46,7 @@ type answerFakeClient struct {
 
 	results       []api.DocumentSearchResult
 	report        api.DocumentSearchReport
+	searchReport  func(api.DocumentSearchRequest) (api.DocumentSearchReport, error)
 	requests      []api.DocumentSearchRequest
 	profiles      []api.ProcessingProfileSummary
 	documents     []api.DocumentSummary
@@ -81,6 +82,13 @@ func (f *answerFakeClient) SearchDocuments(ctx context.Context, req api.Document
 	f.requests = append(f.requests, req)
 	report := f.report
 	report.Results = f.results
+	if f.searchReport != nil {
+		var err error
+		report, err = f.searchReport(req)
+		if err != nil {
+			return api.DocumentSearchReport{}, err
+		}
+	}
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		return api.DocumentSearchReport{}, err

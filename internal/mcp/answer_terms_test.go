@@ -18,15 +18,44 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-type answerTermsClient struct {
-	*answerFakeClient
+type answerTermsClient struct{ *answerFakeClient }
 
-	search func(api.DocumentSearchRequest) (api.DocumentSearchReport, error)
-}
-
-func (f *answerTermsClient) SearchDocuments(_ context.Context, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-	f.requests = append(f.requests, req)
-	return f.search(req)
+func answerTermsSearchReport(
+	req api.DocumentSearchRequest,
+	coverage api.DocumentSearchCoverage,
+	results ...api.DocumentSearchResult,
+) api.DocumentSearchReport {
+	report := api.DocumentSearchReport{
+		RequestedMode: req.Mode,
+		ActualMode:    req.Mode,
+		Coverage:      coverage,
+		Results:       slices.Clone(results),
+	}
+	for i := range report.Results {
+		result := &report.Results[i]
+		result.VaultUID = req.Fence.VaultUID
+		if result.ContentVersionID == "" && i < len(req.Fence.ContentVersionIDs) {
+			result.ContentVersionID = req.Fence.ContentVersionIDs[i]
+		}
+		result.Rank = i + 1
+		switch req.Mode {
+		case "lexical":
+			result.SemanticRank = 0
+			if result.LexicalRank == 0 {
+				result.LexicalRank = i + 1
+			}
+		case "semantic":
+			result.LexicalRank = 0
+			if result.SemanticRank == 0 {
+				result.SemanticRank = i + 1
+			}
+		case "hybrid":
+			if result.LexicalRank == 0 && result.SemanticRank == 0 {
+				result.LexicalRank = i + 1
+			}
+		}
+	}
+	return report
 }
 
 func (f *answerTermsClient) ResolveDocumentSummaries(ctx context.Context, req api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error) {
@@ -55,20 +84,30 @@ func TestAnswerQuestionTermsRecoverLexicalPassage(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &answerTermsClient{answerFakeClient: &answerFakeClient{}}
+	f.fenceVersions = []string{node.CurrentVersionID}
 	f.documents = []api.DocumentSummary{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: "lease.txt", ActiveRenditions: []api.DocumentRenditionIdentity{{AttachmentID: strings.Repeat("c", 64)}}}}
-	f.search = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+	embedding := api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)}
+	f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+		coverage := api.DocumentSearchCoverage{State: "incomplete", ScopedDocuments: 1}
+		if req.Mode == "hybrid" {
+			report := answerTermsSearchReport(req, coverage, api.DocumentSearchResult{
+				NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/lease.txt", Score: 0.7,
+				SemanticRank: 1, Evidence: []api.DocumentEvidenceReference{embedding},
+			})
+			if req.Rerank {
+				report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+			}
+			return report, nil
+		}
 		hits, _, err := catalog.SearchExplainedLexicalCandidates(t.Context(), req.Query, req.Limit, store.SearchOptions{ContentVersionIDs: []string{node.CurrentVersionID}}, req.ContentFirst)
 		if err != nil {
 			return api.DocumentSearchReport{}, err
 		}
-		report := api.DocumentSearchReport{RequestedMode: req.Mode, ActualMode: req.Mode, Coverage: api.DocumentSearchCoverage{State: "incomplete", ScopedDocuments: 1}}
+		results := make([]api.DocumentSearchResult, 0, len(hits))
 		for i, hit := range hits {
-			report.Results = append(report.Results, api.DocumentSearchResult{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID, Path: hit.Path, Rank: i + 1, LexicalRank: i + 1, Excerpt: hit.Excerpt, Evidence: []api.DocumentEvidenceReference{{Kind: hit.EvidenceKind}}})
+			results = append(results, api.DocumentSearchResult{NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID, Path: hit.Path, LexicalRank: i + 1, Excerpt: hit.Excerpt, Evidence: []api.DocumentEvidenceReference{{Kind: hit.EvidenceKind}}})
 		}
-		if req.Mode == "hybrid" && len(hits) == 0 {
-			report.Results = []api.DocumentSearchResult{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/lease.txt", Rank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "embedding", VectorSpaceID: "space"}}}}
-		}
-		return report, nil
+		return answerTermsSearchReport(req, coverage, results...), nil
 	}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	without, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"what is the renewal date of the lease"}`))
@@ -194,8 +233,8 @@ func FuzzAnswerMergeIdenticalLeads(f *testing.F) {
 		if len(data) > 30 {
 			data = data[:30]
 		}
-		question := api.DocumentSearchReport{}
-		terms := api.DocumentSearchReport{}
+		question := api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 12, CompleteDocuments: 12}}
+		terms := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 12, CompleteDocuments: 12}}
 		seen := map[byte]bool{}
 		questionVersions := map[byte]bool{}
 		termsVersions := map[byte]bool{}
@@ -258,32 +297,39 @@ func FuzzAnswerMergeTerms(f *testing.F) {
 		questionVersions := map[string]bool{}
 		termsVersions := map[string]bool{}
 		for i, id := range data {
-			version := string(rune('a' + id%12))
-			r := api.DocumentSearchResult{NodeID: int64(id%12) + 1, ContentVersionID: version, LexicalRank: 1, Excerpt: strings.Repeat("界", int(id%8)+1), Score: 0.9, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}
-			allVersions[version] = true
+			identity := int(id%12) + 1
+			version := fmt.Sprintf("00000000-0000-4000-8000-%012d", identity)
+			r := api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(identity), ContentVersionID: version, Path: fmt.Sprintf("/fixture-%d", identity), Excerpt: strings.Repeat("界", int(id%8)+1), Score: 0.9, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: fmt.Sprintf("segment-%d", identity)}}}
 			if i%2 == 0 {
-				if questionVersions[version] {
+				if questionVersions[version] || len(question.Results) == limit {
 					continue
 				}
 				questionVersions[version] = true
 				r.Rank = len(question.Results) + 1
+				r.LexicalRank = r.Rank
 				question.Results = append(question.Results, r)
+				allVersions[version] = true
 				if r.Rank <= 2 {
 					questionRelevance[r.NodeID] = r.Score
 				}
 			} else {
-				if termsVersions[version] {
+				if termsVersions[version] || len(terms.Results) == limit {
 					continue
 				}
 				termsVersions[version] = true
 				r.Rank = len(terms.Results) + 1
+				r.LexicalRank = r.Rank
 				terms.Results = append(terms.Results, r)
+				allVersions[version] = true
 			}
 		}
 		if len(question.Results) == 0 {
 			question.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 		} else {
 			question.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: min(2, len(question.Results))}
+		}
+		if len(question.Results) > limit || len(terms.Results) > limit {
+			t.Fatal("search report exceeded its requested result limit")
 		}
 		hits, truncated := mergeAnswerSearchResults(question, terms, limit)
 		again, againTruncated := mergeAnswerSearchResults(question, terms, limit)
@@ -322,12 +368,12 @@ func FuzzAnswerMergeTerms(f *testing.F) {
 
 func TestAnswerQuestionTermsFailureIsReturned(t *testing.T) {
 	failure := errors.New("terms search failed")
-	f := &answerTermsClient{answerFakeClient: &answerFakeClient{}, search: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+	f := &answerTermsClient{answerFakeClient: &answerFakeClient{searchReport: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 		if req.Mode == "lexical" {
 			return api.DocumentSearchReport{}, failure
 		}
-		return api.DocumentSearchReport{ActualMode: "hybrid"}, nil
-	}}
+		return answerTermsSearchReport(req, api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}), nil
+	}}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	_, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"question","terms":["secret"]}`))
 	if !errors.Is(err, failure) || len(f.requests) != 2 {
@@ -355,27 +401,50 @@ func TestAnswerQuestionTermsEmptyFence(t *testing.T) {
 }
 
 func TestAnswerQuestionTermsTruncated(t *testing.T) {
-	f := &answerTermsClient{answerFakeClient: &answerFakeClient{}, search: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		return api.DocumentSearchReport{ActualMode: req.Mode, Truncated: req.Mode == "lexical", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}, nil
+	f := &answerTermsClient{answerFakeClient: &answerFakeClient{
+		fenceVersions: []string{"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"},
+		searchReport: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+			coverage := api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 2, CompleteDocuments: 2}
+			if req.Mode != "lexical" {
+				return answerTermsSearchReport(req, coverage), nil
+			}
+			report := answerTermsSearchReport(req, coverage, api.DocumentSearchResult{
+				NodeID: 2, ContentVersionID: req.Fence.ContentVersionIDs[0], Path: "/fixture-terms",
+				Excerpt: "term passage", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}},
+			})
+			report.Truncated = true
+			return report, nil
+		},
 	}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["term"]}`))
-	if err != nil || out.Status != answer.IncompleteCoverage || !out.CoverageComplete || !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["term"],"limit":1}`))
+	if err != nil || out.Status != answer.Answered || !out.CoverageComplete || len(out.Passages) != 1 || out.Receipt.ObservedScopeCount != 2 || !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 }
 
 func TestAnswerQuestionTermsLimitAndPassageBudget(t *testing.T) {
-	f := &answerTermsClient{answerFakeClient: &answerFakeClient{}, search: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		report := api.DocumentSearchReport{RequestedMode: req.Mode, ActualMode: req.Mode, Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}
-		for i := 1; i <= 2; i++ {
-			nodeID := int64(i)
-			if req.Mode == "lexical" {
-				nodeID += 2
+	fenceVersions := []string{
+		"00000000-0000-4000-8000-000000000001",
+		"00000000-0000-4000-8000-000000000002",
+		"00000000-0000-4000-8000-000000000003",
+		"00000000-0000-4000-8000-000000000004",
+	}
+	f := &answerTermsClient{answerFakeClient: &answerFakeClient{
+		fenceVersions: fenceVersions,
+		searchReport: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+			results := make([]api.DocumentSearchResult, 0, 2)
+			for i := 1; i <= 2; i++ {
+				nodeID := int64(i)
+				if req.Mode == "lexical" {
+					nodeID += 2
+				}
+				version := fmt.Sprintf("00000000-0000-4000-8000-%012d", nodeID)
+				results = append(results, api.DocumentSearchResult{NodeID: nodeID, ContentVersionID: version, Path: fmt.Sprintf("/fixture-%d", nodeID), LexicalRank: i, Excerpt: strings.Repeat("界", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: fmt.Sprintf("segment-%d", nodeID)}}})
 			}
-			report.Results = append(report.Results, api.DocumentSearchResult{NodeID: nodeID, ContentVersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", nodeID), Path: "/fixture", Rank: i, LexicalRank: i, Excerpt: strings.Repeat("界", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: req.Mode, SegmentID: string(rune('a' + i))}}})
-		}
-		return report, nil
+			coverage := api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 4, CompleteDocuments: 4}
+			return answerTermsSearchReport(req, coverage, results...), nil
+		},
 	}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["term"],"limit":3,"max_passage_bytes":2048}`))
@@ -385,9 +454,9 @@ func TestAnswerQuestionTermsLimitAndPassageBudget(t *testing.T) {
 }
 
 func TestAnswerQuestionTermsReceiptHashesExecutedQueryWithoutEcho(t *testing.T) {
-	f := &answerTermsClient{answerFakeClient: &answerFakeClient{}, search: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		return api.DocumentSearchReport{RequestedMode: req.Mode, ActualMode: req.Mode, Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}, nil
-	}}
+	f := &answerTermsClient{answerFakeClient: &answerFakeClient{searchReport: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+		return answerTermsSearchReport(req, api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}), nil
+	}}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":[" classified "," token "]}`))
 	if err != nil {
