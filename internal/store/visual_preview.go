@@ -202,7 +202,7 @@ func (s *Store) VisualPreviewGenerationByRecipe(
 func visualPreviewGenerationByRecipeTx(
 	ctx context.Context, q metadataQuerier, versionID, recipeFingerprint string,
 ) (VisualPreviewGeneration, error) {
-	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=? AND recipe_fingerprint=?`, versionID, recipeFingerprint))
+	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=$1 AND recipe_fingerprint=$2`, versionID, recipeFingerprint))
 }
 
 const visualPreviewGenerationColumns = `generation_id,vault_uid,content_version_id,

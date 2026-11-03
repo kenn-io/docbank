@@ -20,5 +20,5 @@ func currentImageEmbeddingRecipeSQL(version, evidence, recipe string) string {
 }
 
 func currentImageEmbeddingPreviewSQL(version, previewPredicate string) string {
-	return `EXISTS(SELECT 1 FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id JOIN nodes n ON n.id=f.node_id JOIN visual_preview_generations image_preview ON image_preview.content_version_id=` + version + ` WHERE f.asset_id=a.asset_id AND n.current_version_id=` + version + ` AND ` + photoDescriptionEligibility + ` AND ` + previewPredicate + ` AND image_preview.state='ready')`
+	return `EXISTS(SELECT 1 FROM content_versions image_version JOIN nodes n ON n.id=image_version.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.display_file_id=f.file_id JOIN visual_preview_generations image_preview ON image_preview.content_version_id=image_version.version_id WHERE image_version.version_id=` + version + ` AND f.asset_id=a.asset_id AND n.current_version_id=image_version.version_id AND ` + photoDescriptionEligibility + ` AND ` + previewPredicate + ` AND image_preview.state='ready')`
 }

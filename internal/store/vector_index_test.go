@@ -72,6 +72,16 @@ func TestReviewCaptureRejectsNewerDescriptor(t *testing.T) {
 	require.ErrorContains(t, err, "embedding descriptor contract version")
 }
 
+func TestImageEmbeddingEligibilityUsesVersionIndex(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	record, _ := f.publish(t)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	plan := explainQueryPlan(t, f.s, `SELECT `+imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "?")+` FROM embedding_input_generations g WHERE g.generation_id=?`, fingerprints.GridRecipe, record.InputGeneration.ID)
+	require.Contains(t, plan, "SEARCH n USING INTEGER PRIMARY KEY", plan)
+}
+
 func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)

@@ -2116,6 +2116,29 @@ func TestEnqueueEmbeddingJobMissingImagePreview(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestEnqueueEmbeddingJobRejectsNewerPreview(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	preview, err := f.s.VisualPreviewGenerationByRecipe(t.Context(), f.node.CurrentVersionID, fingerprints.GridRecipe)
+	require.NoError(t, err)
+	canonical := bytes.ReplaceAll(preview.CanonicalResult, []byte("visual-preview/v1"), []byte("visual-preview/v999"))
+	checksum := testSHA256(canonical)
+	_, err = f.s.db.ExecContext(t.Context(), `DROP TRIGGER visual_preview_generations_immutable_update`)
+	require.NoError(t, err)
+	_, err = f.s.db.ExecContext(t.Context(), `DELETE FROM visual_preview_heads WHERE content_version_id=?`, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	_, err = f.s.db.ExecContext(t.Context(), `UPDATE visual_preview_generations SET canonical_result=?,checksum=?,generation_id=?,contract_version=? WHERE content_version_id=?`, canonical, checksum, visualPreviewGenerationID(f.node.CurrentVersionID, preview.RecipeFingerprint, checksum), "visual-preview/v999", f.node.CurrentVersionID)
+	require.NoError(t, err)
+	f.request.InputGeneration.EvidenceFingerprint = checksum
+	f.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, f.request.BindingID, checksum)
+	_, err = f.s.VisualPreviewGenerationByRecipe(t.Context(), f.node.CurrentVersionID, preview.RecipeFingerprint)
+	require.ErrorContains(t, err, "canonical identity validation")
+	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.ErrorContains(t, err, "canonical identity validation")
+}
+
 func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)

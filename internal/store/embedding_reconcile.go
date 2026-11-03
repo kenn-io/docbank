@@ -515,8 +515,8 @@ func validateImageEmbeddingGenerationTx(ctx context.Context, tx *sql.Tx, generat
 	return validateImageEmbeddingPreviewTx(ctx, tx, generation)
 }
 
-// imageEmbeddingPreviewEligibilitySQL owns the preview, evidence, input-shape,
-// and photo checks for both publication and source capture. g names the generation.
+// imageEmbeddingPreviewEligibilitySQL checks retained preview eligibility for
+// source capture. g names the generation.
 func imageEmbeddingPreviewEligibilitySQL(inputs, recipe string) string {
 	return `COALESCE(g.attachment_id,'')='' AND COALESCE(g.generation_blob_hash,'')='' AND g.input_count=1 AND
 		EXISTS(SELECT 1 FROM ` + inputs + ` i WHERE i.generation_id=g.generation_id
@@ -525,36 +525,22 @@ func imageEmbeddingPreviewEligibilitySQL(inputs, recipe string) string {
 }
 
 func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord) error {
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
-	if err != nil {
-		return err
-	}
-	var first EmbeddingInputReference
-	if len(generation.Inputs) != 0 {
-		first = generation.Inputs[0]
-	}
-	var eligible bool
-	// Publication also validates generations before their input rows are stored.
-	err = tx.QueryRowContext(ctx, `WITH g AS (SELECT $1 AS generation_id,$2 AS source_version_id,$3 AS evidence_fingerprint,
-		$4 AS attachment_id,$5 AS generation_blob_hash,CAST($6 AS INTEGER) AS input_count,$7 AS generation_checksum),
-		inputs AS (SELECT $1 AS generation_id,$8 AS input_id,$9 AS rendered_checksum)
-		SELECT `+imageEmbeddingPreviewEligibilitySQL("inputs", "$10")+` FROM g`,
-		generation.ID, generation.SourceVersionID, generation.EvidenceFingerprint, generation.AttachmentID,
-		generation.GenerationBlobHash, len(generation.Inputs), generation.GenerationChecksum, first.ID, first.RenderedChecksum, fingerprints.GridRecipe).Scan(&eligible)
+	eligible, err := photoDescriptionEligibleTx(ctx, tx, generation.SourceVersionID)
 	if err != nil {
 		return err
 	}
 	if !eligible {
-		// Preserve the preview lookup error for an otherwise eligible photo.
-		photoEligible, err := photoDescriptionEligibleTx(ctx, tx, generation.SourceVersionID)
-		if err != nil {
-			return err
-		}
-		if photoEligible {
-			if _, err := visualPreviewGenerationByRecipeTx(ctx, tx, generation.SourceVersionID, fingerprints.GridRecipe); err != nil {
-				return err
-			}
-		}
+		return ErrEmbeddingJobFenced
+	}
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return err
+	}
+	preview, err := visualPreviewGenerationByRecipeTx(ctx, tx, generation.SourceVersionID, fingerprints.GridRecipe)
+	if err != nil {
+		return err
+	}
+	if preview.Preview.State != document.VisualPreviewReady || generation.EvidenceFingerprint != preview.Checksum || generation.AttachmentID != "" || generation.GenerationBlobHash != "" || len(generation.Inputs) != 1 || generation.Inputs[0] != (EmbeddingInputReference{ID: generation.SourceVersionID, RenderedChecksum: generation.GenerationChecksum}) {
 		return ErrEmbeddingJobFenced
 	}
 	return nil
