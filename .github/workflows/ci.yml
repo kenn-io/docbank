@@ -96,9 +96,10 @@ jobs:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
         run: make test-pg PG_SUITE=postgres-${{ matrix.version }}
 
-      # gotestsum writes a reruns file only after it reran a failed test.
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-postgres-${{ matrix.version }}-attempt-${{ github.run_attempt }}
@@ -174,9 +175,10 @@ jobs:
           node --test scripts/docs/*.test.mjs
           make docs-build
 
-      # gotestsum writes a reruns file only after it reran a failed test.
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-docs-bridge-contract-attempt-${{ github.run_attempt }}
@@ -411,9 +413,10 @@ jobs:
           --rerun-fails=2 --rerun-fails-report gotestsum/linux-amd64-cgo-modernc-restore-reruns.txt
           --packages ./docbank -- -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$'
 
-      # gotestsum writes a reruns file only after it reran a failed test.
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-linux-amd64-cgo-attempt-${{ github.run_attempt }}
@@ -462,9 +465,10 @@ jobs:
       - name: Test
         run: bash scripts/test-go-ci.sh
 
-      # gotestsum writes a reruns file only after it reran a failed test.
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-linux-amd64-purego-attempt-${{ github.run_attempt }}
@@ -505,9 +509,10 @@ jobs:
       - name: Test
         run: bash scripts/test-go-ci.sh
 
-      # gotestsum writes a reruns file only after it reran a failed test.
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-darwin-arm64-cgo-attempt-${{ github.run_attempt }}
@@ -668,9 +673,10 @@ jobs:
         shell: pwsh
         run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4
 
-      # gotestsum writes a reruns file only after it reran a failed test.
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-${{ matrix.goarch }}-shard-${{ matrix.shard || 'all' }}-attempt-${{ github.run_attempt }}
