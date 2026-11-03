@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-03
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -15,6 +15,16 @@ Standalone MCP is a client of the selected vault's daemon. It discovers or
 starts that daemon the same way the CLI does and never opens `docbank.db`, a
 blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
 no remote-daemon option.
+
+## Server identity
+
+Stdio and HTTP clients receive Docbank's website and icon in `server/discover`
+metadata. The icon is an embedded PNG data URI, so clients can load it without
+an external request. Whether it appears depends on the client.
+
+Standalone and daemon-hosted MCP HTTP listeners also serve that PNG at
+`/icon.png` and `/favicon.ico`. These public image routes accept GET and HEAD
+without a bearer token. `/mcp` keeps its required bearer authentication.
 
 ## Start the server
 

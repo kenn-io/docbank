@@ -74,6 +74,10 @@ func defaultImplementation() *sdkmcp.Implementation {
 		Title:       "Docbank",
 		Description: "Self-sovereign document system",
 		Version:     version.Version,
+		WebsiteURL:  "https://docbank.ai",
+		Icons: []sdkmcp.Icon{{
+			Source: serverIconSource, MIMEType: "image/png", Sizes: []string{"256x256"},
+		}},
 	}
 }
 
