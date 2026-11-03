@@ -319,7 +319,7 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		if terms, ok := arguments["terms"].([]any); ok {
 			for _, term := range terms {
-				if strings.TrimSpace(term.(string)) == "" {
+				if strings.TrimSpace(term.(string)) != term.(string) {
 					return false
 				}
 			}

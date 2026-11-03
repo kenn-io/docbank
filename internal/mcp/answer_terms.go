@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"reflect"
+	"slices"
 
 	"go.kenn.io/docbank/internal/api"
 )
@@ -11,13 +12,10 @@ type answerSearchHit struct {
 	relevance *float64
 }
 
-func answerSearchHits(report api.DocumentSearchReport, allowRelevance bool) []answerSearchHit {
+func answerSearchHits(report api.DocumentSearchReport) []answerSearchHit {
 	hits := make([]answerSearchHit, 0, len(report.Results))
 	for index, result := range report.Results {
-		hit := answerSearchHit{result: result}
-		if allowRelevance {
-			hit.relevance = searchRerankRelevance(result, index, report.Reranking)
-		}
+		hit := answerSearchHit{result: result, relevance: searchRerankRelevance(result, index, report.Reranking)}
 		hits = append(hits, hit)
 	}
 	return hits
@@ -70,7 +68,7 @@ func mergeAnswerSearchResults(questionHits []answerSearchHit, terms []api.Docume
 				questionIndex++
 			}
 			candidate := answerSearchHit{result: report.Results[index]}
-			if !answerSearchHitExists(seen, candidate) {
+			if !slices.ContainsFunc(seen, func(existing answerSearchHit) bool { return sameAnswerSearchResult(existing.result, candidate.result) }) {
 				merged = append(merged, candidate)
 				seen = append(seen, candidate)
 			}
@@ -86,13 +84,4 @@ func mergeAnswerSearchResults(questionHits []answerSearchHit, terms []api.Docume
 		merged[index].result.Rank = index + 1
 	}
 	return merged, truncated
-}
-
-func answerSearchHitExists(hits []answerSearchHit, candidate answerSearchHit) bool {
-	for _, existing := range hits {
-		if sameAnswerSearchResult(existing.result, candidate.result) {
-			return true
-		}
-	}
-	return false
 }

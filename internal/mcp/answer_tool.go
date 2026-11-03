@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -151,9 +152,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		input.MaxPassageBytes = 12288
 	}
 	hash := sha256.Sum256([]byte(input.Question))
-	for i := range input.Terms {
-		input.Terms[i] = strings.TrimSpace(input.Terms[i])
-	}
 	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
 		fence     api.DocumentSourceFenceResolution
@@ -220,7 +218,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				return response{}, err
 			}
 		}
-		hits := answerSearchHits(report, true)
+		hits := answerSearchHits(report)
 		truncated := report.Truncated
 		if len(input.Terms) > 0 {
 			reports := make([]api.DocumentSearchReport, 0, len(input.Terms))
@@ -342,7 +340,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if (out.OmittedPassages > 0 || out.OmittedLeads > 0) && !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
 			out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 		}
-		out.Receipt.VectorSpaceIDs = out.Receipt.VectorSpaceIDs[:0]
 		spaces := map[string]bool{}
 		retained := map[answerCitation]bool{}
 		for _, p := range out.Passages {
@@ -353,7 +350,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		for _, hit := range result.hits {
 			item := hit.result
-			if !retained[answerCitation{item.NodeID, item.ContentVersionID}] {
+			if !slices.ContainsFunc(out.Passages, func(p answer.Passage) bool { return p.Rank == item.Rank }) && !slices.ContainsFunc(out.Leads, func(l answer.Lead) bool { return l.Rank == item.Rank }) {
 				continue
 			}
 			for _, evidence := range item.Evidence {
@@ -362,9 +359,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				}
 			}
 		}
-		for space := range spaces {
-			out.Receipt.VectorSpaceIDs = append(out.Receipt.VectorSpaceIDs, space)
-		}
+		out.Receipt.VectorSpaceIDs = slices.AppendSeq(out.Receipt.VectorSpaceIDs[:0], maps.Keys(spaces))
 		slices.Sort(out.Receipt.VectorSpaceIDs)
 		out.Receipt.CitedVersions = out.Receipt.CitedVersions[:0]
 		for _, p := range out.Passages {
@@ -376,6 +371,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			}
 			return cmp.Compare(a.ContentVersionID, b.ContentVersionID)
 		})
+		out.Receipt.CitedVersions = slices.Compact(out.Receipt.CitedVersions)
 		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.truncated
 		out.Status = answer.Classify(answer.Evidence{Passages: out.Passages, Leads: out.Leads}, out.CoverageComplete, omitted)
 		links := linksFor(retained)

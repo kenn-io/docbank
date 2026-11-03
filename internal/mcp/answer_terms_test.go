@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func (f *answerTermsClient) ResolveDocumentSummaries(ctx context.Context, req ap
 func answerTermsSearchReport(req api.DocumentSearchRequest, results ...api.DocumentSearchResult) api.DocumentSearchReport {
 	report := api.DocumentSearchReport{
 		RequestedMode: req.Mode, ActualMode: req.Mode,
-		Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: len(req.Fence.ContentVersionIDs), CompleteDocuments: len(req.Fence.ContentVersionIDs)},
+		Coverage: answerTermsSearchCoverage(req),
 		Results:  slices.Clone(results),
 	}
 	for i := range report.Results {
@@ -51,6 +52,13 @@ func answerTermsSearchReport(req api.DocumentSearchRequest, results ...api.Docum
 		}
 	}
 	return report
+}
+
+func answerTermsSearchCoverage(req api.DocumentSearchRequest) api.DocumentSearchCoverage {
+	if req.Mode == "lexical" {
+		return api.DocumentSearchCoverage{State: "unknown"}
+	}
+	return api.DocumentSearchCoverage{State: "complete", ScopedDocuments: len(req.Fence.ContentVersionIDs), CompleteDocuments: len(req.Fence.ContentVersionIDs)}
 }
 
 func TestAnswerQuestionTermsRecoverLexicalPassage(t *testing.T) {
@@ -232,10 +240,62 @@ func TestAnswerQuestionTermsSchema(t *testing.T) {
 	}
 	fixture := newNativeExportFixture(t)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, fixture.lease)
-	for _, terms := range [][]string{{" "}, {"lease", "\t\n"}} {
+	for _, terms := range [][]string{{" "}, {"lease", "\t\n"}, {" lease", "lease"}, {"lease "}, {"\tlease"}, {"lease\n"}} {
 		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": map[string]any{"question": "q", "terms": terms}}))
 		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
 	}
+}
+
+func TestAnswerQuestionTermsRetainedReceipt(t *testing.T) {
+	fixture := newNativeExportFixture(t)
+	member := fixture.addFile(t, "lease.txt", "Lease renewal and termination.")
+	leadMember := fixture.addFile(t, "index.txt", "Index")
+	for _, budget := range []int{5, 100} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: []string{member.VersionID, leadMember.VersionID}}, summaries: daemonDocumentClient{fixture.connection}}
+			space := strings.Repeat("c", 64)
+			f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+				result := api.DocumentSearchResult{NodeID: member.NodeID, ContentVersionID: member.VersionID, Path: "/lease.txt", Excerpt: "Lease renewal", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}}
+				if req.Mode == "hybrid" {
+					result.Evidence = append(result.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: space, EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)})
+					lead := api.DocumentSearchResult{NodeID: leadMember.NodeID, ContentVersionID: leadMember.VersionID, Path: "/index.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
+					return answerTermsSearchReport(req, lead, result), nil
+				} else {
+					result.Excerpt = "Lease"
+				}
+				return answerTermsSearchReport(req, result), nil
+			}
+			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+			raw := fmt.Appendf(nil, `{"question":"renewal","terms":["lease"],"max_passage_bytes":%d}`, budget)
+			out, _, err := answerQuestion(t.Context(), session, raw)
+			require.NoError(t, err)
+			if budget == 5 {
+				require.Len(t, out.Passages, 1)
+				require.Equal(t, "Lease", out.Passages[0].Text)
+				require.Empty(t, out.Receipt.VectorSpaceIDs)
+			} else {
+				require.Len(t, out.Passages, 2)
+				require.Equal(t, []string{space}, out.Receipt.VectorSpaceIDs)
+			}
+			require.Equal(t, []answerCitation{{NodeID: member.NodeID, ContentVersionID: member.VersionID}}, out.Receipt.CitedVersions)
+		})
+	}
+}
+
+func TestAnswerQuestionTermsLexicalCoverage(t *testing.T) {
+	f := &answerFakeClient{
+		profiles: []api.ProcessingProfileSummary{{Name: "default", Fingerprint: strings.Repeat("a", 64)}},
+		searchReport: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+			return answerTermsSearchReport(req), nil
+		},
+	}
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["lease"]}`))
+	require.NoError(t, err)
+	require.Equal(t, "unknown", out.Receipt.Coverage.State)
+	require.Zero(t, out.Receipt.Coverage.CompleteDocuments)
+	require.False(t, out.CoverageComplete)
+	require.Contains(t, out.CoverageReasons, "embeddings_incomplete")
 }
 
 func TestAnswerQuestionTermsEmptyFence(t *testing.T) {
@@ -268,7 +328,7 @@ func TestAnswerQuestionTermsReceiptWithoutEcho(t *testing.T) {
 		return answerTermsSearchReport(req), nil
 	}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":[" classified "," token "]}`))
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["classified","token"]}`))
 	require.NoError(t, err)
 	require.Equal(t, "classified", f.requests[1].Query)
 	require.Equal(t, "token", f.requests[2].Query)
