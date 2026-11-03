@@ -301,6 +301,7 @@ var (
 // WriteRevision changes after committed storage writes. All users of this Store
 // and its writer observe the same revision. A reopened Store starts unsettled.
 func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
+
 // withReadTx runs a consistent snapshot without reserving the writer.
 func (s *Store) withReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
