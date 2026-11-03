@@ -383,7 +383,8 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			AND (j.state<>'running' OR j.lease_expires_at<=$4)
 			  AND NOT EXISTS(SELECT 1 FROM embedding_heads h
 			    JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
-			    WHERE h.content_version_id=j.content_version_id AND h.binding_id=j.binding_id
+			    WHERE h.content_version_id=j.content_version_id AND h.profile_fingerprint=j.profile_fingerprint
+			      AND h.binding_id=j.binding_id
 			      AND h.input_kind=j.input_kind AND s.profile_fingerprint=j.profile_fingerprint
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
