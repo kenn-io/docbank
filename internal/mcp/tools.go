@@ -75,7 +75,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
+	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Lexical passages require every question word in one passage. Optional terms are searched separately; every word within a term must appear in one passage. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -316,6 +316,13 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		question, _ := arguments["question"].(string)
 		if strings.TrimSpace(question) == "" {
 			return false
+		}
+		if terms, ok := arguments["terms"].([]any); ok {
+			for _, term := range terms {
+				if strings.TrimSpace(term.(string)) == "" {
+					return false
+				}
+			}
 		}
 		if _, binding := arguments["binding_id"]; binding {
 			if _, profile := arguments["profile"]; !profile {

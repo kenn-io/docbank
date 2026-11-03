@@ -151,18 +151,18 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		input.MaxPassageBytes = 12288
 	}
 	hash := sha256.Sum256([]byte(input.Question))
+	termsHashInput := strings.TrimSpace(strings.Join(input.Terms, " "))
 	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
-		fence         api.DocumentSourceFenceResolution
-		profile       api.ProcessingProfileSummary
-		binding       string
-		report        api.DocumentSearchReport
-		hits          []answerSearchHit
-		failure       string
-		executed      bool
-		termsSearched bool
-		truncated     bool
-		documents     []api.DocumentSummary
+		fence     api.DocumentSourceFenceResolution
+		profile   api.ProcessingProfileSummary
+		binding   string
+		report    api.DocumentSearchReport
+		hits      []answerSearchHit
+		failure   string
+		executed  bool
+		truncated bool
+		documents []api.DocumentSummary
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
 		filters := input.Filters
@@ -220,25 +220,24 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		hits := answerSearchHits(report, true)
 		truncated := report.Truncated
-		termsSearched := false
 		if len(input.Terms) > 0 {
-			termsQuery := strings.TrimSpace(strings.Join(input.Terms, " "))
-			termsReport, termsErr := run(termsQuery, selected.Name, "", "lexical", false)
-			if termsErr != nil {
-				return response{}, termsErr
+			reports := make([]api.DocumentSearchReport, 0, len(input.Terms))
+			for _, term := range input.Terms {
+				termsReport, termsErr := run(strings.TrimSpace(term), selected.Name, "", "lexical", false)
+				if termsErr != nil {
+					return response{}, termsErr
+				}
+				reports = append(reports, termsReport)
 			}
+			termsReport := interleaveAnswerTerms(reports)
 			var mergeTruncated bool
 			hits, mergeTruncated = mergeAnswerSearchResults(report, termsReport, input.Limit)
 			truncated = truncated || termsReport.Truncated || mergeTruncated
-			termsSearched = len(fence.Fence.ContentVersionIDs) > 0
 		}
-		results := make([]api.DocumentSearchResult, len(hits))
-		for index, hit := range hits {
-			results[index] = hit.result
-		}
-		uniqueResults := make([]api.DocumentSearchResult, 0, len(results))
-		seenDocuments := make(map[api.DocumentIdentity]struct{}, len(results))
-		for _, item := range results {
+		uniqueResults := make([]api.DocumentSearchResult, 0, len(hits))
+		seenDocuments := make(map[api.DocumentIdentity]struct{}, len(hits))
+		for _, hit := range hits {
+			item := hit.result
 			identity := api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}
 			if _, exists := seenDocuments[identity]; exists {
 				continue
@@ -250,7 +249,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		return response{fence: fence, profile: selected, binding: binding, report: report, hits: hits, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, termsSearched: termsSearched, truncated: truncated, documents: docs}, nil
+		return response{fence: fence, profile: selected, binding: binding, report: report, hits: hits, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, truncated: truncated, documents: docs}, nil
 	})
 	if err != nil {
 		if code, count := stableDomainError(err); code == "scope_too_large" {
@@ -267,10 +266,9 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	out.Receipt.Profile = &answerProfile{Name: result.profile.Name, Fingerprint: result.profile.Fingerprint}
 	out.Receipt.BindingID = result.binding
 	out.Receipt.SearchExecuted = result.executed
-	out.Receipt.TermsSearched = result.termsSearched
-	if result.termsSearched {
-		termsQuery := strings.TrimSpace(strings.Join(input.Terms, " "))
-		termsHash := sha256.Sum256([]byte(termsQuery))
+	out.Receipt.TermsSearched = result.executed && len(input.Terms) > 0
+	if out.Receipt.TermsSearched {
+		termsHash := sha256.Sum256([]byte(termsHashInput))
 		out.Receipt.TermsSHA256 = hex.EncodeToString(termsHash[:])
 	}
 	if result.executed {

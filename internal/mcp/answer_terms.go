@@ -46,14 +46,14 @@ func sameAnswerSearchResult(a, b api.DocumentSearchResult) bool {
 	if !aHasContent {
 		return sameAnswerLead(a, b)
 	}
-	if a.ContentVersionID != b.ContentVersionID || (a.ContentVersionID == "" && a.NodeID != b.NodeID) {
+	if a.ContentVersionID != b.ContentVersionID {
 		return false
 	}
 	return reflect.DeepEqual(answerContentEvidence(a), answerContentEvidence(b))
 }
 
 func mergeAnswerSearchResults(question, terms api.DocumentSearchReport, limit int) ([]answerSearchHit, bool) {
-	questionHits := uniqueAnswerSearchHits(answerSearchHits(question, true), nil)
+	questionHits := answerSearchHits(question, true)
 	termsHits := answerSearchHits(terms, false)
 	merged := make([]answerSearchHit, 0, len(questionHits)+len(termsHits))
 
@@ -71,9 +71,6 @@ func mergeAnswerSearchResults(question, terms api.DocumentSearchReport, limit in
 		}
 	}
 
-	if limit < 0 {
-		limit = 0
-	}
 	truncated := len(merged) > limit
 	if truncated {
 		merged = merged[:limit]
@@ -84,26 +81,21 @@ func mergeAnswerSearchResults(question, terms api.DocumentSearchReport, limit in
 	return merged, truncated
 }
 
-// uniqueAnswerSearchHits keeps the first representation of each result. In
-// particular, callers pass question hits as prior results so a terms match
-// cannot replace its excerpt, evidence, or reranker score.
-func uniqueAnswerSearchHits(hits, prior []answerSearchHit) []answerSearchHit {
-	unique := make([]answerSearchHit, 0, len(hits))
-	for _, hit := range hits {
-		duplicate := false
-		for _, existing := range prior {
-			if sameAnswerSearchResult(existing.result, hit.result) {
-				duplicate = true
-				break
+func interleaveAnswerTerms(reports []api.DocumentSearchReport) api.DocumentSearchReport {
+	var combined api.DocumentSearchReport
+	maxResults := 0
+	for _, report := range reports {
+		combined.Truncated = combined.Truncated || report.Truncated
+		maxResults = max(maxResults, len(report.Results))
+	}
+	for index := range maxResults {
+		for _, report := range reports {
+			if index < len(report.Results) {
+				combined.Results = append(combined.Results, report.Results[index])
 			}
 		}
-		if duplicate {
-			continue
-		}
-		unique = append(unique, hit)
-		prior = append(prior, hit)
 	}
-	return unique
+	return combined
 }
 
 func answerSearchHitExists(hits []answerSearchHit, candidate answerSearchHit) bool {

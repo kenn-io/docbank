@@ -388,12 +388,13 @@ secrets, daemon keys, or unrequested document text.
 
 `answer_question` returns evidence without writing an answer. By default,
 content passages require every word of `question` to appear in one segment. You
-can supply one to eight optional `terms` (each 1–64 characters) to search for
-additional lexical matches. The terms are joined with spaces and searched in
-the same resolved scope and selected profile, without reranking. Question and
+can supply one to eight optional nonblank `terms` (each 1–64 characters) to search for
+additional lexical matches. Each term is searched separately; all words within
+one term must appear in one passage. Searches use the same resolved scope and
+selected profile, without reranking. Terms results alternate across terms. Question and
 terms results are interleaved with question results first, duplicate evidence
 is removed, and the combined list observes `limit`. The receipt records whether
-the terms search ran and its query hash; it never returns the terms themselves.
+terms searches ran and a hash of the terms; it never returns the terms themselves.
 `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the
 question. Open the source to verify any quotation: excerpts can include omission
