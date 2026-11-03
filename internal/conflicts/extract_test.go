@@ -2300,6 +2300,15 @@ func TestExtractIndependentPeriodScopes(t *testing.T) {
 }
 
 func TestExtractRejectsPostfixBounds(t *testing.T) {
+	for _, text := range []string{
+		"The fee is $5 [maximum ] per 2 devices.",
+		"The fee is $5 (maximum ) per 2 devices.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("postfix bound with trailing wrapper whitespace exposed rate figures for %q: %+v", text, got)
+		}
+	}
+
 	{
 		got := Extract("The wait is 7 days max. The fee is $3.")
 		if len(got) != 1 || got[0].Text != "$3" {
@@ -2564,6 +2573,9 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. before no more than 10 min.",
 		"The deadline is 7 min. After ~10 min.",
 		"The deadline is 7 min. before 10 minutes and $5 is charged.",
+		"The deadline is 7 min. before a quarter of an hour.",
+		"The deadline is 7 min. before three quarters of an hour.",
+		"The deadline is 7 min. before one and a half hours.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("relative duration comparison retained exact figures for %q: %+v", text, got)
@@ -2622,6 +2634,8 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 		"The wait is 7 min. After seven point five minutes, $5 is charged.",
 		"The wait is 7 min. After twenty-one minutes customers pay $5.",
 		"The wait is 7 min. After twenty-one minutes, $5 is charged.",
+		"The wait is 7 min. After 10⁶ minutes customers pay $5.",
+		"The wait is 7 min. After 10⁶ minutes, $5 is charged.",
 	} {
 		t.Run(text, func(t *testing.T) {
 			got := Extract(text)
@@ -2642,6 +2656,18 @@ func TestExtractRejectsCoordinatedRelativeDurationContinuations(t *testing.T) {
 		text := "The deadline is 7 min. before 10 minutes " + conjunction + " the monthly fee is $5."
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("coordinated continuation split an unsupported relative-duration clause for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractRejectsUnsupportedDurationAlternativesAfterAbbreviation(t *testing.T) {
+	for _, text := range []string{
+		"The wait is 7 min. or thirty minutes.",
+		"The wait is 7 min. or a quarter of an hour.",
+		"The wait is 7 min. or one and a half hours.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("unsupported duration alternative retained an endpoint for %q: %+v", text, got)
 		}
 	}
 }
