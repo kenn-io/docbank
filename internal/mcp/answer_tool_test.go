@@ -413,6 +413,10 @@ func TestAnswerQuestionOversizedRerankerReceipt(t *testing.T) {
 func rerankerIdentityClient(receipt *api.DocumentSearchRerankingReceipt) *answerTermsClient {
 	f := &answerTermsClient{answerFakeClient: &answerFakeClient{
 		fenceVersions: []string{"00000000-0000-4000-8000-000000000002"},
+		documents: []api.DocumentSummary{{
+			NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002",
+			Path: "/example", Name: "example", MediaType: "text/plain", ActiveRenditions: []api.DocumentRenditionIdentity{},
+		}},
 		report: api.DocumentSearchReport{
 			Reranking: receipt,
 			Coverage:  api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1},
@@ -426,8 +430,9 @@ func rerankerIdentityClient(receipt *api.DocumentSearchRerankingReceipt) *answer
 			}},
 		}},
 	}}
+	f.summaries = f.answerFakeClient
 	f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		report := answerTermsSearchReport(req, f.report.Coverage, f.results...)
+		report := answerTermsSearchReport(req, f.results...)
 		report.Reranking = f.report.Reranking
 		report.Degradations = slices.Clone(f.report.Degradations)
 		return report, nil
