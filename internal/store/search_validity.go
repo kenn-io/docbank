@@ -43,7 +43,7 @@ func (s *Store) SearchResultValidity(ctx context.Context, scope SearchOptions, n
  LEFT JOIN node_effective_windows sw ON sw.node_id=edge.successor_node_id
  ORDER BY n.id,edge.successor_node_id`
 	args = append([]any{string(encoded)}, args...)
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}

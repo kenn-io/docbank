@@ -590,7 +590,10 @@ var backendSuites = []backendSuite{
 			checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "search-validity", postgres: "native reads", scope: "Reads direct in-scope validity; declaration writes remain SQLite-only.", scenarios: []backendScenario{{"SearchValidity", checkSearchValiditySQLite, checkSearchValidityPostgres}}},
+	{name: "search-validity", postgres: "native reads", scope: "Reads direct in-scope validity; declaration writes remain SQLite-only.", scenarios: []backendScenario{
+		{"SearchValidity", checkSearchValiditySQLite, checkSearchValidityPostgres},
+		{"SearchValiditySnapshot", nil, checkSearchValiditySnapshotPostgres},
+	}},
 	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; includes native image preparation; excludes ranked search.", scenarios: []backendScenario{
 		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
