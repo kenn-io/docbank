@@ -23,6 +23,7 @@ type backendSuite struct {
 
 var backendSuites = []backendSuite{
 	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; excludes image preparation and ranked search.", scenarios: []backendScenario{
+		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
 			t.Helper()
 			checkEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t, newTestStore)
