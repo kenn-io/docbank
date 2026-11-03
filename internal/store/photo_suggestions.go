@@ -66,8 +66,12 @@ const photoDescriptionEligibility = `a.kind='photo' AND ` + liveIncludedDisplayP
 
 func photoDescriptionEligibleTx(ctx context.Context, q metadataQuerier, versionID string) (bool, error) {
 	var eligible bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+`)`, versionID).Scan(&eligible)
+	err := q.QueryRowContext(ctx, `SELECT `+photoDescriptionEligibilitySQL("$1"), versionID).Scan(&eligible)
 	return eligible, err
+}
+
+func photoDescriptionEligibilitySQL(version string) string {
+	return `EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=` + version + ` AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND ` + photoDescriptionEligibility + `)`
 }
 
 // PhotoDescriptionEligible reports whether the version is a visible, included display photo.

@@ -743,7 +743,8 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		space.QueryFormatter != binding.QueryFormatter || space.ModelInputFingerprint != binding.ModelInput.Fingerprint {
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
-	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	// The fence compares the source with the leased generation in the next read transaction.
+	lease, err := s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, false)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -754,10 +755,10 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
 	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
 		release()
-		if err != nil {
-			return SemanticSearchAuthority{}, err
+		if current.ManifestChecksum != "" && current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+			return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
 		}
-		return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
+		return SemanticSearchAuthority{}, err
 	}
 	if normalized.EmbeddingDescriptor != nil {
 		descriptor := *normalized.EmbeddingDescriptor
@@ -777,14 +778,14 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 ) (source VectorIndexSource, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
+		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		if err != nil {
+			return err
+		}
 		if similar != nil {
 			if err := similar.load(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
 				return err
 			}
-		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
-		if err != nil {
-			return err
 		}
 		filterSQL, filterArgs := searchFilterSQL(opts)
 		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,

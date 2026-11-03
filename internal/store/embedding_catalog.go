@@ -1379,14 +1379,16 @@ func embeddingAttachmentEligible(ctx context.Context, tx metadataQuerier, versio
 	if attachmentID == "" {
 		return true, nil
 	}
-	var attached int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_heads h
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT `+embeddingAttachmentEligibilitySQL("$1", "$2", "$3"),
+		versionID, profileFingerprint, attachmentID).Scan(&eligible)
+	return eligible, err
+}
+
+func embeddingAttachmentEligibilitySQL(version, profile, attachment string) string {
+	return `((SELECT COUNT(*) FROM rendition_heads h
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-		WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2 AND h.attachment_id=$3`,
-		versionID, profileFingerprint, attachmentID).Scan(&attached); err != nil {
-		return false, err
-	}
-	return attached == 1, nil
+		WHERE h.content_version_id=` + version + ` AND h.profile_fingerprint=` + profile + ` AND h.attachment_id=` + attachment + `)=1 OR COALESCE(` + attachment + `,'')='')`
 }
 
 func validateEmbeddingHeadKey(key EmbeddingHeadKey) error {

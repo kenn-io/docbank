@@ -2901,3 +2901,22 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 		})
 	}
 }
+
+func TestAcquireSemanticSearchAuthorityReleasesStaleSourceLease(t *testing.T) {
+	t.Parallel()
+	s, first, _ := newPublishedVectorIndexFixture(t)
+	publishVectorIndexMembersForTest(t, s, first, 2)
+	source, err := s.CaptureVectorIndexSource(t.Context(), first.VectorSpace.ID)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
+	content, err := s.ContentVersionByID(t.Context(), first.ContentVersionID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
+	require.NoError(t, err)
+	_, err = s.AcquireSemanticSearchAuthority(t.Context(), first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+	var leases int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+	require.Zero(t, leases)
+}

@@ -2,13 +2,16 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -436,4 +439,185 @@ func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
 	var count int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases WHERE lease_id=?`, lease.ID).Scan(&count))
 	require.Zero(t, count)
+}
+
+type vectorIndexHeadCandidate struct {
+	setID, profile, vectorSpace string
+}
+
+func captureVectorIndexSourcePerMemberForTest(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
+	candidates, err := loadVectorIndexHeadCandidates(ctx, tx, vectorSpaceID)
+	if err != nil {
+		return VectorIndexSource{}, err
+	}
+
+	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
+	for _, candidate := range candidates {
+		set, err := loadEmbeddingSetTx(ctx, tx, candidate.setID)
+		if err != nil {
+			return VectorIndexSource{}, fmt.Errorf("loading vector index member %s: %w", candidate.setID, err)
+		}
+		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
+		if err != nil {
+			return VectorIndexSource{}, err
+		}
+		if !eligible || set.ProcessingProfileFingerprint != candidate.profile ||
+			set.VectorSpace.ID != candidate.vectorSpace || candidate.vectorSpace != vectorSpaceID {
+			continue
+		}
+		source.Members = append(source.Members, VectorIndexMember{
+			EmbeddingSetID: set.ID, VectorSetID: set.VectorSet.ID,
+			PayloadBlobHash: set.VectorSet.PayloadBlobHash, PayloadSize: set.VectorSet.PayloadSize,
+		})
+	}
+	if len(source.Members) == 0 {
+		return VectorIndexSource{}, ErrNotFound
+	}
+	source.ManifestChecksum = vectorIndexSourceChecksum(source.Members)
+	return source, nil
+}
+
+func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ []vectorIndexHeadCandidate, retErr error) {
+	rows, err := tx.QueryContext(ctx, `SELECT embedding_set_id,profile_fingerprint,vector_space_id
+		FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`, vectorSpaceID)
+	if err != nil {
+		return nil, fmt.Errorf("listing vector index logical membership: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	var candidates []vectorIndexHeadCandidate
+	for rows.Next() {
+		var candidate vectorIndexHeadCandidate
+		if err := rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return candidates, nil
+}
+
+func TestVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	s := f.s
+	// Use one descriptor for all three input kinds so the mixed capture shares a space.
+	descriptor := embeddingCatalogDescriptor()
+	descriptor.InputKinds = append(descriptor.InputKinds, document.EmbeddingInputImage)
+	var err error
+	f.request.Descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+	require.NoError(t, err)
+	var profile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(f.request.Profile.CanonicalProfile, &profile))
+	for i := range profile.Embeddings {
+		profile.Embeddings[i].Descriptor.Fingerprint = f.request.Descriptor.Fingerprint
+	}
+	canonical, fingerprints, err := document.CanonicalProfile(profile)
+	require.NoError(t, err)
+	f.request.Profile.CanonicalProfile, f.request.Profile.Fingerprint = canonical, fingerprints.Profile
+	f.request.Profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
+	f.request.Profile.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
+	f.request.Profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
+	f.request.Authorization.ProfileFingerprint = fingerprints.Profile
+	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+		Principal: f.request.Authorization.Principal, Scope: f.request.Authorization.Scope,
+		ProfileFingerprint: fingerprints.Profile, DisclosureFingerprint: f.binding.DisclosureFingerprint,
+		InputClasses: []string{string(document.EmbeddingInputImage)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	})
+	require.NoError(t, err)
+	f.request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+	f.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, fingerprints.Profile, f.binding.Name, f.request.InputGeneration.EvidenceFingerprint)
+	image, _ := f.publish(t)
+	space := image.VectorSpace.ID
+	publish := func(record EmbeddingSetRecord) EmbeddingSetRecord {
+		record.VectorSpace.Descriptor = f.request.Descriptor
+		require.Equal(t, space, record.VectorSpace.ID)
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: record.ContentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: record.ProcessingProfileFingerprint, PublishedAt: embeddingCatalogTime,
+		}))
+		return record
+	}
+	check := func(name string, want ...string) {
+		t.Run(name, func(t *testing.T) {
+			got, err := s.CaptureVectorIndexSource(t.Context(), space)
+			var reference VectorIndexSource
+			referenceErr := s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+				var err error
+				reference, err = captureVectorIndexSourcePerMemberForTest(t.Context(), tx, space)
+				return err
+			})
+			if len(want) == 0 {
+				require.ErrorIs(t, err, ErrNotFound)
+				require.ErrorIs(t, referenceErr, ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, referenceErr)
+			require.Equal(t, reference, got)
+			slices.Sort(want)
+			var ids []string
+			for _, member := range got.Members {
+				ids = append(ids, member.EmbeddingSetID)
+			}
+			require.Equal(t, want, ids)
+		})
+	}
+	originals := make([]EmbeddingSetRecord, 3)
+	for i := range originals {
+		sourceHash := hashVectorIndexTest(fmt.Sprintf("source-%d", i))
+		if i == 0 {
+			sourceHash = catalogSourceHash
+		}
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("source-%d.pdf", i), sourceHash, 20, "application/pdf")
+		require.NoError(t, err)
+		originals[i] = publish(embeddingSetFixture(t.Context(), s, node.CurrentVersionID, fingerprints.Profile, document.EmbeddingInputOriginalFile, "required", ""))
+		if i == 1 {
+			_, _, err = s.Trash(t.Context(), node.ID, UnconditionalRev)
+			require.NoError(t, err)
+		}
+		if i == 2 {
+			_, _, err = s.ReplaceContent(t.Context(), node.ID, UnconditionalRev, hashVectorIndexTest("replacement"), 20, "application/pdf")
+			require.NoError(t, err)
+		}
+	}
+	check("live original with trashed and replaced heads", image.ID, originals[0].ID)
+
+	build := catalogRenditionBuild(s, f.request.Profile)
+	build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	attachment := RenditionAttachmentRecord{ID: hashVectorIndexTest("capture-attachment"), VaultID: s.VaultID(), ContentVersionID: originals[0].ContentVersionID, BuildID: build.ID, Profile: f.request.Profile, AttachedAt: embeddingCatalogTime}
+	require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, hashVectorIndexTest("capture-lexical")))
+	chunk := publish(embeddingSetFixture(t.Context(), s, attachment.ContentVersionID, fingerprints.Profile, document.EmbeddingInputRenditionChunk, "chunk", attachment.ID))
+	check("current rendition attachment", image.ID, originals[0].ID, chunk.ID)
+
+	photos := make([]EmbeddingSetRecord, 2)
+	for i := range photos {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("source-%d.jpg", i), hashVectorIndexTest(fmt.Sprintf("photo-%d", i)), 20, "image/jpeg")
+		require.NoError(t, err)
+		photos[i], _ = f.forNode(t, node).publish(t)
+		if i == 0 {
+			require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+		} else {
+			_, _, err = s.Trash(t.Context(), node.ID, UnconditionalRev)
+			require.NoError(t, err)
+		}
+	}
+	check("mixed space with visible hidden and trashed photos", image.ID, originals[0].ID, chunk.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.ID)
+	require.NoError(t, err)
+	check("removed rendition head", image.ID, originals[0].ID)
+	for _, version := range []string{image.ContentVersionID, originals[0].ContentVersionID} {
+		content, err := s.ContentVersionByID(t.Context(), version)
+		require.NoError(t, err)
+		_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	check("nothing eligible")
 }

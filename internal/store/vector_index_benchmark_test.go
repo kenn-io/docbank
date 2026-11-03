@@ -17,16 +17,7 @@ func BenchmarkSemanticSearchIngestLatency(b *testing.B) {
 	for _, members := range []int{1000, 4000, 16000} {
 		b.Run(fmt.Sprintf("members=%d", members), func(b *testing.B) {
 			s, first, _ := newPublishedVectorIndexFixture(b)
-			for i := 1; i < members; i++ {
-				node, err := s.CreateFile(b.Context(), s.RootID(), fmt.Sprintf("member-%06d.pdf", i), fmt.Sprintf("%064x", i), 20, "application/pdf")
-				require.NoError(b, err)
-				record := embeddingSetFixture(b.Context(), s, node.CurrentVersionID, first.ProcessingProfileFingerprint, first.InputKind, first.BindingID, "")
-				require.NoError(b, s.StageEmbeddingSet(b.Context(), record))
-				require.NoError(b, s.PublishEmbeddingHead(b.Context(), EmbeddingHeadRecord{
-					FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
-					SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: record.ProcessingProfileFingerprint, PublishedAt: embeddingCatalogTime,
-				}))
-			}
+			publishVectorIndexMembersForTest(b, s, first, members)
 			source, err := s.CaptureVectorIndexSource(b.Context(), first.VectorSpace.ID)
 			require.NoError(b, err)
 			require.Len(b, source.Members, members)
@@ -86,6 +77,34 @@ func BenchmarkSemanticSearchIngestLatency(b *testing.B) {
 			}
 			completed := searches.Load() - before
 			b.ReportMetric(float64(completed)/b.Elapsed().Seconds(), "searches/s")
+		})
+	}
+}
+
+func publishVectorIndexMembersForTest(tb testing.TB, s *Store, first EmbeddingSetRecord, members int) {
+	tb.Helper()
+	for i := 1; i < members; i++ {
+		node, err := s.CreateFile(tb.Context(), s.RootID(), fmt.Sprintf("member-%06d.pdf", i), fmt.Sprintf("%064x", i), 20, "application/pdf")
+		require.NoError(tb, err)
+		record := embeddingSetFixture(tb.Context(), s, node.CurrentVersionID, first.ProcessingProfileFingerprint, first.InputKind, first.BindingID, "")
+		require.NoError(tb, s.StageEmbeddingSet(tb.Context(), record))
+		require.NoError(tb, s.PublishEmbeddingHead(tb.Context(), EmbeddingHeadRecord{
+			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: node.CurrentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: record.ProcessingProfileFingerprint, PublishedAt: embeddingCatalogTime,
+		}))
+	}
+}
+
+func BenchmarkVectorIndexSourceCapture(b *testing.B) {
+	for _, heads := range []int{1000, 4000, 16000, 64000} {
+		b.Run(fmt.Sprintf("heads=%d", heads), func(b *testing.B) {
+			s, first, _ := newPublishedVectorIndexFixture(b)
+			publishVectorIndexMembersForTest(b, s, first, heads)
+			for b.Loop() {
+				source, err := s.CaptureVectorIndexSource(b.Context(), first.VectorSpace.ID)
+				require.NoError(b, err)
+				require.Len(b, source.Members, heads)
+			}
 		})
 	}
 }
