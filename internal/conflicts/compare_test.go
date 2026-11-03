@@ -232,6 +232,28 @@ func TestFindDifferentRateDenominators(t *testing.T) {
 	}
 }
 
+func TestFindRejectsUnsupportedRateDenominatorMeanings(t *testing.T) {
+	for _, tt := range []struct{ name, a, b string }{
+		{"second symbol versus flat amount", "The service fee is $5/s.", "The service fee is $6."},
+		{"millisecond versus metre symbols", "The service fee is $5/ms.", "The service fee is $6/m."},
+		{"linear distance units", "The service fee is $5 per linear metre.", "The service fee is $6 per linear foot."},
+		{"passenger distance units", "The service fee is $5 per passenger mile.", "The service fee is $6 per passenger kilometre."},
+		{"credit units", "The service fee is $5 per credit hour.", "The service fee is $6 per credit point."},
+		{"additional article rate", "The service fee is $5 per device a month.", "The service fee is $6 per device."},
+		{"wrapped article rate versus flat amount", "The service fee is $5 a (month).", "The service fee is $6."},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Find(Input{Query: "service fee", Passages: []Passage{
+				{Document: "a", Text: tt.a},
+				{Document: "b", Text: tt.b},
+			}})
+			if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+				t.Fatalf("unsupported rate denominator compared: %+v", got)
+			}
+		})
+	}
+}
+
 func TestFindNumericDenominatorsAreNotStandaloneFigures(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"The service fee is $10 per 2 months.", "The service fee is $20 per 4 months."},

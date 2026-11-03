@@ -67,8 +67,12 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 // Rate conversion is deliberately unsupported; the full denominator remains
 // part of the comparison signature.
 var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
+var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
+var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s+(?:and\s+)?(?:a|an)\s+(?:\(\s*)?[\p{L}\p{Nd}]+\b`)
+var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*\(\s*[\p{L}\p{Nd}]+\s*\)`)
 var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
 var rateArithmeticContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[+*/×÷−]|-\s+)\s*(?:[$€£¥]\s*)?[0-9]`)
+var rateDenominatorContinuationWords = wordSet("apply applies applied bill bills billed charge charges charged cost costs cover covers covered expire expires include includes included start starts started end ends ended available")
 var rateDeterminers = wordSet("my your his her its our their this that these those some any every")
 var rateMarkerRE = regexp.MustCompile(`(?i)\b(?:per|each|every)\b|/`)
 var contrasts = wordSet("new existing old current previous first second third last minimum maximum monthly annual yearly daily weekly per each additional extra business personal domestic international free paid")
@@ -85,6 +89,15 @@ func tokens(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 func normalized(s string) string { return singular(strings.ToLower(s)) }
+
+func normalizedRateDenominatorPart(s string) string {
+	lower := strings.ToLower(s)
+	if lower == "s" || lower == "ms" {
+		return lower
+	}
+	return normalized(s)
+}
+
 func content(s string) words {
 	m := words{}
 	for _, w := range tokens(s) {
@@ -152,6 +165,9 @@ func makeSubject(f Figure, figures []Figure) subject {
 				if other.Kind == durationKind && strings.HasPrefix(text[suffixStart:], ".") && durationAbbrevRE.MatchString(text[:suffixStart+1]) {
 					suffixStart++
 				}
+				if start == ownStart && end == ownEnd && wrappedArticleRateRE.MatchString(text[suffixStart:]) {
+					invalidRate = true
+				}
 				if match := rateDenominatorRE.FindStringSubmatchIndex(text[suffixStart:]); match != nil {
 					a, b := suffixStart+match[2], suffixStart+match[3]
 					parts := strings.Fields(text[a:b])
@@ -177,7 +193,7 @@ func makeSubject(f Figure, figures []Figure) subject {
 							parts = append([]string{number}, strings.Fields(text[numberEnd:b])...)
 						}
 						for i, part := range parts {
-							parts[i] = normalized(part)
+							parts[i] = normalizedRateDenominatorPart(part)
 						}
 						s.denominator = strings.Join(parts, " ")
 					}
@@ -187,8 +203,14 @@ func makeSubject(f Figure, figures []Figure) subject {
 						s.isDenominator = true
 					}
 					continuation := text[suffixStart+match[1]:]
-					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) {
+					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) {
 						invalidRate = true
+					}
+					if word := rateDenominatorContinuationRE.FindStringSubmatch(continuation); len(word) > 1 {
+						lower := strings.ToLower(word[1])
+						if !stopWords[lower] && !rateDenominatorContinuationWords[lower] {
+							invalidRate = true
+						}
 					}
 				}
 			}

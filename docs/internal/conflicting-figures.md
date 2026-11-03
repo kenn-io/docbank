@@ -326,7 +326,10 @@ are excluded from independent comparison. Thus `$5 per month` and `$60 per year`
 are not comparable; rate conversion is outside this package's scope. Ordinary
 duration conversions such as `24 hours` and `1 day` still agree, and differing
 numerators with the same denominator can conflict. Unsupported fractions or
-arithmetic after a rate omit the whole clause.
+arithmetic after a rate omit the whole clause. Additional denominator words,
+such as `per passenger mile`, and a second article rate after a supported
+denominator are unsupported. An unparsed wrapped article denominator such as
+`a (month)` is omitted rather than compared as an unqualified amount.
 
 Clauses with multiple rates or unbound `per`, `each`, `every`, or `/` markers are
 skipped. This includes prefix rates such as `Per device the fee is $5.`
