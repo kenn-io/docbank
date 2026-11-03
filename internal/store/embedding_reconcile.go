@@ -545,6 +545,16 @@ func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation
 		return err
 	}
 	if !eligible {
+		// Preserve the preview lookup error for an otherwise eligible photo.
+		photoEligible, err := photoDescriptionEligibleTx(ctx, tx, generation.SourceVersionID)
+		if err != nil {
+			return err
+		}
+		if photoEligible {
+			if _, err := visualPreviewGenerationByRecipeTx(ctx, tx, generation.SourceVersionID, fingerprints.GridRecipe); err != nil {
+				return err
+			}
+		}
 		return ErrEmbeddingJobFenced
 	}
 	return nil

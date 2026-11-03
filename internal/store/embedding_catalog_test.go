@@ -2107,6 +2107,15 @@ func TestEnqueueEmbeddingJobRejectsInvalidImageGeneration(t *testing.T) {
 	}
 }
 
+func TestEnqueueEmbeddingJobMissingImagePreview(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	_, err := f.s.db.ExecContext(t.Context(), `DELETE FROM visual_preview_generations WHERE content_version_id=?`, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {
 	t.Parallel()
 	f := newImageEmbeddingCatalogFixture(t)
