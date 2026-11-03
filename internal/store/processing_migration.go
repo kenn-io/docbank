@@ -356,8 +356,8 @@ func revokeStaleLegacyPlainTextHeadsTx(
 }
 
 // legacyPlainTextWorkPendingTx reports whether the migration has anything to
-// publish, revoke, queue, or fence. Open and email-body publication call the
-// full migration, so a settled catalog must cost index lookups rather than
+// publish, revoke, queue, or fence. Callers can run the full migration on a
+// settled catalog, so that check must cost index lookups rather than
 // a read of every cached text.
 // Search eligibility also retains historical versions; only current versions
 // need heads, matching readLegacySelectedVersions. A terminal failure completes

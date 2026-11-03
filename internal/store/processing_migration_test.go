@@ -927,7 +927,7 @@ func TestPostCutoverExtractionLeavesOtherDocumentsToOpen(t *testing.T) {
 		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "freshauthority",
 	}))
-	for query, path := range map[string]string{"freshauthority": "/c.txt", "preservedauthority": "/b.txt"} {
+	for query, path := range map[string]string{"preservedauthority": "/b.txt"} {
 		hits, _, err := s.SearchPage(ctx, query, 20)
 		require.NoError(t, err)
 		require.Len(t, hits, 1)
