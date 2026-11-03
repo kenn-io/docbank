@@ -118,7 +118,7 @@ func findConflicts(ctx context.Context, session documentReadSession, raw []byte)
 			p.SkipReason = "no_excerpt"
 		case !content:
 			p.SkipReason = "no_content_evidence"
-		case utf8.RuneCountInString(hit.Excerpt) >= 512 || strings.HasPrefix(hit.Excerpt, "…") || strings.HasSuffix(strings.TrimSpace(hit.Excerpt), "…"):
+		case utf8.RuneCountInString(hit.Excerpt) >= 512 || strings.HasPrefix(strings.TrimSpace(hit.Excerpt), "…") || strings.HasSuffix(strings.TrimSpace(hit.Excerpt), "…"):
 			p.SkipReason = "saturated_excerpt"
 		default:
 			p.Compared = true

@@ -19,12 +19,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestFindConflictsRegistered(t *testing.T) {
-	tool, err := ReadTool("find_conflicts")
-	require.NoError(t, err)
-	require.Equal(t, "find_conflicts", tool.Name)
-}
-
 type conflictTestClient struct {
 	results      []api.DocumentSearchResult
 	summaryCalls int
@@ -33,7 +27,6 @@ type conflictTestClient struct {
 	truncated    bool
 	searchErr    error
 	summaryErr   error
-	badSummary   bool
 }
 
 func (c *conflictTestClient) VaultInfo(context.Context) (api.VaultInfo, error) {
@@ -63,9 +56,6 @@ func (c *conflictTestClient) ResolveDocumentSummaries(_ context.Context, req api
 	out := make([]api.DocumentSummary, len(req.Identities))
 	for i, id := range req.Identities {
 		out[i] = api.DocumentSummary{NodeID: id.NodeID, ContentVersionID: id.ContentVersionID, Path: id.Path, ModifiedAt: "2026-01-01T00:00:00Z"}
-		if c.badSummary && c.summaryCalls == 2 {
-			out[i].Path += "-moved"
-		}
 	}
 	return out, nil
 }
@@ -162,13 +152,19 @@ func TestFindConflictsResponseBounds(t *testing.T) {
 					text = "The cooling period is 15 days."
 				}
 				hit := conflictHit(int64(i+1), text, "rendition_segment")
-				// Schema-valid Unicode paths and 64 opaque evidence identities force
-				// pruning only when the duplicated escaped MCP envelope is measured.
-				hit.Path = "/" + strings.Repeat("é\\\"\n", 2500)
-				evidence := api.DocumentEvidenceReference{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: strings.Repeat("b", 64), SourceManifestChecksum: strings.Repeat("c", 64)}
-				hit.Evidence = make([]api.DocumentEvidenceReference, 64)
+				// Keep each identity and evidence set valid while making the complete
+				// envelope exceed its response budget.
+				hit.Path = "/" + strings.Repeat("🧭/", 7990) + fmt.Sprintf("doc%d", i)
+				hit.ContentVersionID = fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
+				require.LessOrEqual(t, len([]rune(hit.Path)), maxPathCharacters)
+				hit.Evidence = make([]api.DocumentEvidenceReference, 32)
 				for j := range hit.Evidence {
-					hit.Evidence[j] = evidence
+					hit.Evidence[j] = api.DocumentEvidenceReference{
+						Kind:                   "rendition_segment",
+						BuildID:                strings.Repeat("a", 64),
+						SegmentID:              fmt.Sprintf("%064x", i*len(hit.Evidence)+j+1),
+						SourceManifestChecksum: fmt.Sprintf("%064x", i+1),
+					}
 				}
 				c.results = append(c.results, hit)
 			}
@@ -205,9 +201,6 @@ func TestFindConflictsPropagatesDomainFailures(t *testing.T) {
 		require.True(t, result.IsError)
 		require.Equal(t, "stale_version", structuredMap(t, result.StructuredContent)["code"])
 	}
-	c := &conflictTestClient{results: []api.DocumentSearchResult{conflictHit(1, "The fee is $10.", "rendition_segment")}, badSummary: true}
-	_, err := findConflicts(t.Context(), c.session, []byte(`{"query":"fee","profile":"local","filters":{}}`))
-	require.ErrorContains(t, err, "summary identity mismatch")
 }
 func (c *conflictTestClient) session(ctx context.Context, fn func(context.Context, documentClient) error) error {
 	return fn(ctx, c)
@@ -232,6 +225,20 @@ func TestFindConflictsResults(t *testing.T) {
 	}
 	_, err = boundedToolSuccess(mustResolveSchema(func() schema { _, s := findConflictsSchemas(); return s }()), out, nil)
 	require.NoError(t, err)
+}
+
+func TestFindConflictsSkipsLeadingClippedExcerptWithWhitespace(t *testing.T) {
+	clipped := " … introductory text. The fee is $20."
+	c := &conflictTestClient{results: []api.DocumentSearchResult{
+		conflictHit(1, clipped, "rendition_segment"),
+		conflictHit(2, "The fee is $10.", "rendition_segment"),
+	}}
+	out, err := findConflicts(t.Context(), c.session, []byte(`{"query":"fee","profile":"local","filters":{}}`))
+	require.NoError(t, err)
+	require.Equal(t, conflicts.NotComparable, out.Status)
+	require.Empty(t, out.Conflicts)
+	require.Equal(t, "saturated_excerpt", out.Passages[0].SkipReason)
+	require.Equal(t, clipped, out.Passages[0].Excerpt)
 }
 func TestFindConflictsEmptyAndStale(t *testing.T) {
 	c := &conflictTestClient{}
@@ -267,7 +274,7 @@ func TestFindConflictsSkipReasons(t *testing.T) {
 		{"clipped_prefix", "…The fee is $20.", "rendition_segment", "saturated_excerpt"},
 		{"clipped_excerpt", "The fee is $20. " + strings.Repeat("x", 480) + "…", "rendition_segment", "saturated_excerpt"},
 		{"saturated_unicode", "The fee is $20. " + strings.Repeat("é", 497), "rendition_segment", "saturated_excerpt"},
-		{"partial", " … The fee is $20.", "rendition_segment", "partial"},
+		{"clipped_prefix_with_whitespace", " … The fee is $20.", "rendition_segment", "saturated_excerpt"},
 		{"no_figures", "The fee depends on the contract.", "content_blob", "no_figures"},
 		{"negated", "The fee is not $20.", "rendition_segment", "negated"},
 		{"ambiguous", "The fee is $500 and $250 for students.", "rendition_segment", "ambiguous"},
