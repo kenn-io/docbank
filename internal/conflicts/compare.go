@@ -68,7 +68,7 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 // part of the comparison signature.
 var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
 var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
-var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s+(?:and\s+)?(?:a|an)\s+(?:\(\s*)?[\p{L}\p{Nd}]+\b`)
+var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:and\s+)?(?:[(\["'‘’“”«»]\s*)*(?:a|an)\b\s*(?:[(\["'‘’“”«»]\s*)*[\p{L}\p{Nd}]+\b`)
 var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
 var rateDenominatorExtensionRE = regexp.MustCompile(`(?i)^\s+(?:of|for|in|to|from|by|with|on|at|and|or)\s+(?:(?:a|an|the)\s+)?[\p{L}\p{Nd}]+\b`)
 var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
@@ -204,7 +204,8 @@ func makeSubject(f Figure, figures []Figure) subject {
 						s.isDenominator = true
 					}
 					continuation := text[suffixStart+match[1]:]
-					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) || rateDenominatorExtensionRE.MatchString(continuation) {
+					unsupportedExtension := rateDenominatorExtensionRE.MatchString(continuation) && !acceptedRateDateBound(text, suffixStart+match[1], f)
+					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) || unsupportedExtension {
 						invalidRate = true
 					}
 					if word := rateDenominatorContinuationRE.FindStringSubmatch(continuation); len(word) > 1 {
@@ -262,6 +263,24 @@ func makeSubject(f Figure, figures []Figure) subject {
 		s.discriminators[n] = true
 	}
 	return s
+}
+
+func acceptedRateDateBound(text string, start int, f Figure) bool {
+	if start < 0 || start > len(text) || f.Period.From == "" && f.Period.To == "" {
+		return false
+	}
+	for _, span := range f.acceptedDates {
+		if span.start < start || span.end < span.start || span.end > len(text) {
+			continue
+		}
+		lead := strings.TrimSpace(strings.Trim(text[start:span.start], `.,;:()[]{}"'‘’“”«»`))
+		for _, word := range periodWords {
+			if strings.EqualFold(lead, word) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func subjectQualifierSpan(prefix, qualifier string) (int, int, bool) {

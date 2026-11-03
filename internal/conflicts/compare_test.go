@@ -242,6 +242,9 @@ func TestFindRejectsUnsupportedRateDenominatorMeanings(t *testing.T) {
 		{"unit of energy versus volume", "The service fee is $5 per unit of energy.", "The service fee is $6 per unit of volume."},
 		{"bottle of water versus wine", "The service fee is $5 per bottle of water.", "The service fee is $6 per bottle of wine."},
 		{"additional article rate", "The service fee is $5 per device a month.", "The service fee is $6 per device."},
+		{"wrapped additional article rate", "The service fee is $5 per device (a month).", "The service fee is $6 per device."},
+		{"comma-separated additional article rate", "The service fee is $5 per device, a month.", "The service fee is $6 per device."},
+		{"comma-separated wrapped article rate", "The service fee is $5 per device, (a month).", "The service fee is $6 per device."},
 		{"wrapped article rate versus flat amount", "The service fee is $5 a (month).", "The service fee is $6."},
 		{"bracketed article rate versus flat amount", "The service fee is $5 a [month].", "The service fee is $6."},
 		{"quoted article rate versus flat amount", "The service fee is $5 a \"month\".", "The service fee is $6."},
@@ -399,6 +402,24 @@ func TestFindCanonicalizesNumericRateDenominators(t *testing.T) {
 		if got.Status != Conflicting || len(got.Conflicts) != 1 {
 			t.Errorf("equivalent numeric rate denominators did not compare: %+v", got)
 		}
+	}
+}
+
+func TestFindAllowsAcceptedTrailingDateBoundsOnRates(t *testing.T) {
+	got := Find(Input{Query: "service fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per month from 1 July 2026."},
+		{Document: "b", Text: "The service fee is $6 per month."},
+	}})
+	if got.Status != Conflicting || len(got.Conflicts) != 1 || got.Conflicts[0].PeriodsOverlap != "unknown" {
+		t.Fatalf("accepted trailing date bound prevented rate comparison: %+v", got)
+	}
+
+	got = Find(Input{Query: "service fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per month from 31 February 2026."},
+		{Document: "b", Text: "The service fee is $6 per month."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("unaccepted trailing date was treated as a rate period: %+v", got)
 	}
 }
 
