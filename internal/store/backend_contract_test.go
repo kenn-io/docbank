@@ -145,6 +145,77 @@ var backendSuites = []backendSuite{
 			checkEmailDocumentsRepublishReleasedReceiptReportsConflict(t, newPostgresQueryStore)
 		}},
 	}},
+	{name: "media", postgres: "native operations", scope: "Media source retention, input artifacts, occurrence visibility and operation receipts; excludes provider execution.", scenarios: []backendScenario{
+		{"MediaConsentAndContinuations", func(t *testing.T) { t.Helper(); checkMediaConsentAndContinuations(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMediaConsentAndContinuations(t, newPostgresQueryStore) }},
+		{"MediaPublicationRollback", nil, checkMediaPublicationRollbackPostgres},
+		{"MediaSnapshots", nil, checkMediaSnapshotsPostgres},
+		{"MediaRevocationRemovesInputBoundRendition", func(t *testing.T) { t.Helper(); checkMediaRevocationRemovesInputBoundRendition(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaRevocationRemovesInputBoundRendition(t, newPostgresQueryStore)
+		}},
+		{"MediaIdentityConflicts", nil, checkMediaIdentityConflictsPostgres},
+		{"RetainSuppliedMediaReusesCallerRevisionAcrossOperations", func(t *testing.T) {
+			t.Helper()
+			checkRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t, newPostgresQueryStore)
+		}},
+		{"ImportMediaInputArtifactRejectsChangedImmutableAuthority", func(t *testing.T) {
+			t.Helper()
+			checkImportMediaInputArtifactRejectsChangedImmutableAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkImportMediaInputArtifactRejectsChangedImmutableAuthority(t, newPostgresQueryStore)
+		}},
+		{"SuppliedInputSelectorsFilterKind", func(t *testing.T) { t.Helper(); checkSuppliedInputSelectorsFilterKind(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSuppliedInputSelectorsFilterKind(t, newPostgresQueryStore) }},
+		{"MediaSourcesPageSelectsNewestVisibleOccurrences", func(t *testing.T) { t.Helper(); checkMediaSourcesPageSelectsNewestVisibleOccurrences(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaSourcesPageSelectsNewestVisibleOccurrences(t, newPostgresQueryStore)
+		}},
+		{"MediaSourceVersionSelectsTheExactVisibleRevision", func(t *testing.T) { t.Helper(); checkMediaSourceVersionSelectsTheExactVisibleRevision(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaSourceVersionSelectsTheExactVisibleRevision(t, newPostgresQueryStore)
+		}},
+		{"RetainRemoteRecordingMedia", func(t *testing.T) { t.Helper(); checkRetainRemoteRecordingMedia(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRetainRemoteRecordingMedia(t, newPostgresQueryStore) }},
+		{"MediaRevokeIsPrincipalScopedAndIdempotent", func(t *testing.T) { t.Helper(); checkMediaRevokeIsPrincipalScopedAndIdempotent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaRevokeIsPrincipalScopedAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"MediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible", func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t, newPostgresQueryStore)
+		}},
+		{"MediaOccurrenceConcurrentDeclarationCreatesOneRevision", func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t, newPostgresQueryStore)
+		}},
+		{"PublishMediaSourceVersionBindsOnlyUnboundOccurrences", func(t *testing.T) {
+			t.Helper()
+			checkPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t, newPostgresQueryStore)
+		}},
+		{"MediaOperationReplaysWithoutRepeatingMutation", func(t *testing.T) { t.Helper(); checkMediaOperationReplaysWithoutRepeatingMutation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaOperationReplaysWithoutRepeatingMutation(t, newPostgresQueryStore)
+		}},
+		{"MediaOperationConcurrentReplayRunsMutationOnce", func(t *testing.T) { t.Helper(); checkMediaOperationConcurrentReplayRunsMutationOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaOperationConcurrentReplayRunsMutationOnce(t, newPostgresQueryStore)
+		}},
+		{"RemoteRecordingReceiptScopesPrincipalAndVerb", func(t *testing.T) { t.Helper(); checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; excludes image preparation and ranked search.", scenarios: []backendScenario{
 		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
@@ -734,7 +805,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, image embedding preparation, email PDF and other media producers remain unqualified; retained-state cleanup is covered above."},
+	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, image embedding preparation, email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},

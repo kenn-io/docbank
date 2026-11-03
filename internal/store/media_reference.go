@@ -28,12 +28,12 @@ func (s *Store) RetainMediaReference(
 	receiptRaw, err := s.withMediaOperation(ctx, request.Operation, func(tx *sql.Tx) (string, error) {
 		var existingKind, existingProvider, existingScope, existingIdentity string
 		err := tx.QueryRowContext(ctx, `SELECT kind,provider,origin_scope,identity_sha256
-			FROM media_sources WHERE source_id=?`, request.Operation.SourceID).Scan(
+			FROM media_sources WHERE source_id=$1`, request.Operation.SourceID).Scan(
 			&existingKind, &existingProvider, &existingScope, &existingIdentity)
 		if errors.Is(err, sql.ErrNoRows) {
 			_, err = tx.ExecContext(ctx, `INSERT INTO media_sources(
 				source_id,kind,provider,origin_scope,identity_sha256,created_at
-			) VALUES(?,'remote_recording',?,?,?,?)`, request.Operation.SourceID,
+			) VALUES($1,'remote_recording',$2,$3,$4,$5)`, request.Operation.SourceID,
 				request.Provider, request.OriginScope, request.IdentitySHA256, nowRFC3339())
 		} else if err == nil && (existingKind != "remote_recording" || existingProvider != request.Provider ||
 			existingScope != request.OriginScope || existingIdentity != request.IdentitySHA256) {

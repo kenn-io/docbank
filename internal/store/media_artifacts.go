@@ -46,7 +46,7 @@ func (s *Store) ImportMediaInputArtifact(
 		var sourceID, sourceVersionID string
 		var visible int
 		if err := tx.QueryRowContext(ctx, `SELECT source_id,COALESCE(source_version_id,''),visible
-			FROM media_occurrences WHERE occurrence_id=? AND caller_principal=?`,
+			FROM media_occurrences WHERE occurrence_id=$1 AND caller_principal=$2`,
 			request.OccurrenceID, request.Operation.Principal).Scan(&sourceID, &sourceVersionID, &visible); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", ErrNotFound
@@ -98,7 +98,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 		err := tx.QueryRowContext(ctx, `SELECT o.source_id,COALESCE(o.source_version_id,''),o.visible,
 			s.kind,o.message_json FROM media_occurrences o
 			JOIN media_sources s ON s.source_id=o.source_id
-			WHERE o.occurrence_id=? AND o.caller_principal=?`,
+			WHERE o.occurrence_id=$1 AND o.caller_principal=$2`,
 			request.OccurrenceID, request.Operation.Principal).Scan(
 			&sourceID, &sourceVersionID, &visible, &sourceKind, &captureJSON)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -121,7 +121,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 			err := tx.QueryRowContext(ctx, `SELECT v.content_version_id,c.blob_hash,c.size,
 				COALESCE(c.mime_type,'') FROM media_source_versions v
 				JOIN content_versions c ON c.version_id=v.content_version_id
-				WHERE v.source_version_id=? AND v.source_id=?`, sourceVersionID, sourceID).Scan(
+				WHERE v.source_version_id=$1 AND v.source_id=$2`, sourceVersionID, sourceID).Scan(
 				&contentVersionID, &blobHash, &sourceBytes, &mediaType)
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", ErrNotFound
@@ -136,7 +136,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 			err := tx.QueryRowContext(ctx, `SELECT v.source_version_id,v.content_version_id
 				FROM media_source_versions v JOIN content_versions c
 				ON c.version_id=v.content_version_id
-				WHERE v.source_id=? AND c.blob_hash=? AND c.size=? AND COALESCE(c.mime_type,'')=?
+				WHERE v.source_id=$1 AND c.blob_hash=$2 AND c.size=$3 AND COALESCE(c.mime_type,'')=$4
 				ORDER BY v.revision DESC LIMIT 1`, sourceID, request.InputSHA, request.ByteLength, request.MediaType).Scan(&sourceVersionID, &contentVersionID)
 			if errors.Is(err, sql.ErrNoRows) {
 				content, sealErr := s.sealMediaContentTx(ctx, tx, request.VirtualPath, ContentVersion{
@@ -145,7 +145,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 					return "", sealErr
 				}
 				var currentRevision int64
-				if headErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=?`, sourceID).Scan(&currentRevision); headErr != nil {
+				if headErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=$1`, sourceID).Scan(&currentRevision); headErr != nil {
 					return "", headErr
 				}
 				sourceVersionID, sealErr = newUUIDv4()
@@ -164,8 +164,8 @@ func (s *Store) RetainRemoteRecordingMedia(
 			} else if err != nil {
 				return "", err
 			} else {
-				result, updateErr := tx.ExecContext(ctx, `UPDATE media_occurrences SET source_version_id=?
-					WHERE occurrence_id=? AND source_id=? AND caller_principal=? AND visible=1
+				result, updateErr := tx.ExecContext(ctx, `UPDATE media_occurrences SET source_version_id=$1
+					WHERE occurrence_id=$2 AND source_id=$3 AND caller_principal=$4 AND visible=1
 						AND source_version_id IS NULL`, sourceVersionID, request.OccurrenceID, sourceID,
 					request.Operation.Principal)
 				if updateErr != nil {
@@ -187,7 +187,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 
 		request.SourceVersionID = sourceVersionID
 		if _, err := s.retainMediaInputArtifactTx(ctx, tx, request, contentVersionID); err != nil {
-			if s.driver.IsUniqueViolation(err) {
+			if s.isUniqueViolation(err) {
 				return "", ErrMediaOperationConflict
 			}
 			return "", err
@@ -214,11 +214,11 @@ func (s *Store) retainMediaInputArtifactTx(
 	var versionID string
 	var matches bool
 	err := tx.QueryRowContext(ctx, `SELECT i.content_version_id,
-		i.occurrence_id=? AND i.source_id=? AND i.source_version_id=?
-		AND i.kind=? AND i.origin=? AND i.provider=? AND i.language=? AND i.input_sha256=?
-		AND c.blob_hash=? AND c.size=? AND COALESCE(c.mime_type,'')=?
+		i.occurrence_id=$1 AND i.source_id=$2 AND i.source_version_id=$3
+		AND i.kind=$4 AND i.origin=$5 AND i.provider=$6 AND i.language=$7 AND i.input_sha256=$8
+		AND c.blob_hash=$9 AND c.size=$10 AND COALESCE(c.mime_type,'')=$11
 		FROM media_input_artifacts i JOIN content_versions c ON c.version_id=i.content_version_id
-		WHERE i.input_id=?`,
+		WHERE i.input_id=$12`,
 		request.OccurrenceID, request.Operation.SourceID, request.SourceVersionID, request.Kind, request.Origin,
 		request.Provider, request.Language, request.InputSHA, request.InputSHA,
 		request.ByteLength, request.MediaType, request.InputID).Scan(&versionID, &matches)
@@ -241,7 +241,7 @@ func (s *Store) retainMediaInputArtifactTx(
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO media_input_artifacts(
 		input_id,occurrence_id,source_id,source_version_id,content_version_id,kind,
-		origin,provider,language,input_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		origin,provider,language,input_sha256,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		request.InputID, request.OccurrenceID, request.Operation.SourceID, request.SourceVersionID,
 		contentVersionID, request.Kind, request.Origin, request.Provider,
 		request.Language, request.InputSHA, nowRFC3339())

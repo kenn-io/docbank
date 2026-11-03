@@ -345,7 +345,9 @@ and atomic head publication through the same Store. Document embedding jobs
 include reconciliation, consent-bound claims, immutable vector staging, atomic
 publication and coverage reads. Email MIME inventories, body renditions,
 attachment child documents, and page-render job publication also use shared
-Store operations.
+Store operations. Supplied media, remote recording references,
+original recordings and transcript/caption inputs retain their source, occurrence
+and replay receipts through shared native operations.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
@@ -529,6 +531,12 @@ GRANT INSERT, UPDATE(state, results_json, failure_code, epoch, token, updated_at
 GRANT INSERT, UPDATE(attachment_id, published_at)
     ON documents.email_heads TO docbank_runtime;
 GRANT DELETE ON documents.email_document_publications TO docbank_runtime;
+GRANT INSERT ON documents.media_sources, documents.media_source_versions,
+    documents.media_input_artifacts, documents.media_occurrences,
+    documents.media_operations TO docbank_runtime;
+GRANT UPDATE(source_version_id, visible, revoked_at)
+    ON documents.media_occurrences TO docbank_runtime;
+GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -911,6 +919,39 @@ late-write rollback and concurrent publication. Plain-text extraction, email PDF
 rendering, rendering subprocesses and metadata recovery remain outside these
 suites. They do not enable a public PostgreSQL-backed vault or qualify ranked
 search.
+
+#### Media retention and input artifacts
+
+Supplied-media retention, remote-reference retention, recording acquisition and
+transcript/caption import use the same Store operations on both backends. Core
+content, source revisions, occurrence bindings, input artifacts and the operation
+receipt commit together. Replaying an operation returns its stored receipt;
+changed request identities conflict. Equal remote bytes reuse an existing source
+revision without merging separate source identities or caller occurrences.
+
+Reads select only the caller's visible occurrences. Revocation hides that
+occurrence and its inputs, removes its input-bound rendition heads, and preserves
+other callers' occurrences. Source pages, occurrence pages and exact-revision
+views use one repeatable-read snapshot for their totals, selection and receipts.
+A concurrent revocation or receipt update becomes visible on the next request.
+SQLite retains its page-first join order; PostgreSQL uses ordinary joins. Both
+schemas index occurrence visibility and principal/source operation history.
+
+Media acquisition consent uses the existing consent grants and revocation
+fences. Its operation receipt commits with the grant or revocation, so an exact
+replay does not issue another grant or advance the fence again. Processing
+receipts retain their exact source and consent selection while recording queued,
+failed and completed outcomes. Continuation pages expose only the requesting
+principal's queued operations. Revoking acquisition consent does not remove
+already retained content.
+
+The runtime role has insert-only access to media sources, source versions and
+input artifacts. Occurrence updates are limited to first-version binding and
+revocation; operation updates are limited to the receipt and update timestamp.
+The `media` backend suite exercises native retention, immutable-identity
+conflicts, replay, visibility, consent, continuations, late-write rollback and
+concurrent reads. It does not qualify remote network acquisition, media provider
+execution, metadata recovery or public PostgreSQL vault opening.
 
 #### Recoverable deletion
 

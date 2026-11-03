@@ -124,6 +124,11 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT DELETE ON "+schema+".email_document_publications TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".media_sources,"+schema+".media_source_versions,"+schema+".media_input_artifacts,"+schema+".media_occurrences,"+schema+".media_operations TO "+quotedRole+
+		"; GRANT UPDATE(source_version_id,visible,revoked_at) ON "+schema+".media_occurrences TO "+quotedRole+
+		"; GRANT UPDATE(receipt_json,updated_at) ON "+schema+".media_operations TO "+quotedRole)
+	require.NoError(t, err)
+
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))
