@@ -542,14 +542,14 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, semanticSpace)
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
 				}
 				return captureErr
 			}
-			if current.ManifestChecksum != semanticSource {
+			if current != semanticSource {
 				return ErrVectorIndexSourceStale
 			}
 		}
@@ -752,7 +752,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	current, annRows, err := s.semanticSearchAuthorityFence(ctx,
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
-	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+	if err != nil || current != lease.Generation.SourceManifestChecksum {
 		release()
 		if err != nil {
 			return SemanticSearchAuthority{}, err
@@ -774,7 +774,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
-) (source VectorIndexSource, annRows []vectorindex.RowIdentity, retErr error) {
+) (source string, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
@@ -782,7 +782,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 				return err
 			}
 		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
 		}
@@ -885,17 +885,17 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
 		filterSQL, filterArgs := searchFilterSQL(normalized)
-		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale
 			}
 			return captureErr
 		}
-		if current.ManifestChecksum != expectedSourceManifest {
+		if current != expectedSourceManifest {
 			return ErrVectorIndexSourceStale
 		}
-		result.SourceManifestChecksum = current.ManifestChecksum
+		result.SourceManifestChecksum = current
 		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
 			inputKind, vectorSpaceID, filterSQL, filterArgs,
 			normalized.CollapsesPhotoDuplicates())

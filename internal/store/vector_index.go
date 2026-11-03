@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,8 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"time"
+
+	"go.kenn.io/docbank/document"
 )
 
 var (
@@ -87,61 +91,99 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 	return source, err
 }
 
-type vectorIndexHeadCandidate struct {
-	setID, profile, vectorSpace string
-}
-
 func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
-	candidates, err := loadVectorIndexHeadCandidates(ctx, tx, vectorSpaceID)
+	if _, err := loadVectorSpaceTx(ctx, tx, vectorSpaceID); err != nil {
+		return VectorIndexSource{}, err
+	}
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return VectorIndexSource{}, err
 	}
-
 	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
-	for _, candidate := range candidates {
-		set, err := loadEmbeddingSetTx(ctx, tx, candidate.setID)
-		if err != nil {
-			return VectorIndexSource{}, fmt.Errorf("loading vector index member %s: %w", candidate.setID, err)
-		}
-		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
-		if err != nil {
+	rows, err := tx.QueryContext(ctx, `SELECT es.embedding_set_id,vs.vector_set_id,vs.payload_blob_hash,vs.payload_size,
+		es.input_kind,es.binding_id,g.generation_id,g.source_version_id,g.profile_fingerprint,g.evidence_fingerprint,g.chunk_policy_fingerprint,
+		(es.profile_fingerprint=h.profile_fingerprint AND es.vector_space_id=h.vector_space_id AND
+		CASE WHEN es.input_kind='image' THEN
+			`+imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "?")+`
+		ELSE `+embeddingAttachmentEligibilitySQL("es.content_version_id", "es.profile_fingerprint", "g.attachment_id")+` END)
+		FROM embedding_heads h
+		JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+		JOIN embedding_vector_sets vs ON vs.vector_set_id=es.vector_set_id
+		JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+		JOIN content_versions v ON v.version_id=es.content_version_id
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
+		WHERE h.vector_space_id=?`, fingerprints.GridRecipe, vectorSpaceID)
+	if err != nil {
+		return VectorIndexSource{}, fmt.Errorf("listing vector index logical membership: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	for rows.Next() {
+		var member VectorIndexMember
+		var kind document.EmbeddingInputKind
+		var binding string
+		var generation EmbeddingInputGenerationRecord
+		var eligible bool
+		if err := rows.Scan(&member.EmbeddingSetID, &member.VectorSetID, &member.PayloadBlobHash, &member.PayloadSize,
+			&kind, &binding, &generation.ID, &generation.SourceVersionID, &generation.ProcessingProfileFingerprint,
+			&generation.EvidenceFingerprint, &generation.ChunkPolicyFingerprint, &eligible); err != nil {
 			return VectorIndexSource{}, err
 		}
-		if !eligible || set.ProcessingProfileFingerprint != candidate.profile ||
-			set.VectorSpace.ID != candidate.vectorSpace || candidate.vectorSpace != vectorSpaceID {
-			continue
+		if kind == document.EmbeddingInputImage {
+			if err := validateImageEmbeddingGeneration(generation, binding); err != nil {
+				return VectorIndexSource{}, err
+			}
 		}
-		source.Members = append(source.Members, VectorIndexMember{
-			EmbeddingSetID: set.ID, VectorSetID: set.VectorSet.ID,
-			PayloadBlobHash: set.VectorSet.PayloadBlobHash, PayloadSize: set.VectorSet.PayloadSize,
-		})
+		if eligible {
+			source.Members = append(source.Members, member)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return VectorIndexSource{}, err
 	}
 	if len(source.Members) == 0 {
 		return VectorIndexSource{}, ErrNotFound
 	}
+	slices.SortFunc(source.Members, func(a, b VectorIndexMember) int { return cmp.Compare(a.EmbeddingSetID, b.EmbeddingSetID) })
 	source.ManifestChecksum = vectorIndexSourceChecksum(source.Members)
 	return source, nil
 }
 
-func loadVectorIndexHeadCandidates(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ []vectorIndexHeadCandidate, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT embedding_set_id,profile_fingerprint,vector_space_id
-		FROM embedding_heads WHERE vector_space_id=? ORDER BY embedding_set_id`, vectorSpaceID)
+type vectorSourceMemo struct {
+	revision int64
+	checksum string
+}
+
+// vectorIndexSourceChecksumTx reads the revision and membership in the consumer's snapshot.
+func (s *Store) vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, space string) (string, error) {
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM vector_membership_epochs WHERE vector_space_id=?),0)`, space).Scan(&revision); err != nil {
+		return "", err
+	}
+	s.vectorSourceMu.Lock()
+	memo, ok := s.vectorSourceMemos[space]
+	s.vectorSourceMu.Unlock()
+	if ok && memo.revision == revision {
+		return memo.checksum, nil
+	}
+	source, err := captureVectorIndexSourceTx(ctx, tx, space)
 	if err != nil {
-		return nil, fmt.Errorf("listing vector index logical membership: %w", err)
+		return "", err
 	}
-	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	var candidates []vectorIndexHeadCandidate
-	for rows.Next() {
-		var candidate vectorIndexHeadCandidate
-		if err := rows.Scan(&candidate.setID, &candidate.profile, &candidate.vectorSpace); err != nil {
-			return nil, err
+	s.vectorSourceMu.Lock()
+	defer s.vectorSourceMu.Unlock()
+	if s.vectorSourceMemos == nil {
+		s.vectorSourceMemos = make(map[string]vectorSourceMemo)
+	}
+	if prior, ok := s.vectorSourceMemos[space]; !ok || prior.revision <= revision {
+		if !ok && len(s.vectorSourceMemos) >= 64 {
+			for key := range s.vectorSourceMemos {
+				delete(s.vectorSourceMemos, key)
+				break
+			}
 		}
-		candidates = append(candidates, candidate)
+		s.vectorSourceMemos[space] = vectorSourceMemo{revision: revision, checksum: source.ManifestChecksum}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return candidates, nil
+	return source.ManifestChecksum, nil
 }
 
 func vectorIndexSourceChecksum(members []VectorIndexMember) string {
@@ -501,11 +543,11 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		if err != nil {
 			return err
 		}
-		current, err := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		current, err := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
 		}
-		if current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+		if current != lease.Generation.SourceManifestChecksum {
 			return ErrVectorIndexSourceStale
 		}
 		return nil

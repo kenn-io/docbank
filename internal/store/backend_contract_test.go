@@ -179,6 +179,7 @@ var backendSuites = []backendSuite{
 			checkEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t, newPostgresQueryStore)
 		}},
 		{"EmbeddingPublication", nil, checkEmbeddingPublicationPostgres},
+		{"ImageEmbeddingPublication", nil, checkImageEmbeddingPublicationPostgres},
 		{"EmbeddingCoverageSnapshot", nil, checkEmbeddingCoverageSnapshotPostgres},
 		{"ProcessingCoverageReportsRebuildWhilePreviousGenerationServes", func(t *testing.T) {
 			t.Helper()

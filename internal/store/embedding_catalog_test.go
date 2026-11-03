@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1993,7 +1994,7 @@ type imageEmbeddingCatalogFixture struct {
 	binding document.EmbeddingBindingV1
 }
 
-func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture {
+func newImageEmbeddingCatalogFixture(t *testing.T, inputKinds ...document.EmbeddingInputKind) imageEmbeddingCatalogFixture {
 	t.Helper()
 	s, _, profile, _ := newEmbeddingCatalogFixture(t)
 	bindingID := "optional"
@@ -2006,15 +2007,20 @@ func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture 
 	require.NoError(t, err)
 	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, bindingID, "")
 	descriptor := record.VectorSpace.Descriptor
-	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	if len(inputKinds) == 0 {
+		inputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	}
+	descriptor.InputKinds = inputKinds
 	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
 	require.NoError(t, err)
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
 	for i := range portable.Embeddings {
+		if portable.Embeddings[i].Name == bindingID || slices.Contains(inputKinds, portable.Embeddings[i].InputKind) {
+			portable.Embeddings[i].Descriptor.Fingerprint = descriptor.Fingerprint
+		}
 		if portable.Embeddings[i].Name == bindingID {
 			portable.Embeddings[i].InputKind = document.EmbeddingInputImage
-			portable.Embeddings[i].Descriptor.Fingerprint = descriptor.Fingerprint
 		}
 	}
 	// Two image bindings must retain separate generation authority.
@@ -2099,6 +2105,38 @@ func TestEnqueueEmbeddingJobRejectsInvalidImageGeneration(t *testing.T) {
 			require.ErrorContains(t, err, tc.message)
 		})
 	}
+}
+
+func TestEnqueueEmbeddingJobMissingImagePreview(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	_, err := f.s.db.ExecContext(t.Context(), `DELETE FROM visual_preview_generations WHERE content_version_id=?`, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestEnqueueEmbeddingJobRejectsNewerPreview(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	preview, err := f.s.VisualPreviewGenerationByRecipe(t.Context(), f.node.CurrentVersionID, fingerprints.GridRecipe)
+	require.NoError(t, err)
+	canonical := bytes.ReplaceAll(preview.CanonicalResult, []byte("visual-preview/v1"), []byte("visual-preview/v999"))
+	checksum := testSHA256(canonical)
+	_, err = f.s.db.ExecContext(t.Context(), `DROP TRIGGER visual_preview_generations_immutable_update`)
+	require.NoError(t, err)
+	_, err = f.s.db.ExecContext(t.Context(), `DELETE FROM visual_preview_heads WHERE content_version_id=?`, f.node.CurrentVersionID)
+	require.NoError(t, err)
+	_, err = f.s.db.ExecContext(t.Context(), `UPDATE visual_preview_generations SET canonical_result=?,checksum=?,generation_id=?,contract_version=? WHERE content_version_id=?`, canonical, checksum, visualPreviewGenerationID(f.node.CurrentVersionID, preview.RecipeFingerprint, checksum), "visual-preview/v999", f.node.CurrentVersionID)
+	require.NoError(t, err)
+	f.request.InputGeneration.EvidenceFingerprint = checksum
+	f.request.InputGeneration.ID = ImageEmbeddingGenerationID(f.node.CurrentVersionID, f.request.Profile.Fingerprint, f.request.BindingID, checksum)
+	_, err = f.s.VisualPreviewGenerationByRecipe(t.Context(), f.node.CurrentVersionID, preview.RecipeFingerprint)
+	require.ErrorContains(t, err, "canonical identity validation")
+	_, err = f.s.EnqueueEmbeddingJob(t.Context(), f.request)
+	require.ErrorContains(t, err, "canonical identity validation")
 }
 
 func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {

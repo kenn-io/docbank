@@ -3102,3 +3102,136 @@ CREATE TABLE IF NOT EXISTS vault_changes (
     node_id INTEGER NOT NULL,
     node_revision INTEGER NOT NULL
 );
+
+-- Membership epochs are local derived state, rebuilt from retained authority.
+CREATE TABLE IF NOT EXISTS vector_membership_epochs (
+    vector_space_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_insert
+AFTER INSERT ON embedding_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM (SELECT NEW.vector_space_id AS vector_space_id) WHERE 1
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_update
+AFTER UPDATE OF content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,profile_fingerprint ON embedding_heads
+WHEN OLD.content_version_id IS NOT NEW.content_version_id OR OLD.binding_id IS NOT NEW.binding_id OR OLD.input_kind IS NOT NEW.input_kind OR OLD.embedding_set_id IS NOT NEW.embedding_set_id OR OLD.vector_space_id IS NOT NEW.vector_space_id OR OLD.profile_fingerprint IS NOT NEW.profile_fingerprint
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM (SELECT OLD.vector_space_id AS vector_space_id UNION SELECT NEW.vector_space_id AS vector_space_id) WHERE 1
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_delete
+AFTER DELETE ON embedding_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM (SELECT OLD.vector_space_id AS vector_space_id) WHERE 1
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_insert
+AFTER INSERT ON rendition_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind<>'image' AND ((h.content_version_id=NEW.content_version_id AND es.profile_fingerprint=NEW.profile_fingerprint AND g.attachment_id=NEW.attachment_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_update
+AFTER UPDATE OF content_version_id,profile_fingerprint,attachment_id ON rendition_heads
+WHEN OLD.content_version_id IS NOT NEW.content_version_id OR OLD.profile_fingerprint IS NOT NEW.profile_fingerprint OR OLD.attachment_id IS NOT NEW.attachment_id
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind<>'image' AND ((h.content_version_id=OLD.content_version_id AND es.profile_fingerprint=OLD.profile_fingerprint AND g.attachment_id=OLD.attachment_id) OR (h.content_version_id=NEW.content_version_id AND es.profile_fingerprint=NEW.profile_fingerprint AND g.attachment_id=NEW.attachment_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_delete
+AFTER DELETE ON rendition_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind<>'image' AND ((h.content_version_id=OLD.content_version_id AND es.profile_fingerprint=OLD.profile_fingerprint AND g.attachment_id=OLD.attachment_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_insert
+AFTER INSERT ON visual_preview_generations
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind='image' AND es.content_version_id=NEW.content_version_id
+      AND g.evidence_fingerprint=NEW.checksum AND NEW.state='ready'
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_delete
+AFTER DELETE ON visual_preview_generations
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind='image' AND es.content_version_id=OLD.content_version_id
+      AND g.evidence_fingerprint=OLD.checksum AND OLD.state='ready'
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_insert
+AFTER INSERT ON photo_files
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT version_id FROM content_versions WHERE (node_id=NEW.node_id AND (EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=NEW.asset_id AND a.display_file_id=NEW.file_id))))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_update
+AFTER UPDATE OF asset_id,node_id,file_id ON photo_files
+WHEN OLD.asset_id IS NOT NEW.asset_id OR OLD.node_id IS NOT NEW.node_id OR OLD.file_id IS NOT NEW.file_id
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT version_id FROM content_versions WHERE (node_id=OLD.node_id AND (EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=OLD.asset_id AND a.display_file_id=OLD.file_id))) OR (node_id=NEW.node_id AND (EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=NEW.asset_id AND a.display_file_id=NEW.file_id))))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_delete
+AFTER DELETE ON photo_files
+BEGIN
+    -- Foreign-key actions may already have cleared the asset's display link.
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT version_id FROM content_versions WHERE node_id=OLD.node_id)
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_update
+AFTER UPDATE OF kind,display_file_id,hidden_at,excluded_at ON photo_assets
+WHEN OLD.kind IS NOT NEW.kind OR OLD.display_file_id IS NOT NEW.display_file_id OR OLD.hidden_at IS NOT NEW.hidden_at OR OLD.excluded_at IS NOT NEW.excluded_at
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT v.version_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE (f.asset_id=OLD.asset_id AND f.file_id=OLD.display_file_id) OR (f.asset_id=NEW.asset_id AND f.file_id=NEW.display_file_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_nodes_update
+AFTER UPDATE OF current_version_id,trashed_at ON nodes
+WHEN OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;

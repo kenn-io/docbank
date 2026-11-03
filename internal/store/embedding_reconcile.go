@@ -515,6 +515,15 @@ func validateImageEmbeddingGenerationTx(ctx context.Context, tx *sql.Tx, generat
 	return validateImageEmbeddingPreviewTx(ctx, tx, generation)
 }
 
+// imageEmbeddingPreviewEligibilitySQL checks retained preview eligibility for
+// source capture. g names the generation.
+func imageEmbeddingPreviewEligibilitySQL(inputs, recipe string) string {
+	return `COALESCE(g.attachment_id,'')='' AND COALESCE(g.generation_blob_hash,'')='' AND g.input_count=1 AND
+		EXISTS(SELECT 1 FROM ` + inputs + ` i WHERE i.generation_id=g.generation_id
+			AND i.input_id=g.source_version_id AND i.rendered_checksum=g.generation_checksum) AND
+		` + currentImageEmbeddingRecipeSQL("g.source_version_id", "g.evidence_fingerprint", recipe)
+}
+
 func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord) error {
 	eligible, err := photoDescriptionEligibleTx(ctx, tx, generation.SourceVersionID)
 	if err != nil {
