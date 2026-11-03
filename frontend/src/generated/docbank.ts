@@ -9754,12 +9754,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File | string;
+  file: Blob | File;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File | string;
+  file: Blob | File;
   metadata: MediaArtifactMetadata;
 };
 

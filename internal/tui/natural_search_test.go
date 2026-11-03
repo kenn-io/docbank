@@ -64,10 +64,12 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 		t.Run(map[bool]string{false: "reply", true: "replaced pending"}[replaced], func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
-			fake.naturalSearch = api.DocumentSearchReport{
-				RequestedMode: "hybrid", ActualMode: "hybrid",
-				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
-			}
+			readme := fake.nodes["/README.txt"]
+			readme.TrashedAt = "2026-10-20T12:00:00Z"
+			fake.nodes["/README.txt"] = readme
+			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "stale base excerpt")
+			fake.naturalSearch.RequestedMode = "hybrid"
+			fake.naturalSearch.ActualMode = "hybrid"
 			fake.naturalSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped", Cause: "empty candidates"}
 			fake.naturalRerankSearch = fake.naturalSearch
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
@@ -112,7 +114,12 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 func TestEmptyNaturalSearchRetainsFailedRerank(t *testing.T) {
 	fake := newFakeBackend()
 	fake.profiles[0].RerankingAvailable = true
-	fake.naturalSearch = api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid"}
+	readme := fake.nodes["/README.txt"]
+	readme.TrashedAt = "2026-10-20T12:00:00Z"
+	fake.nodes["/README.txt"] = readme
+	fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "stale base excerpt")
+	fake.naturalSearch.RequestedMode = "hybrid"
+	fake.naturalSearch.ActualMode = "hybrid"
 	model, err := New(t.Context(), fake)
 	require.NoError(t, err)
 	model.naturalProfiles = fake.profiles

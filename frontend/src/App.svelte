@@ -3829,7 +3829,7 @@
       leavePage();
       onclose();
       querySettingsApplied = true;
-      void submitSnapshot(query, snapshot.state.options ?? {});
+      void submitSnapshot(query, snapshot.state.options ?? {}, false, false);
     }}
     {onclose}
     onauthfailure={handleFailure}

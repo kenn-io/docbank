@@ -102,7 +102,7 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 						require.Empty(t, misses[0].Filters)
 					}
 					if mode == "explicit" {
-						require.Zero(t, resolutions)
+						require.Equal(t, 1, resolutions)
 					}
 					if mode == "emptyscope" {
 						require.Zero(t, resolutions)
@@ -132,9 +132,10 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 	}
 }
 
-func TestExplicitSearchPreservesLiveMatchWithTrashedVersion(t *testing.T) {
+func TestExplicitSearchRejectsTrashedVersionInSourceFence(t *testing.T) {
 	const vault = "11111111-1111-4111-8111-111111111111"
 	const trashed = "22222222-2222-4222-8222-222222222222"
+	searchRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -143,18 +144,15 @@ func TestExplicitSearchPreservesLiveMatchWithTrashedVersion(t *testing.T) {
 		case "/api/v1/info":
 			assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: vault}))
 		case "/api/v1/processing/source-fences/resolve":
+			var request api.DocumentSourceFenceResolveRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+			assert.Equal(t, []string{processingTestVersionID, trashed}, request.ContentVersionIDs)
 			w.WriteHeader(http.StatusConflict)
 			_, _ = io.WriteString(w, `{"status":409,"code":"stale_version"}`)
 		case "/api/v1/search":
-			var request api.DocumentSearchRequest
-			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-			assert.Equal(t, vault, request.Fence.VaultUID)
-			assert.Equal(t, []string{processingTestVersionID, trashed}, request.Fence.ContentVersionIDs)
-			assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{
-				RequestedMode: "lexical", ActualMode: "lexical",
-				Coverage: api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
-				Results:  []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Path: "/live.txt", Rank: 1, LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}},
-			}))
+			searchRequests++
+			t.Error("search must not start when the source fence contains a trashed version")
+			http.NotFound(w, r)
 		case "/api/v1/miss-log":
 			t.Error("live match must not record a miss")
 			w.WriteHeader(http.StatusNoContent)
@@ -164,11 +162,10 @@ func TestExplicitSearchPreservesLiveMatchWithTrashedVersion(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	command, output := processingTestCommand()
-	require.NoError(t, runDocumentSearch(command, daemonconn.New(server.URL, "test-key"), "live", documentSearchCLIOptions{
+	err := runDocumentSearch(command, daemonconn.New(server.URL, "test-key"), "live", documentSearchCLIOptions{
 		Mode: "lexical", Profile: "private", ContentVersionIDs: []string{processingTestVersionID, trashed}, Limit: 10, JSON: true,
-	}))
-	var report api.DocumentSearchReport
-	require.NoError(t, json.Unmarshal(output.Bytes(), &report))
-	require.Len(t, report.Results, 1)
-	assert.Equal(t, "/live.txt", report.Results[0].Path)
+	})
+	require.Error(t, err)
+	assert.Zero(t, searchRequests)
+	assert.Empty(t, output.String())
 }

@@ -370,8 +370,7 @@ it.each([
     render(App);
     await screen.findByRole("button", { name: "Open" });
     await submitSearch("invoices");
-    if (embeddings)
-      await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+    if (embeddings) await waitFor(() => expect(harness.postBodies).toHaveLength(1));
     else await waitFor(() => expect(harness.legacyCalls()).toBe(1));
     expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
     if (embeddings && liveFiles) {
@@ -433,7 +432,9 @@ it("keeps names and text on GET without a processing profile", async () => {
       .map(([input]) => String(input))
       .filter((input) => input.startsWith("/api/v1/search?"));
     expect(searchURLs).toHaveLength(2);
-    expect(new URL(searchURLs[1]!, "https://example.com").searchParams.get("skip_miss_log")).toBeNull();
+    expect(
+      new URL(searchURLs[1]!, "https://example.com").searchParams.get("skip_miss_log"),
+    ).toBeNull();
   });
   expect(
     harness.fetchMock.mock.calls.some(
@@ -2020,7 +2021,8 @@ it.each(["plain", "rerank", "fallback", "filtered"])(
   },
 );
 
-it("records failed reranking after an empty base search", async () => {
+it("records failed reranking when base results cannot be hydrated", async () => {
+  const stale = node(99, "stale.txt", baseVersion);
   const harness = installHarness({
     profiles: [
       {
@@ -2032,7 +2034,7 @@ it("records failed reranking after an empty base search", async () => {
       },
     ],
     files: [node(2, "existing.txt", baseVersion)],
-    baseReport: report("hybrid", []),
+    baseReport: report("hybrid", [result(stale, 1, "stale excerpt")]),
     rerankStatus: 500,
   });
   render(App);
