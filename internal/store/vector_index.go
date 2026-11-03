@@ -516,12 +516,6 @@ func (s *Store) ReadVectorIndexVectorSet(ctx context.Context, reader RenditionBl
 func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
 	at time.Time, duration time.Duration,
 ) (VectorIndexReaderLease, error) {
-	return s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, true)
-}
-
-func (s *Store) acquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
-	at time.Time, duration time.Duration, checkSource bool,
-) (VectorIndexReaderLease, error) {
 	if err := validateEmbeddingCatalogText(owner, "vector index reader owner"); err != nil {
 		return VectorIndexReaderLease{}, err
 	}
@@ -546,14 +540,12 @@ func (s *Store) acquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		if err != nil {
 			return err
 		}
-		if checkSource {
-			current, err := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
-			if err != nil {
-				return err
-			}
-			if current != lease.Generation.SourceManifestChecksum {
-				return ErrVectorIndexSourceStale
-			}
+		current, err := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
+		if err != nil {
+			return err
+		}
+		if current != lease.Generation.SourceManifestChecksum {
+			return ErrVectorIndexSourceStale
 		}
 		return nil
 	})

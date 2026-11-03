@@ -14,6 +14,22 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
+func checkImageEmbeddingPublicationPostgres(t *testing.T) {
+	t.Helper()
+	f := newImageEmbeddingCatalogFixture(t)
+	setup, owner := pgtest.NewDatabase(t)
+	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	_, err := setup.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET vault_uid=$1`, f.s.vaultID)
+	require.NoError(t, err)
+	// Copy the prepared preview to exercise PostgreSQL publication.
+	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations")
+	copyStoreCatalogFixture(t, f.s, setup, tables)
+	s.rootID, s.vaultID, s.primaryStoreID = f.s.rootID, f.s.vaultID, f.s.primaryStoreID
+	f.s = s
+	record, _ := f.publish(t)
+	require.Equal(t, record.ID, embeddingHeadSetIDForTest(t, f.s, f.node.CurrentVersionID, f.request.Profile.Fingerprint, f.request.BindingID, document.EmbeddingInputImage))
+}
+
 func checkEmbeddingPublicationPostgres(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"optional", "chunk"} {

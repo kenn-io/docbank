@@ -743,8 +743,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		space.QueryFormatter != binding.QueryFormatter || space.ModelInputFingerprint != binding.ModelInput.Fingerprint {
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
-	// The fence compares the source with the leased generation in the next read transaction.
-	lease, err := s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, false)
+	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}

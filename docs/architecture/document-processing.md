@@ -243,7 +243,7 @@ coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
 
 SQLite maintains a derived membership revision for each vector space as embedding heads, rendition heads, content versions, previews, and photo eligibility change.
-Search checkpoints reuse an in-process checksum memo while the snapshot's revision and current grid-preview recipe match; the first checkpoint after a membership change or restart captures the source again without writing bookkeeping.
+Search checkpoints reuse an in-process checksum memo while the snapshot's revision matches; the first checkpoint after a membership change or restart captures the source again without writing bookkeeping.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact

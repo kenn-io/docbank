@@ -2902,6 +2902,31 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 	}
 }
 
+func TestReviewStaleSearchDoesNotWaitForWriter(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"semantic", "similar"} {
+		t.Run(name, func(t *testing.T) {
+			s, first, source := newPublishedVectorIndexFixture(t)
+			now := time.Now().UTC()
+			require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
+			publishVectorIndexMembersForTest(t, s, first, 2)
+			version, err := s.ContentVersionByID(t.Context(), first.ContentVersionID)
+			require.NoError(t, err)
+			tx, err := s.writeDB.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, tx.Rollback()) }()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if name == "semantic" {
+				_, err = s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
+			} else {
+				_, err = s.AcquireSimilarSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{ContentVersionIDs: []string{version.ID}}, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+			}
+			require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+		})
+	}
+}
+
 func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceFailure(t *testing.T) {
 	t.Parallel()
 	s, first, source := newPublishedVectorIndexFixture(t)
@@ -2917,13 +2942,16 @@ func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceFailure(t *testing.T)
 	_, err := s.AcquireSemanticSearchAuthority(t.Context(), first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 	requireNoLeases()
+	source, err = s.CaptureVectorIndexSource(t.Context(), first.VectorSpace.ID)
+	require.NoError(t, err)
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("coverage-cancellation", source, []byte("index"), now)))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	release := make(chan struct{})
 	close(release)
 	readDB := s.db
 	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
-		// Cancel the coverage query after the fence has read the changed source.
+		// Cancel coverage after the lease and source checks succeed.
 		if strings.Contains(query, "SELECT COUNT(*) FROM "+nodeFrom) {
 			cancel()
 		}

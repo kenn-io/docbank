@@ -536,7 +536,7 @@ func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation
 	var eligible bool
 	// Publication also validates generations before their input rows are stored.
 	err = tx.QueryRowContext(ctx, `WITH g AS (SELECT $1 AS generation_id,$2 AS source_version_id,$3 AS evidence_fingerprint,
-		$4 AS attachment_id,$5 AS generation_blob_hash,$6 AS input_count,$7 AS generation_checksum),
+		$4 AS attachment_id,$5 AS generation_blob_hash,CAST($6 AS INTEGER) AS input_count,$7 AS generation_checksum),
 		inputs AS (SELECT $1 AS generation_id,$8 AS input_id,$9 AS rendered_checksum)
 		SELECT `+imageEmbeddingPreviewEligibilitySQL("inputs", "$10")+` FROM g`,
 		generation.ID, generation.SourceVersionID, generation.EvidenceFingerprint, generation.AttachmentID,
