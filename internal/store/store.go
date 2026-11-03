@@ -40,8 +40,6 @@ type Store struct {
 	photoEvents            photoEventFeed
 	photoStackVectorsMu    sync.Mutex
 	photoStackVectors      map[string]photoStackOpenedGeneration
-	semanticRowsMu         sync.Mutex
-	semanticRows           map[semanticRowsKey]semanticRowsEntry
 	photoHiddenNow         func() time.Time
 	photoHiddenAuthMu      sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu  sync.Mutex
@@ -275,9 +273,6 @@ func (s *Store) Close() error {
 	s.photoStackVectorsMu.Lock()
 	s.photoStackVectors = nil
 	s.photoStackVectorsMu.Unlock()
-	s.semanticRowsMu.Lock()
-	s.semanticRows = nil
-	s.semanticRowsMu.Unlock()
 	return err
 }
 

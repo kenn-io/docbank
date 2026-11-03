@@ -252,27 +252,6 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					for i := range ranked {
 						ranked[i].Score = 1 - float64(i)/float64(count)
 					}
-					if scope == "all" {
-						for _, reuse := range []string{"reused", "reused-fenced"} {
-							b.Run("authority/"+reuse, func(b *testing.B) {
-								options, want := opts, wantRows
-								if reuse == "reused-fenced" {
-									for _, neighbor := range neighbors[:20] {
-										options.ContentVersionIDs = append(options.ContentVersionIDs, neighbor.InputKey)
-									}
-									want = 20
-								}
-								_, err := s.semanticANNRowsForSourceTx(ctx, tx, source.ManifestChecksum, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, options)
-								require.NoError(b, err)
-								b.ReportAllocs()
-								for b.Loop() {
-									rows, err := s.semanticANNRowsForSourceTx(ctx, tx, source.ManifestChecksum, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, options)
-									require.NoError(b, err)
-									require.Len(b, rows, want)
-								}
-							})
-						}
-					}
 					for _, operation := range []string{"authority", "resolve", "similar"} {
 						if scope == "collapse" && operation == "similar" {
 							continue
