@@ -1269,7 +1269,7 @@ func TestExtractRejectsIdentifierContinuations(t *testing.T) {
 	}
 	for _, text := range []string{
 		"Policy number: AB-1234-.", "Policy number: 1234-.",
-		"Policy: AB-1234-.", "Policy: USD1234-.", "Policy: 2026-07-01-.", "Policy: AB/2026-07-01.",
+		"Policy: AB-1234-.", "Policy: USD1234-.", "Policy: 2026-07-01-.", "Policy: AB/2026-07-01.", "Policy: A/B/2026-07-01.",
 	} {
 		got := Extract(text + " The fee is $5.")
 		if len(got) != 1 || got[0].Text != "$5" {
@@ -2563,6 +2563,7 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 	for _, text := range []string{
 		"The deadline is 7 min. after 10 min.",
 		"The deadline is 7 min. before 10 min.",
+		"The deadline is 7 min. before 1 000 minutes.",
 		"The deadline is 7 min. before 1/2 hour.",
 		"The deadline is 7 min. before seven point five minutes.",
 		"The deadline is 7 min. prior to 10 min.",
@@ -2629,6 +2630,7 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperands(t *testing.T) {
 	for _, text := range []string{
 		"The wait is 7 min. After 1/2 hour customers pay $5.",
+		"The wait is 7 min. After 1 000 minutes customers pay $5.",
 		"The wait is 7 min. After 1/2 hour, $5 is charged.",
 		"The wait is 7 min. After seven point five minutes customers pay $5.",
 		"The wait is 7 min. After seven point five minutes, $5 is charged.",
@@ -2662,7 +2664,9 @@ func TestExtractRejectsCoordinatedRelativeDurationContinuations(t *testing.T) {
 
 func TestExtractRejectsUnsupportedDurationAlternativesAfterAbbreviation(t *testing.T) {
 	for _, text := range []string{
+		"The wait is 7 min. and thirty minutes.",
 		"The wait is 7 min. or thirty minutes.",
+		"The wait is 7 min. or an hour.",
 		"The wait is 7 min. or a quarter of an hour.",
 		"The wait is 7 min. or one and a half hours.",
 	} {

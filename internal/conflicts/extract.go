@@ -1151,15 +1151,18 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
+	regexp.MustCompile(`^[0-9]{1,3}(?:[[:space:]][0-9]{3})+`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	spokenDecimalNumberRE,
 	regexp.MustCompile(`(?i)^` + numRange),
 	numeralWordSequenceRE,
 	regexp.MustCompile(`(?i)^(?:a\s+)?` + fractionWords + `s?\b`),
+	regexp.MustCompile(`(?i)^an?\b`),
 }
 var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:of\s+)?(?:a|an)\s+|of\s+)?(?:(?:business|working|calendar)\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
 
-var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^\s+(?:or|through|to|until|till)\s+`)
+var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^\s+(and|or|through|to|until|till)\s+`)
+var durationLaterLeadRE = regexp.MustCompile(`(?i)^\s+(?:later|afterwards?|thereafter)\b`)
 
 func durationAlternativeContinuation(prefix, suffix string) bool {
 	if strings.HasPrefix(suffix, ".") && !durationAbbrevRE.MatchString(prefix) && durationAbbrevRE.MatchString(prefix+".") {
@@ -1171,7 +1174,7 @@ func durationAlternativeContinuation(prefix, suffix string) bool {
 // Unsupported alternative endpoints must keep an abbreviated duration attached
 // to the expression so safety checks can reject both endpoints together.
 func unsupportedDurationAlternativeContinuation(suffix string) bool {
-	lead := unsupportedDurationAlternativeLeadRE.FindStringIndex(suffix)
+	lead := unsupportedDurationAlternativeLeadRE.FindStringSubmatchIndex(suffix)
 	if lead == nil {
 		return false
 	}
@@ -1179,9 +1182,15 @@ func unsupportedDurationAlternativeContinuation(suffix string) bool {
 	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
 		operand = trimRelativeDurationWrappers(operand[qualifier[1]:])
 	}
-	_, unit, _, ok := relativeDurationOperandParts(operand)
+	_, unit, following, ok := relativeDurationOperandParts(operand)
 	if !ok {
 		return false
+	}
+	conjunction := strings.ToLower(suffix[lead[2]:lead[3]])
+	if conjunction == "and" {
+		if later := durationLaterLeadRE.FindStringIndex(following); later != nil && relativeDurationIndependentAssertionRE.MatchString(following[later[1]:]) {
+			return false
+		}
 	}
 	match := unitRE.FindStringSubmatchIndex(operand)
 	if match == nil || match[0] != 0 || match[1] != unit[1] {
@@ -2237,7 +2246,7 @@ func dateContinuedPrefix(prefix string) bool {
 	return unicode.IsDigit(previous)
 }
 
-var labelledIdentifierDatePrefixRE = regexp.MustCompile(`(?i)\b` + identifierLabel + `(?:\s+(?:number|no\.?|id))?\s*(?::|\bis\b)\s*[[:alnum:]][[:alnum:]-]*/\s*$`)
+var labelledIdentifierDatePrefixRE = regexp.MustCompile(`(?i)\b` + identifierLabel + `(?:\s+(?:number|no\.?|id))?\s*(?::|\bis\b)\s*(?:[[:alnum:]][[:alnum:]-]*/)+\s*$`)
 
 var incompleteAlternativeDateSuffixRE = regexp.MustCompile(`(?i)^[\s,)\]"'‘’“”»]+or\s+[(\["'‘’“”«]*(?:[0-9]{4}\b|(?:[0-9]{1,2}\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december)\b)`)
 

@@ -37,7 +37,8 @@ Date parsing accepts spaces and tabs while preserving the original quote.
 Continued date tokens such as `2026-07-01-02` and `1 July 2026/2027` supply
 neither a date value nor a period bound, including two dates joined by a slash.
 A short code prefix in a labelled identifier also prevents an embedded date
-from becoming a date value, as in `Policy: AB/2026-07-01`. A complete date can
+from becoming a date value, as in `Policy: AB/2026-07-01` or
+`Policy: A/B/2026-07-01`. A complete date can
 precede an independent typed figure in the same clause.
 An accepted date after `to` supplies an end bound, even when its day follows a
 money amount, unless its scope is uncertain.
@@ -71,8 +72,9 @@ parsed. This includes symbolic comparisons after a rate; word-number or
 fraction-word operands such as `$5/month higher than thirty`, `$5/month greater
 than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
 duration operands such as `7 days before thirty days` or
-`7 min. before thirty-five min.`; fractional or spoken-decimal durations such
-as `7 min. before 1/2 hour`, `7 min. before half an hour`, or
+`7 min. before thirty-five min.`; grouped numeric, fractional or spoken-decimal
+durations such as `7 min. before 1 000 minutes`, `7 min. before 1/2 hour`,
+`7 min. before half an hour`, or
 `7 min. before seven point five minutes`; rejected ranges such as
 `7 min. before 10-7 min.`; and wrapped bounds such as
 `7 min. before (about 10 min.)` or
@@ -84,7 +86,8 @@ An independent temporal assertion after an abbreviated duration remains
 separate when it starts with its own subject and predicate, or with a typed
 figure followed directly by an assertion predicate. For example, `The wait is
 7 min. After 10 minutes, $5 is charged.`, `The wait is 7 min. After 1/2 hour
-customers pay $5.`, `The wait is 7 min. After seven point five minutes,
+customers pay $5.`, `The wait is 7 min. After 1 000 minutes customers pay
+$5.`, `The wait is 7 min. After seven point five minutes,
 $5 is charged.`, and `The wait is 7 min. After twenty-one minutes customers
 pay $5.` keep both figures, even when the duration operand itself is rejected.
 Closing wrappers after the duration do not hide the following assertion:
@@ -101,8 +104,9 @@ omission, including markers before a bound or inside a range. The suffixes
 `more or less` and `and change` also mark a figure as approximate. A marker followed
 by `exactly`, as in `almost exactly`, or `a total of` also omits the figure. An approximate component omits a
 compound duration joined by `and` or a comma, while an independently stated exact figure can remain.
-An unsupported numeric alternative such as `7 or 10 days` never becomes the
-exact value `10 days`. Unsupported sign words such as `minus` and `negative`
+An unsupported numeric or verbal duration alternative such as `7 or 10 days`,
+`7 min. or an hour`, or `7 min. and thirty minutes` never becomes a partial
+exact value. Unsupported sign words such as `minus` and `negative`
 before a numeric figure or its bound never yield a positive value. Postfix
 bounds such as `7 days maximum` are omitted rather than treated as exact.
 Recognition never rewrites the quoted source text.
