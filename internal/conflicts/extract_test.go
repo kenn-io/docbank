@@ -2554,6 +2554,8 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 	for _, text := range []string{
 		"The deadline is 7 min. after 10 min.",
 		"The deadline is 7 min. before 10 min.",
+		"The deadline is 7 min. before 1/2 hour.",
+		"The deadline is 7 min. before seven point five minutes.",
 		"The deadline is 7 min. prior to 10 min.",
 		"The deadline is 7 min. After 10 min.",
 		"The deadline is 7 min. before about 10 min.",
@@ -2588,6 +2590,9 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 		"The wait is 7 min. After 10 minutes the price increases to $5.",
 		"The wait is 7 min. After 10 minutes the fee becomes $5.",
 		"The wait is 7 min. After 10 minutes customers pay $5.",
+		"The wait is 7 min. After 10 minutes, $5 is charged.",
+		"The wait is 7 min. Prior  to 10 minutes customers pay $5.",
+		"The wait is 7 min. Prior\tto\t10 minutes customers pay $5.",
 		"The wait is 7 min. After thirty minutes customers pay $5.",
 		"The wait is 7 min. After twenty minutes customers pay $5.",
 		"The wait is 7 min. After thirty-five minutes customers pay $5.",
@@ -2616,12 +2621,25 @@ func TestExtractRejectsSymbolicRelativeDurationBounds(t *testing.T) {
 		"The deadline is 7 min. before (about 10 min.).",
 		"The deadline is 7 min. before [at least 10 min.].",
 		"The deadline is 7 days before (about 10 days).",
+		"The deadline is (7 days) before (about 10 days).",
 		"The deadline is 7 days before (at least 10 days).",
 		"The deadline is 7 days before ( about 10 days ).",
 		"The deadline is 7 days before (( at least 10 days )).",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("symbolic relative-duration comparison retained exact figures for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestRelativeDurationClauseOperandNormalizesConnectorWhitespace(t *testing.T) {
+	for _, text := range []string{
+		"Prior  to thirty-five minutes customers pay $5.",
+		"Prior\tto\tthirty-five minutes customers pay $5.",
+	} {
+		connector, operand, _, ok := relativeDurationClauseOperand(text)
+		if !ok || connector != "prior to" || !strings.HasPrefix(operand, "thirty-five minutes") {
+			t.Errorf("relative duration clause operand for %q = (%q, %q, %t)", text, connector, operand, ok)
 		}
 	}
 }

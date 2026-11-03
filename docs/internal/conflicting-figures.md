@@ -68,11 +68,15 @@ Comparison continuations omit the clause even when the right operand cannot be
 parsed, including symbolic comparisons after a rate, word-number operands such
 as `$5/month higher than thirty` or `$5/month greater than thirty dollars`,
 spelled-out duration operands such as `7 days before thirty days` or
-`7 min. before thirty-five min.`, and wrapped bounds such as
-`7 min. before (about 10 min.)`. An independent temporal
-assertion after an abbreviated duration remains separate, as in
-`The wait is 7 min. After 10 minutes customers pay $5.`
-Sentence punctuation followed by closing quotes or brackets ends a clause. Soft line wraps stay in the same clause; blank lines and list or table rows separate clauses.
+`7 min. before thirty-five min.`, fractional or spoken-decimal durations such
+as `7 min. before 1/2 hour` or `7 min. before seven point five minutes`, and
+wrapped bounds such as `7 min. before (about 10 min.)` or
+`(7 days) before (about 10 days)`. An independent temporal assertion after an
+abbreviated duration remains separate, including when a typed figure is the
+subject: `The wait is 7 min. After 10 minutes, $5 is charged.`
+Sentence punctuation followed by closing quotes or brackets ends a clause. Soft
+line wraps stay in the same clause; blank lines and list or table rows separate
+clauses.
 Approximation markers (`about`, `approximately`, `around`, `roughly`, `nearly`,
 `almost`, `circa`, `estimated`, `~`, and `≈`) before or after a figure cause its
 omission, including markers before a bound or inside a range. The suffixes
