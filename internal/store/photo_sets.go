@@ -126,7 +126,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 // PhotoSet returns one live album summary using the given grid preview recipe.
 func (s *Store) PhotoSet(ctx context.Context, id, recipe string) (PhotoSetSummary, error) {
 	var out PhotoSetSummary
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		set, err := photoSetByID(ctx, tx, id)
 		if err != nil {
 			return err
@@ -140,7 +140,7 @@ func (s *Store) PhotoSet(ctx context.Context, id, recipe string) (PhotoSetSummar
 // ListPhotoSets returns live albums, starred first, then by name.
 func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSummary, error) {
 	out := make([]PhotoSetSummary, 0)
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT `+photoSetColumns+` FROM photo_sets WHERE deleted_at IS NULL ORDER BY starred DESC,name,set_id`)
 		if err != nil {
 			return err

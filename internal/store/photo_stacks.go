@@ -439,7 +439,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool,
 		}
 		position[id] = i
 	}
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		if hidden {
 			if _, err := s.hiddenSession(ctx, tx); err != nil {
 				return err
@@ -532,7 +532,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 	}
 	var vectors *photoStackVectorReader
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		vectors, err = s.newPhotoStackVectorReader(ctx, tx)
 		return err

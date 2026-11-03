@@ -725,19 +725,14 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		vectorSpaceID = normalized.VectorSpaceID
 	}
 	if similar != nil {
-		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 		})
 		if err != nil {
 			return SemanticSearchAuthority{}, err
 		}
 	}
-	var space EmbeddingVectorSpaceRecord
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var loadErr error
-		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
-		return loadErr
-	})
+	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -2295,10 +2290,10 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
-// withSearchOptionsTx binds photo predicates to the transaction consuming them.
+// withSearchOptionsTx binds photo predicates to the read snapshot consuming them.
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) (retErr error) {
+	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
 		if opts.PhotoScope != nil {
 			lease, err := s.acquireLexicalGeneration(ctx, tx)
 			if err != nil && !errors.Is(err, ErrNotFound) {

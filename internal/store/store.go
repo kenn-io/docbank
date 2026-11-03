@@ -302,6 +302,22 @@ var (
 // and its writer observe the same revision. A reopened Store starts unsettled.
 func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
 
+// withReadTx runs a consistent snapshot without reserving the writer.
+func (s *Store) withReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return fmt.Errorf("beginning read transaction: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing read transaction: %w", err)
+	}
+	return nil
+}
+
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an

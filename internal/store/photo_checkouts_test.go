@@ -1231,7 +1231,7 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	selection := PhotoCheckoutSelection{AssetIDs: []string{kept.ID, purged.ID}}
 	var entries []PhotoCheckoutEntry
 	var estimate PhotoCheckoutEstimate
-	require.NoError(t, s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(t, s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		entries, estimate, err = s.checkoutEntriesTx(ctx, tx, selection)
 		return err

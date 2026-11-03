@@ -471,6 +471,9 @@ func (s *Store) ReadVectorIndexVectorSet(ctx context.Context, reader RenditionBl
 	return data, nil
 }
 
+// AcquireVectorIndexGeneration leases and pins the generation it names. The manifest
+// check uses a read snapshot before the lease. Callers that need the source current
+// at use time re-check it, as semanticSearchAuthorityFence does.
 func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
 	at time.Time, duration time.Duration,
 ) (VectorIndexReaderLease, error) {
@@ -485,7 +488,7 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		return VectorIndexReaderLease{}, err
 	}
 	lease := VectorIndexReaderLease{ID: leaseID, FencingToken: 1, ExpiresAt: at.UTC().Add(duration)}
-	err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var generationID string
 		if err := tx.QueryRowContext(ctx, `SELECT generation_id FROM vector_index_heads
 			WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID); errors.Is(err, sql.ErrNoRows) {
@@ -505,12 +508,33 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		if current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
 			return ErrVectorIndexSourceStale
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
-			lease_id,generation_id,owner,fencing_token,lease_expires_at) VALUES(?,?,?,?,?)`,
-			lease.ID, generationID, owner, lease.FencingToken, lease.ExpiresAt.Format(timestampLayout))
-		return err
+		return nil
+	})
+	if err != nil {
+		return lease, err
+	}
+	err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
+		return insertVectorIndexReaderLeaseTx(ctx, tx, lease, owner)
 	})
 	return lease, err
+}
+
+func insertVectorIndexReaderLeaseTx(ctx context.Context, tx *sql.Tx, lease VectorIndexReaderLease, owner string) error {
+	result, err := tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
+		lease_id,generation_id,owner,fencing_token,lease_expires_at)
+		SELECT ?,generation_id,?,?,? FROM vector_index_heads WHERE vector_space_id=? AND generation_id=?`,
+		lease.ID, owner, lease.FencingToken, lease.ExpiresAt.Format(timestampLayout), lease.Generation.VectorSpaceID, lease.Generation.ID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrVectorIndexSourceStale
+	}
+	return nil
 }
 
 func (s *Store) ReleaseVectorIndexGeneration(ctx context.Context, leaseID string, fencingToken int64, at time.Time) error {

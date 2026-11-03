@@ -73,7 +73,7 @@ func (s *Store) AcquireSimilarSearchAuthority(ctx context.Context, profile, bind
 	if err != nil {
 		return SimilarSearchAuthority{}, err
 	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		if err := validateSimilarSource(ctx, tx, source, opts); err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 		return SimilarSearchResolution{}, err
 	}
 	var result SimilarSearchResolution
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		capture := similarSourceCapture{SimilarSource: source}
 		if err := capture.load(ctx, tx, profile, binding, kind, space, opts); err != nil {
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrSimilarSourceUnavailable) {

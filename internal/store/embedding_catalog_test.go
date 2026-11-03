@@ -969,9 +969,9 @@ func embeddingHeadSetIDForTest(
 	return setID
 }
 
-func newEmbeddingCatalogFixture(t *testing.T) (*Store, string, ProcessingProfileRecord, string) {
-	t.Helper()
-	return seedEmbeddingCatalog(t, newTestStore(t))
+func newEmbeddingCatalogFixture(tb testing.TB) (*Store, string, ProcessingProfileRecord, string) {
+	tb.Helper()
+	return seedEmbeddingCatalog(tb, newTestStore(tb))
 }
 
 func seedEmbeddingCatalog(tb testing.TB, s *Store) (*Store, string, ProcessingProfileRecord, string) {

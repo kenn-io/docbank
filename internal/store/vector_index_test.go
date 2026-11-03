@@ -322,8 +322,7 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 
 func newPublishedVectorIndexFixture(tb testing.TB) (*Store, EmbeddingSetRecord, VectorIndexSource) {
 	tb.Helper()
-	s := newTestStore(tb)
-	_, versionID, profile, _ := seedEmbeddingCatalog(tb, s)
+	s, versionID, profile, _ := newEmbeddingCatalogFixture(tb)
 	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(tb, s.StageEmbeddingSet(tb.Context(), record))
 	require.NoError(tb, s.PublishEmbeddingHead(tb.Context(), EmbeddingHeadRecord{
@@ -416,4 +415,25 @@ func TestVectorIndexPayloadClassifiesBackendFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
+	t.Parallel()
+	s, _, source := newPublishedVectorIndexFixture(t)
+	now := time.Now().UTC()
+	first := vectorIndexGenerationFixture("first", source, []byte("first"), now)
+	second := vectorIndexGenerationFixture("second", source, []byte("second"), now)
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, first))
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, second))
+	reclaimed, err := s.ReclaimVectorIndexGenerations(t.Context(), now)
+	require.NoError(t, err)
+	require.Equal(t, 1, reclaimed)
+	lease := VectorIndexReaderLease{ID: "reader-race", Generation: first, FencingToken: 1, ExpiresAt: now.Add(time.Minute)}
+	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return insertVectorIndexReaderLeaseTx(t.Context(), tx, lease, "reader")
+	})
+	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+	var count int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases WHERE lease_id=?`, lease.ID).Scan(&count))
+	require.Zero(t, count)
 }
