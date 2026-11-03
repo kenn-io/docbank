@@ -5,6 +5,7 @@ import (
 	"context"
 	"image"
 	"os"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -24,7 +25,11 @@ func TestNativeVisibilityAmbiguityStopsOnCancellation(t *testing.T) {
 }
 
 func TestInspectNativeTextAcrossPages(t *testing.T) {
-	count := 2
+	// A live 512 MiB backing buffer can delay GC past the worker's RSS ceiling.
+	// Exercise all 16 supported native pages without relying on earlier GC.
+	previousGC := debug.SetGCPercent(300)
+	defer debug.SetGCPercent(previousGC)
+	count := 16
 	if os.Getenv("DOCBANK_PDF_QUALIFICATION") == "1" {
 		count = 1000 // Exercises a document that exceeds one page's deadline.
 	}
@@ -57,7 +62,7 @@ func TestInspectNativeTextAcrossPages(t *testing.T) {
 		}
 		require.Equal(t, "alpha", text.String())
 	}
-	if count == 2 {
+	if count == 16 {
 		// Each page fits on its own, but retaining both must honor the
 		// document observation budget before alignment builds the map.
 		first, _, err := canonical.BoundedSize(pages[0], 1<<20)
