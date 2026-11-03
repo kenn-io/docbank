@@ -918,44 +918,94 @@ func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
 	return validPDFTableXRefWithRoot(xref, beforeStartXRef, nil)
 }
 
+// A table's own trailer governs it. Linearized files put the first-page
+// table and its trailer near the start, and their final trailer may omit
+// /Root. When that trailer lies beyond the bounded read, the final trailer
+// governs, as it does for an ordinary table. The final trailer must still
+// immediately precede startxref, so appended data cannot borrow a trailer.
 func validPDFTableXRefWithRoot(xref, beforeStartXRef []byte, inheritedRoot []string) bool {
 	position := 0
 	line, ok := nextPDFLine(xref, &position)
 	if !ok || !bytes.Equal(trimPDFWhitespace(line), []byte("xref")) {
 		return false
 	}
-	header, ok := nextNonemptyPDFLine(xref, &position)
+	end, records, trailer, ok := scanPDFTableXRef(xref, position)
 	if !ok {
 		return false
 	}
-	headerFields := bytes.Fields(header)
-	if len(headerFields) != 2 {
+	final, ok := finalPDFTrailer(beforeStartXRef)
+	if !ok {
 		return false
 	}
-	first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
-	count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
-	if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count {
+	if _, ok := pdfPositiveInteger(final["Size"]); !ok {
 		return false
 	}
-	validatedRecords := uint64(0)
-	for validatedRecords < count {
-		record, ok := nextPDFLine(xref, &position)
-		if !ok {
-			break
-		}
-		if !validPDFXRefRecord(record) {
-			if position == len(xref) {
-				break
-			}
-			return false
-		}
-		validatedRecords++
+	if trailer == nil {
+		trailer = final
 	}
-	if validatedRecords == 0 {
+	// A hybrid-reference update may add no table entries and defer to the
+	// /XRefStm stream or the /Prev section.
+	_, stream := pdfPositiveInteger(trailer["XRefStm"])
+	_, previous := pdfPositiveInteger(trailer["Prev"])
+	if records == 0 && !stream && !previous {
 		return false
 	}
+	root := trailer["Root"]
+	if len(root) == 0 {
+		root = inheritedRoot
+	}
+	size, sizeOK := pdfPositiveInteger(trailer["Size"])
+	return validPDFRootReference(root) && sizeOK && end <= size
+}
 
-	return validPDFTrailerWithRoot(beforeStartXRef, first, count, inheritedRoot)
+// Scan subsections until the trailer keyword. Return the highest object number
+// covered plus one, the number of validated records, and the table's own
+// trailer, or nil when the bounded read ends first.
+func scanPDFTableXRef(xref []byte, position int) (uint64, int, map[string][]string, bool) {
+	end, records := uint64(0), 0
+	for {
+		start := position
+		header, ok := nextNonemptyPDFLine(xref, &position)
+		if !ok {
+			return end, records, nil, true
+		}
+		if firstPDFKeyword(header, "trailer") == 0 {
+			trailerIndex := start + firstPDFKeyword(xref[start:], "trailer") + len("trailer")
+			startXRef := firstPDFKeyword(xref[trailerIndex:], "startxref")
+			if startXRef < 0 {
+				return end, records, nil, true
+			}
+			// A dictionary this scan cannot isolate defers to the final trailer.
+			trailer, ok := parsePDFDictionary(xref[trailerIndex : trailerIndex+startXRef])
+			if !ok {
+				trailer = nil
+			}
+			return end, records, trailer, true
+		}
+		headerFields := bytes.Fields(header)
+		if len(headerFields) != 2 {
+			return 0, 0, nil, false
+		}
+		first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
+		count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
+		if firstErr != nil || countErr != nil || first > math.MaxUint64-count {
+			return 0, 0, nil, false
+		}
+		end = max(end, first+count)
+		for range count {
+			record, ok := nextPDFLine(xref, &position)
+			if !ok {
+				return end, records, nil, true
+			}
+			if !validPDFXRefRecord(record) {
+				if position == len(xref) {
+					return end, records, nil, true
+				}
+				return 0, 0, nil, false
+			}
+			records++
+		}
+	}
 }
 
 func validPDFStreamXRef(xref []byte) bool {
@@ -993,27 +1043,20 @@ func validPDFStreamXRefWithRoot(xref []byte, inheritedRoot []string) bool {
 		validPDFStreamLength(dictionary["Length"])
 }
 
-func validPDFTrailerWithRoot(data []byte, first, count uint64, inheritedRoot []string) bool {
+// Return the trailer dictionary that immediately precedes startxref. A later
+// trailer keyword may appear inside a string, so try earlier ones in turn.
+func finalPDFTrailer(data []byte) (map[string][]string, bool) {
 	for end := len(data); end > 0; {
 		trailerIndex := lastPDFKeyword(data[:end], "trailer")
 		if trailerIndex < 0 {
-			return false
+			return nil, false
 		}
-		trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):])
-		if ok {
-			root := trailer["Root"]
-			if len(root) == 0 {
-				root = inheritedRoot
-			}
-			if !validPDFRootReference(root) {
-				return false
-			}
-			size, sizeOK := pdfPositiveInteger(trailer["Size"])
-			return sizeOK && first+count <= size
+		if trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):]); ok {
+			return trailer, true
 		}
 		end = trailerIndex
 	}
-	return false
+	return nil, false
 }
 
 func nextPDFLine(data []byte, position *int) ([]byte, bool) {
