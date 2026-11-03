@@ -29,6 +29,13 @@ LDFLAGS = -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
 # fts5: enable the SQLite FTS5 full-text search extension
 BUILD_TAGS := fts5
 
+# gotestsum writes gotestsum/<suite>.json, which CI uploads for failed or
+# rerun tests. CI sets PG_SUITE so each PostgreSQL version has its own files.
+PG_SUITE ?= postgres
+gotestsum = mkdir -p gotestsum && go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+	--jsonfile gotestsum/$(1).json --rerun-fails=2 --rerun-fails-report gotestsum/$(1)-reruns.txt \
+	--packages "$(2)" --
+
 # Output directory for make homebrew.
 BINDIR ?= bin
 
@@ -82,8 +89,8 @@ backend-coverage:
 
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
-	go test -v -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store/pgschema
-	go test -v -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-pgschema,./internal/store/pgschema) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)"
+	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
@@ -170,7 +177,7 @@ docs-subpath-test:
 	cd docs && uv run --project . --frozen --no-dev python scripts/check_zensical_subpath.py
 
 bridge-contract:
-	go test -v -tags fts5 ./document/bridge -run '^TestBridgeContractNormativeDocuments'
+	$(call gotestsum,docs-bridge-contract,./document/bridge) -tags fts5 -run '^TestBridgeContractNormativeDocuments'
 
 docs-assets-test:
 	bash scripts/docs-assets-sync.test.sh

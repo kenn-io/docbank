@@ -94,7 +94,17 @@ jobs:
       - name: Exercise schema lifecycle and node queries
         env:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
-        run: make test-pg
+        run: make test-pg PG_SUITE=postgres-${{ matrix.version }}
+
+      # gotestsum writes a reruns file only after it reran a failed test.
+      - name: Upload Go test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-${{ matrix.version }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   docs:
     needs: changes
@@ -163,6 +173,16 @@ jobs:
           make docs-subpath-test
           node --test scripts/docs/*.test.mjs
           make docs-build
+
+      # gotestsum writes a reruns file only after it reran a failed test.
+      - name: Upload Go test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-docs-bridge-contract-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Verify documentation upload inputs locally
         run: node scripts/docs/check-upload-inputs.mjs
@@ -340,7 +360,21 @@ jobs:
       - name: Embedded modernc restore without FTS5 build tags
         env:
           CGO_ENABLED: "1"
-        run: go test -v -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' ./docbank
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text
+          --jsonfile gotestsum/linux-amd64-cgo-modernc-restore.json
+          --rerun-fails=2 --rerun-fails-report gotestsum/linux-amd64-cgo-modernc-restore-reruns.txt
+          --packages ./docbank -- -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$'
+
+      # gotestsum writes a reruns file only after it reran a failed test.
+      - name: Upload Go test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-linux-amd64-cgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Stop S3-compatible test service
         if: always()
@@ -383,6 +417,16 @@ jobs:
       - name: Test
         run: bash scripts/test-go-ci.sh
 
+      # gotestsum writes a reruns file only after it reran a failed test.
+      - name: Upload Go test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-linux-amd64-purego-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
 
@@ -415,6 +459,16 @@ jobs:
 
       - name: Test
         run: bash scripts/test-go-ci.sh
+
+      # gotestsum writes a reruns file only after it reran a failed test.
+      - name: Upload Go test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-darwin-arm64-cgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -568,6 +622,16 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
         run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4
+
+      # gotestsum writes a reruns file only after it reran a failed test.
+      - name: Upload Go test results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-${{ matrix.goarch }}-shard-${{ matrix.shard || 'all' }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         if: matrix.shard == 4

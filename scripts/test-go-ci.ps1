@@ -39,19 +39,34 @@ if ($ShardCount -eq 4 -and $Shard -ne 'all') {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+# Name each gotestsum report after the architecture, shard and call so every
+# CI job and every run in this script writes a distinct file.
+$goTestArgs = @($args)
+$suite = "windows-$(go env GOARCH)-shard-$Shard"
+$part = 0
+New-Item -ItemType Directory -Force -Path gotestsum | Out-Null
+function Invoke-GoTest([string[]]$Packages) {
+    $script:part++
+    $name = "$suite-part-$script:part"
+    go tool gotestsum --format pkgname-and-test-fails --format-icons text `
+        --jsonfile "gotestsum/$name.json" `
+        --rerun-fails=2 --rerun-fails-report "gotestsum/$name-reruns.txt" `
+        --packages ($Packages -join ' ') -- -timeout 30m -tags fts5 @goTestArgs
+}
+
 # Git Bash enables backup privileges for its children, which lets reads bypass exclusive file locks.
 if ($ShardCount -eq 4 -and $Shard -eq '1') {
     # Kata fixture shutdown checkpoints SQLite within five seconds. Keep it
     # separate from the store suite's concurrent database and filesystem work.
-    go test -v -timeout 30m -tags fts5 @args ./internal/kataevidence
+    Invoke-GoTest @('./internal/kataevidence')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $packages = @($packages | Where-Object { $_ -ne './internal/kataevidence' })
 }
 if ($ShardCount -eq 4 -and $Shard -eq '3') {
     # Lifecycle tests spawn daemons with readiness deadlines; give them the runner first.
-    go test -v -timeout 30m -tags fts5 @args ./cmd/docbank
+    Invoke-GoTest @('./cmd/docbank')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $packages = @($packages | Where-Object { $_ -ne './cmd/docbank' })
 }
-go test -v -timeout 30m -tags fts5 @args @packages
+Invoke-GoTest $packages
 exit $LASTEXITCODE

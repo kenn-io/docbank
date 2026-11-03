@@ -1393,6 +1393,14 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
+Go test jobs run `go test` through gotestsum, which the module pins as a Go
+tool. gotestsum reruns each failed test up to two more times. A test that passes
+on a rerun lets the job pass, and gotestsum lists it in
+`gotestsum/<suite>-reruns.txt`. When a test fails or is rerun, the job uploads
+the `gotestsum/*.json` reports as the `gotestsum-<suite>-attempt-<n>` artifact
+for 14 days, so a flaky test stays visible after the job passes. Clean runs
+upload nothing.
+
 Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
 
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.
