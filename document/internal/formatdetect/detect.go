@@ -966,21 +966,16 @@ func scanPDFTableXRef(xref []byte, position int) (uint64, int, map[string][]stri
 	for {
 		start := position
 		header, ok := nextNonemptyPDFLine(xref, &position)
-		if !ok {
+		// A line cut off by the bounded read is truncation, not a bad header.
+		if !ok || (position == len(xref) && !bytes.ContainsAny(xref[len(xref)-1:], "\r\n")) {
 			return end, records, nil, true
+		}
+		if header[0] == '%' {
+			continue
 		}
 		if firstPDFKeyword(header, "trailer") == 0 {
 			trailerIndex := start + firstPDFKeyword(xref[start:], "trailer") + len("trailer")
-			startXRef := firstPDFKeyword(xref[trailerIndex:], "startxref")
-			if startXRef < 0 {
-				return end, records, nil, true
-			}
-			// A dictionary this scan cannot isolate defers to the final trailer.
-			trailer, ok := parsePDFDictionary(xref[trailerIndex : trailerIndex+startXRef])
-			if !ok {
-				trailer = nil
-			}
-			return end, records, trailer, true
+			return end, records, pdfOwnTrailer(xref[trailerIndex:]), true
 		}
 		headerFields := bytes.Fields(header)
 		if len(headerFields) != 2 {
@@ -1005,6 +1000,34 @@ func scanPDFTableXRef(xref []byte, position int) (uint64, int, map[string][]stri
 			}
 			records++
 		}
+	}
+}
+
+// Parse the dictionary after a table's trailer keyword. It ends at a following
+// startxref; that keyword may also appear inside a string or comment. When the
+// bounded read ends before any startxref, the dictionary may end anywhere. Return
+// nil when no complete dictionary is found, so the final trailer governs.
+func pdfOwnTrailer(data []byte) map[string][]string {
+	for start := 0; ; {
+		index := firstPDFKeyword(data[start:], "startxref")
+		if index < 0 {
+			if start > 0 {
+				return nil
+			}
+			tokens, ok := tokenizePDF(data)
+			if !ok {
+				return nil
+			}
+			trailer, _, ok := parsePDFDictionaryTokens(tokens, 0, 0)
+			if !ok {
+				return nil
+			}
+			return trailer
+		}
+		if trailer, ok := parsePDFDictionary(data[:start+index]); ok {
+			return trailer
+		}
+		start += index + len("startxref")
 	}
 }
 
