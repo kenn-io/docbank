@@ -1795,11 +1795,7 @@ func TestEmbeddingSatisfiedHeadSkipsWork(t *testing.T) {
 		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
 	}
-	_, err = s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
-		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
-		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
-		RetainedArtifactClasses: consent.RetainedArtifactClasses,
-	})
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(consent, nil))
 	require.NoError(t, err)
 	request := EmbeddingReconcileRequest{
 		At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint},
