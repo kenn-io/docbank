@@ -82,6 +82,60 @@ func TestImageEmbeddingEligibilityUsesVersionIndex(t *testing.T) {
 	require.Contains(t, plan, "SEARCH n USING INTEGER PRIMARY KEY", plan)
 }
 
+func TestVectorIndexSourceRejectsFuturePreview(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	record, _ := f.publish(t)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		preview, err := visualPreviewGenerationByRecipeTx(t.Context(), tx, record.ContentVersionID, fingerprints.GridRecipe)
+		require.NoError(t, err)
+		// Retain a future writer's checksummed result and matching image identity.
+		canonical := bytes.Replace(preview.CanonicalResult, []byte(`"contract_version":"visual-preview/v1"`), []byte(`"contract_version":"visual-preview/v999"`), 1)
+		require.NotEqual(t, preview.CanonicalResult, canonical)
+		checksum := testSHA256(canonical)
+		generationID := ImageEmbeddingGenerationID(record.ContentVersionID, record.ProcessingProfileFingerprint, record.BindingID, checksum)
+		previewID := visualPreviewGenerationID(record.ContentVersionID, fingerprints.GridRecipe, checksum)
+		for _, query := range []string{
+			`PRAGMA defer_foreign_keys=ON`,
+			`DROP TRIGGER visual_preview_generations_immutable_update`,
+			`DROP TRIGGER embedding_sets_immutable_update`,
+		} {
+			_, err = tx.ExecContext(t.Context(), query)
+			require.NoError(t, err)
+		}
+		_, err = tx.ExecContext(t.Context(), `UPDATE visual_preview_heads SET generation_id=? WHERE generation_id=?`, previewID, preview.GenerationID)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(), `UPDATE visual_preview_generations SET generation_id=?,canonical_result=?,checksum=?,contract_version='visual-preview/v999' WHERE generation_id=?`, previewID, canonical, checksum, preview.GenerationID)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO embedding_input_generations SELECT ?,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,?,tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at FROM embedding_input_generations WHERE generation_id=?`, generationID, checksum, record.InputGeneration.ID)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO embedding_generation_inputs SELECT ?,input_id,input_order,rendered_checksum FROM embedding_generation_inputs WHERE generation_id=?`, generationID, record.InputGeneration.ID)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(), `UPDATE embedding_sets SET input_generation_id=? WHERE embedding_set_id=?`, generationID, record.ID)
+		require.NoError(t, err)
+		_, err = visualPreviewGenerationByRecipeTx(t.Context(), tx, record.ContentVersionID, fingerprints.GridRecipe)
+		require.ErrorContains(t, err, "visual preview failed canonical identity validation")
+		return nil
+	}))
+	_, err = f.s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
+	require.ErrorIs(t, err, ErrNotFound, "unsupported previews must be excluded from index membership")
+}
+
+func TestOpenBootstrapsMissingVectorMembershipEpochs(t *testing.T) {
+	t.Parallel()
+	s, _, source := newPublishedVectorIndexFixture(t)
+	// Default-branch vaults at the current schema version predate this derived table.
+	_, err := s.db.ExecContext(t.Context(), `DROP TABLE vector_membership_epochs`)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	reopened, err := Open(t.Context(), s.path, s.driver)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, reopened, source.VectorSpaceID))
+}
+
 func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)

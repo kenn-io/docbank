@@ -166,7 +166,6 @@ var currentSchemaTables = [...]string{
 	"document_event_state", "document_event_generations", "document_event_heads",
 	"document_event_builds", "document_event_dirty", "document_event_attempts",
 	"document_events", "document_event_actors", "document_event_primaries",
-	"vector_membership_epochs",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 	"vector_index_reader_leases", "vector_index_unavailable_coverage",
 	"media_sources", "media_source_versions", "media_occurrences", "media_input_artifacts",
