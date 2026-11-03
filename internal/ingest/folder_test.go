@@ -139,7 +139,8 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1, "a digest change must settle before processing")
 			now = now.Add(9 * time.Second)
-			if test.changeModTime || test.noChangeTime {
+			// This rewrite keeps the size and mtime, so only a moved change time reveals it.
+			if test.noChangeTime {
 				require.NoError(t, os.WriteFile(file, []byte("third"), 0o600))
 				require.NoError(t, os.Chtimes(file, modTime, modTime))
 			} else {
