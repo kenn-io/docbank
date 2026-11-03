@@ -288,7 +288,7 @@ state: draft
 	encoded, err := json.Marshal(matched)
 	require.NoError(t, err)
 	require.Less(t, len(encoded), answercard.MaxMatchResponseBytes)
-	envelope, err := toolEnvelopeBytes(matchAnswerCardsOutput{MatchResult: matched, privateCache: newPrivateCache()})
+	envelope, err := toolEnvelopeBytes(matchAnswerCardsOutput{MatchResult: matched, privateCache: newPrivateCache()}, nil)
 	require.NoError(t, err)
 	require.Greater(t, envelope, maxToolResponseBytes-(8<<10))
 

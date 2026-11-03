@@ -51,7 +51,7 @@ func matchAnswerCards(ctx context.Context, lease *daemonLease, raw []byte) (matc
 	}
 	output := matchAnswerCardsOutput{MatchResult: result, privateCache: newPrivateCache()}
 	const envelopeBudget = maxToolResponseBytes - 8<<10
-	envelope, err := toolEnvelopeBytes(output)
+	envelope, err := toolEnvelopeBytes(output, nil)
 	if err != nil {
 		return matchAnswerCardsOutput{}, err
 	}
