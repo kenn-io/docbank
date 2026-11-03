@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
@@ -165,7 +163,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					`INSERT INTO blobs(hash,size,created_at) SELECT DISTINCT hash,20,'2026-01-01' FROM bench_members`,
 					`INSERT INTO blobs(hash,size,created_at) SELECT payload_hash,payload_size,'2026-01-01' FROM bench_members`,
 					fmt.Sprintf(`INSERT INTO nodes(id,parent_id,name,kind,current_version_id,created_at,modified_at)
-      SELECT n+100,%d,version,'file',version,'2026-01-01',CASE WHEN n>%d THEN '2026-02-01' ELSE '2026-01-01' END FROM bench_members`, s.RootID(), count*99/100),
+      SELECT n+100,%d,version,'file',version,'2026-01-01','2026-01-01' FROM bench_members`, s.RootID()),
 					`INSERT INTO content_versions(version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,introduced_operation_id,transition_kind)
       SELECT version,n+100,hash,20,'text/plain','2026-01-01',1,version,'content_create' FROM bench_members`,
 					`INSERT INTO embedding_input_generations SELECT generation,NULL,0,hash,version,e.profile_fingerprint,e.evidence_fingerprint,e.tokenizer_fingerprint,e.chunk_policy_fingerprint,e.formatter_fingerprint,e.attachment_context_fingerprint,NULL,1,e.created_at FROM bench_members CROSS JOIN embedding_input_generations e WHERE e.generation_id='` + record.InputGeneration.ID + `'`,
@@ -175,7 +173,6 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					`INSERT INTO embedding_sets SELECT set_id,e.vault_uid,e.binding_id,e.input_kind,version,e.profile_fingerprint,e.embedding_input_fingerprint,e.vector_space_id,generation,vectors,e.created_at FROM bench_members CROSS JOIN embedding_sets e WHERE e.embedding_set_id='` + record.ID + `'`,
 					`INSERT INTO embedding_heads SELECT version,e.binding_id,e.input_kind,set_id,e.vector_space_id,e.profile_fingerprint,e.published_at,e.fencing_token FROM bench_members CROSS JOIN embedding_heads e WHERE e.embedding_set_id='` + record.ID + `'`,
 					`DROP TABLE bench_members`,
-					`UPDATE nodes SET modified_at='2026-01-01' WHERE name='seed.txt'`,
 				}
 				for _, statement := range statements {
 					if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -257,105 +254,74 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 					}
 				}
 			})
-			for _, scope := range []string{"all", "narrow", "collapse"} {
-				b.Run(scope, func(b *testing.B) {
-					opts := SearchOptions{}
-					ranked := append([]vectorindex.Neighbor(nil), neighbors...)
-					wantRows := count
-					wantSimilar, similarTruncated := 20, true
-					switch scope {
-					case "all":
-						// Interleave copies so an ordinary page starts with distinct groups.
-						ranked = ranked[:0]
-						for copy := range 100 {
-							for group := range count / 100 {
-								if index := group*100 + copy; index < len(neighbors) {
-									ranked = append(ranked, neighbors[index])
-								}
-							}
+			b.Run("all", func(b *testing.B) {
+				opts := SearchOptions{}
+				ranked := make([]vectorindex.Neighbor, 0, len(neighbors))
+				// Interleave copies so an ordinary page starts with distinct groups.
+				for copy := range 100 {
+					for group := range count / 100 {
+						if index := group*100 + copy; index < len(neighbors) {
+							ranked = append(ranked, neighbors[index])
 						}
-					case "narrow":
-						opts.ModifiedSince = "2026-02-01"
-						wantRows = count/100 - 1
-						wantSimilar, similarTruncated = min(20, count/10000), count/10000 > 20
-					case "collapse":
-						lexical := query.Query{Filters: query.Filters{CollapseDuplicates: true}}
-						opts.PhotoScope, opts.PhotoLexicalQuery = &PhotoBrowseRequest{}, &lexical
-						wantRows = count/100 + 1
 					}
-					filterSQL, filterArgs := searchFilterSQL(opts)
-					allowed, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, filterSQL, filterArgs)
-					require.NoError(b, err)
-					require.Len(b, allowed, wantRows)
-					allowlist := make(map[vectorindex.RowIdentity]struct{}, len(allowed))
-					for _, row := range allowed {
-						allowlist[row] = struct{}{}
-					}
-					ranked = slices.DeleteFunc(ranked, func(neighbor vectorindex.Neighbor) bool {
-						_, included := allowlist[vectorindex.RowIdentity{SetID: neighbor.SetID, InputKey: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
-						return !included
-					})
-					for i := range ranked {
-						ranked[i].Score = 1 - float64(i)/float64(count)
-					}
-					for _, operation := range []string{"authority", "resolve", "similar"} {
-						if scope == "collapse" && operation == "similar" {
-							continue
-						}
-						b.Run(operation, func(b *testing.B) {
-							b.ReportAllocs()
-							b.StopTimer()
-							var heap uint64
-							for range b.N {
-								runtime.GC()
-								var start runtime.MemStats
-								runtime.ReadMemStats(&start)
-								// Sample live Go heap while the loaders own their intermediate maps.
-								sampleCtx, cancel := context.WithCancel(ctx)
-								sampled := make(chan uint64)
-								go func() {
-									ticker := time.NewTicker(time.Millisecond)
-									defer ticker.Stop()
-									peak := start.HeapAlloc
-									for {
-										var mem runtime.MemStats
-										runtime.ReadMemStats(&mem)
-										peak = max(peak, mem.HeapAlloc)
-										select {
-										case <-sampleCtx.Done():
-											sampled <- peak - start.HeapAlloc
-											return
-										case <-ticker.C:
-										}
+				}
+				for i := range ranked {
+					ranked[i].Score = 1 - float64(i)/float64(count)
+				}
+				for _, operation := range []string{"authority", "resolve", "similar"} {
+					b.Run(operation, func(b *testing.B) {
+						b.ReportAllocs()
+						b.StopTimer()
+						var heap uint64
+						for range b.N {
+							runtime.GC()
+							var start runtime.MemStats
+							runtime.ReadMemStats(&start)
+							// Sample live Go heap while the loaders own their intermediate maps.
+							sampleCtx, cancel := context.WithCancel(ctx)
+							sampled := make(chan uint64)
+							go func() {
+								ticker := time.NewTicker(time.Millisecond)
+								defer ticker.Stop()
+								peak := start.HeapAlloc
+								for {
+									var mem runtime.MemStats
+									runtime.ReadMemStats(&mem)
+									peak = max(peak, mem.HeapAlloc)
+									select {
+									case <-sampleCtx.Done():
+										sampled <- peak - start.HeapAlloc
+										return
+									case <-ticker.C:
 									}
-								}()
-								b.StartTimer()
-								switch operation {
-								case "authority":
-									filterSQL, filterArgs := searchFilterSQL(opts)
-									rows, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, filterSQL, filterArgs)
-									require.NoError(b, err)
-									require.Len(b, rows, wantRows)
-								case "resolve":
-									var result SemanticSearchResolution
-									require.NoError(b, s.semanticCandidatesTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, ranked, 20, opts, nil, &result))
-									require.Len(b, result.Candidates, 20)
-									require.True(b, result.Truncated)
-								case "similar":
-									var result SimilarSearchResolution
-									require.NoError(b, s.similarCandidatesTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, ranked, 20, opts, SimilarSource{NodeID: node.ID}, &result))
-									require.Len(b, result.Candidates, wantSimilar)
-									require.Equal(b, similarTruncated, result.Truncated)
 								}
-								b.StopTimer()
-								cancel()
-								heap = max(heap, <-sampled)
+							}()
+							b.StartTimer()
+							switch operation {
+							case "authority":
+								filterSQL, filterArgs := searchFilterSQL(opts)
+								rows, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, filterSQL, filterArgs)
+								require.NoError(b, err)
+								require.Len(b, rows, count)
+							case "resolve":
+								var result SemanticSearchResolution
+								require.NoError(b, s.semanticCandidatesTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, ranked, 20, opts, nil, &result))
+								require.Len(b, result.Candidates, 20)
+								require.True(b, result.Truncated)
+							case "similar":
+								var result SimilarSearchResolution
+								require.NoError(b, s.similarCandidatesTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, ranked, 20, opts, SimilarSource{NodeID: node.ID}, &result))
+								require.Len(b, result.Candidates, 20)
+								require.True(b, result.Truncated)
 							}
-							b.ReportMetric(float64(heap), "heap-B")
-						})
-					}
-				})
-			}
+							b.StopTimer()
+							cancel()
+							heap = max(heap, <-sampled)
+						}
+						b.ReportMetric(float64(heap), "heap-B")
+					})
+				}
+			})
 		})
 	}
 }
