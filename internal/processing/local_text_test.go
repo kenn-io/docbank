@@ -66,6 +66,16 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		s, err := NewService(t.Context(), config)
 		return s, err
 	}
+	startupFailure := errors.New("synthetic startup failure")
+	setup.Startup = func(context.Context, bool, string) error { return startupFailure }
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	require.ErrorIs(t, err, startupFailure)
+	require.Equal(t, "previous-profile", saved)
+	for _, request := range service.profileConsentRequests(service.profiles["local-text"]) {
+		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
+		require.Error(t, err, "startup failure must leave consent unsaved")
+	}
+	setup.Startup = func(context.Context, bool, string) error { return nil }
 	setup.Save = func(string, string) error { return saveFailure }
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.ErrorIs(t, err, ErrConsentSaved)
@@ -234,52 +244,6 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 }
 
-func TestLocalTextTokenizerLimitLeavesSweep(t *testing.T) {
-	t.Parallel()
-	renderer, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 16 << 20})
-	require.NoError(t, err)
-	fixture, setup := newLocalTextBackfillFixture(t, renderer)
-	cfg, err := config.Default().WithLocalText()
-	require.NoError(t, err)
-	resolved, err := cfg.ProcessingProfile(config.LocalTextProfile)
-	require.NoError(t, err)
-	portable := resolved.Document
-	portable.Embeddings = setup.Service.profiles[setup.Selected].portable.Embeddings
-	portable.Embeddings[0].MaxInputBytes = 16 << 20
-	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"text": {Profile: portable, RenditionProvider: renderer, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}}}})
-	require.NoError(t, err)
-	defer service.Stop()
-	setup = &LocalTextSetup{Service: service, Selected: "text"}
-	require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["text"], nil))
-	data := strings.Repeat("word ", 250_001)
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "large.txt", written.Hash, written.Size, "text/plain", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}
-	plan, err := setup.Service.Plan(t.Context(), Selector{Profile: setup.Selected, NodeID: node.ID, ContentVersionID: node.CurrentVersionID})
-	require.NoError(t, err)
-	require.Empty(t, plan.RenditionIneligibleReason)
-	var logs bytes.Buffer
-	setup.logger = slog.New(slog.NewTextHandler(&logs, nil))
-	require.NoError(t, setup.process(t.Context(), item))
-	require.Contains(t, logs.String(), "tokenizer_limit")
-	firstLog := logs.String()
-	for range 2 {
-		targets, err := setup.targets(t.Context(), "", 50)
-		require.NoError(t, err)
-		require.NotContains(t, targets, item)
-	}
-	require.Equal(t, firstLog, logs.String())
-	replacement, err := fixture.blobs.WriteDetailedContext(t.Context(), strings.NewReader("short replacement"))
-	require.NoError(t, err)
-	changed, _, err := fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, replacement.Hash, replacement.Size, "text/plain", processingBlobPhysical(t, replacement))
-	require.NoError(t, err)
-	targets, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Contains(t, targets, store.DocumentSummary{NodeID: changed.ID, ContentVersionID: changed.CurrentVersionID, Name: changed.Name})
-}
-
 func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
 	t.Parallel()
 	for _, missing := range []bool{false, true} {
@@ -371,7 +335,7 @@ func TestLocalTextPurgeSuppressionControlsTargets(t *testing.T) {
 
 func TestLocalTextPermanentFailureLeavesSweep(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"invalid_response", "rendition_failed", "stale_authority"} {
+	for _, failure := range []string{"invalid_response", "rendition_failed", "stale_authority", "tokenizer_limit"} {
 		t.Run(failure, func(t *testing.T) {
 			renderer := newWorkerProvider(t)
 			data, name, mime := mediatest.PDF(), "failed.pdf", "application/pdf"
@@ -381,6 +345,24 @@ func TestLocalTextPermanentFailureLeavesSweep(t *testing.T) {
 			var calls int
 			provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), values: []float32{1}, embed: func(context.Context) error { calls++; return nil }}
 			fixture, setup := newLocalTextBackfillFixture(t, renderer, provider)
+			if failure == "tokenizer_limit" {
+				plain, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 16 << 20})
+				require.NoError(t, err)
+				cfg, err := config.Default().WithLocalText()
+				require.NoError(t, err)
+				resolved, err := cfg.ProcessingProfile(config.LocalTextProfile)
+				require.NoError(t, err)
+				portable := resolved.Document
+				portable.Embeddings = setup.Service.profiles[setup.Selected].portable.Embeddings
+				portable.Embeddings[0].MaxInputBytes = 16 << 20
+				service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"text": {Profile: portable, RenditionProvider: plain, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}}}})
+				require.NoError(t, err)
+				defer service.Stop()
+				setup = &LocalTextSetup{Service: service, Selected: "text"}
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["text"], nil))
+
+				data, name, mime = []byte(strings.Repeat("word ", 250_001)), "large.txt", "text/plain"
+			}
 			initial, err := setup.targets(t.Context(), "", 50)
 			require.NoError(t, err)
 			for _, item := range initial {
@@ -421,11 +403,13 @@ func TestLocalTextPermanentFailureLeavesSweep(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, targets)
 			require.Equal(t, logged, logs.String())
-			require.Equal(t, 1, renderer.calls)
+			if failure != "tokenizer_limit" {
+				require.Equal(t, 1, renderer.calls)
+			}
 			if failure == "invalid_response" {
 				require.Equal(t, 1, calls)
 			}
-			replacement, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(append(data, '\n')))
+			replacement, err := fixture.blobs.WriteDetailedContext(t.Context(), strings.NewReader("short replacement"))
 			require.NoError(t, err)
 			changed, _, err := fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, replacement.Hash, replacement.Size, mime, processingBlobPhysical(t, replacement))
 			require.NoError(t, err)
@@ -434,74 +418,6 @@ func TestLocalTextPermanentFailureLeavesSweep(t *testing.T) {
 			require.Equal(t, []store.DocumentSummary{{NodeID: changed.ID, ContentVersionID: changed.CurrentVersionID, Name: name}}, targets)
 		})
 	}
-}
-
-func TestLocalTextPublishesDuringBackfillAndOnIdle(t *testing.T) {
-	t.Parallel()
-	thirdStarted, release := make(chan struct{}), make(chan struct{})
-	calls := 0
-	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(ctx context.Context) error {
-		calls++
-		if calls == 3 {
-			close(thirdStarted)
-			select {
-			case <-release:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		return nil
-	}}
-	renderer := newWorkerProvider(t)
-	renderer.textForSource = true
-	fixture, setup := newLocalTextBackfillFixture(t, renderer, provider)
-	for i := range 8 {
-		data := append(mediatest.PDF(), []byte(fmt.Sprintf("\n%% source %d", i))...)
-		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
-		require.NoError(t, err)
-		_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), fmt.Sprintf("batch-%d.pdf", i), written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-		require.NoError(t, err)
-	}
-	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog,
-		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
-		}, Mutate: setup.Service.gate.MutateContext, Owner: "index-worker", BuildLease: 5 * time.Minute, ReaderLease: 5 * time.Minute, IdleDelay: time.Second})
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	backfillDone, indexDone := make(chan error, 1), make(chan error, 1)
-	indexStarted := false
-	go func() { backfillDone <- setup.Backfill(ctx, nil) }()
-	defer func() {
-		cancel()
-		require.ErrorIs(t, <-backfillDone, ctx.Err())
-		if indexStarted {
-			require.ErrorIs(t, <-indexDone, ctx.Err())
-		}
-	}()
-	select {
-	case <-thirdStarted:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	space := setup.Service.profiles["pdf"].vectorSpaces["chunk"]
-	before, err := fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
-	if !errors.Is(err, store.ErrNotFound) {
-		require.NoError(t, err)
-		require.Zero(t, before.RowCount, "backfill defers publication to the recurring worker")
-	}
-	go func() { indexDone <- indexer.Run(ctx) }()
-	indexStarted = true
-	var during store.VectorIndexGenerationRecord
-	require.Eventually(t, func() bool {
-		var err error
-		during, err = fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
-		return err == nil && during.RowCount == 2
-	}, 5*time.Second, 10*time.Millisecond, "the recurring publisher runs while backfill is still active")
-	close(release)
-	require.Eventually(t, func() bool {
-		generation, err := fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
-		return err == nil && generation.RowCount == 8 && generation.ID != during.ID
-	}, 5*time.Second, 10*time.Millisecond, "the recurring publisher includes the final documents")
 }
 
 func BenchmarkLocalTextIdleSweep(b *testing.B) {

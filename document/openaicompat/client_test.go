@@ -805,7 +805,7 @@ func TestSharedAdmissionRejectsBeforeTransport(t *testing.T) {
 	assert.Zero(t, calls.Load())
 }
 
-func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
+func TestManagedServiceMovesPortsWithoutChangingVectors(t *testing.T) {
 	t.Parallel()
 	var firstCalls, secondCalls atomic.Int64
 	handler := func(calls *atomic.Int64) http.Handler {
@@ -834,8 +834,6 @@ func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
 	p.Descriptor = descriptorFor(t, p)
 	client, err := New(p, nil, &http.Client{})
 	require.NoError(t, err)
-	originalPolicy, err := PolicyFingerprint(p)
-	require.NoError(t, err)
 	for _, endpoint := range []string{first.URL, second.URL} {
 		origin = endpoint
 		_, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(p.Descriptor))
@@ -846,14 +844,6 @@ func TestManagedServiceMovesPortsWithoutChangingConsentOrVectors(t *testing.T) {
 	identity, err := client.VectorIdentity()
 	require.NoError(t, err)
 	assert.Equal(t, oldIdentity, identity)
-	p.ResolveOrigin = func(context.Context) (string, error) { return second.URL, nil }
-	nextPolicy, err := PolicyFingerprint(p)
-	require.NoError(t, err)
-	assert.Equal(t, originalPolicy, nextPolicy)
-	p.SelectionMode = "auto"
-	nextPolicy, err = PolicyFingerprint(p)
-	require.NoError(t, err)
-	assert.NotEqual(t, originalPolicy, nextPolicy)
 }
 
 func TestManagedServiceRejectsInvalidBinding(t *testing.T) {

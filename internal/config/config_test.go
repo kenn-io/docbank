@@ -1221,6 +1221,11 @@ func TestImageEmbeddingProfileUsesStandardBridge(t *testing.T) {
 			portable, err := cfg.ProcessingProfile("archive")
 			require.NoError(t, err)
 			require.Equal(t, document.EmbeddingInputImage, portable.Document.Embeddings[0].InputKind)
+			modelInput, err := cfg.EmbeddingModelInput("semantic")
+			require.NoError(t, err)
+			descriptor := EmbeddingDescriptor(cfg.EmbeddingProfiles["semantic"], modelInput)
+			require.True(t, descriptor.SupportsTextQuery)
+			require.Equal(t, []document.EmbeddingInputKind{document.EmbeddingInputImage}, descriptor.InputKinds)
 		})
 	}
 }

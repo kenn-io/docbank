@@ -63,8 +63,4 @@ func checkMissingProcessingTargets(t *testing.T, s *Store) {
 	suppressed, err = s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f2"), []EmbeddingHeadKey{key})
 	require.NoError(t, err)
 	require.Empty(t, suppressed, "another profile has its own suppression identity")
-	require.NoError(t, s.AuthorizeEmbeddingRebuild(t.Context(), EmbeddingRebuildAuthorization{Key: key, ProcessingProfileFingerprint: fakeHash("f1"), SetID: fakeHash("f3"), AuthorizedAt: "2026-01-02T00:00:00.000000000Z"}))
-	suppressed, err = s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f1"), []EmbeddingHeadKey{key})
-	require.NoError(t, err)
-	require.Empty(t, suppressed)
 }

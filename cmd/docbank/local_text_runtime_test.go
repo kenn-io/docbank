@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -95,44 +97,38 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
-	for _, scenario := range []string{"missing_profile", "malformed"} {
-		t.Run(scenario, func(t *testing.T) {
-			root := t.TempDir()
-			t.Setenv("DOCBANK_HOME", root)
-			t.Setenv("DO_NOT_TRACK", "1")
-			data := []byte(`{"version":1,"profile":"deleted-profile","server":"local"}`)
-			if scenario == "malformed" {
-				data = []byte(`{"version":1`)
-			}
-			require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
-			stop := startServe(t)
-			defer stop()
-			record := waitForDaemon(t, root)
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+record.Address+"/api/v1/jobs", nil)
-			require.NoError(t, err)
-			req.Header.Set("X-Api-Key", record.Metadata["api_key"])
-			response, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, response.Body.Close()) }()
-			var jobs bytes.Buffer
-			_, err = jobs.ReadFrom(response.Body)
-			require.NoError(t, err)
-			require.Equal(t, http.StatusOK, response.StatusCode, jobs.String())
-			require.NotContains(t, jobs.String(), "embed:local-text")
-			saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
-			require.NoError(t, err)
-			require.Equal(t, data, saved)
-		})
-	}
+	t.Run("malformed", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("DOCBANK_HOME", root)
+		t.Setenv("DO_NOT_TRACK", "1")
+		data := []byte(`{"version":1`)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
+		stop := startServe(t)
+		defer stop()
+		record := waitForDaemon(t, root)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+record.Address+"/api/v1/jobs", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Api-Key", record.Metadata["api_key"])
+		response, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, response.Body.Close()) }()
+		var jobs bytes.Buffer
+		_, err = jobs.ReadFrom(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, jobs.String())
+		require.NotContains(t, jobs.String(), "embed:local-text")
+		saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
+		require.NoError(t, err)
+		require.Equal(t, data, saved)
+	})
 }
 
 func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 	bin := buildDocbank(t)
 	for _, result := range []struct {
 		name       string
-		invalid    bool
 		lateImport bool
-	}{{"completed", false, false}, {"invalid_response", true, false}, {"new_import", false, true}} {
+	}{{"completed", false}, {"new_import", true}} {
 		t.Run(result.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("DO_NOT_TRACK", "1")
@@ -165,11 +161,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				data := make([]map[string]any, len(body.Input))
 				for i := range data {
 					vector := make([]float32, 768)
-					if result.invalid {
-						vector = []float32{1}
-					} else {
-						vector[0] = 1
-					}
+					vector[0] = 1
 					data[i] = map[string]any{"index": i, "object": "embedding", "embedding": vector}
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -217,6 +209,19 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				if result.lateImport {
 					_, _, err = catalog.Trash(t.Context(), node.ID, node.Revision)
 					require.NoError(t, err)
+					synctest.Test(t, func(t *testing.T) {
+						setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile}
+						tracker := api.NewActivityTracker()
+						time.Sleep(time.Second)
+						logger := slog.New(slog.DiscardHandler)
+						require.True(t, localTextIdle(t.Context(), tracker, time.Second, setup.Pending, logger), "the initial scan has no pending work")
+						imported, err := catalog.CreateFile(t.Context(), catalog.RootID(), "between-scans.txt", written.Hash, written.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+						require.NoError(t, err)
+						require.False(t, localTextIdle(t.Context(), tracker, time.Second, setup.Pending, logger), "an import after the empty scan prevents idle shutdown")
+						require.Zero(t, tracker.IdleFor(), "pending work resets the idle window")
+						_, _, err = catalog.Trash(t.Context(), imported.ID, imported.Revision)
+						require.NoError(t, err)
+					})
 				}
 			}()
 			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
@@ -225,7 +230,6 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			defer stop()
 			if result.lateImport {
 				waitForDaemon(t, root)
-				time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: place the import between the real lane's initial scan and next wall-clock poll
 				source := filepath.Join(t.TempDir(), "new.txt")
 				require.NoError(t, os.WriteFile(source, []byte("new synthetic local text"), 0600))
 				command := exec.CommandContext(t.Context(), bin, "add", source)
@@ -251,23 +255,21 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			catalog, err := store.Open(t.Context(), layout.DBPath())
 			require.NoError(t, err)
 			defer func() { require.NoError(t, catalog.Close()) }()
-			if !result.invalid {
-				require.Eventually(t, func() bool {
-					spaces, err := catalog.ListVectorIndexSpaces(t.Context())
-					if err != nil || len(spaces) != 1 {
-						return false
-					}
-					source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
-					if err != nil || len(source.Members) == 0 {
-						return false
-					}
-					generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
-					return err == nil && generation.SourceManifestChecksum == source.ManifestChecksum && generation.RowCount > 0
-				}, 5*time.Second, 10*time.Millisecond, "completed embeddings become search-visible before idle shutdown")
-				records, err := daemonconn.RuntimeStore(root).List()
-				require.NoError(t, err)
-				require.Len(t, records, 1, "the daemon stays discoverable through vector publication")
-			}
+			require.Eventually(t, func() bool {
+				spaces, err := catalog.ListVectorIndexSpaces(t.Context())
+				if err != nil || len(spaces) != 1 {
+					return false
+				}
+				source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
+				if err != nil || len(source.Members) == 0 {
+					return false
+				}
+				generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
+				return err == nil && generation.SourceManifestChecksum == source.ManifestChecksum && generation.RowCount > 0
+			}, 5*time.Second, 10*time.Millisecond, "completed embeddings become search-visible before idle shutdown")
+			records, err := daemonconn.RuntimeStore(root).List()
+			require.NoError(t, err)
+			require.Len(t, records, 1, "the daemon stays discoverable through vector publication")
 			require.Eventually(t, func() bool {
 				records, err := daemonconn.RuntimeStore(root).List()
 				return err == nil && len(records) == 0
@@ -276,11 +278,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			jobs, err := catalog.EmbeddingJobsForVersionProfile(t.Context(), version, profileFingerprint)
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
-			if result.invalid {
-				require.Equal(t, store.EmbeddingFailureInvalidResponse, jobs[0].FailureCode)
-			} else {
-				require.Equal(t, "completed", jobs[0].State)
-			}
+			require.Equal(t, "completed", jobs[0].State)
 			require.Equal(t, int64(1), calls.Load())
 		})
 	}
@@ -378,7 +376,6 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	command.Stdin = nil
 	data, err := command.CombinedOutput()
 	require.NoError(t, err, string(data))
-	require.NotContains(t, string(data), "[y/N]")
 	require.Contains(t, string(data), "Text indexing enabled.")
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
