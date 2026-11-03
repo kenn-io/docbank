@@ -37,6 +37,9 @@ export default defineConfig({
     execArgv: ["--no-experimental-webstorage"],
     exclude: ["docs-site/**", "node_modules/**"],
     maxWorkers: 2,
+    // GitHub Actions lists every passing test by name so reruns can confirm
+    // flaky tests, and keeps Vitest's default failure annotations.
+    ...(process.env.GITHUB_ACTIONS === "true" && { reporters: ["verbose", "github-actions"] }),
     testTimeout: 30_000,
     server: {
       deps: {

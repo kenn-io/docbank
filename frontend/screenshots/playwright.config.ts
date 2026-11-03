@@ -18,7 +18,8 @@ export default defineConfig({
     timeout: 15_000,
   },
   outputDir: path.join(repositoryRoot, ".superpowers", "playwright"),
-  reporter: "line",
+  // CI lists every test result by name so reruns can confirm flaky tests.
+  reporter: process.env.CI ? "list" : "line",
   use: {
     ...devices["Desktop Chrome"],
     viewport: { width: 1440, height: 960 },

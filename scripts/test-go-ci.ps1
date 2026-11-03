@@ -43,15 +43,15 @@ if ($ShardCount -eq 4 -and $Shard -ne 'all') {
 if ($ShardCount -eq 4 -and $Shard -eq '1') {
     # Kata fixture shutdown checkpoints SQLite within five seconds. Keep it
     # separate from the store suite's concurrent database and filesystem work.
-    go test -timeout 30m -tags fts5 @args ./internal/kataevidence
+    go test -v -timeout 30m -tags fts5 @args ./internal/kataevidence
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $packages = @($packages | Where-Object { $_ -ne './internal/kataevidence' })
 }
 if ($ShardCount -eq 4 -and $Shard -eq '3') {
     # Lifecycle tests spawn daemons with readiness deadlines; give them the runner first.
-    go test -timeout 30m -tags fts5 @args ./cmd/docbank
+    go test -v -timeout 30m -tags fts5 @args ./cmd/docbank
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $packages = @($packages | Where-Object { $_ -ne './cmd/docbank' })
 }
-go test -timeout 30m -tags fts5 @args @packages
+go test -v -timeout 30m -tags fts5 @args @packages
 exit $LASTEXITCODE

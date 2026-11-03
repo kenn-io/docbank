@@ -55,7 +55,8 @@ try {
           "--project",
           "chromium",
           "--reporter",
-          "line,json",
+          // CI lists every test result by name so reruns can confirm flaky tests.
+          process.env.CI ? "list,json" : "line,json",
         ],
         { cwd: repository, env, stdio: "inherit", timeout: 360_000 },
       );

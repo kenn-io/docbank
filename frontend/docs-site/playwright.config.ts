@@ -16,7 +16,8 @@ export default defineConfig({
     timeout: 10_000,
   },
   outputDir: path.join(repositoryRoot, ".superpowers", "docs-site-playwright"),
-  reporter: "line",
+  // CI lists every test result by name so reruns can confirm flaky tests.
+  reporter: process.env.CI ? "list" : "line",
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
