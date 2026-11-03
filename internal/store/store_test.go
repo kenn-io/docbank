@@ -14,7 +14,7 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-func newTestStore(t *testing.T) *Store {
+func newTestStore[T testing.TB](t T) *Store {
 	t.Helper()
 	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)

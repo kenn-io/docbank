@@ -974,19 +974,19 @@ func newEmbeddingCatalogFixture(t *testing.T) (*Store, string, ProcessingProfile
 	return seedEmbeddingCatalog(t, newTestStore(t))
 }
 
-func seedEmbeddingCatalog(t *testing.T, s *Store) (*Store, string, ProcessingProfileRecord, string) {
-	t.Helper()
-	versions := seedRenditionCatalogVersions(t, s)
-	profile := embeddingCatalogProfile(t)
+func seedEmbeddingCatalog(tb testing.TB, s *Store) (*Store, string, ProcessingProfileRecord, string) {
+	tb.Helper()
+	versions := seedRenditionCatalogVersions(tb, s)
+	profile := embeddingCatalogProfile(tb)
 	build := catalogRenditionBuild(s, profile)
-	build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
-	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	build.EvidenceChecksum = embeddingCatalogEvidence(tb).Checksum
+	require.NoError(tb, s.StageRenditionBuild(tb.Context(), build))
 	attachment := RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime,
 	}
-	require.NoError(t, publishRenditionForTest(
-		t, s, attachment, embeddingCatalogTime, testSHA256([]byte("embedding-catalog-lexical-generation")),
+	require.NoError(tb, publishRenditionForTest(
+		tb, s, attachment, embeddingCatalogTime, testSHA256([]byte("embedding-catalog-lexical-generation")),
 	))
 	return s, versions[0], profile, attachment.ID
 }
@@ -1127,10 +1127,10 @@ func (embeddingCatalogTokenizer) Tokenize(text string, limit int) ([]document.To
 	return result, nil
 }
 
-func embeddingCatalogEvidence(t *testing.T) document.NormalizedEvidenceV1 {
-	t.Helper()
+func embeddingCatalogEvidence(tb testing.TB) document.NormalizedEvidenceV1 {
+	tb.Helper()
 	policy, err := document.NewEvidencePolicy(4096)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
 		Family: "pdf", UnitKind: document.EvidenceUnitPage,
@@ -1139,7 +1139,7 @@ func embeddingCatalogEvidence(t *testing.T) document.NormalizedEvidenceV1 {
 			{Order: 1, Text: "Second evidence", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 2, End: 2}},
 		},
 	}, policy)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return evidence
 }
 
@@ -1168,12 +1168,12 @@ func embeddingCatalogDescriptor() document.EmbeddingDescriptor {
 	return descriptor
 }
 
-func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
-	t.Helper()
+func embeddingCatalogProfile(tb testing.TB) ProcessingProfileRecord {
+	tb.Helper()
 	descriptor := embeddingCatalogDescriptor()
-	base := catalogProcessingProfile(t, false)
+	base := catalogProcessingProfile(tb, false)
 	var profile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(base.CanonicalProfile, &profile))
+	require.NoError(tb, json.Unmarshal(base.CanonicalProfile, &profile))
 	makeBinding := func(name string, activation document.EmbeddingActivation, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{
 			Activation: activation, AuthorizationFingerprint: fakeHash("d1"), CompatibilityID: descriptor.CompatibilityID,
@@ -1198,7 +1198,7 @@ func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
 	}
 	profile.Embeddings[3].Chunk.MaxTokens = 64
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return ProcessingProfileRecord{
 		Fingerprint: fingerprints.Profile, CanonicalProfile: canonical,
 		RenditionRequestFingerprint: fingerprints.RenditionRequest, EvidenceLexicalFingerprint: fingerprints.EvidenceLexical,

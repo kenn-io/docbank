@@ -102,9 +102,9 @@ response identity, and the bounded search evidence references.
 Retrieval takes a source fence: a bounded list that contains the Docbank vault
 UUID and the authorized immutable content-version IDs. The service rejects a
 foreign vault and applies that fence before FTS, vector scoring, expansion, and
-reranking. Vector eligibility comes from current, live attachments in the same
-database snapshot as coverage. Missing row authority stops the search. The
-service also revalidates candidates before returning them. Consumers perform their
+reranking. Vector eligibility comes from current, live attachments. Missing row
+authority stops the search. The service revalidates candidates before returning
+them and counts coverage once in that final snapshot. Consumers perform their
 own final presentation-time visibility check, because authority can change after
 the query returns.
 

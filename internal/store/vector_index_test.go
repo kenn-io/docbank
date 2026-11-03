@@ -246,17 +246,17 @@ func metadataEmbeddingTimeForTest(value time.Time) string {
 	return value.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
 
-func putVectorIndexGenerationForTest(t *testing.T, s *Store, record VectorIndexGenerationRecord) error {
-	t.Helper()
-	return s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(t.Context(), `INSERT INTO vector_index_generations(
+func putVectorIndexGenerationForTest(tb testing.TB, s *Store, record VectorIndexGenerationRecord) error {
+	tb.Helper()
+	return s.withStorageTx(tb.Context(), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(tb.Context(), `INSERT INTO vector_index_generations(
 			generation_id,vector_space_id,source_manifest_checksum,index_manifest_checksum,
 			generation_bytes,byte_size,row_count,built_at) VALUES(?,?,?,?,?,?,?,?)`, record.ID,
 			record.VectorSpaceID, record.SourceManifestChecksum, record.IndexManifestChecksum,
 			record.Bytes, len(record.Bytes), record.RowCount, record.BuiltAt); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO vector_index_heads(
+		_, err := tx.ExecContext(tb.Context(), `INSERT INTO vector_index_heads(
 			vector_space_id,generation_id,source_manifest_checksum) VALUES(?,?,?)
 			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,
 			source_manifest_checksum=excluded.source_manifest_checksum`, record.VectorSpaceID,
@@ -320,17 +320,18 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
-func newPublishedVectorIndexFixture(t *testing.T) (*Store, EmbeddingSetRecord, VectorIndexSource) {
-	t.Helper()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
-	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+func newPublishedVectorIndexFixture(tb testing.TB) (*Store, EmbeddingSetRecord, VectorIndexSource) {
+	tb.Helper()
+	s := newTestStore(tb)
+	_, versionID, profile, _ := seedEmbeddingCatalog(tb, s)
+	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(tb, s.StageEmbeddingSet(tb.Context(), record))
+	require.NoError(tb, s.PublishEmbeddingHead(tb.Context(), EmbeddingHeadRecord{
 		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: versionID, BindingID: record.BindingID, InputKind: record.InputKind},
 		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
-	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
-	require.NoError(t, err)
+	source, err := s.CaptureVectorIndexSource(tb.Context(), record.VectorSpace.ID)
+	require.NoError(tb, err)
 	return s, record, source
 }
 
