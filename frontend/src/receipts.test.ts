@@ -113,6 +113,7 @@ describe("search result authority", () => {
     fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
   };
   const valid = (): DocumentSearchReport => ({
+    as_of: "2025-01-01",
     requested_mode: "semantic",
     actual_mode: "semantic",
     coverage: {

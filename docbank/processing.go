@@ -199,7 +199,7 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 		}
 	}
 	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
-		MediaSources: sources,
+		MediaSources: sources, AsOf: request.AsOf,
 		ContentFirst: request.ContentFirst,
 		Mode:         string(request.Mode), Limit: request.Limit, Profile: request.Profile,
 		BindingID: request.BindingID, Explain: request.Explain,
@@ -267,7 +267,7 @@ func fromCoverageClass(item internalprocessing.CoverageClass) CoverageClass {
 }
 
 func fromSearchReport(report internalprocessing.SearchReport, explain bool) DocumentSearchReport {
-	result := DocumentSearchReport{RequestedMode: DocumentSearchMode(report.RequestedMode),
+	result := DocumentSearchReport{AsOf: report.AsOf, RequestedMode: DocumentSearchMode(report.RequestedMode),
 		ActualMode:           DocumentSearchMode(report.ActualMode),
 		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
@@ -290,9 +290,9 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		if v := item.Validity; v != nil {
-			converted.Validity = &DocumentResultValidity{State: string(v.State), SupersededBy: make([]DocumentValiditySuccessor, 0, len(v.SupersededBy))}
+			converted.Validity = &DocumentResultValidity{State: string(v.State), EffectiveFrom: v.EffectiveFrom, EffectiveTo: v.EffectiveTo, SupersededBy: make([]DocumentValiditySuccessor, 0, len(v.SupersededBy))}
 			for _, next := range v.SupersededBy {
-				converted.Validity.SupersededBy = append(converted.Validity.SupersededBy, DocumentValiditySuccessor{NodeID: next.NodeID, Path: next.Path})
+				converted.Validity.SupersededBy = append(converted.Validity.SupersededBy, DocumentValiditySuccessor{NodeID: next.NodeID, Path: next.Path, EffectiveFrom: next.EffectiveFrom})
 			}
 		}
 		for evidenceIndex, evidence := range item.Evidence {

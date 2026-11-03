@@ -1,7 +1,6 @@
 package retrieval
 
 import (
-	"context"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/store"
@@ -182,7 +181,6 @@ type Report struct {
 }
 
 type Query struct {
-	Order func(context.Context, []Result) ([]Result, error)
 	Text  string
 	Mode  Mode
 	Limit int

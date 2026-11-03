@@ -1662,24 +1662,15 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
-	extra, err := service.catalog.CountSearchValidityDeclared(ctx, searchScope, document.MaxRetrievalCandidateLimit-prepared.limit)
-	if err != nil {
-		return retrieval.Report{}, err
-	}
-	lexicalLimit, vectorLimit := profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit
-	if extra > 0 {
-		lexicalLimit = max(lexicalLimit, prepared.limit+extra)
-		vectorLimit = max(vectorLimit, prepared.limit+extra)
-	}
-	order := func(ctx context.Context, results []retrieval.Result) ([]retrieval.Result, error) {
-		return service.applyValidity(ctx, results, searchScope, asOf)
-	}
 	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
-		LexicalLimit: lexicalLimit, VectorLimit: vectorLimit,
-		Order: order,
+		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	report.Results, err = service.applyValidity(ctx, report.Results, searchScope, asOf)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -1693,9 +1684,6 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 func (service *Service) ValidateSearch(ctx context.Context, request SearchRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if _, err := document.ResolveValidityDate(request.AsOf); err != nil {
-		return fmt.Errorf("%w: %w", store.ErrInvalidSupersession, err)
 	}
 	profile, ok := service.profiles[request.Profile]
 	if !ok {
@@ -1771,9 +1759,6 @@ func (service *Service) prepareSearch(
 			Profile: profile.rerankingProfile, Provider: profile.rerankingProvider,
 			Authorizer: rerankingAuth, Deadline: profile.rerankingDeadline,
 			FailurePolicy: profile.rerankingFailurePolicy}
-	}
-	if request.Rerank {
-		searcherConfig.Reranking.Profile.MaxCandidates = min(searcherConfig.Reranking.Profile.MaxCandidates, limit)
 	}
 	searcher, err := retrieval.NewSearcher(searcherConfig)
 	if err != nil {

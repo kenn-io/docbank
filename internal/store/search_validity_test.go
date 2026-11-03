@@ -28,9 +28,6 @@ func checkSearchValidityPostgres(t *testing.T) {
 func checkSearchValidity(t *testing.T, s *Store, seed func(int64, int64)) {
 	t.Helper()
 	ctx := t.Context()
-	count, err := s.CountSearchValidityDeclared(ctx, SearchOptions{}, 10)
-	require.NoError(t, err)
-	require.Zero(t, count)
 	scope, err := s.Mkdir(ctx, s.RootID(), "leases")
 	require.NoError(t, err)
 	old, err := s.CreateFile(ctx, scope.ID, "old.txt", fakeHash("old"), 1, "text/plain; charset=utf-8")
@@ -44,18 +41,6 @@ func checkSearchValidity(t *testing.T, s *Store, seed func(int64, int64)) {
 		require.NoError(t, err)
 		_, err = s.PutEffectiveWindow(ctx, next.ID, next.Revision, "2025-01-01", "")
 		require.NoError(t, err)
-	}
-	for _, tc := range []struct {
-		scope     SearchOptions
-		cap, want int
-	}{
-		{SearchOptions{}, 10, 2}, {SearchOptions{}, 1, 1}, {SearchOptions{}, 0, 0},
-		{SearchOptions{ContentVersionIDs: []string{old.CurrentVersionID}}, 10, 1},
-		{SearchOptions{UnderNodeID: scope.ID, MIMEType: "text/plain", ModifiedSince: "2020-01-01T00:00:00Z"}, 10, 1},
-	} {
-		count, err = s.CountSearchValidityDeclared(ctx, tc.scope, tc.cap)
-		require.NoError(t, err)
-		require.Equal(t, tc.want, count)
 	}
 	ids := []int64{old.ID, next.ID}
 	got, err := s.SearchResultValidity(ctx, SearchOptions{}, ids)
@@ -77,7 +62,4 @@ func checkSearchValidity(t *testing.T, s *Store, seed func(int64, int64)) {
 	got, err = s.SearchResultValidity(ctx, SearchOptions{}, ids)
 	require.NoError(t, err)
 	require.Empty(t, got[old.ID].Successors)
-	count, err = s.CountSearchValidityDeclared(ctx, SearchOptions{}, 10)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
 }

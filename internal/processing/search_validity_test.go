@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestProcessingSearchValidityBeforeLimit(t *testing.T) {
+func TestProcessingSearchValidityOnReturnedPage(t *testing.T) {
 	t.Parallel()
 	f := newMediaStateFixture(t)
 	ctx := t.Context()
@@ -35,7 +35,8 @@ func TestProcessingSearchValidityBeforeLimit(t *testing.T) {
 	report, err := f.service.Search(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	require.Equal(t, next.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, old.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, document.ValiditySuperseded, report.Results[0].Validity.State)
 	require.Equal(t, 1, report.Results[0].Rank)
 	require.True(t, report.Truncated)
 	require.Equal(t, "2025-06-01", report.AsOf)
@@ -48,6 +49,9 @@ func TestProcessingSearchValidityBeforeLimit(t *testing.T) {
 	request.AsOf = "2025-06-01"
 	report, err = f.service.Search(ctx, request)
 	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	require.Equal(t, next.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, old.ID, report.Results[1].Document.NodeID)
 	require.Equal(t, document.ValiditySuperseded, report.Results[1].Validity.State)
 	require.Equal(t, "/renewal-b", report.Results[1].Validity.SupersededBy[0].Path)
 	require.Equal(t, math.Float64bits(baseline.Results[0].Score), math.Float64bits(report.Results[1].Score))
@@ -60,7 +64,6 @@ func TestProcessingSearchValidityBeforeLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, time.Now().Format("2006-01-02"), report.AsOf)
 	request.AsOf = "2025-02-30"
-	require.ErrorIs(t, f.service.ValidateSearch(ctx, request), store.ErrInvalidSupersession)
 	_, err = f.service.Search(ctx, request)
 	require.ErrorIs(t, err, store.ErrInvalidSupersession)
 }
@@ -84,7 +87,7 @@ func TestProcessingSearchValidityAllLiveScopeExcludesOutOfScopeSuccessor(t *test
 	require.Nil(t, report.Results[0].Validity)
 }
 
-func TestMediaSearchValidityBeforeLimit(t *testing.T) {
+func TestMediaSearchValidityOnReturnedPage(t *testing.T) {
 	t.Parallel()
 	f := newMediaStateFixture(t)
 	ctx := t.Context()
@@ -125,12 +128,16 @@ func TestMediaSearchValidityBeforeLimit(t *testing.T) {
 	report, err := f.service.Search(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	require.Equal(t, next.NodeID, report.Results[0].Document.NodeID)
+	require.Equal(t, old.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, document.ValiditySuperseded, report.Results[0].Validity.State)
 	require.Equal(t, 1, report.Results[0].Rank)
 	require.True(t, report.Truncated)
 	request.Limit = 2
 	report, err = f.service.Search(ctx, request)
 	require.NoError(t, err)
+	require.Len(t, report.Results, 2)
+	require.Equal(t, next.NodeID, report.Results[0].Document.NodeID)
+	require.Equal(t, old.ID, report.Results[1].Document.NodeID)
 	require.Equal(t, document.ValiditySuperseded, report.Results[1].Validity.State)
 	require.Equal(t, next.NodeID, report.Results[1].Validity.SupersededBy[0].NodeID)
 }

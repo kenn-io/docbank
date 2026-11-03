@@ -208,6 +208,7 @@
     match?: generated.SearchHitMatch;
     excerpt?: string;
     evidence?: string[];
+    validity?: generated.DocumentResultValidity;
     naturalMode?: NaturalSearchMode;
   };
   type Snapshot = {
@@ -2441,11 +2442,25 @@
         excerpt: result.excerpt || "",
         evidence: evidenceKindLabels(result.evidence.map((item) => item.kind)),
         naturalMode,
+        validity: result.validity,
       };
       hydrated.push(row);
     }
     if (request !== generation || session !== webSession || signal.aborted) return [];
     return hydrated;
+  }
+
+  function validityReason(validity: generated.DocumentResultValidity | undefined): string {
+    switch (validity?.state) {
+      case "superseded":
+        return `superseded by ${validity.superseded_by.map((next) => next.path).join(", ")}`;
+      case "expired":
+        return "expired";
+      case "not_yet_effective":
+        return "not yet effective";
+      default:
+        return "";
+    }
   }
 
   async function loadTaggedNodes(tagID: string, preferredSelectedID?: number): Promise<void> {
@@ -4887,6 +4902,14 @@
                               <span>{showingResults ? row.path : row.node.name}</span>
                             </span>
                           {/if}
+                          {#if validityReason(row.validity)}
+                            <div
+                              class="search-evidence validity-reason"
+                              title={validityReason(row.validity)}
+                            >
+                              {validityReason(row.validity)}
+                            </div>
+                          {/if}
                         </td>
                         <td class="type-cell col-type"
                           >{fileTypeLabel(row.node.kind, row.node.mime_type)}</td
@@ -5623,6 +5646,15 @@
     align-items: center;
     gap: var(--space-2);
     white-space: nowrap;
+    font-size: var(--font-size-sm);
+  }
+
+  .search-evidence.validity-reason {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 

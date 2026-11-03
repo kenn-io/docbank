@@ -136,9 +136,6 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	for _, text := range append([]string{query.Text}, variants...) {
 		variant := query
 		variant.Text = text
-		if query.Order != nil {
-			variant.Limit = document.MaxRetrievalCandidateLimit
-		}
 		report, err := searcher.searchBase(ctx, variant)
 		if err != nil {
 			if searcher.expansion.Enabled {
@@ -151,11 +148,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 		}
 		reports = append(reports, report)
 	}
-	poolLimit := query.Limit
-	if query.Order != nil {
-		poolLimit = document.MaxRetrievalCandidateLimit
-	}
-	report, err := mergeVariantReports(reports, poolLimit)
+	report, err := mergeVariantReports(reports, query.Limit)
 	if err != nil {
 		return Report{}, err
 	}
@@ -183,16 +176,6 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 		}
 		report = revalidated
 	}
-	if query.Order != nil {
-		report.Results, err = query.Order(ctx, report.Results)
-		if err != nil {
-			return Report{}, err
-		}
-		if len(report.Results) > query.Limit {
-			report.Results = report.Results[:query.Limit]
-			report.Truncated = true
-		}
-	}
 	report, rerankingReceipt, rerankingDegradation, err := searcher.rerank(ctx, query, report)
 	if err != nil {
 		return Report{}, err
@@ -202,12 +185,6 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	}
 	if rerankingDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, rerankingDegradation)
-	}
-	if query.Order != nil {
-		report.Results, err = query.Order(ctx, report.Results)
-		if err != nil {
-			return Report{}, err
-		}
 	}
 	return report, nil
 }

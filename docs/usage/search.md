@@ -66,11 +66,11 @@ search, including when expansion and reranking are disabled.
 
 ## Search by effective date
 
-Processing search ranks documents in force ahead of superseded, expired, and future documents before applying `--limit`. It keeps their retrieval scores. The PATH column explains each out-of-force result, for example `(superseded by /leases/lease-2025.pdf)`. Agent output includes `validity` and `validity_reason` fields.
+Processing search ranks documents in force ahead of superseded, expired, and future documents within the returned page. It keeps their retrieval scores. The PATH column explains each out-of-force result, for example `(superseded by /leases/lease-2025.pdf)`. Agent output includes `validity` and `validity_reason` fields.
 
 Use `docbank search renewal --as-of 2024-06-01` to evaluate declarations on a chosen date. This also works with explicit processing search. Omitting the date uses today. Only live successors within the search's source fence or filters affect standing or appear in explanations. See [Document validity](organizing.md#document-validity) to declare replacements and effective dates.
 
-The candidate pool is bounded at 1,000. Processing search widens profile lane limits to allow for declared documents, within that bound; the resulting lane limits still bound which matches can be considered. Reranking scores the selected page, and documents in force keep priority afterward.
+Profile lane limits bound retrieval candidates. Retrieval selects the page and reranks it before validity ordering. Out-of-force matches stay on that page, listed after in-force ones.
 
 `--as-of` requires automatic hybrid search or explicit processing search. If automatic search cannot run or fails, the command returns an error. Ordinary lexical search without a processing profile keeps its usual order.
 

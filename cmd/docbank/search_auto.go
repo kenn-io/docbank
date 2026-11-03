@@ -39,7 +39,7 @@ type automaticSearchJSON struct {
 // tryAutomaticSearch runs hybrid search when a profile has a query embedding
 // binding. Scope and semantic readiness decisions stay with the daemon.
 func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query string, limit int,
-	opts daemonconn.SearchOptions,
+	opts daemonconn.SearchOptions, asOf string,
 ) (automaticSearchOutcome, error) {
 	if !automaticSearchEligible(query, limit, opts) {
 		return automaticSearchOutcome{}, nil
@@ -56,15 +56,14 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		return automaticSearchOutcome{}, nil
 	}
 	var first automaticSearchOutcome
+	var lastErr error
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			AsOf: searchAsOf, Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+			AsOf: asOf, Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
 		}
-		if searchAsOf != "" {
-			return automaticSearchOutcome{}, searchErr
-		}
+		lastErr = searchErr
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
 			return automaticSearchOutcome{}, err
@@ -75,6 +74,9 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		if !daemonconn.BindingSearchFailure(outcome.reason) {
 			break
 		}
+	}
+	if asOf != "" {
+		return automaticSearchOutcome{}, lastErr
 	}
 	return first, nil
 }

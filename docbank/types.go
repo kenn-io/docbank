@@ -452,6 +452,7 @@ const (
 )
 
 type DocumentSearchRequest struct {
+	AsOf         string                        `json:"as_of,omitzero"`
 	MediaSources []DocumentMediaSourceSelector `json:"media_sources,omitzero"`
 	Query        string                        `json:"query"`
 	Mode         DocumentSearchMode            `json:"mode"`
@@ -503,13 +504,16 @@ type DocumentSearchTrace struct {
 }
 
 type DocumentResultValidity struct {
-	State        string                      `json:"state"`
-	SupersededBy []DocumentValiditySuccessor `json:"superseded_by"`
+	EffectiveFrom string                      `json:"effective_from,omitzero"`
+	EffectiveTo   string                      `json:"effective_to,omitzero"`
+	State         string                      `json:"state"`
+	SupersededBy  []DocumentValiditySuccessor `json:"superseded_by"`
 }
 
 type DocumentValiditySuccessor struct {
-	NodeID int64  `json:"node_id"`
-	Path   string `json:"path"`
+	EffectiveFrom string `json:"effective_from,omitzero"`
+	NodeID        int64  `json:"node_id"`
+	Path          string `json:"path"`
 }
 
 type DocumentSearchResult struct {
@@ -543,6 +547,7 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	AsOf                 string                   `json:"as_of"`
 	MediaSelections      []DocumentMediaSelection `json:"media_selections,omitzero"`
 	MediaSourceSelection bool                     `json:"media_source_selection,omitzero"`
 	RequestedMode        DocumentSearchMode       `json:"requested_mode"`

@@ -18,12 +18,14 @@ import (
 func TestSearchValidityCLIReasons(t *testing.T) {
 	cmd, out := processingTestCommand()
 	report := api.DocumentSearchReport{AsOf: "2025-01-01", Results: []api.DocumentSearchResult{
-		{NodeID: 1, Rank: 1, Path: "/old.txt", Validity: &api.DocumentResultValidity{State: "superseded", SupersededBy: []api.DocumentValiditySuccessor{{NodeID: 2, Path: "/new.txt"}}}},
-		{NodeID: 3, Rank: 2, Path: "/expired.txt", Validity: &api.DocumentResultValidity{State: "expired"}},
-		{NodeID: 4, Rank: 3, Path: "/future.txt", Validity: &api.DocumentResultValidity{State: "not_yet_effective"}},
+		{NodeID: 2, Rank: 1, Path: "/new.txt", Validity: &api.DocumentResultValidity{State: "current"}},
+		{NodeID: 1, Rank: 2, Path: "/old.txt", Validity: &api.DocumentResultValidity{State: "superseded", SupersededBy: []api.DocumentValiditySuccessor{{NodeID: 2, Path: "/new.txt"}}}},
+		{NodeID: 3, Rank: 3, Path: "/expired.txt", Validity: &api.DocumentResultValidity{State: "expired"}},
+		{NodeID: 4, Rank: 4, Path: "/future.txt", Validity: &api.DocumentResultValidity{State: "not_yet_effective"}},
 	}}
 	require.NoError(t, writeDocumentSearchReport(cmd, report, false, true, nil))
 	require.Contains(t, out.String(), "/old.txt (superseded by /new.txt)")
+	require.Less(t, strings.Index(out.String(), "/new.txt"), strings.Index(out.String(), "/old.txt"))
 	require.Contains(t, out.String(), "/expired.txt (expired)")
 	require.Contains(t, out.String(), "/future.txt (not yet effective)")
 	cmd, out = processingTestCommand()
@@ -46,7 +48,7 @@ func TestAutomaticSearchValidityCLI(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var record kitdaemon.RuntimeRecord
 			var profileCalls, searchCalls, lexicalCalls int
-			spec := automaticSearchCase{query: "lease", limit: 1, profiles: tc.profiles, searchError: tc.searchError, wantSearch: 1}
+			spec := automaticSearchCase{asOf: "2025-01-01", query: "lease", limit: 1, profiles: tc.profiles, searchError: tc.searchError, wantSearch: 1}
 			handler := automaticSearchDaemon(t, spec, &record, &profileCalls, &searchCalls)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/search" {

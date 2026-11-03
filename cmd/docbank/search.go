@@ -210,7 +210,7 @@ See docs/usage/search.md.`,
 		query := strings.Join(args, " ")
 		var automatic automaticSearchOutcome
 		if !cmd.Flags().Changed("mode") {
-			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
+			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts, searchAsOf)
 			if err != nil {
 				return err
 			}

@@ -6,7 +6,6 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -42,15 +41,8 @@ func (service *Service) searchMediaSources(
 	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: retrieval.ModeLexical,
 		Results: []retrieval.Result{}}
 	scope := store.SearchOptions{ContentVersionIDs: ids}
-	extra, err := service.catalog.CountSearchValidityDeclared(ctx, scope, document.MaxRetrievalCandidateLimit-prepared.limit)
-	if err != nil {
-		return retrieval.Report{}, err
-	}
 	if len(plan.builds) != 0 {
 		candidateLimit := service.profiles[request.Profile].portable.Retrieval.LexicalLimit
-		if extra > 0 {
-			candidateLimit = max(candidateLimit, prepared.limit+extra)
-		}
 		report, err = prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query,
 			Mode: prepared.mode, Limit: candidateLimit, LexicalLimit: candidateLimit,
 			Scope: store.SearchOptions{SelectedBuilds: plan.builds}, ContentFirst: true})
@@ -65,15 +57,15 @@ func (service *Service) searchMediaSources(
 	}
 	plan.dropChanged(current)
 	report.Results = plan.attributedResults(report.Results)
+	if len(report.Results) > prepared.limit {
+		report.Results = report.Results[:prepared.limit]
+		report.Truncated = true
+	}
 	report.Results, err = service.applyValidity(ctx, report.Results, scope, request.AsOf)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
 	report.AsOf = request.AsOf
-	if len(report.Results) > prepared.limit {
-		report.Results = report.Results[:prepared.limit]
-		report.Truncated = true
-	}
 	report.RequestedMode = prepared.requestedMode
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	report.MediaSourceSelection, report.Coverage = true, plan.coverage()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"fmt"
 
 	"go.kenn.io/docbank/document"
 )
@@ -19,21 +18,6 @@ type SearchValidityNode struct {
 type SearchValiditySuccessor struct {
 	NodeID              int64
 	Path, EffectiveFrom string
-}
-
-// CountSearchValidityDeclared bounds the extra candidates needed before demotion.
-func (s *Store) CountSearchValidityDeclared(ctx context.Context, scope SearchOptions, limit int) (int, error) {
-	if limit <= 0 {
-		return 0, nil
-	}
-	scopeSQL, args := liveSearchScopeSQLForBackend(scope, s.postgresSchema != "", 0)
-	query := `SELECT COUNT(*) FROM (SELECT d.node_id FROM (
- SELECT node_id FROM node_effective_windows UNION SELECT predecessor_node_id FROM node_supersessions
- ) d WHERE EXISTS (SELECT 1 ` + scopeSQL + ` AND n.id=d.node_id) LIMIT ` + fmt.Sprintf("$%d", len(args)+1) + ` ) declared`
-	args = append(args, limit)
-	var count int
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
-	return count, err
 }
 
 // SearchResultValidity reads only candidates and their direct live successors

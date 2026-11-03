@@ -21,13 +21,15 @@ func TestSearchValidityHTTP(t *testing.T) {
 	_, err = catalog.PutEffectiveWindow(ctx, next.ID, next.Revision, "2025-01-01", "")
 	require.NoError(t, err)
 	c := daemonconn.New(ts.URL, testAPIKey)
-	request := api.DocumentSearchRequest{Query: "old", Mode: "lexical", Profile: "private", AsOf: "2025-06-01", Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{old.CurrentVersionID, next.CurrentVersionID}}}
+	request := api.DocumentSearchRequest{Query: "txt", Limit: 2, Mode: "lexical", Profile: "private", AsOf: "2025-06-01", Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{old.CurrentVersionID, next.CurrentVersionID}}}
 	report, err := c.SearchDocuments(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, "2025-06-01", report.AsOf)
-	require.Len(t, report.Results, 1)
-	require.Equal(t, "superseded", report.Results[0].Validity.State)
-	require.Equal(t, []api.DocumentValiditySuccessor{{NodeID: next.ID, Path: "/new.txt", EffectiveFrom: "2025-01-01"}}, report.Results[0].Validity.SupersededBy)
+	require.Len(t, report.Results, 2)
+	require.Equal(t, next.ID, report.Results[0].NodeID)
+	require.Equal(t, old.ID, report.Results[1].NodeID)
+	require.Equal(t, "superseded", report.Results[1].Validity.State)
+	require.Equal(t, []api.DocumentValiditySuccessor{{NodeID: next.ID, Path: "/new.txt", EffectiveFrom: "2025-01-01"}}, report.Results[1].Validity.SupersededBy)
 	request.AsOf = "2024-06-01"
 	report, err = c.SearchDocuments(ctx, request)
 	require.NoError(t, err)
@@ -56,14 +58,15 @@ func TestSearchValidityReranksReturnedPage(t *testing.T) {
 	report, err := c.SearchDocuments(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	require.Equal(t, next.ID, report.Results[0].NodeID)
+	require.Equal(t, old.ID, report.Results[0].NodeID)
+	require.Equal(t, "superseded", report.Results[0].Validity.State)
 	require.Len(t, provider.candidates, 1)
-	require.Equal(t, next.ID, provider.candidates[0].Document.NodeID)
+	require.Equal(t, old.ID, provider.candidates[0].Document.NodeID)
 	require.Equal(t, 1, report.Reranking.CandidateCount)
 	request.Limit = 2
 	report, err = c.SearchDocuments(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, next.ID, report.Results[0].NodeID, "in-force priority survives reranking")
 	require.Equal(t, old.ID, report.Results[1].NodeID)
-	require.InDelta(t, 2, report.Results[1].Score, 0.000001, "keep the provider score despite demotion")
+	require.InDelta(t, 1, report.Results[1].Score, 0.000001, "keep the provider score despite demotion")
 }

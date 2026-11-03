@@ -2778,11 +2778,7 @@ func searchFilterSQLForBackend(opts SearchOptions, postgres bool, offset int) (s
 		if err != nil {
 			panic(err)
 		}
-		arrayRows := "SELECT value FROM json_each(?)"
-		if postgres {
-			arrayRows = "SELECT value FROM json_array_elements_text(CAST(? AS json))"
-		}
-		clauses = append(clauses, `AND cv.version_id IN (`+arrayRows+`)`)
+		clauses = append(clauses, `AND cv.version_id IN (SELECT value FROM (`+jsonArrayRowsSQL(postgres, "?")+`))`)
 		args = append(args, string(encoded))
 	}
 	if opts.TagID != "" {
