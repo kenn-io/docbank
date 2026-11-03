@@ -94,7 +94,18 @@ jobs:
       - name: Exercise schema lifecycle and node queries
         env:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
-        run: make test-pg
+        run: make test-pg PG_SUITE=postgres-${{ matrix.version }}
+
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-${{ matrix.version }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   docs:
     needs: changes
@@ -164,6 +175,17 @@ jobs:
           node --test scripts/docs/*.test.mjs
           make docs-build
 
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-docs-bridge-contract-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Verify documentation upload inputs locally
         run: node scripts/docs/check-upload-inputs.mjs
 
@@ -173,6 +195,15 @@ jobs:
         run: |
           npm --prefix frontend run docs-site:check
           npm --prefix frontend run docs-site:test
+
+      - name: Upload Playwright docs-site results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-docs-site-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/docs-site.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Print Playwright browser server logs on failure
         if: failure() && steps.browser_server.outcome == 'success'
@@ -199,6 +230,15 @@ jobs:
 
       - name: Check and build web application
         run: make frontend-test
+
+      - name: Upload Vitest frontend results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-frontend-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/vitest/frontend.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   released-schemas:
     name: Released storage schemas
@@ -252,15 +292,42 @@ jobs:
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
 
+      - name: Upload Playwright report-export results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-report-export-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/report-export-*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Qualify photo map in Chromium
         env:
           CGO_ENABLED: "0"
         run: make photo-map-browser-test
 
+      - name: Upload Playwright photo-map results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-photo-map-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/photo-map.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Qualify live photo tabs in Chromium
         env:
           CGO_ENABLED: "0"
         run: make photo-tabs-browser-test
+
+      - name: Upload Playwright photo-tabs results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-photo-tabs-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/photo-tabs.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test:
     needs: changes
@@ -340,7 +407,22 @@ jobs:
       - name: Embedded modernc restore without FTS5 build tags
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' ./docbank
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text
+          --jsonfile gotestsum/linux-amd64-cgo-modernc-restore.json
+          --rerun-fails=2 --rerun-fails-report gotestsum/linux-amd64-cgo-modernc-restore-reruns.txt
+          --packages ./docbank -- -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$'
+
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-linux-amd64-cgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Stop S3-compatible test service
         if: always()
@@ -383,6 +465,17 @@ jobs:
       - name: Test
         run: bash scripts/test-go-ci.sh
 
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-linux-amd64-purego-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
 
@@ -415,6 +508,17 @@ jobs:
 
       - name: Test
         run: bash scripts/test-go-ci.sh
+
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-darwin-arm64-cgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -568,6 +672,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
         run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4
+
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-${{ matrix.goarch }}-shard-${{ matrix.shard || 'all' }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         if: matrix.shard == 4

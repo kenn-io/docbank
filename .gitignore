@@ -7,6 +7,10 @@
 /bin/
 /dist/
 
+# Test results that CI uploads
+/gotestsum/
+/frontend/test-results/
+
 # Frontend dependencies and generated embed output
 node_modules/
 frontend/dist/

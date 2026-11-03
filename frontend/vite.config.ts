@@ -37,6 +37,13 @@ export default defineConfig({
     execArgv: ["--no-experimental-webstorage"],
     exclude: ["docs-site/**", "node_modules/**"],
     maxWorkers: 2,
+    // CI retries a failed test and records every result as JSON, which CI
+    // uploads so a test that passed only on a retry stays visible.
+    ...(process.env.CI && {
+      retry: 2,
+      reporters: ["default", "github-actions", "json"],
+      outputFile: { json: "test-results/vitest/frontend.json" },
+    }),
     testTimeout: 30_000,
     server: {
       deps: {
