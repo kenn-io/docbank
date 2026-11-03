@@ -773,23 +773,29 @@ func (s *Store) acquireSemanticSearchAuthorityWithGeneration(ctx context.Context
 		// identities together in this fresh writer snapshot. The collector never
 		// crosses its commit; publication order must match the head it read.
 		s.vectorIndexPublicationMu.RLock()
-		err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
+		err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) (retErr error) {
 			if err := loadSpace(tx); err != nil {
 				return err
 			}
-			var err error
+			bound, release, err := s.bindPhotoSearchOptionsTx(ctx, tx, normalized)
+			if release != nil {
+				defer func() { retErr = errors.Join(retErr, release()) }()
+			}
+			if err != nil {
+				return err
+			}
 			lease, err = newVectorIndexReaderLease(vectorSpaceID, owner, at, duration)
 			if err != nil {
 				return err
 			}
 			collector := newOriginalSemanticSnapshot(profileFingerprint, bindingID, vectorSpaceID,
-				binding.InputKind, normalized)
+				binding.InputKind, bound)
 			if err := s.acquireVectorIndexGenerationTx(ctx, tx, vectorSpaceID, owner,
 				&lease, true, collector); err != nil {
 				return err
 			}
 			annRows, err = semanticSearchAuthorityANNRowsTx(ctx, tx, profileFingerprint,
-				bindingID, binding.InputKind, vectorSpaceID, normalized, collector)
+				bindingID, binding.InputKind, vectorSpaceID, bound, collector)
 			return err
 		})
 		if err == nil {
@@ -2370,32 +2376,43 @@ func (s *Store) SearchPageWithOptions(
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) (retErr error) {
-		if opts.PhotoScope != nil {
-			lease, err := s.acquireLexicalGeneration(ctx, tx)
-			if err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
-			if lease != nil {
-				defer func() { retErr = errors.Join(retErr, lease.Release()) }()
-			}
+		bound, release, err := s.bindPhotoSearchOptionsTx(ctx, tx, opts)
+		if release != nil {
+			defer func() { retErr = errors.Join(retErr, release()) }()
 		}
-		if opts.PhotoScope != nil {
-			request := *opts.PhotoScope
-			request.Query.Syntax = "advanced"
-			var err error
-			if opts.photoFilter, err = photoSearchFragment(ctx, tx, request); err != nil {
-				return err
-			}
-			if opts.PhotoLexicalQuery != nil {
-				request.Query = *opts.PhotoLexicalQuery
-				if opts.photoLexical, err = photoSearchFragment(ctx, tx, request); err != nil {
-					return err
-				}
-			}
+		if err != nil {
+			return err
 		}
-
-		return fn(tx, opts)
+		return fn(tx, bound)
 	})
+}
+
+func (s *Store) bindPhotoSearchOptionsTx(ctx context.Context, tx *sql.Tx,
+	opts SearchOptions,
+) (SearchOptions, func() error, error) {
+	if opts.PhotoScope == nil {
+		return opts, nil, nil
+	}
+	lease, err := s.acquireLexicalGeneration(ctx, tx)
+	var release func() error
+	if lease != nil {
+		release = lease.Release
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return opts, release, err
+	}
+	request := *opts.PhotoScope
+	request.Query.Syntax = "advanced"
+	if opts.photoFilter, err = photoSearchFragment(ctx, tx, request); err != nil {
+		return opts, release, err
+	}
+	if opts.PhotoLexicalQuery != nil {
+		request.Query = *opts.PhotoLexicalQuery
+		if opts.photoLexical, err = photoSearchFragment(ctx, tx, request); err != nil {
+			return opts, release, err
+		}
+	}
+	return opts, release, nil
 }
 
 // photoSearchFragment compiles one photo query as lexical node membership.

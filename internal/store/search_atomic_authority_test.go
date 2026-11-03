@@ -2,12 +2,14 @@ package store
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/vectorindex"
+	"hegel.dev/go/hegel"
 )
 
 func TestSemanticSearchAuthorityHeadSnapshot(t *testing.T) {
@@ -66,6 +68,76 @@ func TestSemanticSearchAuthorityHeadSnapshot(t *testing.T) {
 			require.Zero(t, leases)
 		})
 	}
+}
+
+func TestSemanticSearchAuthorityHeadPhotoScopeParityProperty(t *testing.T) {
+	t.Parallel()
+	f := newImageEmbeddingCatalogFixture(t)
+	s, profile := f.s, f.request.Profile
+	cameras := []string{"CameraA", "CameraB", "CameraC"}
+	records := make([]EmbeddingSetRecord, 0, len(cameras))
+	for index, camera := range cameras {
+		node, fixture := f.node, f
+		if index > 0 {
+			var err error
+			node, err = s.CreateFile(t.Context(), s.RootID(), camera+".jpg",
+				testSHA256([]byte(camera)), 20, "image/jpeg")
+			require.NoError(t, err)
+			fixture = f.forNode(t, node)
+		}
+		browsePhotoMetadata(t, s, node, "photo-scope-"+camera,
+			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(camera)))
+		record, _ := fixture.publish(t)
+		records = append(records, record)
+	}
+	for index, camera := range cameras {
+		page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"camera:`+camera+`"}`)
+		require.Equal(t, int64(1), page.Total)
+		require.Equal(t, records[index].ContentVersionID, page.Items[0].ContentVersionID)
+	}
+	for _, record := range records[1:] {
+		require.Equal(t, records[0].VectorSpace.ID, record.VectorSpace.ID)
+	}
+
+	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	stored := vectorIndexGenerationFixture("photo-scope-parity", source, []byte("synthetic-index"), now)
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, stored))
+	hegel.Test(t, func(ht *hegel.T) {
+		index := hegel.Draw(ht, hegel.Integers(0, len(cameras)-1))
+		camera := cameras[index]
+		options := SearchOptions{PhotoScope: &PhotoBrowseRequest{
+			Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"camera:`+camera+`"}`),
+		}}
+		full, err := s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+			records[0].BindingID, "photo-scope-full", now, time.Minute, options)
+		if err != nil {
+			ht.Fatalf("acquiring full-byte authority for %s: %v", camera, err)
+		}
+		head, err := s.AcquireSemanticSearchAuthorityHead(t.Context(), profile.Fingerprint,
+			records[0].BindingID, "photo-scope-head", now, time.Minute, options)
+		if err != nil {
+			_ = s.ReleaseVectorIndexGeneration(t.Context(), full.Lease.ID, full.Lease.FencingToken, now)
+			ht.Fatalf("acquiring metadata-only authority for %s: %v", camera, err)
+		}
+		fullRows, headRows := slices.Clone(full.ANNRows), slices.Clone(head.ANNRows)
+		if err := s.ReleaseVectorIndexGeneration(t.Context(), full.Lease.ID, full.Lease.FencingToken, now); err != nil {
+			ht.Fatalf("releasing full-byte authority for %s: %v", camera, err)
+		}
+		if err := s.ReleaseVectorIndexGeneration(t.Context(), head.Lease.ID, head.Lease.FencingToken, now); err != nil {
+			ht.Fatalf("releasing metadata-only authority for %s: %v", camera, err)
+		}
+		want := vectorindex.RowIdentity{SetID: records[index].VectorSet.ID,
+			InputKey:      records[index].InputGeneration.Inputs[0].ID,
+			InputChecksum: records[index].InputGeneration.Inputs[0].RenderedChecksum}
+		if len(fullRows) != 1 || fullRows[0] != want {
+			ht.Fatalf("full-byte authority for %s returned %#v, want only %#v", camera, fullRows, want)
+		}
+		if !slices.Equal(headRows, fullRows) {
+			ht.Fatalf("metadata-only authority for %s returned %#v, full-byte authority returned %#v", camera, headRows, fullRows)
+		}
+	}, hegel.WithDatabase(t.TempDir()))
 }
 
 func TestSemanticSearchAuthorityHeadFailuresReturnNoAuthority(t *testing.T) {

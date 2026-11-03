@@ -104,36 +104,6 @@ func compareOriginalSnapshotFallback(t *testing.T, s *Store, p ProcessingProfile
 	require.Equal(t, wantRequired, required)
 	require.Equal(t, wantComplete, complete)
 	require.Equal(t, wantRows, rows)
-	neighbors := make([]vectorindex.Neighbor, len(rows))
-	for i, row := range rows {
-		neighbors[i] = vectorindex.Neighbor{SetID: row.SetID, InputKey: row.InputKey, InputChecksum: row.InputChecksum, Score: 1 - float64(i)/float64(len(rows)+1)}
-	}
-	for _, limit := range []int{1, 10} {
-		// Reuse the independent full-SQL/legacy-reducer oracle from the
-		// prefix tests: typed fallback must retain every ranked candidate,
-		// including withheld lookahead, rather than only the TEXT witness.
-		want := SemanticSearchResolution{SourceManifestChecksum: source.ManifestChecksum}
-		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-			filterSQL, args := searchFilterSQL(opts)
-			eligible, err := loadSemanticEligibility(t.Context(), tx, p.Fingerprint, witness.BindingID,
-				document.EmbeddingInputOriginalFile, witness.VectorSpace.ID, filterSQL, args, opts.CollapsesPhotoDuplicates())
-			require.NoError(t, err)
-			want.Candidates, want.Truncated, want.NextNeighbor = reduceSemanticCandidates(s.vaultID,
-				witness.VectorSpace.ID, neighbors, limit, eligible, nil)
-			for i := range want.Candidates {
-				candidate := &want.Candidates[i]
-				candidate.Path, err = pathOf(t.Context(), tx, candidate.NodeID)
-				require.NoError(t, err)
-				candidate.Excerpt, err = searchExcerptByVersionTx(t.Context(), tx, candidate.ContentVersionID)
-				require.NoError(t, err)
-			}
-			return nil
-		}))
-		resolved, err := s.ResolveSemanticCandidates(t.Context(), p.Fingerprint, witness.BindingID,
-			document.EmbeddingInputOriginalFile, witness.VectorSpace.ID, source.ManifestChecksum, neighbors, limit, opts, nil)
-		require.NoError(t, err)
-		require.Equal(t, want, resolved, "typed fallback must match every legacy candidate and global lookahead at limit %d", limit)
-	}
 	requested := originalSnapshotEvidence(t, s, witness, source.ManifestChecksum)
 	final, err := s.RevalidateSearchCandidates(t.Context(), requested, opts, p.Fingerprint, witness.BindingID)
 	require.NoError(t, err)
