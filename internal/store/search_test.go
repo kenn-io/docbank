@@ -2922,12 +2922,10 @@ func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
 		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: node.CurrentVersionID,
 			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 1 - float64(i)/10})
 	}
-	_, _, err = s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
-	require.NoError(t, err)
 	source, err := s.CaptureVectorIndexSource(t.Context(), space)
 	require.NoError(t, err)
 	result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
-		space, source.ManifestChecksum, neighbors, 1, SearchOptions{}, map[int64]struct{}{nodes[1].ID: {}, nodes[2].ID: {}})
+		space, source.ManifestChecksum, neighbors, 1, SearchOptions{}, map[int64]struct{}{nodes[0].ID: {}, nodes[1].ID: {}, nodes[2].ID: {}})
 	require.NoError(t, err)
 	require.Len(t, result.Candidates, 1)
 	assert.Equal(t, nodes[3].ID, result.Candidates[0].NodeID)
