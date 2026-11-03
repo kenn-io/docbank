@@ -1891,8 +1891,8 @@ it.each([
     "superseded by lease-2025.pdf, renewal.txt",
     "superseded by /leases/lease-2025.pdf, /leases/addenda/renewal.txt",
   ],
-  [{ state: "expired", superseded_by: [] }, "expired", "expired"],
-  [{ state: "not_yet_effective", superseded_by: [] }, "not yet effective", "not yet effective"],
+  [{ state: "expired", superseded_by: [] }, "expired", ""],
+  [{ state: "not_yet_effective", superseded_by: [] }, "not yet effective", ""],
   [undefined, "", ""],
 ])(
   "shows the validity reason beneath the search result for %j",
