@@ -242,6 +242,14 @@ Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
 
+SQLite records the source revision and grid-preview recipe verified for each
+published vector-index head. Search fences reuse its checksum in the same read
+snapshot while those values match. Changes to embedding or rendition heads,
+current or trashed content, previews, or photo visibility and display ownership
+force a fresh capture. Publication and the idle vector worker record verification;
+searches stay read-only. Verification survives a restart, and a changed grid recipe
+requires a new capture.
+
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact
 input generation and source unit from retained canonical artifacts. Both paths

@@ -125,6 +125,8 @@ func TestIndexWorkerRestoreSkipsSpacesWithoutEligibleMembership(t *testing.T) {
 var indexWorkerNow = time.Date(2026, 8, 26, 14, 0, 0, 0, time.UTC)
 
 type fakeIndexCatalog struct {
+	captureCalls, verifyCalls                          int
+	verified                                           bool
 	activeLoads                                        int
 	listErr                                            error
 	listFailures                                       int
@@ -184,6 +186,7 @@ func newIndexWorkerForTest(t *testing.T, catalog *fakeIndexCatalog) *IndexWorker
 func (c *fakeIndexCatalog) CaptureVectorIndexSource(_ context.Context, space string) (store.VectorIndexSource, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.captureCalls++
 	source, ok := c.sources[space]
 	if !ok {
 		return store.VectorIndexSource{}, store.ErrNotFound
@@ -406,7 +409,7 @@ func (c *fakeIndexCatalog) ActiveVectorIndexHead(_ context.Context, space string
 	if c.active.ID == "" || c.active.VectorSpaceID != space {
 		return store.VectorIndexHead{}, store.ErrNotFound
 	}
-	return store.VectorIndexHead{GenerationID: c.active.ID, SourceManifestChecksum: c.active.SourceManifestChecksum}, nil
+	return store.VectorIndexHead{GenerationID: c.active.ID, SourceManifestChecksum: c.active.SourceManifestChecksum, Verified: c.verified}, nil
 }
 
 func TestIndexWorkerRestoresAndSearchesLargeDimensionVectors(t *testing.T) {
@@ -447,4 +450,30 @@ func TestIndexWorkerRestoresAndSearchesLargeDimensionVectors(t *testing.T) {
 	require.Equal(t, setID, neighbors[0].SetID)
 	require.InDelta(t, float64(1), neighbors[0].Score, 1e-12)
 	require.NoError(t, lease.Release(t.Context()))
+}
+
+func (c *fakeIndexCatalog) MarkVectorIndexHeadVerified(_ context.Context, source store.VectorIndexSource) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.verifyCalls++
+	if c.active.VectorSpaceID == source.VectorSpaceID && c.active.SourceManifestChecksum == source.ManifestChecksum && c.sources[source.VectorSpaceID].Revision == source.Revision {
+		c.verified = true
+	}
+	return nil
+}
+
+func TestIndexWorkerRefreshVerifiesUnchangedMembership(t *testing.T) {
+	catalog, space := newIndexCatalogFixture(t)
+	worker := newIndexWorkerForTest(t, catalog)
+	_, err := worker.Rebuild(t.Context(), space)
+	require.NoError(t, err)
+	catalog.captureCalls = 0
+	require.NoError(t, worker.refresh(t.Context(), space))
+	require.Equal(t, 1, catalog.captureCalls)
+	require.Equal(t, 1, catalog.verifyCalls)
+	require.Equal(t, 1, catalog.publishCalls)
+	require.NoError(t, worker.refresh(t.Context(), space))
+	require.Equal(t, 1, catalog.captureCalls, "verified refresh must skip capture")
+	require.Equal(t, 1, catalog.verifyCalls)
+	require.Equal(t, 1, catalog.publishCalls)
 }

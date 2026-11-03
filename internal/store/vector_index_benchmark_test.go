@@ -95,15 +95,34 @@ func publishVectorIndexMembersForTest(tb testing.TB, s *Store, first EmbeddingSe
 	}
 }
 
+// ResolveSemanticCandidates includes the source fence and downstream eligibility
+// work, so accidentally recapturing during search is included in these timings.
 func BenchmarkVectorIndexSourceCapture(b *testing.B) {
 	for _, heads := range []int{1000, 4000, 16000, 64000} {
 		b.Run(fmt.Sprintf("heads=%d", heads), func(b *testing.B) {
 			s, first, _ := newPublishedVectorIndexFixture(b)
 			publishVectorIndexMembersForTest(b, s, first, heads)
-			for b.Loop() {
-				source, err := s.CaptureVectorIndexSource(b.Context(), first.VectorSpace.ID)
-				require.NoError(b, err)
-				require.Len(b, source.Members, heads)
+			source, err := s.CaptureVectorIndexSource(b.Context(), first.VectorSpace.ID)
+			require.NoError(b, err)
+			now := time.Now().UTC()
+			claim, claimed, err := s.ClaimVectorIndexBuild(b.Context(), source.VectorSpaceID, source.ManifestChecksum, "benchmark", now, time.Minute)
+			require.NoError(b, err)
+			require.True(b, claimed)
+			generation := vectorIndexGenerationFixture("benchmark", source, []byte("index"), now)
+			require.NoError(b, s.StageVectorIndexGeneration(b.Context(), claim, generation, now))
+			require.NoError(b, s.PublishVectorIndexGeneration(b.Context(), claim, generation.ID, now))
+			for _, verified := range []bool{true, false} {
+				b.Run(fmt.Sprintf("verified=%t", verified), func(b *testing.B) {
+					if !verified {
+						_, err := s.db.ExecContext(b.Context(), `DELETE FROM vector_index_source_verifications`)
+						require.NoError(b, err)
+					}
+					for b.Loop() {
+						_, err := s.ResolveSemanticCandidates(b.Context(), first.ProcessingProfileFingerprint, first.BindingID, first.InputKind, source.VectorSpaceID, source.ManifestChecksum,
+							[]vectorindex.Neighbor{{SetID: first.VectorSet.ID, InputKey: first.InputGeneration.Inputs[0].ID, InputChecksum: first.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}}, 10, SearchOptions{}, nil)
+						require.NoError(b, err)
+					}
+				})
 			}
 		})
 	}

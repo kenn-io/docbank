@@ -3102,3 +3102,116 @@ CREATE TABLE IF NOT EXISTS vault_changes (
     node_id INTEGER NOT NULL,
     node_revision INTEGER NOT NULL
 );
+
+-- Source verification is local derived state, rebuilt from retained authority.
+CREATE TABLE IF NOT EXISTS vector_index_source_state (
+    singleton INTEGER PRIMARY KEY,
+    revision INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO vector_index_source_state(singleton,revision) VALUES(1,1);
+
+CREATE TABLE IF NOT EXISTS vector_index_source_verifications (
+    vector_space_id TEXT PRIMARY KEY REFERENCES vector_index_heads(vector_space_id) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL,
+    verified_revision INTEGER NOT NULL,
+    grid_recipe TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_insert
+AFTER INSERT ON embedding_heads
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_update
+AFTER UPDATE ON embedding_heads
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_delete
+AFTER DELETE ON embedding_heads
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_insert
+AFTER INSERT ON rendition_heads
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_update
+AFTER UPDATE ON rendition_heads
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_delete
+AFTER DELETE ON rendition_heads
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_insert
+AFTER INSERT ON visual_preview_generations
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_delete
+AFTER DELETE ON visual_preview_generations
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_insert
+AFTER INSERT ON photo_files
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_update
+AFTER UPDATE OF asset_id,node_id,file_id ON photo_files
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_delete
+AFTER DELETE ON photo_files
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_insert
+AFTER INSERT ON photo_assets
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_update
+AFTER UPDATE OF kind,display_file_id,hidden_at,excluded_at ON photo_assets
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_delete
+AFTER DELETE ON photo_assets
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_nodes_update
+AFTER UPDATE OF current_version_id,trashed_at ON nodes
+WHEN (OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at)
+ AND EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id))
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_content_versions_delete
+AFTER DELETE ON content_versions
+WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id=OLD.version_id)
+BEGIN
+    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
+END;

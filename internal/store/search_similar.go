@@ -137,14 +137,14 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			}
 			return err
 		}
-		current, err := captureVectorIndexSourceTx(ctx, tx, space)
+		current, err := vectorIndexSourceChecksumTx(ctx, tx, space)
 		if errors.Is(err, ErrNotFound) {
 			return ErrVectorIndexSourceStale
 		}
 		if err != nil {
 			return err
 		}
-		if current.ManifestChecksum != manifest {
+		if current != manifest {
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = manifest

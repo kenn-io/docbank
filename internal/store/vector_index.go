@@ -35,6 +35,7 @@ type VectorIndexMember struct {
 }
 
 type VectorIndexSource struct {
+	Revision         int64
 	VectorSpaceID    string
 	ManifestChecksum string
 	Members          []VectorIndexMember
@@ -83,7 +84,7 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 		return VectorIndexSource{}, err
 	}
 	var source VectorIndexSource
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		return err
@@ -96,16 +97,12 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 	if err != nil {
 		return VectorIndexSource{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT es.embedding_set_id,vs.vector_set_id,vs.payload_blob_hash,vs.payload_size,
+	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
+	rows, err := tx.QueryContext(ctx, `SELECT (SELECT revision FROM vector_index_source_state WHERE singleton=1),es.embedding_set_id,vs.vector_set_id,vs.payload_blob_hash,vs.payload_size,
 		es.input_kind,es.binding_id,g.generation_id,g.source_version_id,g.profile_fingerprint,g.evidence_fingerprint,g.chunk_policy_fingerprint,
 		(es.profile_fingerprint=h.profile_fingerprint AND es.vector_space_id=h.vector_space_id AND
 		CASE WHEN es.input_kind='image' THEN
-			COALESCE(g.attachment_id,'')='' AND COALESCE(g.generation_blob_hash,'')='' AND g.input_count=1 AND
-			EXISTS(SELECT 1 FROM embedding_generation_inputs i WHERE i.generation_id=g.generation_id
-				AND i.input_id=g.source_version_id AND i.rendered_checksum=g.generation_checksum) AND
-			EXISTS(SELECT 1 FROM visual_preview_generations p WHERE p.content_version_id=g.source_version_id
-				AND p.recipe_fingerprint=? AND p.state='ready' AND p.checksum=g.evidence_fingerprint) AND
-			`+photoDescriptionEligibilitySQL("g.source_version_id")+`
+			`+imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "?")+`
 		ELSE `+embeddingAttachmentEligibilitySQL("es.content_version_id", "es.profile_fingerprint", "g.attachment_id")+` END)
 		FROM embedding_heads h
 		JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
@@ -118,14 +115,13 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 		return VectorIndexSource{}, fmt.Errorf("listing vector index logical membership: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
 	for rows.Next() {
 		var member VectorIndexMember
 		var kind document.EmbeddingInputKind
 		var binding string
 		var generation EmbeddingInputGenerationRecord
 		var eligible bool
-		if err := rows.Scan(&member.EmbeddingSetID, &member.VectorSetID, &member.PayloadBlobHash, &member.PayloadSize,
+		if err := rows.Scan(&source.Revision, &member.EmbeddingSetID, &member.VectorSetID, &member.PayloadBlobHash, &member.PayloadSize,
 			&kind, &binding, &generation.ID, &generation.SourceVersionID, &generation.ProcessingProfileFingerprint,
 			&generation.EvidenceFingerprint, &generation.ChunkPolicyFingerprint, &eligible); err != nil {
 			return VectorIndexSource{}, err
@@ -148,6 +144,44 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 	slices.SortFunc(source.Members, func(a, b VectorIndexMember) int { return cmp.Compare(a.EmbeddingSetID, b.EmbeddingSetID) })
 	source.ManifestChecksum = vectorIndexSourceChecksum(source.Members)
 	return source, nil
+}
+
+// vectorIndexSourceChecksumTx checks verification in the same snapshot as its consumer.
+func vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, space string) (string, error) {
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return "", err
+	}
+	var checksum string
+	err = tx.QueryRowContext(ctx, `SELECT h.source_manifest_checksum FROM vector_index_heads h
+		JOIN vector_index_source_verifications v ON v.vector_space_id=h.vector_space_id AND v.generation_id=h.generation_id
+		JOIN vector_index_source_state s ON s.singleton=1 AND s.revision=v.verified_revision
+		WHERE h.vector_space_id=? AND v.grid_recipe=?`, space, fingerprints.GridRecipe).Scan(&checksum)
+	if err == nil {
+		return checksum, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	source, err := captureVectorIndexSourceTx(ctx, tx, space)
+	return source.ManifestChecksum, err
+}
+
+// MarkVectorIndexHeadVerified keeps a capture valid only while its snapshot's
+// revision and the published source still match.
+func (s *Store) MarkVectorIndexHeadVerified(ctx context.Context, source VectorIndexSource) error {
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO vector_index_source_verifications(vector_space_id,generation_id,verified_revision,grid_recipe)
+			SELECT h.vector_space_id,h.generation_id,s.revision,? FROM vector_index_heads h,vector_index_source_state s
+			WHERE h.vector_space_id=? AND h.source_manifest_checksum=? AND s.singleton=1 AND s.revision=?
+			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,verified_revision=excluded.verified_revision,grid_recipe=excluded.grid_recipe`,
+			fingerprints.GridRecipe, source.VectorSpaceID, source.ManifestChecksum, source.Revision)
+		return err
+	})
 }
 
 func vectorIndexSourceChecksum(members []VectorIndexMember) string {
@@ -386,6 +420,15 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 			generationID, claim.SourceManifestChecksum); err != nil {
 			return err
 		}
+		fingerprints, err := document.CurrentPhotoQualityFingerprints()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vector_index_source_verifications(vector_space_id,generation_id,verified_revision,grid_recipe)
+			VALUES(?,?,?,?) ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,verified_revision=excluded.verified_revision,grid_recipe=excluded.grid_recipe`,
+			claim.VectorSpaceID, generationID, current.Revision, fingerprints.GridRecipe); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=?
 			WHERE vector_space_id=? AND fencing_token=?`, at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.FencingToken)
 		return err
@@ -420,14 +463,21 @@ func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, gen
 // VectorIndexHead is the publication metadata needed by an idle worker scan.
 // Generation bytes are immutable and validated before this head is published.
 type VectorIndexHead struct {
+	Verified               bool
 	GenerationID           string
 	SourceManifestChecksum string
 }
 
 func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string) (VectorIndexHead, error) {
 	var head VectorIndexHead
-	err := s.db.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
-		FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return head, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT h.generation_id,h.source_manifest_checksum,
+		EXISTS(SELECT 1 FROM vector_index_source_verifications v JOIN vector_index_source_state s ON s.singleton=1
+			WHERE v.vector_space_id=h.vector_space_id AND v.generation_id=h.generation_id AND v.verified_revision=s.revision AND v.grid_recipe=?)
+		FROM vector_index_heads h WHERE h.vector_space_id=?`, fingerprints.GridRecipe, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum, &head.Verified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return head, ErrNotFound
 	}
@@ -514,11 +564,11 @@ func (s *Store) acquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 			return err
 		}
 		if checkSource {
-			current, err := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+			current, err := vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 			if err != nil {
 				return err
 			}
-			if current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+			if current != lease.Generation.SourceManifestChecksum {
 				return ErrVectorIndexSourceStale
 			}
 		}
