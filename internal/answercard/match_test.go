@@ -251,6 +251,93 @@ func TestMatcherCacheIsScopedByVault(t *testing.T) {
 		}
 	}
 }
+func TestMatcherCacheSeparatesVaults(t *testing.T) {
+	const (
+		vaultA  = "00000000-0000-4000-8000-000000000001"
+		vaultB  = "00000000-0000-4000-8000-000000000099"
+		version = "00000000-0000-4000-8000-000000000003"
+	)
+	approvedCard := func(vaultID, answer string) (Card, []byte) {
+		input := strings.Replace(sample, "vault_uid: "+vaultA, "vault_uid: "+vaultID, 1)
+		input = strings.Replace(input, "Test answer.", answer, 1)
+		card, err := Parse([]byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data := strings.Replace(input, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1)
+		return card, []byte(data)
+	}
+	cards := map[string]Card{}
+	contents := map[string][]byte{}
+	answers := map[string]string{
+		vaultA: "First vault answer.",
+		vaultB: "Second vault answer.",
+	}
+	for vaultID, answer := range answers {
+		card, data := approvedCard(vaultID, answer)
+		cards[vaultID] = card
+		contents[vaultID] = data
+	}
+	currentVault, infoCalls, downloads := "", 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/info":
+			infoCalls++
+			currentVault = vaultA
+			if infoCalls == 2 {
+				currentVault = vaultB
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": currentVault})
+		case "/api/v1/documents":
+			data := contents[currentVault]
+			_ = json.NewEncoder(w).Encode(api.DocumentPage{
+				PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250,
+				Items: []api.DocumentSummary{{NodeID: 1, ContentVersionID: version, Path: "/answer-cards/card.md", Name: "card.md", MediaType: "text/markdown", Size: int64(len(data)), ModifiedAt: "2026-10-27T00:00:00Z"}},
+			})
+		case "/api/v1/versions/" + version + "/content":
+			downloads++
+			data := contents[currentVault]
+			sum := sha256.Sum256(data)
+			w.Header().Set(api.ContentVersionHeader, version)
+			w.Header().Set(api.BlobHashHeader, hex.EncodeToString(sum[:]))
+			w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(data)))
+			w.Header().Set("Trailer", "Content-Digest")
+			_, _ = w.Write(data)
+			w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":")
+		case "/api/v1/nodes/42":
+			cite := cards[currentVault].Citations[0]
+			_ = json.NewEncoder(w).Encode(api.Node{ID: cite.NodeID, Kind: "file", CurrentVersionID: cite.ContentVersionID.String(), BlobHash: cite.ContentSHA256})
+		case "/api/v1/text-citations/resolve":
+			cite := cards[currentVault].Citations[0]
+			sum := sha256.Sum256([]byte(cite.Quote))
+			_ = json.NewEncoder(w).Encode(document.ResolvedTextCitation{Citation: cite.TextCitation(), Text: cite.Quote, TextBytes: len(cite.Quote), TextSHA256: hex.EncodeToString(sum[:])})
+		case "/api/v1/nodes/1":
+			data := contents[currentVault]
+			sum := sha256.Sum256(data)
+			_ = json.NewEncoder(w).Encode(api.Node{ID: 1, Kind: "file", Path: "/answer-cards/card.md", CurrentVersionID: version, BlobHash: hex.EncodeToString(sum[:]), Size: int64(len(data))})
+		default:
+			t.Errorf("unexpected route %s", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	m := NewMatcher()
+	conn := daemonconn.New(server.URL, "synthetic-key")
+	for i, vaultID := range []string{vaultA, vaultB} {
+		got, err := m.Match(t.Context(), conn, "When is renewal?", "/answer-cards", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "matched" || len(got.Matches) != 1 || got.Matches[0].Answer != answers[vaultID] {
+			t.Fatalf("vault %d reused another vault's card data: %+v", i, got)
+		}
+	}
+	if downloads != 2 {
+		t.Fatalf("downloaded shared version ID %d times, want once per vault", downloads)
+	}
+}
 
 func TestMatchDiscoveryLimits(t *testing.T) {
 	for _, mode := range []string{"files", "bytes", "cursor", "empty"} {

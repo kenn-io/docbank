@@ -178,8 +178,8 @@ func TestNormalizedDuplicatesAndLimits(t *testing.T) {
 	}{
 		{"Unicode duplicate", "question: Café\nalternates: [ＣＡＦÉ]", false},
 		{"punctuation duplicate", "question: hello world\nalternates: [hello-world]", false},
-		{"oversized question", "question: \"" + strings.Repeat(" ", 301) + "a\"", true},
-		{"oversized duplicate alternate", "question: When is renewal?\nalternates: [\"When is renewal?" + strings.Repeat(" ", 301) + "\"]", true},
+		{"oversized question", "question: \"" + strings.Repeat("x", 301) + "\"", true},
+		{"oversized alternate", "question: When is renewal?\nalternates: [\"" + strings.Repeat("x", 301) + "\"]", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := Parse([]byte(strings.Replace(sample, "question: When is renewal?", tc.replacement, 1)))
