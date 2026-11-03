@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -111,11 +115,13 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 			if test.separate {
 				mcpAddress = separate
 			}
+			var declaredIcon []byte
 			for _, call := range []struct {
 				name, bearer, host string
 				status             int
 			}{
 				{"valid", "synthetic-mcp-bearer", "docbank:7341", http.StatusOK},
+				{"missing token", "", "docbank:7341", http.StatusUnauthorized},
 				{"API key", record.Metadata["api_key"], "docbank:7341", http.StatusUnauthorized},
 				{"unlisted Host", "synthetic-mcp-bearer", "unlisted.example", http.StatusForbidden},
 			} {
@@ -124,7 +130,8 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 				if call.status == http.StatusOK {
 					var wire struct {
 						Result struct {
-							IsError bool `json:"isError"`
+							Meta    map[string]sdkmcp.Implementation `json:"_meta"`
+							IsError bool                             `json:"isError"`
 							Content struct {
 								VaultID string `json:"vault_id"`
 							} `json:"structuredContent"`
@@ -133,7 +140,30 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 					require.NoError(t, json.Unmarshal([]byte(data), &wire))
 					assert.False(t, wire.Result.IsError, data)
 					assert.Equal(t, info.VaultID, wire.Result.Content.VaultID, data)
+					identity := wire.Result.Meta[sdkmcp.MetaKeyServerInfo]
+					assert.Equal(t, "https://docbank.ai", identity.WebsiteURL)
+					require.Len(t, identity.Icons, 1)
+					const prefix = "data:image/png;base64,"
+					require.True(t, strings.HasPrefix(identity.Icons[0].Source, prefix))
+					declaredIcon, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(identity.Icons[0].Source, prefix))
+					require.NoError(t, err)
 				}
+			}
+			image, err := png.Decode(bytes.NewReader(declaredIcon))
+			require.NoError(t, err)
+			assert.Equal(t, 256, image.Bounds().Dx())
+			assert.Equal(t, 256, image.Bounds().Dy())
+			for _, path := range []string{"/icon.png", "/favicon.ico"} {
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+mcpAddress+path, nil)
+				require.NoError(t, err)
+				response, err := http.DefaultClient.Do(request)
+				require.NoError(t, err)
+				data, err := io.ReadAll(response.Body)
+				require.NoError(t, response.Body.Close())
+				require.NoError(t, err)
+				assert.Equal(t, http.StatusOK, response.StatusCode)
+				assert.Equal(t, "image/png", response.Header.Get("Content-Type"))
+				assert.Equal(t, declaredIcon, data)
 			}
 			// The MCP bearer never authorizes the API beside it.
 			_, err = daemonconn.New("http://"+record.Address, "synthetic-mcp-bearer").API().VaultInfo(t.Context())
