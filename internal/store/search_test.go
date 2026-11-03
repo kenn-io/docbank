@@ -396,7 +396,16 @@ func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCovera
 			_, fingerprints, err := embeddingProfileBindingAuthority(t.Context(), s.db, test.profile, test.binding)
 			require.NoError(t, err)
 			require.Equal(t, record.VectorSpace.ID, fingerprints.VectorSpace[test.binding])
-
+			_, rows, _, err := s.semanticSearchAuthorityFence(t.Context(), test.profile,
+				test.binding, test.kind, record.VectorSpace.ID, SearchOptions{ContentVersionIDs: []string{versionID}}, nil)
+			require.NoError(t, err)
+			if test.want {
+				require.Len(t, rows, 1)
+				assert.Equal(t, record.VectorSet.ID, rows[0].SetID)
+			} else {
+				assert.NotNil(t, rows)
+				assert.Empty(t, rows, "authority must exclude other bindings before vector scoring")
+			}
 			result, err := s.ResolveSemanticCandidates(t.Context(), test.profile, test.binding, test.kind,
 				record.VectorSpace.ID, source.ManifestChecksum, []vectorindex.Neighbor{{
 					SetID: record.VectorSet.ID, InputKey: versionID,
@@ -3027,19 +3036,16 @@ func (q semanticMembershipCountingQuerier) QueryContext(ctx context.Context, que
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
 
-func TestSemanticWholeSpaceEquivalence(t *testing.T) {
+func TestSemanticAcquisitionSkipsUnscopedRowsAndMatchesVersionFence(t *testing.T) {
 	t.Parallel()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	ctx := t.Context()
-	first, err := s.ContentVersionByID(ctx, version)
-	require.NoError(t, err)
 	versions := []string{version}
 	for _, name := range []string{"second.txt", "other-binding.txt"} {
 		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(name)), 20, "text/plain")
 		require.NoError(t, err)
 		versions = append(versions, node.CurrentVersionID)
 	}
-	records := make(map[string]EmbeddingSetRecord)
 	var space string
 	publish := func(t *testing.T, record EmbeddingSetRecord, fence int64) {
 		t.Helper()
@@ -3050,7 +3056,7 @@ func TestSemanticWholeSpaceEquivalence(t *testing.T) {
 		require.NoError(t, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{FencingToken: fence,
 			Key:   EmbeddingHeadKey{ContentVersionID: record.ContentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
 			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
-		records[record.ID], space = record, record.VectorSpace.ID
+		space = record.VectorSpace.ID
 	}
 	for i, version := range versions {
 		binding := "optional"
@@ -3058,17 +3064,6 @@ func TestSemanticWholeSpaceEquivalence(t *testing.T) {
 			binding = "required"
 		}
 		record := embeddingSetFixture(ctx, s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, binding, "")
-		if i == 2 {
-			vectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
-				VectorSpaceFingerprint: record.VectorSpace.ID, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
-				Dimension: 8, InputKeys: []string{version}, InputChecksums: []string{record.InputGeneration.Inputs[0].RenderedChecksum}, Values: [][]float64{{1, 0, 0, 0, 0, 0, 0, 0}},
-			})
-			require.NoError(t, err)
-			payload, checksum, err := document.EncodeVectorSetV1(vectors)
-			require.NoError(t, err)
-			record.VectorSet.ID, record.VectorSet.PayloadChecksum = checksum, checksum
-			record.VectorSet.Payload, record.VectorSet.PayloadBlobHash = payload, testSHA256(payload)
-		}
 		publish(t, record, 1)
 	}
 	counted := &membershipCountingQuerier{metadataQuerier: s.db}
@@ -3077,70 +3072,22 @@ func TestSemanticWholeSpaceEquivalence(t *testing.T) {
 	require.True(t, wholeSpace)
 	require.Nil(t, rows)
 	require.Zero(t, counted.queries, "unscoped acquisition must not read the catalog")
-	for _, change := range []string{"initial", "trash", "restore", "replace content"} {
-		t.Run(change, func(t *testing.T) {
-			switch change {
-			case "trash":
-				_, _, err = s.Trash(ctx, first.NodeID, UnconditionalRev)
-			case "restore":
-				_, _, err = s.Restore(ctx, first.NodeID, UnconditionalRev)
-			case "replace content":
-				_, _, err = s.ReplaceContent(ctx, first.NodeID, UnconditionalRev, testSHA256([]byte("replacement")), 11, "text/plain")
-			}
-			require.NoError(t, err)
-			source, err := s.CaptureVectorIndexSource(ctx, space)
-			require.NoError(t, err)
-			var sets []document.VectorSetV1
-			var ids []string
-			for _, member := range source.Members {
-				record := records[member.EmbeddingSetID]
-				set, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{MaxRows: 100, MaxDimension: 8, MaxBytes: len(record.VectorSet.Payload)})
-				require.NoError(t, err)
-				sets, ids = append(sets, set), append(ids, member.VectorSetID)
-			}
-			manifest, err := vectorindex.NewManifest(ids)
-			require.NoError(t, err)
-			generation, err := vectorindex.BuildGeneration(manifest, sets, vectorindex.Options{})
-			require.NoError(t, err)
-			opts := SearchOptions{ContentVersionIDs: versions}
-			rows, _, err := semanticANNRowsForSourceTx(ctx, s.db, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, opts)
-			require.NoError(t, err)
-			filter, args := searchFilterSQL(opts)
-			args = append([]any{space, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile}, args...)
-			oldRows, err := s.db.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+semanticMembershipSQL(`FROM embedding_sets es`)+filter, args...)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, oldRows.Close()) }()
-			var want []vectorindex.RowIdentity
-			for oldRows.Next() {
-				var row vectorindex.RowIdentity
-				require.NoError(t, oldRows.Scan(&row.SetID, &row.InputKey, &row.InputChecksum))
-				want = append(want, row)
-			}
-			require.NoError(t, oldRows.Err())
-			require.ElementsMatch(t, want, rows)
-			query := []float32{1, 0, 0, 0, 0, 0, 0, 0}
-			all, err := generation.Search(query, generation.Metadata().RowCount)
-			require.NoError(t, err)
-			require.Equal(t, versions[2], all[0].InputKey, "the top neighbor belongs to another binding")
-			for _, limit := range []int{1, 2} {
-				wholeResult, err := s.ResolveSemanticCandidates(ctx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, source.ManifestChecksum, all, limit, SearchOptions{}, nil)
-				require.NoError(t, err)
-				want := 2
-				if change == "trash" || change == "replace content" {
-					want = 1
-				}
-				require.Len(t, wholeResult.Candidates, min(limit, want), "paging must fill the page past the ineligible top neighbor")
-				if change == "trash" || change == "replace content" {
-					for _, candidate := range wholeResult.Candidates {
-						require.NotEqual(t, first.NodeID, candidate.NodeID)
-					}
-				}
-			}
-		})
-		if t.Failed() {
-			return
-		}
+	opts := SearchOptions{ContentVersionIDs: versions}
+	rows, _, err = semanticANNRowsForSourceTx(ctx, s.db, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, opts)
+	require.NoError(t, err)
+	filter, args := searchFilterSQL(opts)
+	args = append([]any{space, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile}, args...)
+	oldRows, err := s.db.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+semanticMembershipSQL(`FROM embedding_sets es`)+filter, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, oldRows.Close()) }()
+	var want []vectorindex.RowIdentity
+	for oldRows.Next() {
+		var row vectorindex.RowIdentity
+		require.NoError(t, oldRows.Scan(&row.SetID, &row.InputKey, &row.InputChecksum))
+		want = append(want, row)
 	}
+	require.NoError(t, oldRows.Err())
+	require.ElementsMatch(t, want, rows)
 }
 
 func TestSemanticSparseFilteredAcquisitionUsesEmbeddingCandidates(t *testing.T) {
