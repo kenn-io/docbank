@@ -2586,6 +2586,8 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 		"The wait is 7 min. After 10 minutes, the fee is $5.",
 		"The wait is 7 min. After 10 min., the fee is $5.",
 		"The wait is 7 min. After 10 minutes the price increases to $5.",
+		"The wait is 7 min. After 10 minutes the fee becomes $5.",
+		"The wait is 7 min. After 10 minutes customers pay $5.",
 	} {
 		got := Extract(text)
 		foundWait, foundFee := false, false
@@ -2643,7 +2645,15 @@ func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 func TestExtractRejectsVerbalComparisonsWithWordOperands(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5/month greater than thirty dollars.",
+		"The fee is $5 greater than thirty dollars.",
+		"The fee is $5/month higher than thirty dollars/month.",
+		"The service fee is $5/month higher than thirty.",
+		"The service fee is $5/month lower than thirty.",
+		"The service fee is $5/month higher than negative thirty.",
+		"The service fee is $5/month lower than minus thirty.",
 		"The deadline is 7 days before thirty days.",
+		"The deadline is 7 min. before thirty-five min.",
+		"The deadline is 7 minutes before thirty-five minutes.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("verbal comparison retained an exact figure for %q: %+v", text, got)

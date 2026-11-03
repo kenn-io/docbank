@@ -1134,7 +1134,8 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:unit[1]]+".") {
 		following = following[1:]
 	}
-	if relativeDurationIndependentAssertionRE.MatchString(following) {
+	connector := strings.TrimSpace(suffix[loc[0]:loc[1]])
+	if relativeDurationIndependentAssertionRE.MatchString(following) || strings.EqualFold(connector, "after") && independentTypedFigureAssertion(following) {
 		return false
 	}
 	parsed, ok := parseUnit(operand[:unit[1]], unitRE.FindStringSubmatch(operand))
@@ -1144,20 +1145,47 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:business|working|calendar)\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
 
 func unsupportedWordDurationOperand(operand string) bool {
-	wordEnd := strings.IndexFunc(operand, func(r rune) bool { return !unicode.IsLetter(r) })
-	if wordEnd < 0 || !numeralWord(operand[:wordEnd]) {
+	number := numeralWordSequenceRE.FindStringIndex(operand)
+	if number == nil || number[0] != 0 {
 		return false
 	}
-	rest := operand[wordEnd:]
+	rest := operand[number[1]:]
 	unit := durationWordUnitRE.FindStringIndex(rest)
 	if unit == nil || unit[0] != 0 {
 		return false
 	}
 	following := rest[unit[1]:]
-	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:wordEnd]+rest[:unit[1]]+".") {
+	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:number[1]]+rest[:unit[1]]+".") {
 		following = following[1:]
 	}
 	return !relativeDurationIndependentAssertionRE.MatchString(following)
+}
+
+func independentTypedFigureAssertion(s string) bool {
+	loc := figureAssertionRE.FindStringIndex(s)
+	if loc == nil {
+		return false
+	}
+	words := assertionPrefixWordRE.FindAllString(s[:loc[0]], -1)
+	if len(words) < 2 {
+		return false
+	}
+	last := strings.ToLower(words[len(words)-1])
+	if _, blocked := nonPredicateFigurePrefixWords[last]; blocked {
+		return false
+	}
+	// Accept common inflected predicates and a few common uninflected verbs so
+	// independent assertions do not depend on the relative-duration verb list.
+	return assertionPredicateRE.MatchString(last)
+}
+
+var assertionPrefixWordRE = regexp.MustCompile(`(?i)[\p{L}\p{Nd}]+`)
+var assertionPredicateRE = regexp.MustCompile(`(?i)^(?:[\p{L}]+(?:s|ed|ing)|pay|cost|put|set|cut|hit|run)$`)
+var nonPredicateFigurePrefixWords = map[string]struct{}{
+	"about": {}, "additional": {}, "after": {}, "and": {}, "an": {}, "a": {}, "at": {}, "before": {}, "but": {},
+	"each": {}, "every": {}, "extra": {}, "few": {}, "following": {}, "for": {}, "from": {}, "further": {}, "in": {},
+	"less": {}, "more": {}, "next": {}, "of": {}, "on": {}, "or": {}, "per": {}, "previous": {}, "prior": {},
+	"remaining": {}, "second": {}, "subsequent": {}, "the": {}, "third": {}, "through": {}, "to": {}, "until": {}, "with": {},
 }
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
@@ -1193,6 +1221,23 @@ func identifierAbbreviation(s string, dot int) bool {
 }
 
 var numberWords = map[string]string{"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20"}
+
+var numeralWordAtom = func() string {
+	words := make([]string, 0, len(numberWords)+11)
+	for word := range numberWords {
+		words = append(words, regexp.QuoteMeta(word))
+	}
+	words = append(words, "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand", "million", "billion", "trillion")
+	sort.Slice(words, func(i, j int) bool {
+		if len(words[i]) == len(words[j]) {
+			return words[i] < words[j]
+		}
+		return len(words[i]) > len(words[j])
+	})
+	return strings.Join(words, "|")
+}()
+
+var numeralWordSequenceRE = regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b`)
 
 func numberPattern() string {
 	words := make([]string, 0, len(numberWords))
@@ -1563,11 +1608,36 @@ func comparisonContinuationAfterRate(s string) bool {
 	if n := rateEnd(s); n > 0 {
 		s = s[n:]
 	}
-	return bareComparisonRE.MatchString(s) || symbolicComparisonContinuationRE.MatchString(s)
+	return bareComparisonRE.MatchString(s) || symbolicComparisonContinuationRE.MatchString(s) || verbalComparisonWithWordOperand(s)
 }
 
 var symbolicComparisonContinuationRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥)\s*[^\p{L}\p{N}]*[\p{L}\p{N}]`)
 var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:[+\-−]\s*)?(?:` + number + `)\b`)
+
+var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
+var verbalComparisonCurrencyPrefixRE = regexp.MustCompile(`(?i)^(?:[$€£¥]|` + currencyCodes + `\s+)`)
+var verbalComparisonSignPrefixRE = regexp.MustCompile(`(?i)^(?:(?:minus|negative|plus|positive)\s+|[+−-]\s*)`)
+
+func verbalComparisonWithWordOperand(s string) bool {
+	lead := verbalComparisonLeadRE.FindStringIndex(s)
+	if lead == nil {
+		return false
+	}
+	operand := strings.TrimLeftFunc(s[lead[1]:], func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(`()[]"'‘’“”«»`, r)
+	})
+	if currency := verbalComparisonCurrencyPrefixRE.FindStringIndex(operand); currency != nil {
+		operand = strings.TrimLeft(operand[currency[1]:], " \t")
+	}
+	if sign := verbalComparisonSignPrefixRE.FindStringIndex(operand); sign != nil {
+		operand = strings.TrimLeft(operand[sign[1]:], " \t")
+	}
+	number := numeralWordSequenceRE.FindStringIndex(operand)
+	if number == nil || number[0] != 0 {
+		return false
+	}
+	return true
+}
 
 var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)?)[\s(["'‘’“”«»]*$`)
 
