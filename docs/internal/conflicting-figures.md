@@ -65,8 +65,10 @@ with ASCII or typographic apostrophes. `no more than` and
 as are `maximum of` and `minimum of`. `Exceed`, `exceeds`, `exceeded`,
 and `exceeding` mark an exclusive lower bound when they precede a figure.
 Comparison continuations omit the clause even when the right operand cannot be
-parsed, including symbolic comparisons after a rate and wrapped relative
-duration bounds such as `7 days before (about 10 days)`.
+parsed, including symbolic comparisons after a rate, spelled-out duration
+operands such as `7 days before thirty days`, and wrapped bounds such as
+`7 min. before (about 10 min.)`. An independent assertion after an abbreviated
+duration remains separate, as in `The wait is 7 min. After 10 min., the fee is $5.`
 Sentence punctuation followed by closing quotes or brackets ends a clause. Soft line wraps stay in the same clause; blank lines and list or table rows separate clauses.
 Approximation markers (`about`, `approximately`, `around`, `roughly`, `nearly`,
 `almost`, `circa`, `estimated`, `~`, and `≈`) before or after a figure cause its

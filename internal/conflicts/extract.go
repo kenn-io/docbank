@@ -1097,31 +1097,67 @@ func independentBoundAssertion(s string) bool {
 }
 
 func normalizedDurationContinuation(prefix, suffix string) bool {
-	return durationAbbrevRE.MatchString(prefix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeRE.MatchString(suffix) || numericRelativeDurationContinuation(suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(suffix) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuationRE.MatchString(suffix))
+	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeRE.MatchString(suffix) || numericRelativeDurationContinuation(prefix, suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(suffix) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuationRE.MatchString(suffix))
 }
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^\s+(?:after|before|prior\s+to)\s+`)
 var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)`)
-var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?)\b`)
+var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?)\b`)
 
-func numericRelativeDurationContinuation(suffix string) bool {
+func abbreviatedDurationBoundary(prefix, suffix string) bool {
+	return durationAbbrevRE.MatchString(prefix) || strings.HasPrefix(suffix, ".") && durationAbbrevRE.MatchString(prefix+".")
+}
+
+func trimRelativeDurationWrappers(s string) string {
+	return strings.TrimLeftFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(`()[]"'‘’“”«»`, r)
+	})
+}
+
+func numericRelativeDurationContinuation(prefix, suffix string) bool {
+	if strings.HasPrefix(suffix, ".") && !durationAbbrevRE.MatchString(prefix) && durationAbbrevRE.MatchString(prefix+".") {
+		suffix = suffix[1:]
+	}
 	loc := relativeDurationConnectorRE.FindStringIndex(suffix)
 	if loc == nil {
 		return false
 	}
-	operand := strings.TrimLeft(suffix[loc[1]:], `(["'‘’“”«»`)
+	operand := trimRelativeDurationWrappers(suffix[loc[1]:])
 	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-		operand = operand[qualifier[1]:]
+		operand = trimRelativeDurationWrappers(operand[qualifier[1]:])
 	}
 	unit := unitRE.FindStringIndex(operand)
 	if unit == nil || unit[0] != 0 {
-		return false
+		return unsupportedWordDurationOperand(operand)
 	}
-	if relativeDurationIndependentAssertionRE.MatchString(operand[unit[1]:]) {
+	following := operand[unit[1]:]
+	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:unit[1]]+".") {
+		following = following[1:]
+	}
+	if relativeDurationIndependentAssertionRE.MatchString(following) {
 		return false
 	}
 	parsed, ok := parseUnit(operand[:unit[1]], unitRE.FindStringSubmatch(operand))
 	return ok && parsed.Kind == durationKind
+}
+
+var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:business|working|calendar)\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
+
+func unsupportedWordDurationOperand(operand string) bool {
+	wordEnd := strings.IndexFunc(operand, func(r rune) bool { return !unicode.IsLetter(r) })
+	if wordEnd < 0 || !numeralWord(operand[:wordEnd]) {
+		return false
+	}
+	rest := operand[wordEnd:]
+	unit := durationWordUnitRE.FindStringIndex(rest)
+	if unit == nil || unit[0] != 0 {
+		return false
+	}
+	following := rest[unit[1]:]
+	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:wordEnd]+rest[:unit[1]]+".") {
+		following = following[1:]
+	}
+	return !relativeDurationIndependentAssertionRE.MatchString(following)
 }
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
@@ -1519,7 +1555,7 @@ func unsafeCandidates(s string, checks, cs []candidate) bool {
 		}
 	}
 	return slices.ContainsFunc(checks, func(c candidate) bool {
-		return c.priority > 0 && (c.f.Kind == durationKind && numericRelativeDurationContinuation(s[c.end:]) || comparisonContinuationAfterRate(s[c.end:]) || compoundPrefixWithRates(s, c.start, checks, cs) || compoundSuffixBeforeDates(s, c.end, c.f, cs, checks))
+		return c.priority > 0 && (c.f.Kind == durationKind && numericRelativeDurationContinuation(s[:c.end], s[c.end:]) || comparisonContinuationAfterRate(s[c.end:]) || compoundPrefixWithRates(s, c.start, checks, cs) || compoundSuffixBeforeDates(s, c.end, c.f, cs, checks))
 	})
 }
 
