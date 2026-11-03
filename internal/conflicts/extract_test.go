@@ -2588,6 +2588,10 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 		"The wait is 7 min. After 10 minutes the price increases to $5.",
 		"The wait is 7 min. After 10 minutes the fee becomes $5.",
 		"The wait is 7 min. After 10 minutes customers pay $5.",
+		"The wait is 7 min. After thirty minutes customers pay $5.",
+		"The wait is 7 min. After twenty minutes customers pay $5.",
+		"The wait is 7 min. After thirty-five minutes customers pay $5.",
+		"The wait is 7 min. Before 10 minutes elapse, customers pay $5.",
 	} {
 		got := Extract(text)
 		foundWait, foundFee := false, false
@@ -2629,6 +2633,10 @@ func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 		"The fee is $5/month < -10.",
 		"The fee is $5/month < negative 10.",
 		"The fee is $5/month < approximately ($10/month).",
+		"The fee is $5/month higher than negative 10.",
+		"The fee is $5/month greater than approximately ($10/month).",
+		"The fee is $5/hr. higher than thirty dollars/hr.",
+		"The fee is $5/hr. lower than thirty dollars/hr.",
 		"The fee is $5 < thirty.",
 	} {
 		if got := Extract(text); len(got) != 0 {
