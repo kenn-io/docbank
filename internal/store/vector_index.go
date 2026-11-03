@@ -92,6 +92,9 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 }
 
 func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
+	if _, err := loadVectorSpaceTx(ctx, tx, vectorSpaceID); err != nil {
+		return VectorIndexSource{}, err
+	}
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return VectorIndexSource{}, err

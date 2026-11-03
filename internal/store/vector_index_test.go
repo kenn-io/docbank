@@ -53,6 +53,25 @@ func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestReviewCaptureRejectsNewerDescriptor(t *testing.T) {
+	t.Parallel()
+	s, _, source := newPublishedVectorIndexFixture(t)
+	// Simulate a retained descriptor written by a newer contract.
+	_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER embedding_vector_spaces_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE embedding_vector_spaces
+		SET descriptor_json=replace(descriptor_json,'"contract_version":1','"contract_version":999')
+		WHERE vector_space_id=?`, source.VectorSpaceID)
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		_, err := loadVectorSpaceTx(t.Context(), tx, source.VectorSpaceID)
+		require.ErrorContains(t, err, "embedding descriptor contract version")
+		return nil
+	}))
+	_, err = s.CaptureVectorIndexSource(t.Context(), source.VectorSpaceID)
+	require.ErrorContains(t, err, "embedding descriptor contract version")
+}
+
 func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)

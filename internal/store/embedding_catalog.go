@@ -1376,9 +1376,6 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 // Source visibility is checked on publication, not restore: historical and
 // trashed versions may retain their independently published heads.
 func embeddingAttachmentEligible(ctx context.Context, tx metadataQuerier, versionID, profileFingerprint, attachmentID string) (bool, error) {
-	if attachmentID == "" {
-		return true, nil
-	}
 	var eligible bool
 	err := tx.QueryRowContext(ctx, `SELECT `+embeddingAttachmentEligibilitySQL("$1", "$2", "$3"),
 		versionID, profileFingerprint, attachmentID).Scan(&eligible)

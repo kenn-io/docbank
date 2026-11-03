@@ -72,6 +72,12 @@ var backendMaintenanceEffects = []backendMaintenance{
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
+	{"vector source membership epochs", "unported: vector_index.go", "SQLite-only derived state; PostgreSQL ranked search remains unqualified", `
+ vector_source_embedding_heads_insert vector_source_embedding_heads_update vector_source_embedding_heads_delete
+ vector_source_rendition_heads_insert vector_source_rendition_heads_update vector_source_rendition_heads_delete
+ vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete
+ vector_source_photo_files_insert vector_source_photo_files_update vector_source_photo_files_delete
+ vector_source_photo_assets_update vector_source_nodes_update`},
 	{"rendition records", "processing_catalog.go and search.go; runtime has no UPDATE grant", "renditions contracts; cleanup may delete immutable records", `
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update
