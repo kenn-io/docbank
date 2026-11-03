@@ -3,6 +3,7 @@ package docbank
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -115,6 +116,27 @@ func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Empty(t, foreign.Results)
+		{
+			replacement, err := vault.Put(t.Context(), "/replacement.txt", strings.NewReader("synthetic replacement"), PutOptions{MediaType: "text/plain"})
+			require.NoError(t, err)
+			_, err = vault.metadata.PutEffectiveWindow(t.Context(), replacement.Node.ID, replacement.Node.Revision, "2025-01-01", "")
+			require.NoError(t, err)
+			current, err := vault.metadata.NodeByID(t.Context(), first.selector.NodeID)
+			require.NoError(t, err)
+			window, err := vault.metadata.PutEffectiveWindow(t.Context(), current.ID, current.Revision, "2024-01-01", "2026-01-01")
+			require.NoError(t, err)
+			_, err = vault.metadata.PutSupersession(t.Context(), replacement.Node.ID, current.ID, window.Node.Revision, new(""))
+			require.NoError(t, err)
+			results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{
+				Query: first.phrase, Mode: DocumentSearchLexical, Profile: "supplied-captions", Limit: 10, AsOf: "2025-06-01",
+				Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{first.original.ContentVersionID, replacement.Version.ID}},
+			})
+			require.NoError(t, err)
+			require.Len(t, results.Results, 1)
+			require.Equal(t, "2025-06-01", results.AsOf)
+			require.Equal(t, &DocumentResultValidity{State: "superseded", EffectiveFrom: "2024-01-01", EffectiveTo: "2026-01-01",
+				SupersededBy: []DocumentValiditySuccessor{{NodeID: replacement.Node.ID, Path: "/replacement.txt", EffectiveFrom: "2025-01-01"}}}, results.Results[0].Validity)
+		}
 		_, err = vault.DeclareMediaOccurrence(t.Context(), uuid.New().String(), first.remote.SourceID,
 			MediaOccurrenceInput{Ref: "fence-a-survivor", Revision: "1", Filename: "loom.mp4"})
 		require.NoError(t, err)

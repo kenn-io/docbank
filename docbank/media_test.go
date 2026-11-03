@@ -274,27 +274,14 @@ func TestRemoteRecordingManualEmbedded(t *testing.T) {
 		require.Equal(t, remote.SourceID, status.SourceID)
 		require.Equal(t, original.SourceVersionID, status.SourceVersionID)
 		require.Equal(t, original.ContentVersionID, status.ContentVersionID)
-		replacement, err := vault.Put(t.Context(), "/replacement.txt", strings.NewReader("synthetic replacement"), PutOptions{MediaType: "text/plain"})
-		require.NoError(t, err)
-		_, err = vault.metadata.PutEffectiveWindow(t.Context(), replacement.Node.ID, replacement.Node.Revision, "2025-01-01", "")
-		require.NoError(t, err)
-		current, err := vault.metadata.NodeByID(t.Context(), node.ID)
-		require.NoError(t, err)
-		window, err := vault.metadata.PutEffectiveWindow(t.Context(), node.ID, current.Revision, "2024-01-01", "2026-01-01")
-		require.NoError(t, err)
-		_, err = vault.metadata.PutSupersession(t.Context(), replacement.Node.ID, node.ID, window.Node.Revision, new(""))
-		require.NoError(t, err)
 		results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{
 			Query: "embedded remote recording transcript phrase", Mode: DocumentSearchLexical,
-			Profile: "supplied-transcript", Limit: 10, AsOf: "2025-06-01",
-			Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{original.ContentVersionID, replacement.Version.ID}},
+			Profile: "supplied-transcript", Limit: 10,
+			Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{original.ContentVersionID}},
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, results.Results)
 		require.Equal(t, original.ContentVersionID, results.Results[0].ContentVersionID)
-		require.Equal(t, "2025-06-01", results.AsOf)
-		require.Equal(t, &DocumentResultValidity{State: "superseded", EffectiveFrom: "2024-01-01", EffectiveTo: "2026-01-01",
-			SupersededBy: []DocumentValiditySuccessor{{NodeID: replacement.Node.ID, Path: "/replacement.txt", EffectiveFrom: "2025-01-01"}}}, results.Results[0].Validity)
 	})
 }
 

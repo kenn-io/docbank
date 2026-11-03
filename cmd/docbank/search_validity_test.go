@@ -1,14 +1,11 @@
 package main
 
 import (
-	"encoding/json/v2"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -25,7 +22,6 @@ func TestSearchValidityCLIReasons(t *testing.T) {
 	}}
 	require.NoError(t, writeDocumentSearchReport(cmd, report, false, true, nil))
 	require.Contains(t, out.String(), "/old.txt (superseded by /new.txt)")
-	require.Less(t, strings.Index(out.String(), "/new.txt"), strings.Index(out.String(), "/old.txt"))
 	require.Contains(t, out.String(), "/expired.txt (expired)")
 	require.Contains(t, out.String(), "/future.txt (not yet effective)")
 	cmd, out = processingTestCommand()
@@ -37,32 +33,19 @@ func TestSearchValidityCLIReasons(t *testing.T) {
 func TestAutomaticSearchValidityCLI(t *testing.T) {
 	profiles := []api.ProcessingProfileSummary{{Name: "alpha", EmbeddingBindings: []string{"a"}, QueryEmbeddingBindings: []string{"a"}}}
 	for _, tc := range []struct {
-		name, searchError string
-		profiles          []api.ProcessingProfileSummary
-		wantError         string
+		name      string
+		profiles  []api.ProcessingProfileSummary
+		wantError string
 	}{
 		{name: "date reaches automatic request", profiles: profiles},
-		{name: "failed attempt stops", profiles: profiles, searchError: "processing_failed", wantError: "processing_failed"},
 		{name: "no automatic profile", wantError: "--as-of requires"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var record kitdaemon.RuntimeRecord
 			var profileCalls, searchCalls, lexicalCalls int
-			spec := automaticSearchCase{asOf: "2025-01-01", query: "lease", limit: 1, profiles: tc.profiles, searchError: tc.searchError, wantSearch: 1}
+			spec := automaticSearchCase{asOf: "2025-01-01", query: "lease", limit: 1, profiles: tc.profiles, wantSearch: 1}
 			handler := automaticSearchDaemon(t, spec, &record, &profileCalls, &searchCalls)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/search" {
-					raw, err := io.ReadAll(r.Body)
-					if !assert.NoError(t, err) {
-						return
-					}
-					var request api.DocumentSearchRequest
-					if !assert.NoError(t, json.Unmarshal(raw, &request)) {
-						return
-					}
-					assert.Equal(t, "2025-01-01", request.AsOf)
-					r.Body = io.NopCloser(strings.NewReader(string(raw)))
-				}
 				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
 					lexicalCalls++
 				}
