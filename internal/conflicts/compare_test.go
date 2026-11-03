@@ -130,9 +130,9 @@ func FuzzFind(f *testing.F) {
 
 func TestFindNontransitiveSubjects(t *testing.T) {
 	got := Find(Input{Passages: []Passage{
-		{Document: "a", Text: "Alpha beta is 1%."},
-		{Document: "b", Text: "Alpha beta gamma is 2%."},
-		{Document: "c", Text: "Beta gamma is 3%."},
+		{Document: "a", Text: "alpha beta is 1%."},
+		{Document: "b", Text: "alpha beta gamma is 2%."},
+		{Document: "c", Text: "beta gamma is 3%."},
 	}})
 	// The endpoints do not align even though both align with the middle passage.
 	if len(got.Conflicts) != 2 {
@@ -361,6 +361,36 @@ func TestFindSameRateDenominator(t *testing.T) {
 	}})
 	if got.Status != NoConflict || got.Stats.AgreeingPairs != 1 {
 		t.Fatalf("duration conversion changed: %+v", got)
+	}
+}
+
+func TestFindAbbreviatedDurationRateDenominators(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"The service fee takes 7 min. a day.", "The service fee takes 10 min. an hour."},
+		{"The service fee takes 7 min. per day.", "The service fee takes 10 min. per hour."},
+		{"The service fee takes 7 min. each day.", "The service fee takes 10 min. each hour."},
+	} {
+		got := Find(Input{Query: "fee", Passages: []Passage{{Document: "a", Text: pair[0]}, {Document: "b", Text: pair[1]}}})
+		if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+			t.Errorf("abbreviated duration rates with different denominators compared: %+v", got)
+		}
+	}
+	got := Find(Input{Query: "fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee takes 7 min."},
+		{Document: "b", Text: "The service fee takes 10 min."},
+	}})
+	if got.Status != Conflicting || len(got.Conflicts) != 1 {
+		t.Fatalf("standalone abbreviated durations stopped comparing: %+v", got)
+	}
+}
+
+func TestFindSquareUnitRateDenominators(t *testing.T) {
+	got := Find(Input{Query: "fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per square metre."},
+		{Document: "b", Text: "The service fee is $6 per square foot."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("different square-unit rates compared: %+v", got)
 	}
 }
 
