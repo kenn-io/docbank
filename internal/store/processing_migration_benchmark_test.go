@@ -50,3 +50,38 @@ func BenchmarkSettledLegacyMigration(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkPostCutoverTextExtraction(b *testing.B) {
+	for _, files := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
+			ctx := b.Context()
+			s, err := Open(ctx, filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			text := strings.Repeat("searchable migration benchmark ", 64)
+			for i := range files {
+				hash := fmt.Sprintf("%064x", i+1)
+				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("text-%04d.txt", i), hash, int64(len(text)), "text/plain")
+				require.NoError(b, err)
+				require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
+					BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+					Status: ExtractionOK, Text: text,
+				}))
+			}
+			_, err = s.MigrateLegacyPlainText(ctx)
+			require.NoError(b, err)
+			next := files
+			b.ReportAllocs()
+			for b.Loop() {
+				next++
+				hash := fmt.Sprintf("%064x", next)
+				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("text-%04d.txt", next), hash, int64(len(text)), "text/plain")
+				require.NoError(b, err)
+				require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
+					BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+					Status: ExtractionOK, Text: text,
+				}))
+			}
+		})
+	}
+}

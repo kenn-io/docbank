@@ -73,191 +73,8 @@ func (s *Store) MigrateLegacyPlainText(
 		if err != nil || !pending {
 			return err
 		}
-		// The first cutover queues legacy failures for repair. Once published,
-		// the current extractor owns terminal outcomes and retry scheduling.
-		published, err := hasPublishedLexicalHeadTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		rows, err := readLegacyPlainTextRows(ctx, tx)
-		if err != nil {
-			return err
-		}
-		selected, err := readLegacySelectedVersions(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 && len(selected) == 0 {
-			return nil
-		}
-		selectedByBlob := make(map[string][]legacySelectedVersion)
-		for _, version := range selected {
-			selectedByBlob[version.blobHash] = append(selectedByBlob[version.blobHash], version)
-		}
-
-		eligible := make(map[string]legacyPlainTextRow)
-		terminalFailures := make(map[string]bool)
-		for _, row := range rows {
-			if published && row.extractor == legacyPlainTextExtractor &&
-				row.extractorVersion == legacyPlainTextExtractorVersion && row.status == ExtractionFailed {
-				terminalFailures[row.blobHash] = true
-			}
-			if row.extractor == legacyPlainTextExtractor &&
-				row.extractorVersion > legacyPlainTextExtractorVersion &&
-				row.status == ExtractionOK && row.text.Valid && utf8.ValidString(row.text.String) {
-				if len(selectedByBlob[row.blobHash]) != 0 {
-					return fmt.Errorf(
-						"unsupported newer plain-text extraction version %d for selected blob %s",
-						row.extractorVersion, row.blobHash,
-					)
-				}
-			}
-			if row.extractor != legacyPlainTextExtractor ||
-				row.extractorVersion != legacyPlainTextExtractorVersion ||
-				row.status != ExtractionOK || !row.text.Valid ||
-				!utf8.ValidString(row.text.String) {
-				continue
-			}
-			suppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, row.blobHash)
-			if err != nil {
-				return fmt.Errorf("checking legacy derivative purge suppression: %w", err)
-			}
-			if suppressed {
-				continue
-			}
-			buildID := legacyPlainTextBuildFingerprint(
-				row.blobHash, row.extractor, row.extractorVersion, row.status,
-				[]byte(row.text.String))
-			buildSuppressed, err := derivativeBuildSuppressedTx(ctx, tx, row.blobHash, buildID)
-			if err != nil {
-				return fmt.Errorf("checking legacy build purge suppression: %w", err)
-			}
-			if buildSuppressed {
-				continue
-			}
-			if _, authorityErr := requirePhysicalAuthorityTx(ctx, tx, row.blobHash); authorityErr != nil {
-				if errors.Is(authorityErr, ErrNotFound) ||
-					errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
-					continue
-				}
-				return fmt.Errorf("checking legacy plain-text blob %s: %w", row.blobHash, authorityErr)
-			}
-			eligible[row.blobHash] = row
-		}
-		report.EligibleRows = len(eligible)
-
-		if len(eligible) != 0 {
-			if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
-				return fmt.Errorf("recording legacy plain-text profile: %w", err)
-			}
-		}
-		for _, row := range rows {
-			if _, ok := eligible[row.blobHash]; !ok || row.extractor != legacyPlainTextExtractor {
-				continue
-			}
-			build, err := legacyPlainTextBuild(s.vaultID, profile, row)
-			if err != nil {
-				return err
-			}
-			if err := insertLegacyRenditionBuildTx(ctx, tx, build); err != nil {
-				return err
-			}
-			report.MigratedBuilds++
-		}
-
-		if err := revokeStaleLegacyPlainTextHeadsTx(
-			ctx, tx, selected, eligible, profile.Fingerprint,
-		); err != nil {
-			return err
-		}
-
-		for _, version := range selected {
-			row, ok := eligible[version.blobHash]
-			if !ok {
-				continue
-			}
-			suppressed, err := legacyDerivativeSuppressedTx(
-				ctx, tx, version.blobHash, version.versionID, profile.Fingerprint)
-			if err != nil {
-				return fmt.Errorf("checking legacy attachment purge suppression: %w", err)
-			}
-			if suppressed {
-				continue
-			}
-			buildID := legacyPlainTextBuildFingerprint(
-				row.blobHash, row.extractor, row.extractorVersion, row.status,
-				[]byte(row.text.String),
-			)
-			attachmentID := legacyPlainTextAttachmentID(version.versionID, buildID)
-			attachment := RenditionAttachmentRecord{
-				ID: attachmentID, VaultID: s.vaultID, ContentVersionID: version.versionID,
-				BuildID: buildID, Profile: profile, AttachedAt: row.extractedAt,
-			}
-			if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment); err != nil {
-				return err
-			}
-			if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}); err != nil {
-				return err
-			}
-			report.MigratedAttachments++
-		}
-
-		generation, err := stageLegacyLexicalGenerationTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		report.LexicalGenerationID = generation.ID
-
-		if err := compareLegacyServingCompatibilityTx(
-			ctx, tx, selected, eligible, profile.Fingerprint, generation.ID,
-		); err != nil {
-			return err
-		}
-
-		queued := make(map[string]struct{})
-		for blobHash := range selectedByBlob {
-			_, migrated := eligible[blobHash]
-			if migrated {
-				if _, err := tx.ExecContext(ctx,
-					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
-				); err != nil {
-					return fmt.Errorf("clearing migrated legacy plain-text work: %w", err)
-				}
-				continue
-			}
-			suppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, blobHash)
-			if err != nil {
-				return fmt.Errorf("checking legacy repair purge suppression: %w", err)
-			}
-			if suppressed {
-				if _, err := tx.ExecContext(ctx,
-					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash); err != nil {
-					return fmt.Errorf("clearing suppressed legacy repair work: %w", err)
-				}
-				continue
-			}
-			if terminalFailures[blobHash] {
-				continue
-			}
-			queued[blobHash] = struct{}{}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES(?,?)
-				ON CONFLICT(blob_hash) DO NOTHING`, blobHash, nowRFC3339(),
-			); err != nil {
-				return fmt.Errorf("queueing legacy plain-text repair for %s: %w", blobHash, err)
-			}
-		}
-		report.QueuedBlobs = len(queued)
-
-		// extracted_text remains portable and recoverable. Its FTS projection is
-		// deliberately empty after the new lexical head becomes authoritative.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts`); err != nil {
-			return fmt.Errorf("fencing legacy plain-text search authority: %w", err)
-		}
-		if err := s.publishLexicalHeadTx(ctx, tx, generation.ID); err != nil {
-			return fmt.Errorf("publishing migrated legacy lexical head: %w", err)
-		}
-		return nil
+		report, err = s.migrateLegacyPlainTextTx(ctx, tx, "")
+		return err
 	})
 	if err != nil {
 		return LegacyMigrationReport{}, fmt.Errorf("migrating legacy plain-text authority: %w", err)
@@ -265,9 +82,205 @@ func (s *Store) MigrateLegacyPlainText(
 	return report, nil
 }
 
+// migrateLegacyPlainTextTx publishes one blob, or the whole vault when blobHash is empty.
+func (s *Store) migrateLegacyPlainTextTx(
+	ctx context.Context, tx *sql.Tx, blobHash string,
+) (LegacyMigrationReport, error) {
+	profile, err := legacyPlainTextProfile()
+	if err != nil {
+		return LegacyMigrationReport{}, err
+	}
+	report := LegacyMigrationReport{ProfileFingerprint: profile.Fingerprint}
+	// The first cutover queues legacy failures for repair. Once published,
+	// the current extractor owns terminal outcomes and retry scheduling.
+	published, err := hasPublishedLexicalHeadTx(ctx, tx)
+	if err != nil {
+		return LegacyMigrationReport{}, err
+	}
+	rows, err := readLegacyPlainTextRows(ctx, tx, blobHash)
+	if err != nil {
+		return LegacyMigrationReport{}, err
+	}
+	selected, err := readLegacySelectedVersions(ctx, tx, blobHash)
+	if err != nil {
+		return LegacyMigrationReport{}, err
+	}
+	if len(rows) == 0 && len(selected) == 0 {
+		return report, nil
+	}
+	selectedByBlob := make(map[string][]legacySelectedVersion)
+	for _, version := range selected {
+		selectedByBlob[version.blobHash] = append(selectedByBlob[version.blobHash], version)
+	}
+
+	eligible := make(map[string]legacyPlainTextRow)
+	terminalFailures := make(map[string]bool)
+	for _, row := range rows {
+		if published && row.extractor == legacyPlainTextExtractor &&
+			row.extractorVersion == legacyPlainTextExtractorVersion && row.status == ExtractionFailed {
+			terminalFailures[row.blobHash] = true
+		}
+		if row.extractor == legacyPlainTextExtractor &&
+			row.extractorVersion > legacyPlainTextExtractorVersion &&
+			row.status == ExtractionOK && row.text.Valid && utf8.ValidString(row.text.String) {
+			if len(selectedByBlob[row.blobHash]) != 0 {
+				return LegacyMigrationReport{}, fmt.Errorf(
+					"unsupported newer plain-text extraction version %d for selected blob %s",
+					row.extractorVersion, row.blobHash,
+				)
+			}
+		}
+		if row.extractor != legacyPlainTextExtractor ||
+			row.extractorVersion != legacyPlainTextExtractorVersion ||
+			row.status != ExtractionOK || !row.text.Valid ||
+			!utf8.ValidString(row.text.String) {
+			continue
+		}
+		suppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, row.blobHash)
+		if err != nil {
+			return LegacyMigrationReport{}, fmt.Errorf("checking legacy derivative purge suppression: %w", err)
+		}
+		if suppressed {
+			continue
+		}
+		buildID := legacyPlainTextBuildFingerprint(
+			row.blobHash, row.extractor, row.extractorVersion, row.status,
+			[]byte(row.text.String))
+		buildSuppressed, err := derivativeBuildSuppressedTx(ctx, tx, row.blobHash, buildID)
+		if err != nil {
+			return LegacyMigrationReport{}, fmt.Errorf("checking legacy build purge suppression: %w", err)
+		}
+		if buildSuppressed {
+			continue
+		}
+		if _, authorityErr := requirePhysicalAuthorityTx(ctx, tx, row.blobHash); authorityErr != nil {
+			if errors.Is(authorityErr, ErrNotFound) ||
+				errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
+				continue
+			}
+			return LegacyMigrationReport{}, fmt.Errorf("checking legacy plain-text blob %s: %w", row.blobHash, authorityErr)
+		}
+		eligible[row.blobHash] = row
+	}
+	report.EligibleRows = len(eligible)
+
+	if len(eligible) != 0 {
+		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
+			return LegacyMigrationReport{}, fmt.Errorf("recording legacy plain-text profile: %w", err)
+		}
+	}
+	for _, row := range rows {
+		if _, ok := eligible[row.blobHash]; !ok || row.extractor != legacyPlainTextExtractor {
+			continue
+		}
+		build, err := legacyPlainTextBuild(s.vaultID, profile, row)
+		if err != nil {
+			return LegacyMigrationReport{}, err
+		}
+		if err := insertLegacyRenditionBuildTx(ctx, tx, build); err != nil {
+			return LegacyMigrationReport{}, err
+		}
+		report.MigratedBuilds++
+	}
+
+	if err := revokeStaleLegacyPlainTextHeadsTx(
+		ctx, tx, selected, eligible, profile.Fingerprint, blobHash,
+	); err != nil {
+		return LegacyMigrationReport{}, err
+	}
+
+	for _, version := range selected {
+		row, ok := eligible[version.blobHash]
+		if !ok {
+			continue
+		}
+		suppressed, err := legacyDerivativeSuppressedTx(
+			ctx, tx, version.blobHash, version.versionID, profile.Fingerprint)
+		if err != nil {
+			return LegacyMigrationReport{}, fmt.Errorf("checking legacy attachment purge suppression: %w", err)
+		}
+		if suppressed {
+			continue
+		}
+		buildID := legacyPlainTextBuildFingerprint(
+			row.blobHash, row.extractor, row.extractorVersion, row.status,
+			[]byte(row.text.String),
+		)
+		attachmentID := legacyPlainTextAttachmentID(version.versionID, buildID)
+		attachment := RenditionAttachmentRecord{
+			ID: attachmentID, VaultID: s.vaultID, ContentVersionID: version.versionID,
+			BuildID: buildID, Profile: profile, AttachedAt: row.extractedAt,
+		}
+		if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment); err != nil {
+			return LegacyMigrationReport{}, err
+		}
+		if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}); err != nil {
+			return LegacyMigrationReport{}, err
+		}
+		report.MigratedAttachments++
+	}
+
+	generation, err := stageLegacyLexicalGenerationTx(ctx, tx)
+	if err != nil {
+		return LegacyMigrationReport{}, err
+	}
+	report.LexicalGenerationID = generation.ID
+
+	if err := compareLegacyServingCompatibilityTx(
+		ctx, tx, selected, eligible, profile.Fingerprint, blobHash, generation.ID,
+	); err != nil {
+		return LegacyMigrationReport{}, err
+	}
+
+	queued := make(map[string]struct{})
+	for blobHash := range selectedByBlob {
+		_, migrated := eligible[blobHash]
+		if migrated {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
+			); err != nil {
+				return LegacyMigrationReport{}, fmt.Errorf("clearing migrated legacy plain-text work: %w", err)
+			}
+			continue
+		}
+		suppressed, err := legacyTextExtractionSuppressedTx(ctx, tx, blobHash)
+		if err != nil {
+			return LegacyMigrationReport{}, fmt.Errorf("checking legacy repair purge suppression: %w", err)
+		}
+		if suppressed {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash); err != nil {
+				return LegacyMigrationReport{}, fmt.Errorf("clearing suppressed legacy repair work: %w", err)
+			}
+			continue
+		}
+		if terminalFailures[blobHash] {
+			continue
+		}
+		queued[blobHash] = struct{}{}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES(?,?)
+			ON CONFLICT(blob_hash) DO NOTHING`, blobHash, nowRFC3339(),
+		); err != nil {
+			return LegacyMigrationReport{}, fmt.Errorf("queueing legacy plain-text repair for %s: %w", blobHash, err)
+		}
+	}
+	report.QueuedBlobs = len(queued)
+
+	// extracted_text remains portable and recoverable. Its FTS projection is
+	// deliberately empty after the new lexical head becomes authoritative.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts`); err != nil {
+		return LegacyMigrationReport{}, fmt.Errorf("fencing legacy plain-text search authority: %w", err)
+	}
+	if err := s.publishLexicalHeadTx(ctx, tx, generation.ID); err != nil {
+		return LegacyMigrationReport{}, fmt.Errorf("publishing migrated legacy lexical head: %w", err)
+	}
+	return report, nil
+}
+
 func revokeStaleLegacyPlainTextHeadsTx(
 	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
-	eligible map[string]legacyPlainTextRow, profileFingerprint string,
+	eligible map[string]legacyPlainTextRow, profileFingerprint, blobHash string,
 ) error {
 	expected := make(map[string]string, len(selected))
 	for _, version := range selected {
@@ -290,13 +303,18 @@ func revokeStaleLegacyPlainTextHeadsTx(
 	}
 	type staleHead struct{ versionID, attachmentID string }
 	stale, err := func() (_ []staleHead, retErr error) {
-		rows, err := tx.QueryContext(ctx, `
+		query := `
 			SELECT h.content_version_id,h.attachment_id
 			FROM rendition_heads h
 			JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 			JOIN rendition_builds b ON b.build_id=a.build_id
-			WHERE h.profile_fingerprint=? AND b.provider_operation_id=?
-			ORDER BY h.content_version_id`, profileFingerprint, legacyPlainTextProvider)
+			WHERE h.profile_fingerprint=? AND b.provider_operation_id=?`
+		args := []any{profileFingerprint, legacyPlainTextProvider}
+		if blobHash != "" {
+			query += ` AND h.content_version_id IN (SELECT version_id FROM content_versions WHERE blob_hash=?)`
+			args = append(args, blobHash)
+		}
+		rows, err := tx.QueryContext(ctx, query+` ORDER BY h.content_version_id`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("reading legacy rendition heads for replacement: %w", err)
 		}
@@ -334,9 +352,9 @@ func revokeStaleLegacyPlainTextHeadsTx(
 }
 
 // legacyPlainTextWorkPendingTx reports whether the migration has anything to
-// publish, revoke, queue, or fence. Open and every post-extraction publication
-// call the migration, so the common "catalog already agrees with the cache"
-// case must cost index lookups rather than a read of every cached text.
+// publish, revoke, queue, or fence. Open and email-body publication call the
+// full migration, so a settled catalog must cost index lookups rather than
+// a read of every cached text.
 // Search eligibility also retains historical versions; only current versions
 // need heads, matching readLegacySelectedVersions. A terminal failure completes
 // an extraction attempt and must not keep triggering another full migration.
@@ -437,11 +455,15 @@ func legacyPlainTextWorkPendingTx(
 }
 
 func readLegacyPlainTextRows(
-	ctx context.Context, tx *sql.Tx,
+	ctx context.Context, tx *sql.Tx, blobHash string,
 ) ([]legacyPlainTextRow, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT blob_hash,extractor,extractor_version,status,text,extracted_at
-		FROM extracted_text ORDER BY blob_hash,extractor`)
+	query := `SELECT blob_hash,extractor,extractor_version,status,text,extracted_at FROM extracted_text`
+	var args []any
+	if blobHash != "" {
+		query += ` WHERE blob_hash=?`
+		args = append(args, blobHash)
+	}
+	rows, err := tx.QueryContext(ctx, query+` ORDER BY blob_hash,extractor`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading legacy extracted-text cache: %w", err)
 	}
@@ -464,14 +486,19 @@ func readLegacyPlainTextRows(
 }
 
 func readLegacySelectedVersions(
-	ctx context.Context, tx *sql.Tx,
+	ctx context.Context, tx *sql.Tx, blobHash string,
 ) ([]legacySelectedVersion, error) {
-	rows, err := tx.QueryContext(ctx, `
+	query := `
 		SELECT v.version_id,v.blob_hash,n.name,n.trashed_at IS NOT NULL
 		FROM text_searchable_versions sv
 		JOIN content_versions v ON v.version_id=sv.version_id
-		JOIN nodes n ON n.current_version_id=v.version_id
-		ORDER BY v.version_id`)
+		JOIN nodes n ON n.current_version_id=v.version_id`
+	var args []any
+	if blobHash != "" {
+		query += ` WHERE v.blob_hash=?`
+		args = append(args, blobHash)
+	}
+	rows, err := tx.QueryContext(ctx, query+` ORDER BY v.version_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading legacy searchable versions: %w", err)
 	}
@@ -767,12 +794,12 @@ func stageLegacyLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs))
+	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), rows, buildIDs)
 }
 
 func compareLegacyServingCompatibilityTx(
 	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
-	eligible map[string]legacyPlainTextRow, profileFingerprint, generationID string,
+	eligible map[string]legacyPlainTextRow, profileFingerprint, blobHash, generationID string,
 ) error {
 	type authority struct{ name, text string }
 	want := make(map[string]authority)
@@ -794,7 +821,7 @@ func compareLegacyServingCompatibilityTx(
 		}
 		want[version.versionID] = authority{name: version.name, text: row.text.String}
 	}
-	rows, err := tx.QueryContext(ctx, `
+	query := `
 		SELECT h.content_version_id,n.name,f.text
 		FROM rendition_heads h
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
@@ -802,8 +829,13 @@ func compareLegacyServingCompatibilityTx(
 		JOIN rendition_lexical_index f ON f.build_id=a.build_id
 		JOIN content_versions v ON v.version_id=h.content_version_id
 		JOIN nodes n ON n.current_version_id=v.version_id
-		WHERE h.profile_fingerprint=? AND gb.generation_id=? AND n.trashed_at IS NULL
-		ORDER BY h.content_version_id,f.segment_id`, profileFingerprint, generationID)
+		WHERE h.profile_fingerprint=? AND gb.generation_id=? AND n.trashed_at IS NULL`
+	args := []any{profileFingerprint, generationID}
+	if blobHash != "" {
+		query += ` AND v.blob_hash=?`
+		args = append(args, blobHash)
+	}
+	rows, err := tx.QueryContext(ctx, query+` ORDER BY h.content_version_id,f.segment_id`, args...)
 	if err != nil {
 		return fmt.Errorf("comparing migrated search compatibility: %w", err)
 	}

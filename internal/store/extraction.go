@@ -407,12 +407,11 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		return fmt.Errorf("invalid extraction status %q", result.Status)
 	}
 
-	publishRendition := false
 	legacyReplacement := result.Extractor == legacyPlainTextExtractor
 	exactLegacyResult := result.Extractor == legacyPlainTextExtractor &&
 		result.ExtractorVersion == legacyPlainTextExtractorVersion
 	exactLegacySuccess := exactLegacyResult && result.Status == ExtractionOK
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = ?)`, result.BlobHash,
@@ -526,32 +525,25 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			if publishErr != nil {
 				return publishErr
 			}
-			publishRendition = published
+			if published {
+				if _, err := s.migrateLegacyPlainTextTx(ctx, tx, result.BlobHash); err != nil {
+					return fmt.Errorf("publishing legacy extraction authority transition: %w", err)
+				}
+				return nil
+			}
 		}
-		if !publishRendition && storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
+		if storedText != (sql.NullString{String: result.Text, Valid: result.Status == ExtractionOK}) {
 			if err := recordProcessedTx(ctx, tx, "", result.BlobHash); err != nil {
 				return err
 			}
 		}
-		if !publishRendition {
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, result.BlobHash,
-			); err != nil {
-				return fmt.Errorf("finishing text extraction: %w", err)
-			}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, result.BlobHash,
+		); err != nil {
+			return fmt.Errorf("finishing text extraction: %w", err)
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	if !publishRendition {
-		return nil
-	}
-	if _, err := s.MigrateLegacyPlainText(ctx); err != nil {
-		return fmt.Errorf("publishing legacy extraction authority transition: %w", err)
-	}
-	return nil
 }
 
 func hasPublishedLexicalHeadTx(ctx context.Context, tx *sql.Tx) (bool, error) {

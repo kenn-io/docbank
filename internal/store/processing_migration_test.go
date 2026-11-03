@@ -897,3 +897,49 @@ func queuedLegacyHashes(t *testing.T, s *Store) []string {
 	sort.Strings(hashes)
 	return hashes
 }
+
+func TestPostCutoverExtractionLeavesOtherDocumentsToOpen(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(ctx, dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if s != nil {
+			require.NoError(t, s.Close())
+		}
+	})
+	seedLegacyMigrationRow(t, s, "a.txt", "a1", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "firstauthority",
+	})
+	seedLegacyMigrationRow(t, s, "b.txt", "b1", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "preservedauthority",
+	})
+	first, err := s.NodeByPath(ctx, "/a.txt")
+	require.NoError(t, err)
+	report, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, fakeHash("a2"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	fresh, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 14, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "freshauthority",
+	}))
+	for query, path := range map[string]string{"freshauthority": "/c.txt", "preservedauthority": "/b.txt"} {
+		hits, _, err := s.SearchPage(ctx, query, 20)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, path, hits[0].Path)
+		assert.Equal(t, SearchMatchContent, hits[0].Match)
+	}
+	_, err = s.ActiveRendition(ctx, first.CurrentVersionID, report.ProfileFingerprint)
+	require.NoError(t, err, "publishing another blob leaves this historical head for open to settle")
+	require.NoError(t, s.Close())
+	s = nil
+	s, err = Open(ctx, dbPath)
+	require.NoError(t, err)
+	_, err = s.ActiveRendition(ctx, first.CurrentVersionID, report.ProfileFingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+}
