@@ -1780,6 +1780,62 @@ func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
 
 func embeddingTestMutation(_ context.Context, fn func() error) error { return fn() }
 
+func TestEmbeddingSatisfiedHeadSkipsWork(t *testing.T) {
+	t.Parallel()
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	var err error
+	record, err = normalizeEmbeddingSetRecord(record)
+	require.NoError(t, err)
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:satisfied-head", Scope: "embedding:chunk",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(consent, nil))
+	require.NoError(t, err)
+	request := EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint},
+		Mutate: embeddingTestMutation,
+		HydrateGeneration: func(_ context.Context, g EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error) {
+			return HydrateEmbeddingInputGeneration(g, record.InputGeneration.GenerationJSON, record.InputGeneration.EvidenceJSON)
+		},
+	}
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Enqueued)
+	deleted, err := s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs WHERE content_version_id=$1 AND binding_id=$2`, versionID, binding.Name)
+	require.NoError(t, err)
+	count, err := deleted.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{versionID, record.BindingID, record.InputKind},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	t.Run("reconcile", func(t *testing.T) {
+		result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
+		require.NoError(t, err)
+		require.Positive(t, result.Examined)
+		require.Zero(t, result.Enqueued)
+	})
+	t.Run("enqueue", func(t *testing.T) {
+		job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{
+			ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+			Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent,
+		})
+		require.NoError(t, err)
+		status, err := s.EmbeddingJobByID(t.Context(), job.ID)
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
+	})
+}
+
 func checkEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
