@@ -42,7 +42,7 @@ func TestMissLogExportWritesExclusivePrivateFiles(t *testing.T) {
 	defer stop()
 	record := waitForDaemon(t, root)
 	connection := daemonconn.New("http://"+record.Address, record.Metadata["api_key"])
-	defer connection.Close()
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	query := "=synthetic,private\nquestion"
 	report, err := connection.Search(t.Context(), query, 20)
 	require.NoError(t, err)

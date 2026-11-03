@@ -93,10 +93,7 @@ func (s *Service) exportItem(ctx context.Context, format string, r Receipt) (Exp
 	if r.Feedback == nil {
 		return item, "unlabeled", nil
 	}
-	if ValidateFeedback(*r.Feedback) != nil ||
-		!utf8.ValidString(r.Query) ||
-		utf8.RuneCountInString(r.Query) > 32768 ||
-		!validHits(r.Hits) {
+	if !validExportReceipt(r) {
 		return item, "invalid_record", nil
 	}
 	positive := r.Feedback.Verdict != "none_in_vault"
@@ -167,6 +164,14 @@ func (s *Service) exportItem(ctx context.Context, format string, r Receipt) (Exp
 type exportFence struct {
 	VaultUID          string   `json:"vault_uid"`
 	ContentVersionIDs []string `json:"content_version_ids"`
+}
+
+func validExportReceipt(r Receipt) bool {
+	return r.Feedback != nil &&
+		ValidateFeedback(*r.Feedback) == nil &&
+		utf8.ValidString(r.Query) &&
+		utf8.RuneCountInString(r.Query) <= 32768 &&
+		validHits(r.Hits)
 }
 
 func encodeExportFence(fence *exportFence) (string, bool) {

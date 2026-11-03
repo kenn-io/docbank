@@ -21,12 +21,16 @@ func newMissLogExportCmd() *cobra.Command {
 			return usageError(errors.New("export requires eval or cards and a new local file"))
 		}
 		exported, skipped := 0, map[string]int{}
-		err := writePrivateMissLogExport(args[1], func(w io.Writer) error {
+		err := writePrivateMissLogExport(args[1], func(w io.Writer) (retErr error) {
 			connection, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer connection.Close()
+			defer func() {
+				if err := connection.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("closing miss log daemon connection: %w", err))
+				}
+			}()
 			limited := &missLogExportWriter{writer: w, remaining: 128 << 20}
 			if format == "eval" {
 				if err := misslog.WriteEvalCSV(limited, nil); err != nil {
@@ -64,7 +68,7 @@ func newMissLogExportCmd() *cobra.Command {
 			return err
 		}
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%d examples exported\n", exported); err != nil {
-			return err
+			return fmt.Errorf("writing miss log export summary: %w", err)
 		}
 		reasons := make([]string, 0, len(skipped))
 		for reason := range skipped {
@@ -73,7 +77,7 @@ func newMissLogExportCmd() *cobra.Command {
 		slices.Sort(reasons)
 		for _, reason := range reasons {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "skipped %s: %d\n", reason, skipped[reason]); err != nil {
-				return err
+				return fmt.Errorf("writing miss log export summary: %w", err)
 			}
 		}
 		return nil
