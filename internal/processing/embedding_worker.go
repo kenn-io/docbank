@@ -44,6 +44,7 @@ type EmbeddingAttemptReceipt = store.EmbeddingAttemptReceipt
 
 type embeddingWorkerCatalog interface {
 	FindReusableEmbeddingSet(ctx context.Context, work store.EmbeddingJobWork, after, semanticID string) (store.EmbeddingSetRecord, error)
+	WriteRevision() uint64
 	ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error)
 	ClaimNextEmbeddingWork(ctx context.Context, owner string, at time.Time, lease time.Duration, fingerprints []string) (EmbeddingWorkClaim, EmbeddingWork, bool, error)
 	RenewEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, at time.Time, lease time.Duration) (EmbeddingWorkClaim, error)
@@ -294,7 +295,25 @@ type EmbeddingWorker struct {
 	reconcileTextDone, reconcileImageDone          bool
 	imageAfter                                     store.ImageReconcilePosition
 	reconcileAt                                    time.Time
+	reconcile                                      embeddingReconcileState
 	imageRejections                                map[store.ImagePreparationRejectionKey]struct{}
+}
+
+type embeddingReconcileState struct {
+	sweeping, settled, retry bool
+	revision                 uint64
+	expiry                   time.Time
+}
+
+// Input failures that can recover without a catalog write need another sweep.
+func (state *embeddingReconcileState) inputError(err error) {
+	if err == nil || errors.Is(err, ErrEmbeddingInputRejected) {
+		return
+	}
+	if _, ok := errors.AsType[*store.ImagePreparationError](err); ok && !errors.Is(err, errPhotoDescriptionInput) {
+		return
+	}
+	state.retry = true
 }
 
 func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) {
@@ -391,7 +410,15 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 		var work EmbeddingWork
 		found := false
 
-		if !reconciled && !worker.clock().Before(worker.reconcileAt) {
+		now := worker.clock()
+		if !reconciled && !now.Before(worker.reconcileAt) && worker.reconcile.settled &&
+			worker.catalog.WriteRevision() == worker.reconcile.revision && (worker.reconcile.expiry.IsZero() || now.Before(worker.reconcile.expiry)) {
+			worker.reconcileAt = now.Add(time.Minute)
+		}
+		if !reconciled && !now.Before(worker.reconcileAt) {
+			if !worker.reconcile.sweeping {
+				worker.reconcile = embeddingReconcileState{sweeping: true, revision: worker.catalog.WriteRevision()}
+			}
 			var spaces map[string]store.EmbeddingVectorSpaceRecord
 			if runtime, ok := worker.runtime.(interface {
 				VectorSpaces() map[string]store.EmbeddingVectorSpaceRecord
@@ -410,7 +437,11 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			if runtime, ok := worker.runtime.(interface {
 				ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
 			}); ok {
-				prepareImage = runtime.ImageGeneration
+				prepareImage = func(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+					generation, descriptor, err := runtime.ImageGeneration(ctx, profile, binding, versionID)
+					worker.reconcile.inputError(err)
+					return generation, descriptor, err
+				}
 			}
 			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
 				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
@@ -419,7 +450,9 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				ImageRejections:        worker.imageRejections,
 				DescriptorFingerprints: worker.descriptorFingerprints, VectorSpaces: spaces,
 				HydrateGeneration: func(ctx context.Context, generation store.EmbeddingInputGenerationRecord) (store.EmbeddingInputGenerationRecord, error) {
-					return hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
+					hydrated, err := hydrateEmbeddingGeneration(ctx, worker.generationBlobs, generation)
+					worker.reconcile.inputError(err)
+					return hydrated, err
 				},
 			})
 			if err != nil {
@@ -428,6 +461,9 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				}
 				return processed, ErrEmbeddingPersistence
 			}
+			if !result.ConsentExpiresAt.IsZero() && (worker.reconcile.expiry.IsZero() || result.ConsentExpiresAt.Before(worker.reconcile.expiry)) {
+				worker.reconcile.expiry = result.ConsentExpiresAt
+			}
 			worker.reconcileAfter = result.Next
 			worker.imageAfter = result.ImageNext
 			worker.reconcileTextDone = result.Next == ""
@@ -435,6 +471,8 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			if worker.reconcileTextDone && worker.reconcileImageDone {
 				worker.reconcileTextDone, worker.reconcileImageDone = false, false
 				worker.reconcileAt = worker.clock().Add(time.Minute)
+				worker.reconcile.sweeping = false
+				worker.reconcile.settled = !worker.reconcile.retry
 			}
 			reconciled = true
 		}

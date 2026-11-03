@@ -2270,6 +2270,19 @@ CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_w
 CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
 CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
 
+-- Blob deletion checks every referencing table.
+CREATE INDEX export_members_blob ON {{schema}}.export_members(blob_hash);
+CREATE INDEX export_role_roots_blob ON {{schema}}.export_role_roots(blob_hash);
+CREATE INDEX bates_artifacts_blob ON {{schema}}.bates_artifacts(blob_hash);
+CREATE INDEX page_images_blob ON {{schema}}.page_images(blob_hash);
+CREATE INDEX visual_preview_generations_source ON {{schema}}.visual_preview_generations(source_sha256);
+CREATE INDEX embedding_input_generations_blob ON {{schema}}.embedding_input_generations(generation_blob_hash);
+CREATE INDEX rendition_jobs_source ON {{schema}}.rendition_jobs(source_sha256);
+CREATE INDEX mailbox_chunks_blob ON {{schema}}.mailbox_chunks(blob_hash);
+CREATE INDEX visual_preview_generations_output
+    ON {{schema}}.visual_preview_generations(output_blob_hash, generation_id)
+    WHERE output_blob_hash IS NOT NULL;
+
 CREATE INDEX embedding_jobs_ready
     ON {{schema}}.embedding_jobs(state,available_at,job_id);
 
@@ -2293,8 +2306,8 @@ CREATE INDEX embedding_sets_vector_space
 
 CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
 CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
-CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
-CREATE INDEX email_document_relations_version ON {{schema}}.email_document_relations(child_version_id);
+CREATE INDEX email_document_publications_parent ON {{schema}}.email_document_publications(parent_version_id);
+CREATE INDEX email_document_relations_child ON {{schema}}.email_document_relations(child_version_id);
 CREATE INDEX custodian_assignments_node ON {{schema}}.custodian_assignments(node_id);
 CREATE INDEX custodian_assignments_version ON {{schema}}.custodian_assignments(content_version_id);
 CREATE INDEX document_people_node ON {{schema}}.document_people(node_id);
@@ -2369,3 +2382,10 @@ CREATE INDEX current_rendition_roots_target
 CREATE INDEX current_rendition_roots_expiry
     ON {{schema}}.current_rendition_roots(expires_at)
     WHERE expires_at IS NOT NULL;
+
+CREATE INDEX page_render_jobs_pending ON {{schema}}.page_render_jobs(state,created_at,id);
+CREATE INDEX page_render_jobs_request ON {{schema}}.page_render_jobs(request_sha256);
+CREATE INDEX email_part_artifacts_blob ON {{schema}}.email_part_artifacts(blob_hash);
+CREATE INDEX email_attachments_generation ON {{schema}}.email_attachments(generation_id);
+CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_id)
+    WHERE strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0;

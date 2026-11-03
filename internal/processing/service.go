@@ -1617,11 +1617,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	semantic := prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid
 	if request.AllLive != nil && semantic && len(profile.portable.Embeddings) != 0 {
-		count, err := service.catalog.LiveSearchScopeCount(ctx, searchScope)
+		exists, err := service.catalog.LiveSearchScopeExists(ctx, searchScope)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
-		if count == 0 {
+		if !exists {
 			binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
 			if err != nil {
 				return retrieval.Report{}, err

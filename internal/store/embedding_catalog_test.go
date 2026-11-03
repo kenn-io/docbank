@@ -496,45 +496,45 @@ func TestVersionPruneRemovesQueuedEmbeddingJobGenerationAndRoot(t *testing.T) {
 	assert.Zero(t, remaining)
 }
 
-func embeddingJobTestRequest(t *testing.T, s *Store, versionID string,
+func embeddingJobTestRequest(tb testing.TB, s *Store, versionID string,
 	profile ProcessingProfileRecord, generationSeed string,
 ) EmbeddingJobRequest {
-	t.Helper()
+	tb.Helper()
 	const bindingID = "optional"
-	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
+	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, bindingID, "")
 	record.InputGeneration.ID = testSHA256([]byte(generationSeed))
-	binding := workerOptionalEmbeddingBinding(t, profile)
+	binding := workerOptionalEmbeddingBinding(tb, profile)
 	consent := ProviderOperationAuthorizationRequest{
 		Principal: "operator:" + generationSeed, Scope: "embedding:" + bindingID,
 		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
 		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
 	}
-	_, err := s.GrantConsent(t.Context(), ProcessingConsentGrantRequest{
+	_, err := s.GrantConsent(tb.Context(), ProcessingConsentGrantRequest{
 		Principal: consent.Principal, Scope: consent.Scope, ProfileFingerprint: consent.ProfileFingerprint,
 		DisclosureFingerprint: consent.DisclosureFingerprint, InputClasses: consent.InputClasses,
 		RetainedArtifactClasses: consent.RetainedArtifactClasses,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return EmbeddingJobRequest{ContentVersionID: versionID, Profile: profile, BindingID: bindingID,
 		Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent}
 }
 
-func workerOptionalEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord) document.EmbeddingBindingV1 {
-	t.Helper()
-	return workerProfileEmbeddingBinding(t, profile, "optional")
+func workerOptionalEmbeddingBinding(tb testing.TB, profile ProcessingProfileRecord) document.EmbeddingBindingV1 {
+	tb.Helper()
+	return workerProfileEmbeddingBinding(tb, profile, "optional")
 }
 
-func workerProfileEmbeddingBinding(t *testing.T, profile ProcessingProfileRecord, name string) document.EmbeddingBindingV1 {
-	t.Helper()
+func workerProfileEmbeddingBinding(tb testing.TB, profile ProcessingProfileRecord, name string) document.EmbeddingBindingV1 {
+	tb.Helper()
 	var canonical document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &canonical))
+	require.NoError(tb, json.Unmarshal(profile.CanonicalProfile, &canonical))
 	for _, binding := range canonical.Embeddings {
 		if binding.Name == name {
 			return binding
 		}
 	}
-	t.Fatalf("embedding binding %q not found", name)
+	tb.Fatalf("embedding binding %q not found", name)
 	return document.EmbeddingBindingV1{}
 }
 
@@ -974,19 +974,19 @@ func newEmbeddingCatalogFixture(t *testing.T) (*Store, string, ProcessingProfile
 	return seedEmbeddingCatalog(t, newTestStore(t))
 }
 
-func seedEmbeddingCatalog(t *testing.T, s *Store) (*Store, string, ProcessingProfileRecord, string) {
-	t.Helper()
-	versions := seedRenditionCatalogVersions(t, s)
-	profile := embeddingCatalogProfile(t)
+func seedEmbeddingCatalog(tb testing.TB, s *Store) (*Store, string, ProcessingProfileRecord, string) {
+	tb.Helper()
+	versions := seedRenditionCatalogVersions(tb, s)
+	profile := embeddingCatalogProfile(tb)
 	build := catalogRenditionBuild(s, profile)
-	build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
-	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	build.EvidenceChecksum = embeddingCatalogEvidence(tb).Checksum
+	require.NoError(tb, s.StageRenditionBuild(tb.Context(), build))
 	attachment := RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime,
 	}
-	require.NoError(t, publishRenditionForTest(
-		t, s, attachment, embeddingCatalogTime, testSHA256([]byte("embedding-catalog-lexical-generation")),
+	require.NoError(tb, publishRenditionForTest(
+		tb, s, attachment, embeddingCatalogTime, testSHA256([]byte("embedding-catalog-lexical-generation")),
 	))
 	return s, versions[0], profile, attachment.ID
 }
@@ -1127,10 +1127,10 @@ func (embeddingCatalogTokenizer) Tokenize(text string, limit int) ([]document.To
 	return result, nil
 }
 
-func embeddingCatalogEvidence(t *testing.T) document.NormalizedEvidenceV1 {
-	t.Helper()
+func embeddingCatalogEvidence(tb testing.TB) document.NormalizedEvidenceV1 {
+	tb.Helper()
 	policy, err := document.NewEvidencePolicy(4096)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
 		Family: "pdf", UnitKind: document.EvidenceUnitPage,
@@ -1139,7 +1139,7 @@ func embeddingCatalogEvidence(t *testing.T) document.NormalizedEvidenceV1 {
 			{Order: 1, Text: "Second evidence", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 2, End: 2}},
 		},
 	}, policy)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return evidence
 }
 
@@ -1168,12 +1168,12 @@ func embeddingCatalogDescriptor() document.EmbeddingDescriptor {
 	return descriptor
 }
 
-func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
-	t.Helper()
+func embeddingCatalogProfile(tb testing.TB) ProcessingProfileRecord {
+	tb.Helper()
 	descriptor := embeddingCatalogDescriptor()
-	base := catalogProcessingProfile(t, false)
+	base := catalogProcessingProfile(tb, false)
 	var profile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(base.CanonicalProfile, &profile))
+	require.NoError(tb, json.Unmarshal(base.CanonicalProfile, &profile))
 	makeBinding := func(name string, activation document.EmbeddingActivation, kind document.EmbeddingInputKind) document.EmbeddingBindingV1 {
 		binding := document.EmbeddingBindingV1{
 			Activation: activation, AuthorizationFingerprint: fakeHash("d1"), CompatibilityID: descriptor.CompatibilityID,
@@ -1198,7 +1198,7 @@ func embeddingCatalogProfile(t *testing.T) ProcessingProfileRecord {
 	}
 	profile.Embeddings[3].Chunk.MaxTokens = 64
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return ProcessingProfileRecord{
 		Fingerprint: fingerprints.Profile, CanonicalProfile: canonical,
 		RenditionRequestFingerprint: fingerprints.RenditionRequest, EvidenceLexicalFingerprint: fingerprints.EvidenceLexical,
@@ -1779,6 +1779,62 @@ func TestEmbeddingPublicationAndJobCompletionAreAtomic(t *testing.T) {
 }
 
 func embeddingTestMutation(_ context.Context, fn func() error) error { return fn() }
+
+func TestEmbeddingSatisfiedHeadSkipsWork(t *testing.T) {
+	t.Parallel()
+	s, versionID, profile, attachmentID := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
+		document.EmbeddingInputRenditionChunk, "chunk", attachmentID)
+	var err error
+	record, err = normalizeEmbeddingSetRecord(record)
+	require.NoError(t, err)
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	binding := workerProfileEmbeddingBinding(t, profile, "chunk")
+	consent := ProviderOperationAuthorizationRequest{
+		Principal: "operator:satisfied-head", Scope: "embedding:chunk",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+	}
+	_, err = s.GrantConsent(t.Context(), grantRequestForAuthorization(consent, nil))
+	require.NoError(t, err)
+	request := EmbeddingReconcileRequest{
+		At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: []string{record.VectorSpace.Descriptor.Fingerprint},
+		Mutate: embeddingTestMutation,
+		HydrateGeneration: func(_ context.Context, g EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error) {
+			return HydrateEmbeddingInputGeneration(g, record.InputGeneration.GenerationJSON, record.InputGeneration.EvidenceJSON)
+		},
+	}
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Enqueued)
+	deleted, err := s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs WHERE content_version_id=$1 AND binding_id=$2`, versionID, binding.Name)
+	require.NoError(t, err)
+	count, err := deleted.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+		FencingToken: 1,
+		Key:          EmbeddingHeadKey{versionID, record.BindingID, record.InputKind},
+		SetID:        record.ID, VectorSpaceID: record.VectorSpace.ID,
+		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	t.Run("reconcile", func(t *testing.T) {
+		result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
+		require.NoError(t, err)
+		require.Positive(t, result.Examined)
+		require.Zero(t, result.Enqueued)
+	})
+	t.Run("enqueue", func(t *testing.T) {
+		job, err := s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{
+			ContentVersionID: versionID, Profile: profile, BindingID: binding.Name,
+			Descriptor: record.VectorSpace.Descriptor, InputGeneration: record.InputGeneration, Authorization: consent,
+		})
+		require.NoError(t, err)
+		status, err := s.EmbeddingJobByID(t.Context(), job.ID)
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
+	})
+}
 
 func checkEmbeddingReconciliationSkipsExistingTerminalJob(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()

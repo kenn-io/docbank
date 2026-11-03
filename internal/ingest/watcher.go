@@ -39,18 +39,10 @@ type WatchResult struct {
 
 func (ing *Ingester) ingestWatchedFile(
 	ctx context.Context, watchName, destination, sourceRef string,
-	expected localFileFingerprint, open localFileOpener,
+	expected localFileFingerprint, open localFileOpener, tags []string,
 ) (result WatchResult, retErr error) {
-	sourceRef = filepath.ToSlash(sourceRef)
-	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
-		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
-		path.Clean(sourceRef) != sourceRef {
-		return result, fmt.Errorf("invalid watched source reference %q", sourceRef)
-	}
-	if err := validateSourcePath(sourceRef); err != nil {
-		return result, err
-	}
-	if err := validateVirtualDestination(destination); err != nil {
+	sourceRef, err := ing.admitWatchedSource(ctx, watchName, destination, sourceRef, tags)
+	if err != nil {
 		return result, err
 	}
 
@@ -87,15 +79,44 @@ func (ing *Ingester) ingestWatchedFile(
 	if err != nil {
 		return result, err
 	}
-	result.Node, err = ing.Store.IngestFileExact(
+	result.Node, err = ing.Store.IngestFileExactTagged(
 		ctx, run, parent.ID, path.Base(sourceRef), content.hash, content.size,
-		content.mimeType, sourceRef, content.mtime, content.physical,
+		content.mimeType, sourceRef, content.mtime, tags, content.physical,
 	)
 	if err != nil {
 		return result, fmt.Errorf("recording watched source %q: %w", sourceRef, err)
 	}
 	result.Outcome = WatchAdded
 	return result, nil
+}
+
+// admitWatchedSource validates a watched file's target. A source the watch has
+// not recorded must have its tags before any bytes are published; recorded
+// sources whose file is still live keep recording edits. The import transaction checks tags again.
+func (ing *Ingester) admitWatchedSource(
+	ctx context.Context, watchName, destination, sourceRef string, tags []string,
+) (string, error) {
+	sourceRef = filepath.ToSlash(sourceRef)
+	if sourceRef == "." || sourceRef == "" || path.IsAbs(sourceRef) ||
+		sourceRef == ".." || strings.HasPrefix(sourceRef, "../") ||
+		path.Clean(sourceRef) != sourceRef {
+		return "", fmt.Errorf("invalid watched source reference %q", sourceRef)
+	}
+	if err := validateSourcePath(sourceRef); err != nil {
+		return "", err
+	}
+	if err := validateVirtualDestination(destination); err != nil {
+		return "", err
+	}
+	if recorded, err := ing.Store.HasWatchSource(ctx, watchName, sourceRef); err != nil || recorded {
+		return sourceRef, err
+	}
+	for _, name := range tags {
+		if _, err := ing.Store.ResolveWatchTag(ctx, name); err != nil {
+			return "", err
+		}
+	}
+	return sourceRef, nil
 }
 
 func validateVirtualDestination(destination string) error {
@@ -1001,7 +1022,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			if _, skip := deferred[rel]; skip {
 				continue
 			}
-			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil {
+			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil && !onlyUnavailableTags(err) {
 				return false, err
 			}
 		}
@@ -1099,6 +1120,28 @@ func (w *Watcher) blockWatchPath(inventory *watchInventory, rel, reason string) 
 	w.interruptSettlingTree(rel)
 	inventory.complete = false
 	inventory.blocked = append(inventory.blocked, fmt.Errorf("watched source %q %s: %w", rel, reason, errWatchBlocked))
+}
+
+// onlyUnavailableTags reports whether every failure in err is an unavailable
+// configured tag. Such a file waits for the tag, but a tag failure joined with
+// a rollback or cleanup failure must still fail the scan.
+func onlyUnavailableTags(err error) bool {
+	if _, ok := err.(*store.TagResolutionError); ok { //nolint:errorlint // errors.As would also match a tag failure joined with others.
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		for _, cause := range causes {
+			if cause != nil && !onlyUnavailableTags(cause) {
+				return false
+			}
+		}
+		return len(causes) != 0
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return onlyUnavailableTags(cause)
+	}
+	return false
 }
 
 func retryableWatchCollectionError(err error) bool {
@@ -1356,7 +1399,7 @@ func (w *Watcher) scanDirectory(
 		if w.observeFile != nil {
 			observe = func(withChange bool) (watchFileState, error) { return w.observeFile(source, withChange) }
 		}
-		state, err := observe(w.process == nil)
+		state, err := observe(w.process == nil || !w.immediate)
 		if err != nil {
 			if inventory != nil {
 				if retryableWatchCollectionError(err) {
@@ -1436,7 +1479,8 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	if hints.matches(rel) && exists {
 		observation.processed = false
 	}
-	if observation.digest != "" && (hints.Reconcile || hints.matches(rel) || fingerprintChanged) {
+	// A matching native change time vouches for the bytes between periodic scans.
+	if observation.digest != "" && (hints.matches(rel) || fingerprintChanged || (hints.Reconcile && fingerprint.change == 0)) {
 		var digest string
 		digest, err = source.digest(ctx, fingerprint)
 		if err == nil && digest != observation.digest {
@@ -1465,7 +1509,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 				return w.ing.Blobs.WithMutation(ctx, func() error {
 					var writeErr error
 					result, writeErr = w.ing.ingestWatchedFile(
-						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
+						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open, w.config.Tags,
 					)
 					return writeErr
 				})

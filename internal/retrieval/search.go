@@ -416,12 +416,8 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			}
 		}
 	}()
-	coverage = Coverage{BindingRequired: authority.BindingRequired,
-		ScopedDocuments: authority.ScopedDocuments, CompleteDocuments: authority.CompleteDocuments,
-		State: CoverageComplete}
-	if authority.CompleteDocuments != authority.ScopedDocuments {
-		coverage.State = CoverageIncomplete
-	}
+	// Search reports coverage from final candidate revalidation.
+	coverage = Coverage{BindingRequired: authority.BindingRequired, State: CoverageUnknown}
 	if authority.ANNRows == nil {
 		return nil, coverage, false, errors.New("semantic search authority lacks source-fenced ANN rows")
 	}
@@ -484,12 +480,6 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		}
 		if resolution.SourceManifestChecksum != stored.SourceManifestChecksum {
 			return nil, coverage, false, store.ErrVectorIndexSourceStale
-		}
-		coverage.ScopedDocuments = resolution.ScopedDocuments
-		coverage.CompleteDocuments = resolution.CompleteDocuments
-		coverage.State = CoverageComplete
-		if coverage.CompleteDocuments != coverage.ScopedDocuments {
-			coverage.State = CoverageIncomplete
 		}
 		truncated = truncated || resolution.Truncated
 		for _, item := range resolution.Candidates {

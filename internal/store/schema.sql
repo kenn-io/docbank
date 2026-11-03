@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS export_members (
     canonical_json BLOB NOT NULL,
     PRIMARY KEY(source_id,node_id,version_id)
 );
+-- Deleting a blob checks every referencing table; lead each index with its blob column.
+CREATE INDEX IF NOT EXISTS export_members_blob ON export_members(blob_hash);
 CREATE INDEX IF NOT EXISTS export_members_version ON export_members(version_id);
 CREATE TABLE IF NOT EXISTS export_plans (
     id TEXT PRIMARY KEY,
@@ -43,6 +45,7 @@ CREATE TABLE IF NOT EXISTS export_role_roots (
     blob_hash TEXT NOT NULL REFERENCES blobs(hash),
     PRIMARY KEY(plan_id,blob_hash)
 );
+CREATE INDEX IF NOT EXISTS export_role_roots_blob ON export_role_roots(blob_hash);
 CREATE TABLE IF NOT EXISTS export_jobs (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
@@ -217,6 +220,7 @@ CREATE TABLE IF NOT EXISTS bates_artifacts (
     state TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS bates_artifacts_blob ON bates_artifacts(blob_hash);
 CREATE INDEX IF NOT EXISTS bates_artifacts_history ON bates_artifacts(created_at,artifact_id);
 CREATE TABLE IF NOT EXISTS bates_artifact_pages (
     artifact_id TEXT NOT NULL REFERENCES bates_artifacts(artifact_id) ON DELETE CASCADE,
@@ -377,6 +381,7 @@ CREATE TABLE IF NOT EXISTS page_images (
     PRIMARY KEY(version_id,recipe_sha256,page),
     FOREIGN KEY(version_id,page) REFERENCES page_frames(version_id,page) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS page_images_blob ON page_images(blob_hash);
 CREATE TABLE IF NOT EXISTS page_render_jobs (
     id TEXT PRIMARY KEY,
     node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
@@ -1091,6 +1096,7 @@ CREATE TABLE IF NOT EXISTS visual_preview_generations (
     UNIQUE (content_version_id, recipe_fingerprint),
     UNIQUE (content_version_id, generation_id)
 );
+CREATE INDEX IF NOT EXISTS visual_preview_generations_source ON visual_preview_generations(source_sha256);
 
 CREATE INDEX IF NOT EXISTS visual_preview_generations_output
     ON visual_preview_generations(output_blob_hash, generation_id)
@@ -1462,6 +1468,7 @@ CREATE TABLE IF NOT EXISTS embedding_input_generations (
     CHECK ((generation_blob_hash IS NULL AND generation_encoded_size = 0)
         OR (generation_blob_hash IS NOT NULL AND generation_encoded_size > 0))
 );
+CREATE INDEX IF NOT EXISTS embedding_input_generations_blob ON embedding_input_generations(generation_blob_hash);
 
 -- Embedding jobs are rebuildable operational state. Immutable input
 -- generations, vector spaces, consent grants, failures, and published heads
@@ -1774,6 +1781,7 @@ CREATE TABLE IF NOT EXISTS rendition_jobs (
     CHECK ((authorization_grant_id IS NULL) =
            (authorization_incarnation_id IS NULL AND authorization_revocation_fence IS NULL))
 );
+CREATE INDEX IF NOT EXISTS rendition_jobs_source ON rendition_jobs(source_sha256);
 
 CREATE INDEX IF NOT EXISTS rendition_jobs_claimable
     ON rendition_jobs(state, available_at, lease_expires_at, job_id);

@@ -94,6 +94,7 @@ type ProviderOperationAuthorization struct {
 	ProcessingIncarnationID string
 	RevocationFence         int64
 	AuthorizedAt            time.Time
+	expiresAt               time.Time
 }
 
 type normalizedConsentAuthority struct {
@@ -471,8 +472,9 @@ func authorizeProviderOperationInConsentSetTx(
 			continue
 		}
 		foundCurrentFence = true
+		var expiry time.Time
 		if expires.Valid {
-			expiry, err := time.Parse(timestampLayout, expires.String)
+			expiry, err = time.Parse(timestampLayout, expires.String)
 			if err != nil {
 				return ProviderOperationAuthorization{}, fmt.Errorf("authorizing provider operation: invalid grant expiry: %w", err)
 			}
@@ -482,7 +484,7 @@ func authorizeProviderOperationInConsentSetTx(
 		}
 		return ProviderOperationAuthorization{
 			GrantID: grantID, ProcessingIncarnationID: incarnationID,
-			RevocationFence: fence, AuthorizedAt: now,
+			RevocationFence: fence, AuthorizedAt: now, expiresAt: expiry,
 		}, nil
 	}
 	if err := rows.Err(); err != nil {

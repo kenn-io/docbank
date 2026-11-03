@@ -1191,3 +1191,7 @@ The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path
 into a daemon-owned vault. External agents should continue to use the
 [authenticated HTTP contract](agents/integration.md).
+
+## Idle embedding discovery
+
+A quiet vault skips embedding discovery. Any committed write other than search or vector-index coverage bookkeeping, a daemon restart, or expiry of a consent grant selected by discovery brings back one full pass. The worker's own enqueue and completion writes also cause another pass before discovery settles. Transient input failures keep discovery retrying once a minute until the input recovers or is permanently rejected.

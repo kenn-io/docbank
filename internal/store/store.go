@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -23,6 +24,7 @@ var schemaSQL string
 type Store struct {
 	db                     *sql.DB
 	writeDB                *sql.DB
+	writeRevision          atomic.Uint64
 	postgresSchema         string // Empty for SQLite; PostgreSQL pools use this schema as their search path.
 	path                   string
 	rootID                 int64
@@ -296,11 +298,24 @@ var (
 	errCommitTx = errors.New("committing transaction")
 )
 
+// WriteRevision changes after committed storage writes. All users of this Store
+// and its writer observe the same revision. A reopened Store starts unsettled.
+func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
+
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.storageTx(ctx, true, fn)
+}
+
+// withBookkeepingTx keeps search reader leases from waking embedding discovery.
+func (s *Store) withBookkeepingTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.storageTx(ctx, false, fn)
+}
+
+func (s *Store) storageTx(ctx context.Context, counts bool, fn func(tx *sql.Tx) error) (retErr error) {
 	defer func() {
 		// Cancellation may roll back before the callback or Commit observes it.
 		// Preserve cancellation alongside ErrTxDone.
@@ -376,6 +391,12 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	} else if s.photoEvents.installed.Load() {
 		dropped = s.photoEvents.dropPhotoCapture(ctx, tx)
 	}
+	var before int64
+	if counts && s.postgresSchema == "" {
+		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
+			return err
+		}
+	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
@@ -385,9 +406,24 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, tx.Rollback())
 	}
+	wrote := false
+	if counts {
+		if s.postgresSchema == "" {
+			var after int64
+			if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
+				return err
+			}
+			wrote = after != before
+		} else if err := tx.QueryRowContext(ctx, `SELECT pg_catalog.pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&wrote); err != nil {
+			return err
+		}
+	}
 	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("%w: %w", errCommitTx, err)
+	}
+	if wrote {
+		s.writeRevision.Add(1)
 	}
 	if dropped {
 		s.photoEvents.installed.Store(false)

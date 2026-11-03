@@ -205,6 +205,7 @@ type StoreBindingConfig struct {
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
 	Profile         string   `toml:"profile"`
+	Tags            []string `toml:"tags"`
 	CaptureOnChange bool     `toml:"capture_on_change"`
 	Name            string   `toml:"name"`
 	Source          string   `toml:"source"`

@@ -23,7 +23,7 @@ func (s *Store) StageEmailBodyBuild(ctx context.Context, record RenditionBuildRe
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var completedAt string
-		err := tx.QueryRowContext(ctx, `SELECT completed_at FROM rendition_builds WHERE build_id=?`, normalized.ID).Scan(&completedAt)
+		err := tx.QueryRowContext(ctx, `SELECT completed_at FROM rendition_builds WHERE build_id=$1`, normalized.ID).Scan(&completedAt)
 		if err == nil {
 			normalized.CompletedAt = completedAt
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -239,7 +239,7 @@ func insertEmailBodyResult(ctx context.Context, tx *sql.Tx, versionID string, r 
 	if !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO email_body_results(email_attachment_id,body_recipe_fingerprint,state,part_path,rendition_attachment_id,reason) VALUES(?,?,?,?,?,?)`, r.EmailAttachmentID, r.BodyRecipeFingerprint, r.State, r.PartPath, r.RenditionAttachmentID, r.Reason)
+	_, err = tx.ExecContext(ctx, `INSERT INTO email_body_results(email_attachment_id,body_recipe_fingerprint,state,part_path,rendition_attachment_id,reason) VALUES($1,$2,$3,$4,$5,$6)`, r.EmailAttachmentID, r.BodyRecipeFingerprint, r.State, r.PartPath, r.RenditionAttachmentID, r.Reason)
 	// Available bodies emit through rendition-head publication.
 	if err == nil && r.RenditionAttachmentID == nil {
 		return recordProcessedTx(ctx, tx, versionID, "")

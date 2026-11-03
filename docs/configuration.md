@@ -166,6 +166,7 @@ pack_max_bytes = 268435456  # 256 MiB soft raw-byte budget per run
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["receipts"] # optional; first run: docbank tag create receipts
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
@@ -334,6 +335,8 @@ exclude = [".stversions", ".git"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
+First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
+
 Empty, absolute, parent-traversal, malformed, and backslash-containing glob
 rules fail watcher or folder-scanner construction with the watch name.
 Restart the daemon after changing watch rules.
@@ -449,7 +452,7 @@ rendition; embedding stages require explicit profile execution.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, capture mode (`settled` or `prompt`), settle window,
+destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
@@ -1212,10 +1215,13 @@ encoders, each with `mode` and `template`. Templates use `{{content}}`. Contract
 validation checks the supported roles and formatting rules. `query_instruction`
 is available only to contracts that support it.
 
-Discovery reads in pages and waits one minute between complete passes.
+Discovery reads in pages and checks once a minute whether another complete
+pass is needed. Quiet vaults skip the pass; see [idle embedding discovery](embedding.md#idle-embedding-discovery)
+for the wake triggers.
 Existing queued work is still checked on the normal one-second idle cadence.
 Discovery skips missing or invalid generation bytes so later candidates can
-proceed, and a later pass retries them. Database failures keep their
+proceed. Later passes retry temporary input failures; permanent rejections
+allow discovery to settle. Database failures keep their
 separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.

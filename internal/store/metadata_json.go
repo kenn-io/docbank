@@ -57,3 +57,8 @@ func (d metadataJSONDialect) arrayValues(parameter string) string {
 	}
 	return "json_each(" + parameter + ")"
 }
+
+// originalFileWaiter excludes jobs that disclose a derived photo artifact.
+func (d metadataJSONDialect) originalFileWaiter() string {
+	return "NOT EXISTS(SELECT 1 FROM " + d.arrayValues("w.input_classes_json") + " WHERE value='derived_upload')"
+}
