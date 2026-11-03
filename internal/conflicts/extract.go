@@ -1011,7 +1011,15 @@ func splitClauses(s string) []clause {
 			nextRune, _ := utf8.DecodeRuneInString(s[next:])
 			if next == len(s) || unicode.IsSpace(nextRune) {
 				prefix := strings.ToLower(norm.NFKC.String(s[start : i+n]))
-				abbrev := normalizedDurationContinuation(prefix, norm.NFKC.String(s[next:])) || abbreviationRE.MatchString(prefix) || noAbbreviationRE.MatchString(prefix) && identifierAbbreviation(s[start:], i-start) || maxAbbreviationRE.MatchString(prefix) && figureLeadRE.MatchString(s[next:]) && !endsTypedFigure(strings.TrimSpace(prefix[:len(prefix)-4]))
+				normalizedNext := norm.NFKC.String(s[next:])
+				noAbbreviation := false
+				if noAbbreviationRE.MatchString(prefix) {
+					normalizedRemainder := norm.NFKC.String(s[start:])
+					normalizedDot := len(norm.NFKC.String(s[start:i]))
+					noAbbreviation = identifierAbbreviation(normalizedRemainder, normalizedDot)
+				}
+				maxAbbreviation := maxAbbreviationRE.MatchString(prefix) && figureLeadRE.MatchString(normalizedNext) && !endsTypedFigure(strings.TrimSpace(prefix[:len(prefix)-4]))
+				abbrev := normalizedDurationContinuation(prefix, normalizedNext) || abbreviationRE.MatchString(prefix) || noAbbreviation || maxAbbreviation
 				if !abbrev {
 					emit(next, false)
 					start = next
@@ -1387,8 +1395,9 @@ func omitUncertainRates(s string, checks, cs []candidate) []candidate {
 func extendPercentageBases(s string, checks, bases []candidate) []candidate {
 	for i := 0; i < len(bases); i++ {
 		base := bases[i]
+		baseEnd := percentageBaseOperandEnd(s, base)
 		for _, c := range checks {
-			if c.f.Kind == base.f.Kind && c.start >= base.end && durationJoined(s[base.end:c.start]) && !quantitySubjectRE.MatchString(s[c.end:]) {
+			if c.f.Kind == base.f.Kind && c.start >= baseEnd && durationJoined(s[baseEnd:c.start]) && !quantitySubjectRE.MatchString(s[c.end:]) {
 				bases = append(bases, c)
 				break
 			}
@@ -1399,7 +1408,11 @@ func extendPercentageBases(s string, checks, bases []candidate) []candidate {
 
 func percentageBaseGroupEnd(s string, checks []candidate, first candidate) int {
 	bases := extendPercentageBases(s, checks, []candidate{first})
-	return bases[len(bases)-1].end
+	return percentageBaseOperandEnd(s, bases[len(bases)-1])
+}
+
+func percentageBaseOperandEnd(s string, base candidate) int {
+	return base.end + rateEnd(s[base.end:])
 }
 
 // A percentage's base is an operand, not a separate asserted figure.
@@ -1421,7 +1434,7 @@ func omitPercentageBases(s string, checks, cs []candidate) []candidate {
 	}
 	bases = extendPercentageBases(s, checks, bases)
 	return slices.DeleteFunc(cs, func(c candidate) bool {
-		return slices.ContainsFunc(bases, func(base candidate) bool { return c.start >= base.start && c.end <= base.end+rateEnd(s[base.end:]) })
+		return slices.ContainsFunc(bases, func(base candidate) bool { return c.start >= base.start && c.end <= percentageBaseOperandEnd(s, base) })
 	})
 }
 
@@ -1475,7 +1488,6 @@ func unsupportedOriginalRate(original string, offsets map[int]int, s string, end
 }
 
 var rateApproximationRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)\s+)[(\["'‘’“”\s]*(?:` + approximation + `\b|[~≈])`)
-var rateApproximationPrefixRE = regexp.MustCompile(`(?i)^\.?\s+(?:` + approximation + `\b|[~≈])`)
 
 var rateBoundPrefix = func() string {
 	var words []string
@@ -1506,14 +1518,32 @@ func approximateRate(s string) bool {
 	if rateApproximationRE.MatchString(s) {
 		return true
 	}
-	loc := rateApproximationPrefixRE.FindStringIndex(s)
-	return loc != nil && rateRE.MatchString(s[loc[1]:])
+	return rateApproximationBoundary(s) > 0
+}
+
+// rateApproximationBoundary finds an existing rate after a supported postfix approximation.
+func rateApproximationBoundary(s string) int {
+	loc := approximationSuffixRE.FindStringIndex(s)
+	if loc == nil {
+		return 0
+	}
+	end := loc[1]
+	for end > loc[0] {
+		r, size := utf8.DecodeLastRuneInString(s[:end])
+		if !unicode.IsSpace(r) {
+			break
+		}
+		end -= size
+	}
+	if end == loc[0] || !rateRE.MatchString(s[end:]) {
+		return 0
+	}
+	return end
 }
 
 func rateEnd(s string) int {
-	approximationPrefix := 0
-	if loc := rateApproximationPrefixRE.FindStringIndex(s); loc != nil {
-		approximationPrefix = loc[1]
+	approximationPrefix := rateApproximationBoundary(s)
+	if approximationPrefix > 0 {
 		s = s[approximationPrefix:]
 	}
 	loc := rateRE.FindStringSubmatchIndex(s)

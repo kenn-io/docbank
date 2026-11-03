@@ -493,7 +493,8 @@ func FuzzExtract(f *testing.F) {
 	for _, s := range []string{"The fee is $1,000.50.", "From 1 July 2026 wait 15 days.", "\xff 2 days …", "The rate is one point five percent.", "The rate is one percent point five.",
 		"Wait is twenty-one days.", "Wait is thirty-one days.", "Wait is 10-7 days.",
 		"Wait is 20-1 days.", "Wait is 7-10 days.", "The period isn’t 7 days.", "The period is 7 days...", "...The period is 7 days.", "From １ July ２０２６ the fee is $5 per 2 months.", "Wait is ½ day.", "Cost is $1/2.", "The wait cannot be 7 days.", "Wait is 7 days approximately.", "Account number: 1234 5678.", "The fee is $7 and 2 devices are included.", "Policy: USD1234A.", "The fee is $fourteen.",
-		"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", "From 1 July 2026 the fee is $5． The deposit is $7.", "The fee is $5 approximately per 2 devices."} {
+		"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", "From 1 July 2026 the fee is $5． The deposit is $7.", "The fee is $5 approximately per 2 devices.",
+		"The wait is max. ７ days.", "Policy Ｎｏ. is $1234.", "The fee is $5 more or less per 2 devices.", "The fee is $5 (approximately) per 2 devices.", "The fee is 5% of $100 per month and $200 per year."} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -4602,6 +4603,35 @@ func TestExtractApproximateRateDoesNotExposeDenominator(t *testing.T) {
 			for i, want := range tt.want {
 				if got[i].Text != want {
 					t.Errorf("figure %d = %q, want %q", i, got[i].Text, want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractReviewNormalizedAbbreviationsAndRateGroups(t *testing.T) {
+	tests := []struct {
+		name       string
+		text       string
+		wantTexts  []string
+		wantKinds  []string
+		qualifiers []string
+	}{
+		{"normalized max abbreviation", "The wait is max. ７ days.", []string{"７ days"}, []string{durationKind}, []string{"≤"}},
+		{"normalized identifier abbreviation suppresses money", "Policy Ｎｏ. is $1234.", nil, nil, nil},
+		{"approximation phrase before rate", "The fee is $5 more or less per 2 devices.", nil, nil, nil},
+		{"wrapped approximation before rate", "The fee is $5 (approximately) per 2 devices.", nil, nil, nil},
+		{"coordinated rate-bearing percentage bases", "The fee is 5% of $100 per month and $200 per year.", []string{"5%"}, []string{percentKind}, []string{""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.wantTexts) {
+				t.Fatalf("figures = %+v, want %v", got, tt.wantTexts)
+			}
+			for i, want := range tt.wantTexts {
+				if got[i].Text != want || got[i].Kind != tt.wantKinds[i] || got[i].Qualifier != tt.qualifiers[i] {
+					t.Errorf("figure %d = %+v, want text=%q kind=%q qualifier=%q", i, got[i], want, tt.wantKinds[i], tt.qualifiers[i])
 				}
 			}
 		})
