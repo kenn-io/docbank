@@ -3163,6 +3163,22 @@ func TestSemanticSparseFilteredAcquisitionUsesEmbeddingCandidates(t *testing.T) 
 	require.True(t, strings.HasPrefix(q.plan, "SEARCH es "), q.plan)
 }
 
+func TestSemanticVersionFenceAcquisitionUsesKeyLookups(t *testing.T) {
+	t.Parallel()
+	s, record, _ := newPublishedVectorIndexFixture(t)
+	q := &semanticScanPlanQuerier{metadataQuerier: s.db, store: s, t: t}
+	rows, wholeSpace, err := semanticANNRowsForSourceTx(t.Context(), q, record.ProcessingProfileFingerprint, record.BindingID,
+		record.InputKind, record.VectorSpace.ID, SearchOptions{ContentVersionIDs: []string{record.ContentVersionID}})
+	require.NoError(t, err)
+	require.False(t, wholeSpace)
+	require.Equal(t, []vectorindex.RowIdentity{{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
+		InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum}}, rows)
+	// A bounded version fence must look up nodes by key even when most files
+	// have no embeddings. Scanning nodes makes similar search grow with the vault.
+	require.NotContains(t, q.plan, "SCAN n ", q.plan)
+	require.Contains(t, q.plan, "SEARCH n USING INTEGER PRIMARY KEY", q.plan)
+}
+
 type semanticScanPlanQuerier struct {
 	metadataQuerier
 
