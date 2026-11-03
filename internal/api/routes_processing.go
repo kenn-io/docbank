@@ -679,6 +679,7 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments,
 			State: string(report.Coverage.State)}, Truncated: report.Truncated,
 		Results: make([]DocumentSearchResult, len(report.Results)), Degradations: make([]string, len(report.Degradations))}
+	result.AsOf = report.AsOf
 	if report.MediaSelections != nil {
 		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
 		for i, selection := range report.MediaSelections {
@@ -693,6 +694,12 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			ContentVersionID: item.Document.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
+		if v := item.Validity; v != nil {
+			converted.Validity = &DocumentResultValidity{State: string(v.State), EffectiveFrom: v.EffectiveFrom, EffectiveTo: v.EffectiveTo, SupersededBy: make([]DocumentValiditySuccessor, 0, len(v.SupersededBy))}
+			for _, next := range v.SupersededBy {
+				converted.Validity.SupersededBy = append(converted.Validity.SupersededBy, DocumentValiditySuccessor{NodeID: next.NodeID, Path: next.Path, EffectiveFrom: next.EffectiveFrom})
+			}
+		}
 		for evidenceIndex, evidence := range item.Evidence {
 			convertedEvidence := DocumentEvidenceReference{Kind: evidence.Kind,
 				BuildID: evidence.BuildID, SegmentID: evidence.SegmentID,
@@ -820,6 +827,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
+		{store.ErrInvalidSupersession, http.StatusUnprocessableEntity, "invalid_supersession", "document validity input or authority is invalid"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
@@ -896,6 +904,7 @@ func searchDocuments(ctx context.Context, service *processing.Service, input Doc
 		allLive = &options
 	}
 	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query, AllLive: allLive,
+		AsOf:         input.AsOf,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
 		BindingID: input.BindingID, Explain: input.Explain,

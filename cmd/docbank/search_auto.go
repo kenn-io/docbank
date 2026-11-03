@@ -58,9 +58,12 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+			AsOf: searchAsOf, Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
+		}
+		if searchAsOf != "" {
+			return automaticSearchOutcome{}, searchErr
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {

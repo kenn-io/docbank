@@ -245,6 +245,8 @@ type DocumentSearchScope struct {
 }
 
 type DocumentSearchRequest struct {
+	AsOf string `json:"as_of,omitzero" format:"date" maxLength:"10"`
+
 	Scope        *DocumentSearchScope `json:"scope,omitzero"`
 	MediaSources MediaSearchSources   `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
 	Query        string               `json:"query" minLength:"1" maxLength:"8192"`
@@ -374,7 +376,21 @@ type DocumentSearchTrace struct {
 	Count int    `json:"count" minimum:"0"`
 }
 
+type DocumentResultValidity struct {
+	State         string                      `json:"state" enum:"current,superseded,expired,not_yet_effective"`
+	SupersededBy  []DocumentValiditySuccessor `json:"superseded_by" maxItems:"16"`
+	EffectiveFrom string                      `json:"effective_from,omitzero" format:"date"`
+	EffectiveTo   string                      `json:"effective_to,omitzero" format:"date"`
+}
+
+type DocumentValiditySuccessor struct {
+	NodeID        int64  `json:"node_id" minimum:"1"`
+	Path          string `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
+	EffectiveFrom string `json:"effective_from,omitzero" format:"date"`
+}
+
 type DocumentSearchResult struct {
+	Validity         *DocumentResultValidity     `json:"validity,omitzero"`
 	VaultUID         string                      `json:"vault_uid" format:"uuid"`
 	NodeID           int64                       `json:"node_id" minimum:"1"`
 	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
@@ -410,6 +426,7 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	AsOf                 string                          `json:"as_of" format:"date"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`

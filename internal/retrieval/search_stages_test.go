@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -793,3 +794,34 @@ func (backend *stageBackend) NormalizeSearchOptions(_ context.Context, options s
 }
 
 func (authorizer *stageAuthorizer) Close() {}
+
+func TestSearcherOrdersBeforeLimitAndReranking(t *testing.T) {
+	t.Parallel()
+	reranker := &stageReranker{scores: []RerankScore{{Document: DocumentIdentity{VaultID: "vault", NodeID: 2, ContentVersionID: "version-2"}, Score: 2}}}
+	searcher, _ := stageSearcher(t, func(config *SearcherConfig) {
+		config.Reranking = RerankingConfig{Enabled: true, Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker, Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+	})
+	calls := 0
+	report, err := searcher.Search(t.Context(), Query{Text: "original", Mode: ModeLexical, Limit: 1, LexicalLimit: 2, Order: func(_ context.Context, results []Result) ([]Result, error) {
+		calls++
+		slices.SortStableFunc(results, func(a, b Result) int {
+			if a.Document.NodeID == b.Document.NodeID {
+				return 0
+			}
+			if a.Document.NodeID == 2 {
+				return -1
+			}
+			return 1
+		})
+		return results, nil
+	}})
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, int64(2), report.Results[0].Document.NodeID)
+	require.Equal(t, 1, report.Results[0].Rank)
+	require.True(t, report.Truncated)
+	require.Len(t, reranker.candidates, 1)
+	require.Equal(t, int64(2), reranker.candidates[0].Document.NodeID)
+	require.Equal(t, 1, report.Receipts[0].CandidateCount)
+}

@@ -2232,6 +2232,36 @@ export interface DocumentPage {
   source_present?: boolean;
 }
 
+export type DocumentResultValidityState = typeof DocumentResultValidityState[keyof typeof DocumentResultValidityState];
+
+
+export const DocumentResultValidityState = {
+  current: 'current',
+  superseded: 'superseded',
+  expired: 'expired',
+  not_yet_effective: 'not_yet_effective',
+} as const;
+
+export interface DocumentValiditySuccessor {
+  effective_from?: string;
+  /** @minimum 1 */
+  node_id: number;
+  /**
+     * @minLength 2
+     * @maxLength 16384
+     * @pattern ^/
+     */
+  path: string;
+}
+
+export interface DocumentResultValidity {
+  effective_from?: string;
+  effective_to?: string;
+  state: DocumentResultValidityState;
+  /** @maxItems 16 */
+  superseded_by: DocumentValiditySuccessor[];
+}
+
 export interface DocumentSearchCoverage {
   binding_required: boolean;
   /** @minimum 0 */
@@ -2269,6 +2299,7 @@ export interface DocumentSearchResult {
   rank: number;
   score: number;
   semantic_rank?: number;
+  validity?: DocumentResultValidity;
   vault_uid: string;
 }
 
@@ -2282,6 +2313,7 @@ export interface DocumentSearchReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   actual_mode: string;
+  as_of: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
   /** @maxItems 4096 */
@@ -2339,6 +2371,8 @@ export interface DocumentSearchScope {
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxLength 10 */
+  as_of?: string;
   /** @maxLength 128 */
   binding_id?: string;
   content_first?: boolean;
@@ -9696,12 +9730,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaArtifactMetadata;
 };
 
@@ -10187,7 +10221,7 @@ export type UploadPushFileHeaders = {
 };
 
 export type UploadPushFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type ReadRenditionTextParams = {
@@ -10446,7 +10480,7 @@ export type UploadFileHeaders = {
 };
 
 export type UploadFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type GetContentVersionBytesHeaders = {
@@ -19626,7 +19660,7 @@ export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
     params: UploadPushFileParams,
     headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPushFileBody.file);
+formData.append(`file`, uploadPushFileBody.file instanceof Blob ? uploadPushFileBody.file : new Blob([uploadPushFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -22066,7 +22100,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file, params.name);
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};

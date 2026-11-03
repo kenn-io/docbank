@@ -1,6 +1,7 @@
 package retrieval
 
 import (
+	"context"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/internal/store"
@@ -99,7 +100,19 @@ type Contribution struct {
 	Contribution float64
 }
 
+type ResultValidity struct {
+	State                      document.ValidityState
+	SupersededBy               []ValiditySuccessor
+	EffectiveFrom, EffectiveTo string
+}
+
+type ValiditySuccessor struct {
+	NodeID              int64
+	Path, EffectiveFrom string
+}
+
 type Result struct {
+	Validity      *ResultValidity
 	Document      DocumentIdentity
 	Rank          int
 	Score         float64
@@ -155,6 +168,7 @@ type MediaSelection struct {
 }
 
 type Report struct {
+	AsOf                 string
 	MediaSelections      []MediaSelection
 	MediaSourceSelection bool
 	RequestedMode        Mode
@@ -168,6 +182,7 @@ type Report struct {
 }
 
 type Query struct {
+	Order func(context.Context, []Result) ([]Result, error)
 	Text  string
 	Mode  Mode
 	Limit int

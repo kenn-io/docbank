@@ -74,11 +74,13 @@ func writeSearchAgentHeader(cmd *cobra.Command, header searchAgentHeader) error 
 // searchAgentHit is one result line. Ranked hits come from processing search
 // and carry its score and excerpt; ordinary lexical hits have neither.
 type searchAgentHit struct {
-	nodeID      int64
-	match, path string
-	ranked      bool
-	score       float64
-	excerpt     string
+	validity       *api.DocumentResultValidity
+	validityReason string
+	nodeID         int64
+	match, path    string
+	ranked         bool
+	score          float64
+	excerpt        string
 }
 
 func writeSearchAgentHit(cmd *cobra.Command, hit searchAgentHit) error {
@@ -89,6 +91,12 @@ func writeSearchAgentHit(cmd *cobra.Command, hit searchAgentHit) error {
 	line += " path=" + searchAgentValue(hit.path)
 	if hit.ranked {
 		line += " excerpt=" + searchAgentValue(searchAgentExcerpt(hit.excerpt))
+	}
+	if hit.validity != nil {
+		line += " validity=" + searchAgentValue(hit.validity.State)
+		if hit.validityReason != "" {
+			line += " validity_reason=" + searchAgentValue(strings.TrimSpace(hit.validityReason))
+		}
 	}
 	if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 		return fmt.Errorf("writing search agent hit: %w", err)
@@ -158,7 +166,7 @@ func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.Docum
 			}
 		}
 		if err := writeSearchAgentHit(cmd, searchAgentHit{nodeID: hit.NodeID, match: match, path: hit.Path,
-			ranked: true, score: hit.Score, excerpt: hit.Excerpt}); err != nil {
+			ranked: true, score: hit.Score, excerpt: hit.Excerpt, validity: hit.Validity, validityReason: documentValidityReason(hit)}); err != nil {
 			return err
 		}
 	}

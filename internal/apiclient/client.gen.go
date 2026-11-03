@@ -30922,6 +30922,8 @@ type DocumentReference = kataevidence.DocumentReference
 
 type DocumentRenditionIdentity = api.DocumentRenditionIdentity
 
+type DocumentResultValidity = api.DocumentResultValidity
+
 type DocumentSearchCoverage = api.DocumentSearchCoverage
 
 type DocumentSearchReport = api.DocumentSearchReport
@@ -30961,6 +30963,8 @@ type DocumentSummary = api.DocumentSummary
 type DocumentSummaryResolveRequest = api.DocumentSummaryResolveRequest
 
 type DocumentSummaryResolveResponse = api.DocumentSummaryResolveResponse
+
+type DocumentValiditySuccessor = api.DocumentValiditySuccessor
 
 type DownloadBatesExportRequest struct {
 	// Schema A URL to the JSON Schema for this object.

@@ -1,0 +1,83 @@
+package store
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/pgtest"
+	"go.kenn.io/docbank/internal/store/pgschema"
+)
+
+func checkSearchValiditySQLite(t *testing.T) {
+	t.Helper()
+	checkSearchValidity(t, newTestStore(t), nil)
+}
+
+func checkSearchValidityPostgres(t *testing.T) {
+	t.Helper()
+	setup, owner := pgtest.NewDatabase(t)
+	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	checkSearchValidity(t, s, func(old, next int64) {
+		_, err := setup.ExecContext(t.Context(), `INSERT INTO documents.node_supersessions(successor_node_id,predecessor_node_id,note,recorded_at) VALUES($1,$2,'','2025-01-01T00:00:00Z')`, next, old)
+		require.NoError(t, err)
+		_, err = setup.ExecContext(t.Context(), `INSERT INTO documents.node_effective_windows(node_id,effective_from,effective_to) VALUES($1,'2025-01-01',NULL)`, next)
+		require.NoError(t, err)
+	})
+}
+
+func checkSearchValidity(t *testing.T, s *Store, seed func(int64, int64)) {
+	t.Helper()
+	ctx := t.Context()
+	count, err := s.CountSearchValidityDeclared(ctx, SearchOptions{}, 10)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	scope, err := s.Mkdir(ctx, s.RootID(), "leases")
+	require.NoError(t, err)
+	old, err := s.CreateFile(ctx, scope.ID, "old.txt", fakeHash("old"), 1, "text/plain; charset=utf-8")
+	require.NoError(t, err)
+	next, err := s.CreateFile(ctx, s.RootID(), "new.txt", fakeHash("new"), 1, "text/plain")
+	require.NoError(t, err)
+	if seed != nil {
+		seed(old.ID, next.ID)
+	} else {
+		_, err = s.PutSupersession(ctx, next.ID, old.ID, old.Revision, new(""))
+		require.NoError(t, err)
+		_, err = s.PutEffectiveWindow(ctx, next.ID, next.Revision, "2025-01-01", "")
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		scope     SearchOptions
+		cap, want int
+	}{
+		{SearchOptions{}, 10, 2}, {SearchOptions{}, 1, 1}, {SearchOptions{}, 0, 0},
+		{SearchOptions{ContentVersionIDs: []string{old.CurrentVersionID}}, 10, 1},
+		{SearchOptions{UnderNodeID: scope.ID, MIMEType: "text/plain", ModifiedSince: "2020-01-01T00:00:00Z"}, 10, 1},
+	} {
+		count, err = s.CountSearchValidityDeclared(ctx, tc.scope, tc.cap)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, count)
+	}
+	ids := []int64{old.ID, next.ID}
+	got, err := s.SearchResultValidity(ctx, SearchOptions{}, ids)
+	require.NoError(t, err)
+	require.True(t, got[old.ID].Declared)
+	require.Equal(t, []SearchValiditySuccessor{{NodeID: next.ID, Path: "/new.txt", EffectiveFrom: "2025-01-01"}}, got[old.ID].Successors)
+	require.Equal(t, "2025-01-01", got[next.ID].Window.From)
+	for _, filter := range []SearchOptions{{ContentVersionIDs: []string{old.CurrentVersionID}}, {UnderNodeID: scope.ID}} {
+		got, err = s.SearchResultValidity(ctx, filter, ids)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Empty(t, got[old.ID].Successors)
+		require.False(t, got[old.ID].Declared)
+	}
+	next, err = s.NodeByID(ctx, next.ID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, next.ID, next.Revision)
+	require.NoError(t, err)
+	got, err = s.SearchResultValidity(ctx, SearchOptions{}, ids)
+	require.NoError(t, err)
+	require.Empty(t, got[old.ID].Successors)
+	count, err = s.CountSearchValidityDeclared(ctx, SearchOptions{}, 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+}

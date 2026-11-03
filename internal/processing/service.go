@@ -374,6 +374,7 @@ type Coverage struct {
 }
 
 type SearchRequest struct {
+	AsOf                            string
 	AllLive                         *store.SearchOptions
 	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
@@ -1586,6 +1587,11 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
+	asOf, err := document.ResolveValidityDate(request.AsOf)
+	if err != nil {
+		return retrieval.Report{}, fmt.Errorf("%w: %w", store.ErrInvalidSupersession, err)
+	}
+	request.AsOf = asOf
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
 		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
@@ -1596,7 +1602,6 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	var profile configuredProfile
 	var ids []string
 	var searchScope store.SearchOptions
-	var err error
 	if request.AllLive != nil {
 		var ok bool
 		profile, ok = service.profiles[request.Profile]
@@ -1626,7 +1631,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			if err != nil {
 				return retrieval.Report{}, err
 			}
-			return prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
+			report, err := prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
+			report.AsOf = asOf
+			return report, err
 		}
 	}
 	if request.MediaSources != nil {
@@ -1655,8 +1662,21 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
+	extra, err := service.catalog.CountSearchValidityDeclared(ctx, searchScope, document.MaxRetrievalCandidateLimit-prepared.limit)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	lexicalLimit, vectorLimit := profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit
+	if extra > 0 {
+		lexicalLimit = max(lexicalLimit, prepared.limit+extra)
+		vectorLimit = max(vectorLimit, prepared.limit+extra)
+	}
+	order := func(ctx context.Context, results []retrieval.Result) ([]retrieval.Result, error) {
+		return service.applyValidity(ctx, results, searchScope, asOf)
+	}
 	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
-		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
+		LexicalLimit: lexicalLimit, VectorLimit: vectorLimit,
+		Order: order,
 		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
@@ -1664,6 +1684,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return retrieval.Report{}, err
 	}
 	report.RequestedMode = prepared.requestedMode
+	report.AsOf = asOf
 	return report, nil
 }
 
@@ -1672,6 +1693,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 func (service *Service) ValidateSearch(ctx context.Context, request SearchRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if _, err := document.ResolveValidityDate(request.AsOf); err != nil {
+		return fmt.Errorf("%w: %w", store.ErrInvalidSupersession, err)
 	}
 	profile, ok := service.profiles[request.Profile]
 	if !ok {
@@ -1747,6 +1771,9 @@ func (service *Service) prepareSearch(
 			Profile: profile.rerankingProfile, Provider: profile.rerankingProvider,
 			Authorizer: rerankingAuth, Deadline: profile.rerankingDeadline,
 			FailurePolicy: profile.rerankingFailurePolicy}
+	}
+	if request.Rerank {
+		searcherConfig.Reranking.Profile.MaxCandidates = min(searcherConfig.Reranking.Profile.MaxCandidates, limit)
 	}
 	searcher, err := retrieval.NewSearcher(searcherConfig)
 	if err != nil {

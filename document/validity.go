@@ -34,6 +34,17 @@ func ValidateDate(date string) error {
 	return nil
 }
 
+// ResolveValidityDate defaults an omitted date to today and validates it.
+func ResolveValidityDate(asOf string) (string, error) {
+	if asOf == "" {
+		asOf = time.Now().Format("2006-01-02")
+	}
+	if err := ValidateDate(asOf); err != nil {
+		return "", err
+	}
+	return asOf, nil
+}
+
 // ValidateEffectiveWindow validates canonical inclusive endpoints.
 func ValidateEffectiveWindow(w EffectiveWindow) error {
 	if err := ValidateDate(w.From); err != nil {

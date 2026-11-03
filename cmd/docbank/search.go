@@ -40,9 +40,11 @@ var (
 	searchSimilarTo      string
 	searchVersion        string
 	searchRerank         bool
+	searchAsOf           string
 )
 
 type documentSearchCLIOptions struct {
+	AsOf              string
 	Mode              string
 	Profile           string
 	BindingID         string
@@ -59,14 +61,12 @@ var searchCmd = &cobra.Command{
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Query words are joined; lexical search matches prefixes on current live
-names, then content.
+	Long: `Words match prefixes on live names, then content.
 With a query embedding binding, plain search uses hybrid over live files and
 appends matching folders. Filters, --fuzzy, --limit above
 100, and --mode lexical use lexical search. A failed hybrid attempt prints
 "degraded: REASON" to stderr and returns lexical results.
---json prints lexical {hits, limit, truncated} or hybrid processing results
-plus folders.
+--json prints lexical hits or hybrid results plus folders.
 --agent prints an OK header and one line per hit.
 Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
@@ -79,7 +79,7 @@ See docs/usage/search.md.`,
 		}
 		if searchFuzzy {
 			for _, flag := range []string{
-				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to",
+				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to", "as-of",
 			} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--fuzzy cannot be combined with --%s", flag))
@@ -93,7 +93,7 @@ See docs/usage/search.md.`,
 			if len(args) != 0 {
 				return usageError(errors.New("--similar-to does not accept query text"))
 			}
-			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present", "pdf-filter"} {
+			for _, flag := range []string{"mode", "explain", "rerank", "as-of", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present", "pdf-filter"} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
@@ -132,6 +132,7 @@ See docs/usage/search.md.`,
 				return usageError(errors.New("--mode search cannot be combined with tag, MIME, directory, or time filters"))
 			}
 			options := documentSearchCLIOptions{
+				AsOf: searchAsOf,
 				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
 				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
 				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON, Agent: searchAgent,
@@ -213,6 +214,15 @@ See docs/usage/search.md.`,
 			if err != nil {
 				return err
 			}
+		}
+		if searchAsOf != "" && automatic.report == nil {
+			if automatic.err != nil {
+				return automatic.err
+			}
+			if automatic.reason != "" {
+				return fmt.Errorf("automatic search failed: %s", automatic.reason)
+			}
+			return usageError(errors.New("--as-of requires automatic hybrid search or explicit processing search"))
 		}
 		// Lexical search runs after query embedding, so folder hits added to a
 		// hybrid report are as current as its revalidated results.
@@ -435,6 +445,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
+		AsOf:  options.AsOf,
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
@@ -556,7 +567,7 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 		_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
 		for _, result := range report.Results {
 			_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
-				formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+				formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path+documentValidityReason(result), result.Excerpt)
 		}
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("writing document search results: %w", err)
@@ -574,6 +585,25 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 		_, _ = fmt.Fprintln(out, "results truncated at the requested limit")
 	}
 	return nil
+}
+
+func documentValidityReason(result api.DocumentSearchResult) string {
+	if result.Validity == nil {
+		return ""
+	}
+	switch result.Validity.State {
+	case "expired":
+		return " (expired)"
+	case "not_yet_effective":
+		return " (not yet effective)"
+	case "superseded":
+		names := []string{}
+		for _, next := range result.Validity.SupersededBy {
+			names = append(names, next.Path)
+		}
+		return " (superseded by " + strings.Join(names, ", ") + ")"
+	}
+	return ""
 }
 
 func writeDocumentSearchHeader(cmd *cobra.Command, report api.DocumentSearchReport) {
@@ -617,6 +647,7 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 func init() {
 	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "e.g. pdf_has_javascript:true")
 	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
+	searchCmd.Flags().StringVar(&searchAsOf, "as-of", "", "evaluate validity on YYYY-MM-DD")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,

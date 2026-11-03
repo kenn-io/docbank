@@ -829,6 +829,8 @@ several are configured. The explicit CLI processing form requires that choice. `
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
+Optional `as_of` is a calendar date in `YYYY-MM-DD` form and defaults to today. The report returns the resolved `as_of`. Invalid dates return 422. Processing search ranks documents in force first before the page cutoff and again after reranking. Reranking receives only the selected page. Results with declarations include `validity` with `state`, optional `effective_from` and `effective_to`, and `superseded_by` objects containing `node_id`, `path`, and optional `effective_from`. Only direct, live successors within the fence or filtered scope count. Search does not traverse replacement chains. See [Search by effective date](../usage/search.md#search-by-effective-date) for candidate bounds. This contract uses daemon protocol revision 115.
+
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
 Each object names `source_id`, `source_version_id`, and `content_version_id`. Every

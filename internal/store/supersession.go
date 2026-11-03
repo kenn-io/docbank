@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"go.kenn.io/docbank/document"
 )
@@ -299,12 +298,12 @@ func validateSupersessionComponent(ctx context.Context, q metadataQuerier, start
 // NodeValidity evaluates a live file against its direct live successors.
 func (s *Store) NodeValidity(ctx context.Context, id int64, asOf string) (NodeValidityView, error) {
 	var v NodeValidityView
-	if asOf == "" {
-		asOf = time.Now().Format("2006-01-02")
-	}
-	if err := document.ValidateDate(asOf); err != nil {
+	var err error
+	asOf, err = document.ResolveValidityDate(asOf)
+	if err != nil {
 		return v, fmt.Errorf("%w: %w", ErrInvalidSupersession, err)
 	}
+
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return v, err
