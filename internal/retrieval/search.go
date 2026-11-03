@@ -209,9 +209,6 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 			return Report{}, err
 		}
 	}
-	for i := range report.Results {
-		report.Results[i].Rank = i + 1
-	}
 	return report, nil
 }
 

@@ -9730,12 +9730,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File | string;
+  file: Blob | File;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File | string;
+  file: Blob | File;
   metadata: MediaArtifactMetadata;
 };
 
@@ -10221,7 +10221,7 @@ export type UploadPushFileHeaders = {
 };
 
 export type UploadPushFileBody = {
-  file: Blob | File | string;
+  file: Blob | File;
 };
 
 export type ReadRenditionTextParams = {
@@ -10480,7 +10480,7 @@ export type UploadFileHeaders = {
 };
 
 export type UploadFileBody = {
-  file: Blob | File | string;
+  file: Blob | File;
 };
 
 export type GetContentVersionBytesHeaders = {
@@ -19660,7 +19660,7 @@ export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
     params: UploadPushFileParams,
     headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPushFileBody.file instanceof Blob ? uploadPushFileBody.file : new Blob([uploadPushFileBody.file], { type: '*/*' }));
+formData.append(`file`, uploadPushFileBody.file);
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -22100,7 +22100,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
+formData.append(`file`, uploadFileBody.file, params.name);
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};

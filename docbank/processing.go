@@ -198,7 +198,7 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 			sources[i] = retrieval.MediaSourceSelector(source)
 		}
 	}
-	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query, AsOf: request.AsOf,
+	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
 		MediaSources: sources,
 		ContentFirst: request.ContentFirst,
 		Mode:         string(request.Mode), Limit: request.Limit, Profile: request.Profile,
@@ -267,7 +267,7 @@ func fromCoverageClass(item internalprocessing.CoverageClass) CoverageClass {
 }
 
 func fromSearchReport(report internalprocessing.SearchReport, explain bool) DocumentSearchReport {
-	result := DocumentSearchReport{AsOf: report.AsOf, RequestedMode: DocumentSearchMode(report.RequestedMode),
+	result := DocumentSearchReport{RequestedMode: DocumentSearchMode(report.RequestedMode),
 		ActualMode:           DocumentSearchMode(report.ActualMode),
 		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
@@ -290,9 +290,9 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		if v := item.Validity; v != nil {
-			converted.Validity = &DocumentResultValidity{State: string(v.State), EffectiveFrom: v.EffectiveFrom, EffectiveTo: v.EffectiveTo, SupersededBy: make([]DocumentValiditySuccessor, 0, len(v.SupersededBy))}
+			converted.Validity = &DocumentResultValidity{State: string(v.State), SupersededBy: make([]DocumentValiditySuccessor, 0, len(v.SupersededBy))}
 			for _, next := range v.SupersededBy {
-				converted.Validity.SupersededBy = append(converted.Validity.SupersededBy, DocumentValiditySuccessor{NodeID: next.NodeID, Path: next.Path, EffectiveFrom: next.EffectiveFrom})
+				converted.Validity.SupersededBy = append(converted.Validity.SupersededBy, DocumentValiditySuccessor{NodeID: next.NodeID, Path: next.Path})
 			}
 		}
 		for evidenceIndex, evidence := range item.Evidence {

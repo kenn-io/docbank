@@ -79,7 +79,7 @@ See docs/usage/search.md.`,
 		}
 		if searchFuzzy {
 			for _, flag := range []string{
-				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to", "as-of",
+				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to",
 			} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--fuzzy cannot be combined with --%s", flag))

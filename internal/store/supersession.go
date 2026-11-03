@@ -303,7 +303,6 @@ func (s *Store) NodeValidity(ctx context.Context, id int64, asOf string) (NodeVa
 	if err != nil {
 		return v, fmt.Errorf("%w: %w", ErrInvalidSupersession, err)
 	}
-
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return v, err
