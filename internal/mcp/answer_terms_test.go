@@ -147,6 +147,11 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 	lead.Excerpt = ""
 	lead.Evidence = []api.DocumentEvidenceReference{{Kind: "node_name"}}
 	results = append(results, lead)
+	embedding := api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)}
+	embeddingLead := lead
+	embeddingLead.Score = 0.7
+	embeddingLead.Evidence = []api.DocumentEvidenceReference{embedding}
+	results = append(results, embeddingLead)
 	for _, tc := range []struct {
 		name                         string
 		question, first, second      []int
@@ -160,6 +165,7 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 		{"combined limit", []int{0, 1}, []int{2, 3}, []int{4, 2}, 3, false, true, 0, []string{"a", "c", "b"}},
 		{"term truncated", nil, nil, []int{2}, 1, true, true, 0, []string{"c"}},
 		{"duplicate leads", []int{5}, []int{5}, []int{5}, 5, false, false, 1, nil},
+		{"lead evidence does not crowd out passages", []int{6}, []int{5, 1}, nil, 2, false, false, 1, []string{"b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: versions}, summaries: daemonDocumentClient{fixture.connection}}
@@ -187,8 +193,14 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 			var texts []string
 			for i, passage := range out.Passages {
 				texts = append(texts, passage.Text)
-				require.Equal(t, i+1, passage.Rank)
-				if passage.Text == "a" || passage.Text == "b" {
+				wantRank := i + 1
+				if tc.name == "lead evidence does not crowd out passages" {
+					wantRank++
+				}
+				require.Equal(t, wantRank, passage.Rank)
+				if tc.name == "lead evidence does not crowd out passages" {
+					require.Nil(t, passage.Relevance)
+				} else if passage.Text == "a" || passage.Text == "b" {
 					require.InDelta(t, 0.7, *passage.Relevance, 1e-12)
 				} else {
 					require.Nil(t, passage.Relevance)
@@ -197,6 +209,19 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 			require.Len(t, out.Leads, tc.wantLeads)
 			require.Equal(t, tc.want, texts)
 			require.Equal(t, tc.wantTruncated, slices.Contains(out.CoverageReasons, "retrieval_truncated"))
+			if tc.name == "lead evidence does not crowd out passages" {
+				require.Equal(t, answer.Answered, out.Status)
+				require.Equal(t, 1, out.Leads[0].Rank)
+				var evidence []api.DocumentEvidenceReference
+				for _, id := range out.Leads[0].EvidenceIDs {
+					var item api.DocumentEvidenceReference
+					require.NoError(t, json.Unmarshal([]byte(id), &item))
+					evidence = append(evidence, item)
+				}
+				require.ElementsMatch(t, []api.DocumentEvidenceReference{embedding, {Kind: "node_name"}}, evidence)
+				require.NotNil(t, out.Leads[0].Relevance)
+				require.InDelta(t, 0.7, *out.Leads[0].Relevance, 1e-12)
+			}
 		})
 	}
 }
