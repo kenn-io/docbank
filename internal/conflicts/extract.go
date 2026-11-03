@@ -993,7 +993,7 @@ func splitClauses(s string) []clause {
 			start = i
 			continue
 		}
-		if r == ';' || r == '\n' && hardLineBreak(s, i) {
+		if normalizedPunctuation(r) == ';' || r == '\n' && hardLineBreak(s, i) {
 			emit(i, false)
 			i += n
 			start = i
@@ -1003,7 +1003,7 @@ func splitClauses(s string) []clause {
 			next := i + n
 			for next < len(s) {
 				closer, size := utf8.DecodeRuneInString(s[next:])
-				if !strings.ContainsRune(closingPunctuation, closer) {
+				if !strings.ContainsRune(closingPunctuation, normalizedPunctuation(closer)) {
 					break
 				}
 				next += size
@@ -1033,16 +1033,21 @@ func splitClauses(s string) []clause {
 }
 
 func sentenceEndPunctuation(r rune) bool {
-	switch r {
+	switch normalizedPunctuation(r) {
 	case '.', '!', '?':
-		return true
-	}
-	switch norm.NFKC.String(string(r)) {
-	case ".", "!", "?":
 		return true
 	default:
 		return false
 	}
+}
+
+func normalizedPunctuation(r rune) rune {
+	normalized := norm.NFKC.String(string(r))
+	if utf8.RuneCountInString(normalized) != 1 {
+		return r
+	}
+	result, _ := utf8.DecodeRuneInString(normalized)
+	return result
 }
 
 // Blank lines and list or table rows separate independent statements.
@@ -1527,24 +1532,44 @@ func rateApproximationBoundary(s string) int {
 	if loc == nil {
 		return 0
 	}
-	end := loc[1]
-	for end > loc[0] {
+	return rateQualifierRateBoundary(s, loc[1])
+}
+
+func postfixBoundRateBoundary(s string) int {
+	return rateQualifierRateBoundary(s, postfixBoundEnd(s))
+}
+
+func rateQualifierRateBoundary(s string, end int) int {
+	if end == 0 {
+		return 0
+	}
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if !strings.ContainsRune(closingPunctuation, r) {
+			break
+		}
+		end += size
+	}
+	for end > 0 {
 		r, size := utf8.DecodeLastRuneInString(s[:end])
 		if !unicode.IsSpace(r) {
 			break
 		}
 		end -= size
 	}
-	if end == loc[0] || !rateRE.MatchString(s[end:]) {
+	if !rateRE.MatchString(s[end:]) {
 		return 0
 	}
 	return end
 }
 
 func rateEnd(s string) int {
-	approximationPrefix := rateApproximationBoundary(s)
-	if approximationPrefix > 0 {
-		s = s[approximationPrefix:]
+	qualifierPrefix := rateApproximationBoundary(s)
+	if qualifierPrefix == 0 {
+		qualifierPrefix = postfixBoundRateBoundary(s)
+	}
+	if qualifierPrefix > 0 {
+		s = s[qualifierPrefix:]
 	}
 	loc := rateRE.FindStringSubmatchIndex(s)
 	if loc == nil || numeralWord(s[loc[4]:loc[5]]) || loc[2] < 0 && rateBoundLeadRE.MatchString(s) || rateFractionRE.MatchString(s) {
@@ -1598,7 +1623,7 @@ func rateEnd(s string) int {
 	if strings.HasPrefix(s[end:], ".") && durationAbbrevRE.MatchString(s[:end+1]) {
 		end++
 	}
-	return approximationPrefix + end
+	return qualifierPrefix + end
 }
 
 // A stated end date is not an unsupported numeric range endpoint.
@@ -1876,7 +1901,7 @@ func dateContinuedPrefix(prefix string) bool {
 	return unicode.IsDigit(previous)
 }
 
-var incompleteAlternativeDateSuffixRE = regexp.MustCompile(`(?i)^[\s,)\]"'‘’“”»]+or\s+[(\["'‘’“”«]*(?:[0-9]{1,2}\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december)\b`)
+var incompleteAlternativeDateSuffixRE = regexp.MustCompile(`(?i)^[\s,)\]"'‘’“”»]+or\s+[(\["'‘’“”«]*(?:[0-9]{4}\b|(?:[0-9]{1,2}\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december)\b)`)
 
 var bareAlternativeDayRE = regexp.MustCompile(`(?i)^[\s,)\]"'‘’“”»]+or\s+[(\["'‘’“”«]*[0-9]{1,2}\s*(?:[.?!,;)»]|$)`)
 

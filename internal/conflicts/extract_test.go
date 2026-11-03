@@ -2055,7 +2055,7 @@ func TestExtractIndependentPeriodScopes(t *testing.T) {
 		if got := Extract("From 1 July 2026 or about 1 August 2026 the fee is $7. The wait is 2 days."); len(got) != 1 || got[0].Text != "2 days" || got[0].Period != (Period{}) {
 			t.Errorf("approximate alternative scope: %+v", got)
 		}
-		for _, text := range []string{"From 1 July 2026 or (1 August 2026) the fee is $7.", "From 1 July 2026 or 1 August 2026 approximately the fee is $7.", "From 1 July 2026 or 1 August 2026 the fee is $7.", "The fee is $7 from 1 July 2026 or 1 August 2026.", "Until 1 July 2026 or 1 August 2026 the fee is $7.", "The fee is $7 until 1 July 2026 or 1 August 2026."} {
+		for _, text := range []string{"From 1 July 2026 or (1 August 2026) the fee is $7.", "From 1 July 2026 or 1 August 2026 approximately the fee is $7.", "From 1 July 2026 or 1 August 2026 the fee is $7.", "From 1 July 2026 or 2027 the fee is $7.", "The fee is $7 from 1 July 2026 or 1 August 2026.", "Until 1 July 2026 or 1 August 2026 the fee is $7.", "The fee is $7 until 1 July 2026 or 1 August 2026."} {
 			got := Extract(text)
 			if len(got) != 1 || got[0].Text != "$7" || got[0].Period != (Period{}) || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
 				t.Errorf("alternative bounds %q: %+v", text, got)
@@ -4621,6 +4621,9 @@ func TestExtractReviewNormalizedAbbreviationsAndRateGroups(t *testing.T) {
 		{"normalized identifier abbreviation suppresses money", "Policy Ｎｏ. is $1234.", nil, nil, nil},
 		{"approximation phrase before rate", "The fee is $5 more or less per 2 devices.", nil, nil, nil},
 		{"wrapped approximation before rate", "The fee is $5 (approximately) per 2 devices.", nil, nil, nil},
+		{"bracketed approximation before rate", "The fee is $5 [approximately] per 2 devices.", nil, nil, nil},
+		{"postfix maximum before rate", "The fee is $5 maximum per 2 devices.", nil, nil, nil},
+		{"bracketed postfix maximum before rate", "The fee is $5 [maximum] per 2 devices.", nil, nil, nil},
 		{"coordinated rate-bearing percentage bases", "The fee is 5% of $100 per month and $200 per year.", []string{"5%"}, []string{percentKind}, []string{""}},
 	}
 	for _, tt := range tests {
@@ -4636,6 +4639,30 @@ func TestExtractReviewNormalizedAbbreviationsAndRateGroups(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtractReviewNormalizationEquivalentClausePunctuation(t *testing.T) {
+	t.Run("fullwidth semicolon keeps period scopes separate", func(t *testing.T) {
+		text := "From 1 July 2026 the fee is $5； The deposit is $7."
+		got := Extract(text)
+		if len(got) != 2 {
+			t.Fatalf("figures = %+v, want fee and deposit", got)
+		}
+		if got[0].Text != "$5" || got[0].Period != (Period{From: "2026-07-01"}) {
+			t.Errorf("fee figure = %+v, want its July period", got[0])
+		}
+		if got[1].Text != "$7" || got[1].Period != (Period{}) || got[1].Clause != "The deposit is $7." || string([]rune(text)[got[1].Start:got[1].End]) != "$7" {
+			t.Errorf("deposit figure = %+v, want independent clause with original offsets", got[1])
+		}
+	})
+
+	t.Run("fullwidth closing quote allows sentence split", func(t *testing.T) {
+		text := "The wait is not 7 days.＂ The deposit is $7."
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
+			t.Fatalf("negation crossed a fullwidth closing quote: %+v", got)
+		}
+	})
 }
 
 func TestExtractReviewPossessivesAndWrappedDateRanges(t *testing.T) {
