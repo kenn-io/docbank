@@ -177,8 +177,11 @@ The policy renews annually.
 
 func TestMatchAnswerCardsRejectsOversizedMCPEnvelope(t *testing.T) {
 	const cardCount = 10
-	const quoteChars = 8200
-	quote := strings.Repeat("\x01", quoteChars)
+	const quoteChars = 16_000
+	const answerChars = 4_000
+	// Quotation marks survive rendition sanitization and expand in both MCP encodings.
+	quote := strings.Repeat(`"`, quoteChars)
+	answer := strings.Repeat(`"`, answerChars)
 	digest := strings.Repeat("a", 64)
 	type cardFixture struct {
 		nodeID  int64
@@ -212,8 +215,8 @@ citations:
     quote: %s
 state: draft
 ---
-The policy renews annually.
-`, testVaultID, testVersionID, digest, digest, digest, digest, quoteChars, strconv.Quote(quote))
+%s
+`, testVaultID, testVersionID, digest, digest, digest, digest, quoteChars, strconv.Quote(quote), answer)
 		card, err := answercard.Parse([]byte(raw))
 		require.NoError(t, err)
 		raw = strings.Replace(raw, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1)
