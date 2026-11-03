@@ -755,10 +755,10 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
 	if err != nil || current != lease.Generation.SourceManifestChecksum {
 		release()
-		if current != "" && current != lease.Generation.SourceManifestChecksum {
-			return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
+		if err != nil {
+			return SemanticSearchAuthority{}, err
 		}
-		return SemanticSearchAuthority{}, err
+		return SemanticSearchAuthority{}, ErrVectorIndexSourceStale
 	}
 	if normalized.EmbeddingDescriptor != nil {
 		descriptor := *normalized.EmbeddingDescriptor

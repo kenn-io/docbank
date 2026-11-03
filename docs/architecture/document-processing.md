@@ -249,6 +249,8 @@ current or trashed content, previews, or photo visibility and display ownership
 force a fresh capture. Publication and the idle vector worker record verification;
 searches stay read-only. Verification survives a restart, and a changed grid recipe
 requires a new capture.
+After a membership write, searches capture in full until the vector worker
+re-verifies the head on its idle scan.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact

@@ -148,19 +148,11 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 
 // vectorIndexSourceChecksumTx checks verification in the same snapshot as its consumer.
 func vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, space string) (string, error) {
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
-	if err != nil {
-		return "", err
+	head, err := activeVectorIndexHeadTx(ctx, tx, space)
+	if err == nil && head.Verified {
+		return head.SourceManifestChecksum, nil
 	}
-	var checksum string
-	err = tx.QueryRowContext(ctx, `SELECT h.source_manifest_checksum FROM vector_index_heads h
-		JOIN vector_index_source_verifications v ON v.vector_space_id=h.vector_space_id AND v.generation_id=h.generation_id
-		JOIN vector_index_source_state s ON s.singleton=1 AND s.revision=v.verified_revision
-		WHERE h.vector_space_id=? AND v.grid_recipe=?`, space, fingerprints.GridRecipe).Scan(&checksum)
-	if err == nil {
-		return checksum, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return "", err
 	}
 	source, err := captureVectorIndexSourceTx(ctx, tx, space)
@@ -469,12 +461,16 @@ type VectorIndexHead struct {
 }
 
 func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string) (VectorIndexHead, error) {
+	return activeVectorIndexHeadTx(ctx, s.db, vectorSpaceID)
+}
+
+func activeVectorIndexHeadTx(ctx context.Context, query metadataQuerier, vectorSpaceID string) (VectorIndexHead, error) {
 	var head VectorIndexHead
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return head, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT h.generation_id,h.source_manifest_checksum,
+	err = query.QueryRowContext(ctx, `SELECT h.generation_id,h.source_manifest_checksum,
 		EXISTS(SELECT 1 FROM vector_index_source_verifications v JOIN vector_index_source_state s ON s.singleton=1
 			WHERE v.vector_space_id=h.vector_space_id AND v.generation_id=h.generation_id AND v.verified_revision=s.revision AND v.grid_recipe=?)
 		FROM vector_index_heads h WHERE h.vector_space_id=?`, fingerprints.GridRecipe, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum, &head.Verified)

@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -768,4 +770,32 @@ func TestVectorIndexSourceVerificationSurvivesUnrelatedWritesAndRestart(t *testi
 	head, err = reopened.ActiveVectorIndexHead(t.Context(), source.VectorSpaceID)
 	require.NoError(t, err)
 	require.True(t, head.Verified)
+}
+
+func TestVectorIndexUnembeddedPhotoSkipsSourceCapture(t *testing.T) {
+	t.Parallel()
+	s, record, source := newPublishedVectorIndexFixture(t)
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("photo-import", source, []byte("index"), time.Now().UTC())))
+	require.NoError(t, s.MarkVectorIndexHeadVerified(t.Context(), source))
+	_, err := s.CreateFile(t.Context(), s.RootID(), "unembedded.jpg", hashVectorIndexTest("unembedded-photo"), 20, "image/jpeg")
+	require.NoError(t, err)
+	var captures atomic.Int64
+	release := make(chan struct{})
+	close(release)
+	readDB := s.db
+	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
+		if strings.Contains(query, "JOIN embedding_vector_sets") {
+			captures.Add(1)
+		}
+	}})
+	t.Cleanup(func() {
+		require.NoError(t, s.db.Close())
+		require.NoError(t, readDB.Close())
+	})
+	current, _, complete, rows, err := s.semanticSearchAuthorityFence(t.Context(), record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, SearchOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, source.ManifestChecksum, current)
+	require.Equal(t, 1, complete)
+	require.Len(t, rows, 1)
+	require.Zero(t, captures.Load(), "an unembedded photo must leave the text index verified")
 }

@@ -2920,3 +2920,34 @@ func TestAcquireSemanticSearchAuthorityReleasesStaleSourceLease(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
 	require.Zero(t, leases)
 }
+
+func TestAcquireSemanticSearchAuthorityPreservesFenceError(t *testing.T) {
+	t.Parallel()
+	s, first, source := newPublishedVectorIndexFixture(t)
+	now := time.Now().UTC()
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("canceled-search", source, []byte("index"), now)))
+	publishVectorIndexMembersForTest(t, s, first, 2)
+	current, err := s.CaptureVectorIndexSource(t.Context(), source.VectorSpaceID)
+	require.NoError(t, err)
+	require.NotEqual(t, source.ManifestChecksum, current.ManifestChecksum)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	release := make(chan struct{})
+	close(release)
+	readDB := s.db
+	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
+		// Cancel the coverage query after the fence has captured the changed source.
+		if strings.Contains(query, "SELECT COUNT(*) FROM "+nodeFrom) {
+			cancel()
+		}
+	}})
+	t.Cleanup(func() {
+		require.NoError(t, s.db.Close())
+		require.NoError(t, readDB.Close())
+	})
+	_, err = s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "canceled-search", now, time.Minute, SearchOptions{})
+	require.ErrorIs(t, err, context.Canceled)
+	var leases int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+	require.Zero(t, leases)
+}

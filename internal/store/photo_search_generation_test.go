@@ -87,6 +87,7 @@ type photoSearchBeginConnector struct {
 	db      *sql.DB
 	start   func()
 	release chan struct{}
+	query   func(string)
 }
 
 func (c photoSearchBeginConnector) Driver() driver.Driver { return c.db.Driver() }
@@ -121,7 +122,7 @@ func (c photoSearchBeginConnector) Connect(ctx context.Context) (driver.Conn, er
 		return nil, errors.Join(err, conn.Close())
 	}
 	return photoSearchBeginConn{
-		photoSearchDriverConn: raw, start: c.start, release: c.release,
+		photoSearchDriverConn: raw, start: c.start, release: c.release, query: c.query,
 		close: func() error {
 			close(released)
 			<-finished
@@ -145,9 +146,17 @@ type photoSearchBeginConn struct {
 	start   func()
 	release chan struct{}
 	close   func() error
+	query   func(string)
 }
 
 func (c photoSearchBeginConn) Close() error { return c.close() }
+
+func (c photoSearchBeginConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if c.query != nil {
+		c.query(query)
+	}
+	return c.photoSearchDriverConn.QueryContext(ctx, query, args)
+}
 
 func (c photoSearchBeginConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	c.start()

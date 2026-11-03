@@ -3137,66 +3137,86 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_insert
 AFTER INSERT ON rendition_heads
+WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (NEW.content_version_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_update
 AFTER UPDATE ON rendition_heads
+WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (OLD.content_version_id,NEW.content_version_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_delete
 AFTER DELETE ON rendition_heads
+WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (OLD.content_version_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_insert
 AFTER INSERT ON visual_preview_generations
+WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (NEW.content_version_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_delete
 AFTER DELETE ON visual_preview_generations
+WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (OLD.content_version_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_insert
 AFTER INSERT ON photo_files
+WHEN EXISTS(SELECT 1 FROM content_versions v JOIN embedding_heads h ON h.content_version_id=v.version_id
+    WHERE v.node_id IN (NEW.node_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_update
 AFTER UPDATE OF asset_id,node_id,file_id ON photo_files
+WHEN EXISTS(SELECT 1 FROM content_versions v JOIN embedding_heads h ON h.content_version_id=v.version_id
+    WHERE v.node_id IN (OLD.node_id,NEW.node_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_delete
 AFTER DELETE ON photo_files
+WHEN EXISTS(SELECT 1 FROM content_versions v JOIN embedding_heads h ON h.content_version_id=v.version_id
+    WHERE v.node_id IN (OLD.node_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_insert
 AFTER INSERT ON photo_assets
+WHEN EXISTS(SELECT 1 FROM photo_files f JOIN content_versions v ON v.node_id=f.node_id
+    JOIN embedding_heads h ON h.content_version_id=v.version_id
+    WHERE f.asset_id IN (NEW.asset_id) OR f.file_id IN (NEW.display_file_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_update
 AFTER UPDATE OF kind,display_file_id,hidden_at,excluded_at ON photo_assets
+WHEN EXISTS(SELECT 1 FROM photo_files f JOIN content_versions v ON v.node_id=f.node_id
+    JOIN embedding_heads h ON h.content_version_id=v.version_id
+    WHERE f.asset_id IN (OLD.asset_id,NEW.asset_id) OR f.file_id IN (OLD.display_file_id,NEW.display_file_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_delete
 AFTER DELETE ON photo_assets
+WHEN EXISTS(SELECT 1 FROM photo_files f JOIN content_versions v ON v.node_id=f.node_id
+    JOIN embedding_heads h ON h.content_version_id=v.version_id
+    WHERE f.asset_id IN (OLD.asset_id) OR f.file_id IN (OLD.display_file_id))
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
@@ -3205,13 +3225,6 @@ CREATE TRIGGER IF NOT EXISTS vector_source_nodes_update
 AFTER UPDATE OF current_version_id,trashed_at ON nodes
 WHEN (OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at)
  AND EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id))
-BEGIN
-    UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
-END;
-
-CREATE TRIGGER IF NOT EXISTS vector_source_content_versions_delete
-AFTER DELETE ON content_versions
-WHEN EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id=OLD.version_id)
 BEGIN
     UPDATE vector_index_source_state SET revision=revision+1 WHERE singleton=1;
 END;
