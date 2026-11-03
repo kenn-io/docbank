@@ -23,8 +23,11 @@ day or month. A duration immediately before a
 unknown. When an exclusive bound cannot be represented, or the bounds are inverted, the whole period
 is unknown. Month-precision end bounds include their entire month. Independent
 assertions with unclear date scope also receive an unknown period. A date
-without another figure remains a date value with day or month precision. A file's modification date is a
-separate source property and is not inferred by this package.
+without another figure remains a date value with day or month precision,
+unless it is a standalone bound such as `before 1 July 2026` or
+`before 1 July 2026 or 2 August 2026`; those dates are omitted rather than
+compared as exact values. A file's modification date is a separate source
+property and is not inferred by this package.
 If a clause states different dates for the same period bound, extraction omits
 the clause rather than assigning the final date to every figure.
 The search report date facility extracts dates from verified, identity-bound artifact
@@ -61,6 +64,9 @@ with ASCII or typographic apostrophes. `no more than` and
 `less than or equal to` and `greater than or equal to` are inclusive bounds,
 as are `maximum of` and `minimum of`. `Exceed`, `exceeds`, `exceeded`,
 and `exceeding` mark an exclusive lower bound when they precede a figure.
+Comparison continuations omit the clause even when the right operand cannot be
+parsed, including symbolic comparisons after a rate and wrapped relative
+duration bounds such as `7 days before (about 10 days)`.
 Sentence punctuation followed by closing quotes or brackets ends a clause. Soft line wraps stay in the same clause; blank lines and list or table rows separate clauses.
 Approximation markers (`about`, `approximately`, `around`, `roughly`, `nearly`,
 `almost`, `circa`, `estimated`, `~`, and `≈`) before or after a figure cause its

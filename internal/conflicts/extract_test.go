@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func TestExtractKinds(t *testing.T) {
@@ -567,6 +568,60 @@ func FuzzExtractRejectsQualifiedAbbreviatedRelativeDurationComparisons(f *testin
 		text := "The deadline is " + amount + " min. " + connectors[int(connectorChoice)%len(connectors)] + " " + qualifiers[int(qualifierChoice)%len(qualifiers)] + operand + " min."
 		if got := Extract(text); len(got) != 0 {
 			t.Fatalf("qualified relative-duration comparison retained exact figures for %q: %+v", text, got)
+		}
+	})
+}
+
+func FuzzExtractRejectsWrappedRelativeDurationComparisons(f *testing.F) {
+	connectors := []string{"after", "before", "prior to", "After", "Before", "Prior to"}
+	qualifiers := []string{"about ", "approximately ", "at least ", "no more than ", "~"}
+	for connector := range connectors {
+		for qualifier := range qualifiers {
+			f.Add(uint8(connector), uint8(qualifier), uint8(7))
+		}
+	}
+	f.Fuzz(func(t *testing.T, connectorChoice, qualifierChoice, amountChoice uint8) {
+		amounts := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+		amount := amounts[int(amountChoice)%len(amounts)]
+		operand := amounts[(int(amountChoice)+1)%len(amounts)]
+		text := "The deadline is " + amount + " days " + connectors[int(connectorChoice)%len(connectors)] + " (" + qualifiers[int(qualifierChoice)%len(qualifiers)] + operand + " days)."
+		if got := Extract(text); len(got) != 0 {
+			t.Fatalf("wrapped relative-duration comparison retained exact figures for %q: %+v", text, got)
+		}
+	})
+}
+
+func FuzzExtractRejectsSymbolicComparisonContinuations(f *testing.F) {
+	for _, operand := range []string{"negative 10", "approximately ($10/month)", "thirty"} {
+		f.Add(operand)
+	}
+	f.Fuzz(func(t *testing.T, operand string) {
+		operandTokenStart := strings.IndexFunc(operand, func(r rune) bool {
+			return unicode.IsLetter(r) || unicode.IsDigit(r)
+		})
+		if len(operand) > 128 || strings.TrimSpace(operand) == "" || operandTokenStart < 0 {
+			t.Skip()
+		}
+		for _, prefix := range []string{"The fee is $5/month < ", "The fee is $5 < "} {
+			text := prefix + operand + "."
+			leftStart := len([]rune("The fee is "))
+			leftByte := strings.Index(prefix, "$5")
+			rightByte := len(prefix) + operandTokenStart
+			sameClause := false
+			for _, clause := range splitClauses(text) {
+				if clause.start <= leftByte && leftByte < clause.end && clause.start <= rightByte && rightByte < clause.end {
+					sameClause = true
+					break
+				}
+			}
+			if !sameClause {
+				continue
+			}
+			for _, figure := range Extract(text) {
+				if figure.Start == leftStart {
+					t.Fatalf("symbolic comparison retained its left exact figure for %q: %+v", text, figure)
+				}
+			}
 		}
 	})
 }
@@ -2550,6 +2605,8 @@ func TestExtractRejectsSymbolicRelativeDurationBounds(t *testing.T) {
 		"The deadline is 7 minutes before ≥10 minutes.",
 		"The deadline is 7 days before >= 10 days.",
 		"The deadline is 7 min. before ≥10 min.",
+		"The deadline is 7 days before (about 10 days).",
+		"The deadline is 7 days before (at least 10 days).",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("symbolic relative-duration comparison retained exact figures for %q: %+v", text, got)
@@ -2562,6 +2619,9 @@ func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 		"The fee is $5/month < about $10/month.",
 		"The fee is $5 < about $10.",
 		"The fee is $5/month < -10.",
+		"The fee is $5/month < negative 10.",
+		"The fee is $5/month < approximately ($10/month).",
+		"The fee is $5 < thirty.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("qualified comparison retained exact figures for %q: %+v", text, got)
@@ -2571,6 +2631,22 @@ func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 	got := Extract(text)
 	if len(got) != 2 || got[0].Text != "$5" || got[1].Text != "$10" {
 		t.Fatalf("independent rate assertions were suppressed: %+v", got)
+	}
+}
+
+func TestExtractOmitsStandaloneBoundedDates(t *testing.T) {
+	for _, text := range []string{
+		"The filing deadline is before 1 July 2026.",
+		"The filing deadline is before 1 July 2026 or 2 August 2026.",
+		"The filing deadline is after 1 July 2026.",
+		"The filing deadline is prior to 1 July 2026.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("bounded standalone date retained an exact value for %q: %+v", text, got)
+		}
+	}
+	if got := Extract("The filing deadline is 1 July 2026."); len(got) != 1 || got[0].Text != "1 July 2026" {
+		t.Errorf("exact standalone date was omitted: %+v", got)
 	}
 }
 
@@ -4837,6 +4913,25 @@ func TestExtractReviewNormalizationEquivalentClausePunctuation(t *testing.T) {
 			t.Fatalf("negation crossed a fullwidth closing quote: %+v", got)
 		}
 	})
+}
+
+func TestExtractSplitsNFKCListAndTableBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		name, text, clause string
+	}{
+		{"fullwidth list marker", "－ The wait is not\n－ The fee is $5.", "－ The fee is $5."},
+		{"fullwidth table pipes", "｜Policy｜old value｜\nThe fee is $5.", "The fee is $5."},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != 1 || got[0].Text != "$5" || got[0].Clause != tt.clause {
+				t.Fatalf("figure after normalized line boundary = %+v, want $5 in %q", got, tt.clause)
+			}
+			if string([]rune(tt.text)[got[0].Start:got[0].End]) != "$5" {
+				t.Errorf("figure source offsets do not preserve original text: %+v", got[0])
+			}
+		})
+	}
 }
 
 func TestExtractReviewPossessivesAndWrappedDateRanges(t *testing.T) {

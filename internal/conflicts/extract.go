@@ -263,6 +263,11 @@ clauses:
 			}
 		}
 		selected = omitAlternativeStandaloneDates(s, checks, selected)
+		if !slices.ContainsFunc(selected, func(c candidate) bool { return c.f.Kind != dateKind }) {
+			selected = slices.DeleteFunc(selected, func(c candidate) bool {
+				return c.f.Kind == dateKind && standaloneDateBoundPrefix(s[:c.start])
+			})
+		}
 		period := Period{}
 		var acceptedDates []dateSpan
 		nonDate := false
@@ -1133,7 +1138,7 @@ func hardLineBreak(s string, i int) bool {
 	} else {
 		end += i + 1
 	}
-	before, after := s[start:i], s[i+1:end]
+	before, after := norm.NFKC.String(s[start:i]), norm.NFKC.String(s[i+1:end])
 	return strings.TrimSpace(before) == "" || strings.TrimSpace(after) == "" ||
 		strings.Contains(before, "|") || strings.Contains(after, "|") ||
 		listRowRE.MatchString(before) && strings.TrimLeft(after, " \t") == after || listRowRE.MatchString(after)
@@ -1514,10 +1519,18 @@ func unsafeCandidates(s string, checks, cs []candidate) bool {
 		}
 	}
 	return slices.ContainsFunc(checks, func(c candidate) bool {
-		return c.priority > 0 && (bareComparisonRE.MatchString(s[c.end:]) || compoundPrefixWithRates(s, c.start, checks, cs) || compoundSuffixBeforeDates(s, c.end, c.f, cs, checks))
+		return c.priority > 0 && (c.f.Kind == durationKind && numericRelativeDurationContinuation(s[c.end:]) || comparisonContinuationAfterRate(s[c.end:]) || compoundPrefixWithRates(s, c.start, checks, cs) || compoundSuffixBeforeDates(s, c.end, c.f, cs, checks))
 	})
 }
 
+func comparisonContinuationAfterRate(s string) bool {
+	if n := rateEnd(s); n > 0 {
+		s = s[n:]
+	}
+	return bareComparisonRE.MatchString(s) || symbolicComparisonContinuationRE.MatchString(s)
+}
+
+var symbolicComparisonContinuationRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥)\s*[^\p{L}\p{N}]*[\p{L}\p{N}]`)
 var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:[+\-−]\s*)?(?:` + number + `)\b`)
 
 var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)?)[\s(["'‘’“”«»]*$`)
@@ -1705,6 +1718,22 @@ func rateBoundConnector(s string) bool {
 
 var plainDateBoundConnectorRE = regexp.MustCompile(`(?i)^\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
 var dateBoundConnectorRE = regexp.MustCompile(`(?i)^\s*(?:` + rateRE.String() + `\.?)?\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
+var standaloneDateBoundPrefixRE = regexp.MustCompile(`(?i)\b(?:before|after|prior\s+to)\s+[(\["'‘’“”«]*\s*$`)
+var standaloneDateBoundLeadRE = regexp.MustCompile(`(?i)\b(?:before|after|prior\s+to)\s+`)
+var standaloneDateAlternativeLeadRE = regexp.MustCompile(`(?i)(?:,\s*)?\b(?:or|and|through|to|until|till)\s*[(\["'‘’“”«]*\s*$`)
+
+func standaloneDateBoundPrefix(prefix string) bool {
+	if standaloneDateBoundPrefixRE.MatchString(prefix) {
+		return true
+	}
+	bound := standaloneDateBoundLeadRE.FindStringIndex(prefix)
+	if bound == nil {
+		return false
+	}
+	tail := prefix[bound[1]:]
+	date := dateRE.FindStringIndex(tail)
+	return date != nil && standaloneDateAlternativeLeadRE.MatchString(tail[date[1]:])
+}
 
 func endsTypedFigure(s string) bool {
 	for _, re := range []*regexp.Regexp{moneyRE, unitRE, countRE} {
