@@ -1356,7 +1356,7 @@ func (w *Watcher) scanDirectory(
 		if w.observeFile != nil {
 			observe = func(withChange bool) (watchFileState, error) { return w.observeFile(source, withChange) }
 		}
-		state, err := observe(w.process == nil)
+		state, err := observe(w.process == nil || !w.immediate)
 		if err != nil {
 			if inventory != nil {
 				if retryableWatchCollectionError(err) {
@@ -1436,7 +1436,8 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	if hints.matches(rel) && exists {
 		observation.processed = false
 	}
-	if observation.digest != "" && (hints.Reconcile || hints.matches(rel) || fingerprintChanged) {
+	// A matching native change time vouches for the bytes between periodic scans.
+	if observation.digest != "" && (hints.matches(rel) || fingerprintChanged || (hints.Reconcile && fingerprint.change == 0)) {
 		var digest string
 		digest, err = source.digest(ctx, fingerprint)
 		if err == nil && digest != observation.digest {

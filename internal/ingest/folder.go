@@ -98,7 +98,7 @@ func (source watchSource) digest(ctx context.Context, expected watchFingerprint)
 	if err != nil {
 		return "", &SourceAccessError{Err: err}
 	}
-	if !expected.matches(fingerprintFileInfo(info)) {
+	if !expected.matches(fingerprintOpenFile(f, info, expected.change != 0)) {
 		return "", ErrSourceChanged
 	}
 	return (FolderFile{File: f, Info: info}).Digest(ctx)
@@ -123,8 +123,10 @@ type FolderScanner struct {
 
 // NewFolderScanner creates a read-only client-side scanner. ScanOnce admits
 // files immediately; Run uses a full settle window by default, including on
-// restart. Prompt mode skips that delay. Periodic scans recheck digests
-// recorded by FolderFile.Digest; changed bytes start a new observation.
+// restart. Prompt mode skips that delay. Periodic scans recheck digests recorded
+// by FolderFile.Digest when identity, size, mtime, or native change time changes,
+// or on every scan when the filesystem reports no change time. Changed bytes
+// start a new observation.
 // reject receives each file or subdirectory that cannot be read, once until it
 // becomes readable or disappears, and the scan continues with the rest.
 func NewFolderScanner(
@@ -178,7 +180,7 @@ func NewFolderScanner(
 		if err != nil {
 			return &SourceAccessError{Err: fmt.Errorf("checking folder file: %w", err)}
 		}
-		if !expected.matches(fingerprintFileInfo(before)) {
+		if !expected.matches(fingerprintOpenFile(f, before, expected.change != 0)) {
 			return ErrSourceChanged
 		}
 		file := FolderFile{Ref: ref, File: f, Info: before, Scan: scanner.scans, digest: &observation.digest, check: func() error {
@@ -186,7 +188,7 @@ func NewFolderScanner(
 			if statErr != nil {
 				return &SourceAccessError{Err: fmt.Errorf("rechecking folder file: %w", statErr)}
 			}
-			if !expected.matches(fingerprintFileInfo(after)) {
+			if !expected.matches(fingerprintOpenFile(f, after, expected.change != 0)) {
 				return ErrSourceChanged
 			}
 			return checkFolderSource(expected, open)
@@ -337,7 +339,7 @@ func checkFolderSource(expected watchFingerprint, open localFileOpener) error {
 	if err != nil {
 		return &SourceAccessError{Err: fmt.Errorf("rechecking folder file: %w", err)}
 	}
-	if !expected.matches(fingerprintFileInfo(info)) {
+	if !expected.matches(fingerprintOpenFile(f, info, expected.change != 0)) {
 		return ErrSourceChanged
 	}
 	return nil
