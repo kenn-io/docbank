@@ -22,9 +22,9 @@ func suppliedMediaPublicationFixture(t *testing.T, s *Store) MediaPublicationReq
 	}
 }
 
-func TestRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	request := suppliedMediaPublicationFixture(t, s)
 	first, err := s.RetainSuppliedMedia(t.Context(), request)
 	require.NoError(t, err)
@@ -39,9 +39,9 @@ func TestRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t *testing.T) {
 	require.ErrorIs(t, err, ErrMediaOccurrenceConflict)
 }
 
-func TestImportMediaInputArtifactRejectsChangedImmutableAuthority(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkImportMediaInputArtifactRejectsChangedImmutableAuthority(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	publication := suppliedMediaPublicationFixture(t, s)
 	retained, err := s.RetainSuppliedMedia(t.Context(), publication)
 	require.NoError(t, err)
@@ -77,9 +77,9 @@ func TestImportMediaInputArtifactRejectsChangedImmutableAuthority(t *testing.T) 
 	}
 }
 
-func TestSuppliedInputSelectorsFilterKind(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkSuppliedInputSelectorsFilterKind(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	publication := suppliedMediaPublicationFixture(t, s)
 	retained, err := s.RetainSuppliedMedia(t.Context(), publication)
 	require.NoError(t, err)
@@ -133,4 +133,39 @@ func TestSuppliedInputSelectorsFilterKind(t *testing.T) {
 	unbound, err := s.SuppliedTranscriptForSource(t.Context(), "operator", publication.ContentVersion.BlobHash)
 	require.NoError(t, err)
 	require.Equal(t, transcriptID, unbound.InputID)
+	latest, err := s.SuppliedTranscriptForSourceVersion(t.Context(), "operator", MediaInputTranscript,
+		retained.SourceID, retained.SourceVersionID, "")
+	require.NoError(t, err)
+	require.Equal(t, transcript, latest)
+	latest, err = s.SuppliedTranscriptForSourceID(t.Context(), "operator", MediaInputCaption,
+		retained.SourceID, publication.ContentVersion.BlobHash, "")
+	require.NoError(t, err)
+	require.Equal(t, caption, latest)
+	visible, err := s.MediaInputBindingVisible(t.Context(), "operator", retained.SourceID, retained.SourceVersionID, transcriptID)
+	require.NoError(t, err)
+	require.True(t, visible)
+	visible, err = s.MediaInputBindingVisible(t.Context(), "other", retained.SourceID, retained.SourceVersionID, transcriptID)
+	require.NoError(t, err)
+	require.False(t, visible)
+	_, err = s.SuppliedTranscriptForSourceVersion(t.Context(), "other", MediaInputTranscript,
+		retained.SourceID, retained.SourceVersionID, transcriptID)
+	require.ErrorIs(t, err, ErrNotFound)
+	source, version, err := s.MediaSourceBindingForContentVersion(t.Context(), "operator", retained.ContentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, retained.SourceID, source)
+	require.Equal(t, retained.SourceVersionID, version)
+	stored, err := s.SuppliedMediaContentVersion(t.Context(), retained.SourceID, publication.ContentVersion.BlobHash, publication.ContentVersion.Size)
+	require.NoError(t, err)
+	require.Equal(t, publication.ContentVersion, stored)
+
+	require.NoError(t, revokeTestOccurrence(t.Context(), s, "operator", retained.OccurrenceID))
+	visible, err = s.MediaInputBindingVisible(t.Context(), "operator", retained.SourceID, retained.SourceVersionID, transcriptID)
+	require.NoError(t, err)
+	require.False(t, visible)
+	_, err = s.SuppliedTranscriptBindingForSource(t.Context(), "operator", MediaInputTranscript, publication.ContentVersion.BlobHash, transcriptID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.ImportMediaInputArtifact(t.Context(), input(
+		"00000000-0000-4000-8000-000000000069", testSHA256([]byte("late-input")), transcriptHash, MediaInputTranscript, "en"))
+	require.ErrorIs(t, err, ErrNotFound)
+	checkRetentionMetadata(t, s)
 }

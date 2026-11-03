@@ -11,14 +11,14 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-func TestMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for _, source := range []string{"a", "b", "c", "d", "e"} {
 			id := strings.Repeat(source, 64)
-			_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES(?,?,?,?,?,?)`,
+			_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`,
 				id, "remote_recording", "url", "synthetic", id, "2024-01-01T00:00:00Z")
 			if err != nil {
 				return err
@@ -30,7 +30,7 @@ func TestMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO media_operations VALUES(?,?,?,?,?,?,?,?)`,
+			_, err = tx.ExecContext(ctx, `INSERT INTO media_operations VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 				"operation-"+source, "operator:test", "submit_remote_recording", id, id,
 				string(receipt), "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z")
 			if err != nil {
@@ -55,7 +55,7 @@ func TestMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T) {
 			if occurrence.visible == 0 {
 				revoked = "2024-01-05T00:00:00Z"
 			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES(?,?,NULL,?,?,'1',?,'','','{}',?,?,?)`,
+			_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES($1,$2,NULL,$3,$4,'1',$5,'','','{}',$6,$7,$8)`,
 				occurrence.id, strings.Repeat(occurrence.source, 64), occurrence.principal,
 				occurrence.id, occurrence.id+".wav", occurrence.visible, occurrence.stamp+"T00:00:00Z", revoked)
 			if err != nil {
@@ -90,16 +90,16 @@ func TestMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T) {
 	}
 }
 
-func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.wav", fakeHash("a1"), 11, "audio/wav")
 	require.NoError(t, err)
 	second, err := s.CreateFile(ctx, s.RootID(), "second.wav", fakeHash("b2"), 12, "audio/wav")
 	require.NoError(t, err)
 	sourceID := strings.Repeat("a", 64)
-	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES(?,?,?,?,?,?)`, sourceID, "supplied_media", "", "", sourceID, nowRFC3339())
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`, sourceID, "supplied_media", "", "", sourceID, nowRFC3339())
 	require.NoError(t, err)
 	require.NoError(t, declareTestOccurrence(ctx, s, MediaOccurrenceInput{
 		ID: "occurrence-a", SourceID: sourceID, Principal: "operator:test", Ref: "call-a", Revision: "1", MessageJSON: "{}",
@@ -128,7 +128,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 			OperationState: "succeeded", CoverageState: "unprocessed"}
 		raw, err := canonical.Marshal(publication)
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 			receipt.operationID, "operator:test", "submit_supplied_media", receipt.requestHash, sourceID, string(raw), receipt.createdAt, receipt.createdAt)
 		require.NoError(t, err)
 	}
@@ -164,7 +164,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 			raw, err := canonical.Marshal(receipt)
 			require.NoError(t, err)
 			historical := strings.TrimSuffix(string(raw), "}") + `,"unrelated_historical_field":true}`
-			_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, operationID, "operator:test", verb, fakeHash("c3"), sourceID, historical, "2022-01-01T00:00:00Z", "2022-01-01T00:00:00Z")
+			_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, operationID, "operator:test", verb, fakeHash("c3"), sourceID, historical, "2022-01-01T00:00:00Z", "2022-01-01T00:00:00Z")
 			require.NoError(t, err)
 		}
 	}

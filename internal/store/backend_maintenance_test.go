@@ -66,8 +66,10 @@ var backendMaintenanceEffects = []backendMaintenance{
  document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
 	{"retained processing records", "no runtime UPDATE grant; producers unported", "enrollment validates retained rows; derivatives/retention may delete them, never rewrite them", `
  document_people_generations_immutable_update
+ visual_preview_generations_immutable_update`},
+	{"media source and input authority", "media_sources.go, media_runtime.go and media_artifacts.go; INSERT-only grants", "media contracts; first binding and revocation update occurrences without rewriting source or input records", `
  media_sources_immutable_update media_source_versions_immutable_update
- media_input_artifacts_immutable_update visual_preview_generations_immutable_update`},
+ media_input_artifacts_immutable_update`},
 	{"embedding records", "embedding_catalog.go; runtime has no UPDATE grant", "embeddings contracts; immutable records may be collected after roots expire", `
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
