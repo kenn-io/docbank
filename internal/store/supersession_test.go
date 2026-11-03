@@ -285,8 +285,8 @@ func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), report.Deleted)
 	var links, windows int
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM node_supersessions`).Scan(&links))
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM node_effective_windows`).Scan(&windows))
+	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_supersessions`).Scan(&links))
+	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_effective_windows`).Scan(&windows))
 	require.Zero(t, links)
 	require.Zero(t, windows)
 	require.NoError(t, target.ValidateMetadata(ctx))
