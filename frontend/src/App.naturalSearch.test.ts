@@ -1896,8 +1896,10 @@ it.each([
   const row = excerpt.closest("tr")!;
   if (reason) {
     const label = within(row).getByText(reason);
-    expect(label.closest("td")).toBe(excerpt.closest("td"));
-    expect(label.classList.contains("search-evidence")).toBe(true);
+    const text = excerpt.parentElement!;
+    expect(text.querySelector(".folder")).toBeTruthy();
+    expect(label.parentElement).toBe(text);
+    expect(excerpt.nextElementSibling).toBe(label);
   } else {
     expect(row.querySelector(".validity-reason")).toBeNull();
   }

@@ -9,7 +9,14 @@
     folder = "",
     mime,
     excerpt = "",
-  }: { name: string; folder?: string; mime?: string; excerpt?: string } = $props();
+    validityReason = "",
+  }: {
+    name: string;
+    folder?: string;
+    mime?: string;
+    excerpt?: string;
+    validityReason?: string;
+  } = $props();
 </script>
 
 <span class="result-name">
@@ -18,6 +25,8 @@
     <span class="title">{name}</span>
     {#if folder}<span class="folder"><bdi>{folder}</bdi></span>{/if}
     {#if excerpt}<span class="excerpt">{excerpt}</span>{/if}
+    {#if validityReason}<span class="validity-reason" title={validityReason}>{validityReason}</span
+      >{/if}
   </span>
 </span>
 
@@ -34,7 +43,8 @@
   }
   .title,
   .folder,
-  .excerpt {
+  .excerpt,
+  .validity-reason {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -44,7 +54,8 @@
     font-weight: var(--font-weight-medium);
   }
   .folder,
-  .excerpt {
+  .excerpt,
+  .validity-reason {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }

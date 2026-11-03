@@ -4895,20 +4895,13 @@
                               folder={parentPath(row.path)}
                               mime={row.node.mime_type}
                               excerpt={matchExcerpt(row)}
+                              validityReason={validityReason(row.validity)}
                             />
                           {:else}
                             <span class="document-name">
                               <FileTypeIcon kind={row.node.kind} mime={row.node.mime_type} />
                               <span>{showingResults ? row.path : row.node.name}</span>
                             </span>
-                          {/if}
-                          {#if validityReason(row.validity)}
-                            <div
-                              class="search-evidence validity-reason"
-                              title={validityReason(row.validity)}
-                            >
-                              {validityReason(row.validity)}
-                            </div>
                           {/if}
                         </td>
                         <td class="type-cell col-type"
@@ -5646,15 +5639,6 @@
     align-items: center;
     gap: var(--space-2);
     white-space: nowrap;
-    font-size: var(--font-size-sm);
-  }
-
-  .search-evidence.validity-reason {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
