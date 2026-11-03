@@ -255,6 +255,14 @@ func TestMatchDiscoveryLimits(t *testing.T) {
 			if mode == "empty" && requests != 1 {
 				t.Fatalf("continued through empty pages: %d", requests)
 			}
+			if mode == "cursor" {
+				if err.Error() != "repeated document cursor" {
+					t.Fatalf("want repeated-cursor error, got %v", err)
+				}
+				if requests != 2 {
+					t.Fatalf("repeated cursor stopped after %d document-page requests, want 2", requests)
+				}
+			}
 			if mode != "cursor" && mode != "empty" && !errors.Is(err, ErrCardLimit) {
 				t.Fatal("missing card_limit", err)
 			}

@@ -174,3 +174,132 @@ The policy renews annually.
 		})
 	}
 }
+
+func TestMatchAnswerCardsRejectsOversizedMCPEnvelope(t *testing.T) {
+	const cardCount = 10
+	const quoteChars = 8200
+	quote := strings.Repeat("\x01", quoteChars)
+	digest := strings.Repeat("a", 64)
+	type cardFixture struct {
+		nodeID  int64
+		path    string
+		version string
+		raw     []byte
+		hash    [32]byte
+		card    answercard.Card
+	}
+	byNode := make(map[int64]cardFixture, cardCount)
+	byVersion := make(map[string]cardFixture, cardCount)
+	items := make([]api.DocumentSummary, 0, cardCount)
+	for i := 1; i <= cardCount; i++ {
+		nodeID := int64(6 + i)
+		cardVersion := fmt.Sprintf("33333333-3333-4333-8333-%012d", i)
+		path := fmt.Sprintf("/answer-cards/policy-%02d.md", i)
+		raw := fmt.Sprintf(`---
+docbank_answer_card: 1
+question: When does the policy renew?
+citations:
+  - version: 1
+    vault_uid: %s
+    node_id: 42
+    content_version_id: %s
+    content_sha256: %s
+    rendition_attachment_id: %s
+    build_id: %s
+    rendition_sha256: %s
+    start: 0
+    end: %d
+    quote: %s
+state: draft
+---
+The policy renews annually.
+`, testVaultID, testVersionID, digest, digest, digest, digest, quoteChars, strconv.Quote(quote))
+		card, err := answercard.Parse([]byte(raw))
+		require.NoError(t, err)
+		raw = strings.Replace(raw, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1)
+		hash := sha256.Sum256([]byte(raw))
+		fixture := cardFixture{nodeID: nodeID, path: path, version: cardVersion, raw: []byte(raw), hash: hash, card: card}
+		byNode[nodeID] = fixture
+		byVersion[cardVersion] = fixture
+		items = append(items, api.DocumentSummary{
+			NodeID: nodeID, ContentVersionID: cardVersion, Path: path,
+			Name: path[strings.LastIndex(path, "/")+1:], MediaType: "text/markdown",
+			Size: int64(len(raw)), ModifiedAt: "2026-10-27T00:00:00Z",
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/info":
+			_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": testVaultID})
+		case "/api/v1/documents":
+			_ = json.NewEncoder(w).Encode(api.DocumentPage{PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250, Items: items})
+		case "/api/v1/nodes/42":
+			_ = json.NewEncoder(w).Encode(api.Node{ID: 42, Kind: "file", Path: "/sources/policy.md", CurrentVersionID: testVersionID, BlobHash: digest})
+		case "/api/v1/text-citations/resolve":
+			sum := sha256.Sum256([]byte(quote))
+			first := byNode[7].card.Citations[0]
+			_ = json.NewEncoder(w).Encode(document.ResolvedTextCitation{
+				Citation: first.TextCitation(), Text: quote, TextBytes: len(quote), TextSHA256: hex.EncodeToString(sum[:]),
+			})
+		default:
+			if nodeID, ok := strings.CutPrefix(r.URL.Path, "/api/v1/nodes/"); ok {
+				id, err := strconv.ParseInt(nodeID, 10, 64)
+				fixture, ok := byNode[id]
+				if err != nil || !ok {
+					t.Errorf("unexpected node route %s", r.URL.Path)
+					http.Error(w, "unexpected node", http.StatusNotFound)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(api.Node{
+					ID: fixture.nodeID, Kind: "file", Path: fixture.path,
+					CurrentVersionID: fixture.version, BlobHash: hex.EncodeToString(fixture.hash[:]),
+					Size: int64(len(fixture.raw)),
+				})
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/api/v1/versions/") && strings.HasSuffix(r.URL.Path, "/content") {
+				version := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/versions/"), "/content")
+				fixture, ok := byVersion[version]
+				if !ok {
+					t.Errorf("unexpected content route %s", r.URL.Path)
+					http.Error(w, "unexpected content", http.StatusNotFound)
+					return
+				}
+				w.Header().Set(api.ContentVersionHeader, fixture.version)
+				w.Header().Set(api.BlobHashHeader, hex.EncodeToString(fixture.hash[:]))
+				w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(fixture.raw)))
+				w.Header().Set("Trailer", "Content-Digest")
+				_, _ = w.Write(fixture.raw)
+				w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(fixture.hash[:])+":")
+				return
+			}
+			t.Errorf("unexpected route %s", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+	connection := daemonconn.New(server.URL, "synthetic-key")
+	matched, err := answercard.NewMatcher().Match(t.Context(), connection, "When does the policy renew?", "/answer-cards", cardCount)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(matched)
+	require.NoError(t, err)
+	require.Less(t, len(encoded), answercard.MaxMatchResponseBytes)
+	envelope, err := toolEnvelopeBytes(matchAnswerCardsOutput{MatchResult: matched, privateCache: newPrivateCache()})
+	require.NoError(t, err)
+	require.Greater(t, envelope, maxToolResponseBytes-(8<<10))
+
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(server.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	tool := catalogMap(toolCatalog(ServerOptions{}))["match_answer_cards"]
+	result, err := executeReadTool(t.Context(), lease, nil, "match_answer_cards", mustResolveSchema(tool.OutputSchema), []byte(`{"question":"When does the policy renew?","limit":10}`))
+	require.Nil(t, result)
+	require.ErrorIs(t, err, answercard.ErrCardLimit)
+	failure, ok := domainToolError(err)
+	require.True(t, ok)
+	require.True(t, failure.IsError)
+	encoded, err = json.Marshal(failure.StructuredContent)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"code":"card_limit"`)
+}
