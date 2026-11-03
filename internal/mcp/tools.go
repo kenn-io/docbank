@@ -74,6 +74,7 @@ var readToolDefinitions = []toolDefinition{
 	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
+	{name: "list_changes", title: "List changes", description: "Without a cursor, return an empty page and the current checkpoint. Save next_cursor before scanning documents, then resume from it. Later calls return up to 500 changes; repeat while has_more is true.", schemas: listChangesSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
 	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
@@ -309,6 +310,8 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		value, ok := nodeID.(float64)
 		return ok && value >= 1
+	case "list_changes":
+		return stringBytesWithin(arguments, "cursor", maxChangeCursorBytes)
 	case "list_documents":
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
@@ -518,7 +521,7 @@ func stableDomainError(err error) (string, int) {
 		"incomplete_date_coverage", "date_review_required", "report_unavailable", "report_capacity",
 		"report_limit", "report_timeout", "report_retained":
 		return facts.Code, 0
-	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
+	case "changes_cursor_expired", "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
 		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
 		"export_unavailable":
 		return facts.Code, 0
@@ -683,6 +686,8 @@ func domainErrorMessage(code string) string {
 		return "The local Docbank daemon is unavailable; check the daemon and retry."
 	case "scope_too_large":
 		return "The exact source scope exceeds the supported limit; narrow the source scope."
+	case "changes_cursor_expired":
+		return "Call list_changes without a cursor, save next_cursor, rescan the vault, then resume with that cursor."
 	case "cursor_expired":
 		return "The cursor expired; restart the listing from the first page."
 	case "invalid_document_cursor":

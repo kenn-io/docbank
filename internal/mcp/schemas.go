@@ -22,6 +22,7 @@ const (
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
 	schemaOffsetField         = "offset"
+	schemaCursorField         = "cursor"
 	schemaJobIDField          = "job_id"
 	schemaCreatedAtField      = "created_at"
 	jsonSchemaConst           = "const"
@@ -629,6 +630,19 @@ func getVaultInfoSchemas() (schema, schema) {
 		"tracked_blob_bytes":    integerSchema(0, 0),
 	}), cacheRequired("vault_id", "live_files", "live_directories", "trashed_nodes", "content_versions",
 		"logical_version_bytes", "tracked_blobs", "tracked_blob_bytes")...)
+	return input, output
+}
+
+func listChangesSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{schemaCursorField: stringSchema(maxChangeCursorBytes)})
+	event := objectSchema(schema{
+		schemaCursorField: stringSchema(maxChangeCursorBytes), "kind": stringSchema(64),
+		"node_id": integerSchema(1, 0), "revision": integerSchema(1, 0),
+	}, schemaCursorField, "kind", "node_id", "revision")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"events":      arraySchema(event, maxChangesPage),
+		"next_cursor": stringSchema(maxChangeCursorBytes), "has_more": booleanSchema(),
+	}), cacheRequired("events", "next_cursor", "has_more")...)
 	return input, output
 }
 

@@ -27852,6 +27852,9 @@ type ListBatesNamespacesQuery struct {
 type VaultChangesQuery struct {
 	After  *string `json:"after,omitempty"`
 	Follow *bool   `json:"follow,omitempty"`
+
+	// Limit Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.
+	Limit *int64 `json:"limit,omitempty"`
 }
 
 type ListCollectionsQuery struct {

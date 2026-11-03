@@ -246,6 +246,7 @@ resource links, is capped at 1 MiB.
 | `get_export_problems` | Reads up to 50 frozen unavailable outputs by `plan_id` and optional numeric `after`. |
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
+| `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
@@ -298,6 +299,16 @@ For hidden photo details, run `docbank photos assets inspect /path/to/photo.jpg`
 Photo writes return the first file page with the committed asset revision. Continue through `get_photo_asset` when `next_file_offset` is present. Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`. Inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
+
+Call `list_changes` with `{}` to get an empty page and the current checkpoint. Save `next_cursor` before scanning documents, then pass it on the next call to receive changes made since that checkpoint:
+
+```json
+{"name":"list_changes","arguments":{"cursor":"SAVED_NEXT_CURSOR"}}
+```
+
+Each response includes `events`, `next_cursor`, `has_more`, `ttlMs: 0`, and `cacheScope: "private"`. Save `next_cursor` even when `events` is empty, so later calls include changes made afterward. Cursors are opaque strings capped at 128 UTF-8 bytes. An interrupted drain returns no partial page; retry with the previous cursor.
+
+An omitted or empty cursor starts at the present. For initial synchronization, save that checkpoint, scan the vault, and replay after the checkpoint. On `changes_cursor_expired`, call `list_changes` without a cursor, save the new checkpoint, rescan the vault, and resume with that cursor. See [event kinds and retention](../agents/integration.md#react-to-vault-changes).
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation
 between pages can change later membership or order. Each opaque cursor is at

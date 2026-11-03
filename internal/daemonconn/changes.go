@@ -23,10 +23,10 @@ func (e *ChangeCursorExpiredError) Error() string {
 func (e *ChangeCursorExpiredError) Unwrap() error { return store.ErrChangeCursorExpired }
 
 // WatchChanges reads committed changes until drained, or until cancellation
-// when following. A callback error closes the stream immediately.
-func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool, receive func(store.VaultChange) error) (string, error) {
+// when following. A supplied limit bounds a finite read. A callback error closes the stream immediately.
+func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool, limit *int64, receive func(store.VaultChange) error) (string, error) {
 	var response *http.Response
-	_, err := c.apiWithResponse(&response).VaultChanges(runtime.WithStreamingResponse(ctx), &apiclient.VaultChangesRequestOptions{Query: &apiclient.VaultChangesQuery{After: &after, Follow: &follow}})
+	_, err := c.apiWithResponse(&response).VaultChanges(runtime.WithStreamingResponse(ctx), &apiclient.VaultChangesRequestOptions{Query: &apiclient.VaultChangesQuery{After: &after, Follow: &follow, Limit: limit}})
 	if err != nil {
 		return "", err
 	}
@@ -42,7 +42,8 @@ func (c *Connection) WatchChanges(ctx context.Context, after string, follow bool
 			return "", apiProblemError(*event.Error)
 		}
 		if event.Type == "result" {
-			return event.Cursor, nil
+			_, err := io.Copy(io.Discard, response.Body)
+			return event.Cursor, errors.Join(scanner.Err(), err)
 		}
 		if event.Type != "change" || event.Change == nil {
 			return "", integrityErrorf("invalid vault change record")
