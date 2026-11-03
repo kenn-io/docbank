@@ -1022,7 +1022,7 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			if _, skip := deferred[rel]; skip {
 				continue
 			}
-			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil && !errors.As(err, new(*store.TagResolutionError)) {
+			if err := w.processObservation(ctx, watchSource{root: root, ref: rel}, entry.state, entry.observedAt, seen, hints); err != nil && !onlyUnavailableTags(err) {
 				return false, err
 			}
 		}
@@ -1120,6 +1120,28 @@ func (w *Watcher) blockWatchPath(inventory *watchInventory, rel, reason string) 
 	w.interruptSettlingTree(rel)
 	inventory.complete = false
 	inventory.blocked = append(inventory.blocked, fmt.Errorf("watched source %q %s: %w", rel, reason, errWatchBlocked))
+}
+
+// onlyUnavailableTags reports whether every failure in err is an unavailable
+// configured tag. Such a file waits for the tag, but a tag failure joined with
+// a rollback or cleanup failure must still fail the scan.
+func onlyUnavailableTags(err error) bool {
+	if _, ok := err.(*store.TagResolutionError); ok { //nolint:errorlint // errors.As would also match a tag failure joined with others.
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		for _, cause := range causes {
+			if cause != nil && !onlyUnavailableTags(cause) {
+				return false
+			}
+		}
+		return len(causes) != 0
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return onlyUnavailableTags(cause)
+	}
+	return false
 }
 
 func retryableWatchCollectionError(err error) bool {

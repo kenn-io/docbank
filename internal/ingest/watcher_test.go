@@ -1261,6 +1261,14 @@ func TestWatcherTagsImportedFiles(t *testing.T) {
 	require.Zero(t, total)
 }
 
+func TestOnlyUnavailableTagsKeepsJoinedFailures(t *testing.T) {
+	missing := &store.TagResolutionError{Name: "receipts", Err: store.ErrNotFound}
+	cleanup := errors.New("cleaning loose blob abc: permission denied")
+	assert.True(t, onlyUnavailableTags(fmt.Errorf("importing a.txt: %w", errors.Join(missing))))
+	assert.False(t, onlyUnavailableTags(fmt.Errorf("importing a.txt: %w", errors.Join(missing, cleanup))))
+	assert.False(t, onlyUnavailableTags(cleanup))
+}
+
 func TestWatcherMissingTagKeepsTrashedTargetFailure(t *testing.T) {
 	watcher, root, ing, source, _ := watcherFinalPair(t)
 	ctx := t.Context()
