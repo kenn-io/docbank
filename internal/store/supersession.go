@@ -209,7 +209,7 @@ func validateSupersessionComponent(ctx context.Context, q metadataQuerier, start
 		id := queue[0]
 		queue = queue[1:]
 		err := func() error {
-			rows, err := q.QueryContext(ctx, `SELECT predecessor_node_id,successor_node_id FROM node_supersessions WHERE predecessor_node_id=? OR successor_node_id=? ORDER BY predecessor_node_id,successor_node_id`, id, id)
+			rows, err := q.QueryContext(ctx, `SELECT predecessor_node_id,successor_node_id FROM node_supersessions WHERE predecessor_node_id=$1 OR successor_node_id=$2 ORDER BY predecessor_node_id,successor_node_id`, id, id)
 			if err != nil {
 				return err
 			}
