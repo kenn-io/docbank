@@ -129,7 +129,11 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
             throw new Error("Injected displayed-image decode failure");
           });
         if (control.mode === "delay")
-          return result.then(() => new Promise<void>((resolve) => control.pending.push(resolve)));
+          return result.then(() => {
+            // A decode started during the pause may finish after it is released.
+            if (control.mode === "delay")
+              return new Promise<void>((resolve) => control.pending.push(resolve));
+          });
         return result;
       };
     });
@@ -158,6 +162,20 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeFocused();
     await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     await originalPage(1);
+    await page.setViewportSize({ width: 640, height: 400 });
+    await expect(
+      drawer.getByRole("button", { name: "Preview redaction", exact: true }),
+    ).toBeInViewport();
+    const shortDraw = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
+    await expect(shortDraw).toBeEnabled();
+    await shortDraw.click();
+    await expect(shortDraw).toBeChecked();
+    await shortDraw.click();
+    await page.screenshot({
+      path: path.join(captures!, "redaction-short-editing.png"),
+      animations: "disabled",
+    });
+    await page.setViewportSize({ width: 1440, height: 960 });
     expect(originalLoads).toBe(1);
     expect(page.workers()).toEqual(readerWorkers);
     await drawer.getByRole("button", { name: "Document Menu", exact: true }).click();
@@ -189,13 +207,31 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     };
     await expectFitPage();
     const fitZoom = await drawer.getByRole("textbox", { name: "Set zoom" }).inputValue();
-    const setZoom = async (value: string, target: Locator = drawer) => {
-      const zoom = target.getByRole("textbox", { name: "Set zoom" });
-      await zoom.fill(value);
-      await zoom.press("Enter");
+    // A new zoom/scroll position can appear before replacement images start
+    // decoding. Observe that redraw before using the ready marking surface.
+    const redraw = async (action: () => Promise<unknown>, target: Locator = drawer) => {
+      await page.evaluate(() => (window.reviewDecode.mode = "delay"));
+      await action();
+      await expect
+        .poll(() => page.evaluate(() => window.reviewDecode.pending.length))
+        .toBeGreaterThan(0);
+      await expect(
+        target.getByRole("switch", { name: "Draw rectangle", exact: true }),
+      ).toBeDisabled();
+      await page.evaluate(() => {
+        window.reviewDecode.mode = "pass";
+        window.reviewDecode.pending.splice(0).forEach((resolve) => resolve());
+      });
       await expect(
         target.getByRole("switch", { name: "Draw rectangle", exact: true }),
       ).toBeEnabled();
+    };
+    const setZoom = async (value: string, target: Locator = drawer) => {
+      const zoom = target.getByRole("textbox", { name: "Set zoom" });
+      await redraw(async () => {
+        await zoom.fill(value);
+        await zoom.press("Enter");
+      }, target);
     };
     const drawToggle = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
     await page.evaluate(() => (window.reviewDecode.mode = "delay"));
@@ -413,7 +449,9 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await drawer.getByRole("button", { name: "Keep editing", exact: true }).click();
     await drawer.getByRole("button", { name: "Remove", exact: true }).click();
     await setZoom("200");
-    await canvas.evaluate((element) => element.scrollIntoView({ block: "start", inline: "start" }));
+    await redraw(() =>
+      canvas.evaluate((element) => element.scrollIntoView({ block: "start", inline: "start" })),
+    );
     await drag(9000, 7800, 17000, 11000);
     await drag(24000, 12000, 28000, 15000);
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
@@ -624,12 +662,19 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     }
     expect(bundles[0]!.equals(bundles[1]!)).toBe(true);
     await run("put", path.join(scratch, "two-pages.pdf"), "/two-pages.pdf");
-    await page.setViewportSize({ width: 640, height: 900 });
+    await page.setViewportSize({ width: 640, height: 400 });
     const saveReview = drawer.getByRole("button", { name: "Save review", exact: true });
-    await saveReview.focus();
-    await expect(saveReview).toBeFocused();
+    const footer = drawer.locator(".review-footer");
+    await expect(
+      drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }),
+    ).toBeInViewport();
+    await drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await footer.hover();
+    await page.mouse.wheel(0, 500);
+    await saveReview.scrollIntoViewIfNeeded();
     const narrowReview = page.waitForEvent("download");
-    await page.keyboard.press("Enter");
+    await saveReview.click();
     expect((await narrowReview).suggestedFilename()).toContain("PRIVATE-review.json");
     await page.screenshot({
       path: path.join(captures!, "redaction-narrow.png"),
@@ -668,6 +713,15 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await run("tag", "assign", "review-pending", "/cropped.pdf");
     });
     const cropped = page.getByRole("dialog", { name: "Redact cropped.pdf", exact: true });
+    await originalPage(1, cropped);
+    await cropped.getByRole("button", { name: "Back to reading", exact: true }).click();
+    const croppedReader = page.getByRole("dialog", { name: "Read cropped.pdf", exact: true });
+    const originalDownload = page.waitForEvent("download");
+    await croppedReader.getByRole("button", { name: "Download", exact: true }).click();
+    const originalFile = path.join(scratch, "downloaded-cropped.pdf");
+    await (await originalDownload).saveAs(originalFile);
+    expect(await readFile(originalFile)).toEqual(croppedReviewPDF());
+    await croppedReader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     const expectedBoxes = [
       [3000, 3500, 10500, 6500],
       [3500, 3000, 6500, 10500],
@@ -783,22 +837,22 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       name: "Page 1 review layer",
       exact: true,
     });
-    const beforeScroll = await fractionalLayer.evaluate((layer) => {
-      let viewport = layer.parentElement;
-      while (viewport && getComputedStyle(viewport).overflowY !== "auto")
-        viewport = viewport.parentElement;
-      if (!viewport) throw new Error("Reader scroll container absent");
-      viewport.scrollTo({ top: 0, left: 0, behavior: "instant" });
-      const top = layer.getBoundingClientRect().y;
-      viewport.scrollBy({ top: 200, left: 200, behavior: "instant" });
-      return top;
-    });
+    let beforeScroll = 0;
+    await redraw(async () => {
+      beforeScroll = await fractionalLayer.evaluate((layer) => {
+        let viewport = layer.parentElement;
+        while (viewport && getComputedStyle(viewport).overflowY !== "auto")
+          viewport = viewport.parentElement;
+        if (!viewport) throw new Error("Reader scroll container absent");
+        viewport.scrollTo({ top: 0, left: 0, behavior: "instant" });
+        const top = layer.getBoundingClientRect().y;
+        viewport.scrollBy({ top: 200, left: 200, behavior: "instant" });
+        return top;
+      });
+    }, fractional);
     await expect
       .poll(async () => (await fractionalLayer.boundingBox())!.y)
       .toBeLessThan(beforeScroll - 100);
-    await expect(
-      fractional.getByRole("switch", { name: "Draw rectangle", exact: true }),
-    ).toBeEnabled();
     await fractional.getByRole("switch", { name: "Draw rectangle", exact: true }).click();
     await expect
       .poll(() =>

@@ -33,7 +33,7 @@
   let {
     session,
     source,
-    authorizationRevision,
+    authorizationRevision = $bindable(),
     onclose,
     onauthfailure,
     active = false,
@@ -64,7 +64,6 @@
     dragging = $state(false),
     downloading = $state(false);
   let dialog = $state<"discard" | "download">();
-  let revision = $state(untrack(() => authorizationRevision));
   let title = $state(untrack(() => source.name));
   let readerStatus = $state<ReaderReviewStatus>({ page: 1, ready: false, error: "" });
   let bridge = $state<PDFReviewBridge>();
@@ -237,7 +236,7 @@
       node.size !== source.size
     )
       throw new Error("The source changed. Close this review and reopen the intended PDF.");
-    revision = node.revision;
+    authorizationRevision = Math.max(authorizationRevision, node.revision);
     title = node.name;
   }
   async function renderPreview() {
@@ -393,7 +392,11 @@
       const signal = controller.signal;
       void (async () => {
         await revalidate(signal);
-        const prep = await prepareRedaction(session, pageBinding(source, revision), signal);
+        const prep = await prepareRedaction(
+          session,
+          pageBinding(source, authorizationRevision),
+          signal,
+        );
         if (disposed || signal.aborted) return;
         preparation = prep;
         phase = "editing";
@@ -433,7 +436,7 @@
     <OriginalPreview
       {session}
       {source}
-      authorizationRevision={Math.max(authorizationRevision, revision)}
+      {authorizationRevision}
       onauthfailure={fail}
       expanded
       review={active
@@ -814,6 +817,7 @@
     .review-workspace.active {
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(200px, 1fr) minmax(180px, 0.8fr) auto;
+      overflow-y: auto;
     }
     .redaction-editor {
       grid-column: 1;
@@ -825,6 +829,10 @@
     }
     .review-footer {
       grid-row: 3;
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+      background: var(--bg-surface);
     }
     .mask-details {
       grid-template-columns: minmax(0, 1fr);

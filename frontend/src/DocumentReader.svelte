@@ -56,7 +56,7 @@
           active={redacting}
           {session}
           {source}
-          {authorizationRevision}
+          bind:authorizationRevision
           {onauthfailure}
           onworkspaceclose={onclose}
           onclose={() => {
