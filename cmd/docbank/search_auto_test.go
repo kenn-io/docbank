@@ -171,6 +171,12 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				assert.Equal(t, int64(42), request.Hits[0].NodeID)
 				assert.Equal(t, int64(7), request.Hits[1].NodeID)
 			}
+			if tc.name == "folder prevents miss" {
+				if !assert.Len(t, request.Hits, 1) {
+					return
+				}
+				assert.Equal(t, int64(7), request.Hits[0].NodeID)
+			}
 			assert.NoError(t, json.MarshalWrite(w, api.EmptySearchCompletion{MissLogID: strings.Repeat("a", 48), MissLogCapability: strings.Repeat("b", 64)}))
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.wantHybrid, r.URL.Query().Get("skip_miss_log") == "true")
