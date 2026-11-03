@@ -100,8 +100,8 @@ func BenchmarkNameSearch(b *testing.B) {
 	}
 }
 
-// BenchmarkSemanticMemberships isolates membership work after source and coverage
-// checks. Each original-file set has one exact source input; 100 files share each blob.
+// BenchmarkSemanticMemberships measures warmed production pre-search acquisition
+// and isolated membership work. Each original-file set has one exact source input; 100 files share each blob.
 func BenchmarkSemanticMemberships(b *testing.B) {
 	for _, count := range []int{10_000, 100_000, 1_000_000} {
 		b.Run(fmt.Sprintf("rows=%d", count), func(b *testing.B) {
@@ -212,29 +212,45 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 			tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 			require.NoError(b, err)
 			defer func() { require.NoError(b, tx.Rollback()) }()
-			for _, acquisition := range []string{"unscoped-acquisition", "cold-fenced"} {
-				b.Run(acquisition, func(b *testing.B) {
-					opts, want := SearchOptions{}, count
-					if acquisition == "cold-fenced" {
-						for _, neighbor := range neighbors[:20] {
-							opts.ContentVersionIDs = append(opts.ContentVersionIDs, neighbor.InputKey)
-						}
-						want = 20
+			b.Run("unscoped-acquisition", func(b *testing.B) {
+				now := time.Now().UTC()
+				generation := vectorIndexGenerationFixture("benchmark", source, []byte("index"), now)
+				require.NoError(b, putVectorIndexGenerationForTest(b, s, generation))
+				acquire := func() {
+					lease, err := s.AcquireVectorIndexGeneration(ctx, record.VectorSpace.ID, "benchmark", now, time.Minute)
+					if err != nil {
+						b.Fatal(err)
 					}
-					b.ReportAllocs()
-					for b.Loop() {
-						rows, wholeSpace, err := semanticANNRowsForSourceTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
-						require.NoError(b, err)
-						if acquisition == "unscoped-acquisition" {
-							require.True(b, wholeSpace)
-							require.Nil(b, rows)
-						} else {
-							require.False(b, wholeSpace)
-							require.Len(b, rows, want)
-						}
+					current, _, _, err := s.semanticSearchAuthorityFence(ctx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, SearchOptions{}, nil)
+					if err != nil {
+						b.Fatal(err)
 					}
-				})
-			}
+					if current != lease.Generation.SourceManifestChecksum {
+						b.Fatal("source changed")
+					}
+				}
+				acquire()
+				b.ReportAllocs()
+				for b.Loop() {
+					acquire()
+				}
+			})
+			b.Run("cold-fenced", func(b *testing.B) {
+				opts := SearchOptions{}
+				for _, neighbor := range neighbors[:20] {
+					opts.ContentVersionIDs = append(opts.ContentVersionIDs, neighbor.InputKey)
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					rows, _, err := semanticANNRowsForSourceTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(rows) != 20 {
+						b.Fatalf("rows=%d", len(rows))
+					}
+				}
+			})
 			for _, scope := range []string{"all", "narrow", "collapse"} {
 				b.Run(scope, func(b *testing.B) {
 					opts := SearchOptions{}
