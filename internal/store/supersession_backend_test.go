@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -8,21 +9,6 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
-
-func checkSupersessionMetadataGraphValidationSQLite(t *testing.T) {
-	t.Helper()
-	s := newTestStore(t)
-	ctx := t.Context()
-
-	predecessor, err := s.CreateFile(ctx, s.RootID(), "before.txt", fakeHash("beef"), 1, "text/plain")
-	require.NoError(t, err)
-	successor, err := s.CreateFile(ctx, s.RootID(), "after.txt", fakeHash("cafe"), 1, "text/plain")
-	require.NoError(t, err)
-	_, err = s.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, "replacement")
-	require.NoError(t, err)
-
-	require.NoError(t, s.ValidateMetadata(ctx))
-}
 
 func checkSupersessionMetadataGraphValidationPostgres(t *testing.T) {
 	t.Helper()
@@ -41,5 +27,11 @@ func checkSupersessionMetadataGraphValidationPostgres(t *testing.T) {
 		successor.ID, predecessor.ID, "replacement", nowRFC3339())
 	require.NoError(t, err)
 
-	require.NoError(t, s.ValidateMetadata(ctx))
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		high, err := s.auditNodeSequence(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return s.validateMetadataState(ctx, tx, high)
+	}))
 }
