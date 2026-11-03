@@ -3129,7 +3129,7 @@ func TestSemanticWholeSpaceEquivalence(t *testing.T) {
 				allowed, err = semanticANNRowsTx(ctx, tx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{}, "", nil)
 				return err
 			}))
-			counted := &semanticQueryCountingQuerier{metadataQuerier: s.db}
+			counted := &membershipCountingQuerier{metadataQuerier: s.db}
 			rows, wholeSpace, err := semanticANNRowsForSourceTx(ctx, counted, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
 			require.NoError(t, err)
 			require.True(t, wholeSpace)
@@ -3230,20 +3230,4 @@ type semanticScanPlanQuerier struct {
 func (q *semanticScanPlanQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	q.plan = explainQueryPlan(q.t, q.store, query, args...)
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
-}
-
-type semanticQueryCountingQuerier struct {
-	metadataQuerier
-
-	queries int
-}
-
-func (q *semanticQueryCountingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	q.queries++
-	return q.metadataQuerier.QueryContext(ctx, query, args...)
-}
-
-func (q *semanticQueryCountingQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	q.queries++
-	return q.metadataQuerier.QueryRowContext(ctx, query, args...)
 }

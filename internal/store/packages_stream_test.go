@@ -16,14 +16,14 @@ import (
 )
 
 type membershipCountingQuerier struct {
-	*sql.Tx
+	metadataQuerier
 
 	queries int
 }
 
 func (q *membershipCountingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	q.queries++
-	return q.Tx.QueryContext(ctx, query, args...)
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
 
 func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) {
@@ -62,7 +62,7 @@ func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) 
 	tx, err := s.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback()) }()
-	q := &membershipCountingQuerier{Tx: tx}
+	q := &membershipCountingQuerier{metadataQuerier: tx}
 	matched := make(map[string]bool)
 	require.NoError(t, matchSnapshotSourcesBatch(t.Context(), q, ids, matched, members))
 	require.Equal(t, 1, q.queries, "one membership query covers the batch and both sources")
