@@ -166,6 +166,7 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 		{"term truncated", nil, nil, []int{2}, 1, true, true, 0, []string{"c"}},
 		{"duplicate leads", []int{5}, []int{5}, []int{5}, 5, false, false, 1, nil},
 		{"lead evidence does not crowd out passages", []int{6}, []int{5, 1}, nil, 2, false, false, 1, []string{"b"}},
+		{"later question passage is emitted at matching term turn", []int{0, 1, 2}, []int{2}, []int{3}, 3, false, true, 0, []string{"a", "c", "b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: versions}, summaries: daemonDocumentClient{fixture.connection}}
@@ -198,7 +199,10 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 					wantRank++
 				}
 				require.Equal(t, wantRank, passage.Rank)
-				if tc.name == "lead evidence does not crowd out passages" {
+				if tc.name == "later question passage is emitted at matching term turn" && passage.Text == "c" {
+					require.NotNil(t, passage.Relevance)
+					require.InDelta(t, 0.7, *passage.Relevance, 1e-12)
+				} else if tc.name == "lead evidence does not crowd out passages" {
 					require.Nil(t, passage.Relevance)
 				} else if passage.Text == "a" || passage.Text == "b" {
 					require.InDelta(t, 0.7, *passage.Relevance, 1e-12)

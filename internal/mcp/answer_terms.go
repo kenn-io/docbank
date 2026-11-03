@@ -74,19 +74,32 @@ func mergeAnswerSearchResults(questionHits []answerSearchHit, terms []api.Docume
 	}
 	var merged []*answerSearchHit
 	seen := make([]*answerSearchHit, 0, len(questionHits))
+	questionHitIndexes := make(map[*answerSearchHit]int, len(questionHits))
+	questionEmitted := make([]bool, len(questionHits))
 	for index := range questionHits {
-		seen = append(seen, &questionHits[index])
+		hit := &questionHits[index]
+		seen = append(seen, hit)
+		questionHitIndexes[hit] = index
 	}
 	questionIndex := 0
+	emitNextQuestion := func() {
+		for questionIndex < len(questionHits) {
+			index := questionIndex
+			questionIndex++
+			if questionEmitted[index] {
+				continue
+			}
+			merged = append(merged, seen[index])
+			questionEmitted[index] = true
+			return
+		}
+	}
 	for index := range maxResults {
 		for _, report := range terms {
 			if index >= len(report.Results) {
 				continue
 			}
-			if questionIndex < len(questionHits) {
-				merged = append(merged, seen[questionIndex])
-				questionIndex++
-			}
+			emitNextQuestion()
 			candidate := &answerSearchHit{result: report.Results[index]}
 			var duplicate *answerSearchHit
 			for _, existing := range seen {
@@ -99,6 +112,10 @@ func mergeAnswerSearchResults(questionHits []answerSearchHit, terms []api.Docume
 				if !answerContentExcerpt(candidate.result) {
 					*duplicate = mergeAnswerLeadHits(*duplicate, *candidate)
 				}
+				if index, isQuestionHit := questionHitIndexes[duplicate]; isQuestionHit && !questionEmitted[index] {
+					merged = append(merged, duplicate)
+					questionEmitted[index] = true
+				}
 				continue
 			}
 			seen = append(seen, candidate)
@@ -106,7 +123,11 @@ func mergeAnswerSearchResults(questionHits []answerSearchHit, terms []api.Docume
 		}
 	}
 	for ; questionIndex < len(questionHits); questionIndex++ {
+		if questionEmitted[questionIndex] {
+			continue
+		}
 		merged = append(merged, seen[questionIndex])
+		questionEmitted[questionIndex] = true
 	}
 
 	truncated := len(merged) > limit
