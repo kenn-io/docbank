@@ -372,9 +372,15 @@ func hasAlternativeDates(s string, checks []candidate) bool {
 }
 
 func standaloneDateRange(s string, first, second candidate) bool {
-	before := strings.ToLower(strings.TrimSpace(s[:first.start]))
-	connector := strings.ToLower(strings.TrimSpace(s[first.end:second.start]))
+	before := strings.ToLower(trimDateRangePunctuation(s[:first.start]))
+	connector := strings.ToLower(trimDateRangePunctuation(s[first.end:second.start]))
 	return connector == andWord && endsWord(before, "between") || connector == "to" && !endsWord(before, periodStartWords...)
+}
+
+func trimDateRangePunctuation(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(",()[]\"'‘’“”«»", r)
+	})
 }
 
 // Alternative standalone dates do not assert either date exactly.
@@ -993,7 +999,7 @@ func splitClauses(s string) []clause {
 			start = i
 			continue
 		}
-		if r == '.' || r == '!' || r == '?' {
+		if sentenceEndPunctuation(r) {
 			next := i + n
 			for next < len(s) {
 				closer, size := utf8.DecodeRuneInString(s[next:])
@@ -1016,6 +1022,19 @@ func splitClauses(s string) []clause {
 	}
 	emit(len(s), false)
 	return out
+}
+
+func sentenceEndPunctuation(r rune) bool {
+	switch r {
+	case '.', '!', '?':
+		return true
+	}
+	switch norm.NFKC.String(string(r)) {
+	case ".", "!", "?":
+		return true
+	default:
+		return false
+	}
 }
 
 // Blank lines and list or table rows separate independent statements.
@@ -1350,7 +1369,7 @@ func omitUncertainRates(s string, checks, cs []candidate) []candidate {
 		}
 		n := rateEnd(s[c.end:])
 		accepted := slices.ContainsFunc(cs, func(other candidate) bool { return other.start == c.start && other.end == c.end })
-		uncertainDenominator := rateApproximationRE.MatchString(s[c.end:]) || boundedRateRange(s[c.end:]) || boundedCompoundDurationRate(s[c.end:c.end+n]) || slices.ContainsFunc(checks, func(part candidate) bool {
+		uncertainDenominator := approximateRate(s[c.end:]) || boundedRateRange(s[c.end:]) || boundedCompoundDurationRate(s[c.end:c.end+n]) || slices.ContainsFunc(checks, func(part candidate) bool {
 			_, exact := qualifier(s[:part.start])
 			return (part.f.Kind == durationKind || part.f.Kind == "count" || part.f.Kind == percentKind) && part.start >= c.end && part.end <= c.end+n &&
 				(!exact || !slices.ContainsFunc(cs, func(accepted candidate) bool { return accepted.start == part.start && accepted.end == part.end }) || approximationSuffixRE.MatchString(s[part.end:]) || postfixFigureBound(part.f, s[part.end:]) || uncertaintyAdjacent(s[:part.start], s[part.end:]) || calendarExclusionRE.MatchString(s[part.end:]))
@@ -1456,6 +1475,7 @@ func unsupportedOriginalRate(original string, offsets map[int]int, s string, end
 }
 
 var rateApproximationRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)\s+)[(\["'‘’“”\s]*(?:` + approximation + `\b|[~≈])`)
+var rateApproximationPrefixRE = regexp.MustCompile(`(?i)^\.?\s+(?:` + approximation + `\b|[~≈])`)
 
 var rateBoundPrefix = func() string {
 	var words []string
@@ -1482,7 +1502,20 @@ func boundedRateRange(s string) bool {
 	return ok && end != ""
 }
 
+func approximateRate(s string) bool {
+	if rateApproximationRE.MatchString(s) {
+		return true
+	}
+	loc := rateApproximationPrefixRE.FindStringIndex(s)
+	return loc != nil && rateRE.MatchString(s[loc[1]:])
+}
+
 func rateEnd(s string) int {
+	approximationPrefix := 0
+	if loc := rateApproximationPrefixRE.FindStringIndex(s); loc != nil {
+		approximationPrefix = loc[1]
+		s = s[approximationPrefix:]
+	}
 	loc := rateRE.FindStringSubmatchIndex(s)
 	if loc == nil || numeralWord(s[loc[4]:loc[5]]) || loc[2] < 0 && rateBoundLeadRE.MatchString(s) || rateFractionRE.MatchString(s) {
 		return 0
@@ -1535,7 +1568,7 @@ func rateEnd(s string) int {
 	if strings.HasPrefix(s[end:], ".") && durationAbbrevRE.MatchString(s[:end+1]) {
 		end++
 	}
-	return end
+	return approximationPrefix + end
 }
 
 // A stated end date is not an unsupported numeric range endpoint.

@@ -492,7 +492,8 @@ func FuzzExtract(f *testing.F) {
 	f.Add("Policy: XXXX-2026-07-01 applies.")
 	for _, s := range []string{"The fee is $1,000.50.", "From 1 July 2026 wait 15 days.", "\xff 2 days …", "The rate is one point five percent.", "The rate is one percent point five.",
 		"Wait is twenty-one days.", "Wait is thirty-one days.", "Wait is 10-7 days.",
-		"Wait is 20-1 days.", "Wait is 7-10 days.", "The period isn’t 7 days.", "The period is 7 days...", "...The period is 7 days.", "From １ July ２０２６ the fee is $5 per 2 months.", "Wait is ½ day.", "Cost is $1/2.", "The wait cannot be 7 days.", "Wait is 7 days approximately.", "Account number: 1234 5678.", "The fee is $7 and 2 devices are included.", "Policy: USD1234A.", "The fee is $fourteen."} {
+		"Wait is 20-1 days.", "Wait is 7-10 days.", "The period isn’t 7 days.", "The period is 7 days...", "...The period is 7 days.", "From １ July ２０２６ the fee is $5 per 2 months.", "Wait is ½ day.", "Cost is $1/2.", "The wait cannot be 7 days.", "Wait is 7 days approximately.", "Account number: 1234 5678.", "The fee is $7 and 2 devices are included.", "Policy: USD1234A.", "The fee is $fourteen.",
+		"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", "From 1 July 2026 the fee is $5． The deposit is $7.", "The fee is $5 approximately per 2 devices."} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -4561,6 +4562,52 @@ func TestExtractReviewNormalizedAbbreviationsAndDatedSubjects(t *testing.T) {
 	}
 }
 
+func TestExtractSplitsNormalizedSentencePunctuation(t *testing.T) {
+	for _, separator := range []string{"．", "！", "？"} {
+		t.Run(separator, func(t *testing.T) {
+			text := "From 1 July 2026 the fee is $5" + separator + " The deposit is $7."
+			got := Extract(text)
+			if len(got) != 2 {
+				t.Fatalf("got %+v", got)
+			}
+			if got[0].Text != "$5" || got[0].Period != (Period{From: "2026-07-01"}) {
+				t.Errorf("first sentence has wrong figure or period: %+v", got[0])
+			}
+			if got[1].Text != "$7" || got[1].Period != (Period{}) || got[1].Clause != "The deposit is $7." {
+				t.Errorf("second sentence inherited earlier scope: %+v", got[1])
+			}
+		})
+	}
+
+	text := "The wait is not 7 days． The deposit is $7."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+		t.Fatalf("negation crossed a normalization-equivalent sentence boundary: %+v", got)
+	}
+}
+
+func TestExtractApproximateRateDoesNotExposeDenominator(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The fee is $5 approximately per 2 devices.", nil},
+		{"The fee is $5 approximately per 2 devices, and the deposit is $7.", []string{"$7"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("approximate rate leaked a numerator or denominator: %+v", got)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want {
+					t.Errorf("figure %d = %q, want %q", i, got[i].Text, want)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractReviewPossessivesAndWrappedDateRanges(t *testing.T) {
 	for _, tt := range []struct {
 		text          string
@@ -4672,6 +4719,8 @@ func TestExtractReviewNominalAndCompleteDateRanges(t *testing.T) {
 		{"The wait is 7 min. per day.", []string{"7 min"}, []string{"The wait is 7 min. per day."}, Period{}},
 		{"The deadline is between 1 July 2026 and 1 August 2026. The fee is $7.", []string{"$7"}, nil, Period{}},
 		{"The deadline is 1 July 2026 to 1 August 2026. The fee is $7.", []string{"$7"}, nil, Period{}},
+		{"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", []string{"$7"}, nil, Period{}},
+		{"The deadline is between (1 July 2026) and (1 August 2026). The fee is $7.", []string{"$7"}, nil, Period{}},
 		{"The deadlines are 1 July 2026 and 1 August 2026. The fee is $7.", []string{"1 July 2026", "1 August 2026", "$7"}, nil, Period{}},
 		{"From 1 July 2026 to 1 August 2026 the fee is $5.", []string{"$5"}, nil, Period{From: "2026-07-01", To: "2026-08-01"}},
 	} {
