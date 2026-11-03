@@ -46,30 +46,37 @@ func sameAnswerSearchResult(a, b api.DocumentSearchResult) bool {
 	if !aHasContent {
 		return sameAnswerLead(a, b)
 	}
-	if a.ContentVersionID != b.ContentVersionID {
+	if a.ContentVersionID != b.ContentVersionID || a.Excerpt != b.Excerpt {
 		return false
 	}
 	return reflect.DeepEqual(answerContentEvidence(a), answerContentEvidence(b))
 }
 
-func mergeAnswerSearchResults(question, terms api.DocumentSearchReport, limit int) ([]answerSearchHit, bool) {
-	questionHits := answerSearchHits(question, true)
-	termsHits := answerSearchHits(terms, false)
-	merged := make([]answerSearchHit, 0, len(questionHits)+len(termsHits))
-
-	for questionIndex, termsIndex := 0, 0; questionIndex < len(questionHits) || termsIndex < len(termsHits); {
-		if questionIndex < len(questionHits) {
-			merged = append(merged, questionHits[questionIndex])
-			questionIndex++
-		}
-		if termsIndex < len(termsHits) {
-			candidate := termsHits[termsIndex]
-			if !answerSearchHitExists(questionHits, candidate) && !answerSearchHitExists(merged, candidate) {
-				merged = append(merged, candidate)
+func mergeAnswerSearchResults(questionHits []answerSearchHit, terms []api.DocumentSearchReport, limit int) ([]answerSearchHit, bool) {
+	maxResults := 0
+	for _, report := range terms {
+		maxResults = max(maxResults, len(report.Results))
+	}
+	var merged []answerSearchHit
+	seen := append([]answerSearchHit(nil), questionHits...)
+	questionIndex := 0
+	for index := range maxResults {
+		for _, report := range terms {
+			if index >= len(report.Results) {
+				continue
 			}
-			termsIndex++
+			if questionIndex < len(questionHits) {
+				merged = append(merged, questionHits[questionIndex])
+				questionIndex++
+			}
+			candidate := answerSearchHit{result: report.Results[index]}
+			if !answerSearchHitExists(seen, candidate) {
+				merged = append(merged, candidate)
+				seen = append(seen, candidate)
+			}
 		}
 	}
+	merged = append(merged, questionHits[questionIndex:]...)
 
 	truncated := len(merged) > limit
 	if truncated {
@@ -79,23 +86,6 @@ func mergeAnswerSearchResults(question, terms api.DocumentSearchReport, limit in
 		merged[index].result.Rank = index + 1
 	}
 	return merged, truncated
-}
-
-func interleaveAnswerTerms(reports []api.DocumentSearchReport) api.DocumentSearchReport {
-	var combined api.DocumentSearchReport
-	maxResults := 0
-	for _, report := range reports {
-		combined.Truncated = combined.Truncated || report.Truncated
-		maxResults = max(maxResults, len(report.Results))
-	}
-	for index := range maxResults {
-		for _, report := range reports {
-			if index < len(report.Results) {
-				combined.Results = append(combined.Results, report.Results[index])
-			}
-		}
-	}
-	return combined
 }
 
 func answerSearchHitExists(hits []answerSearchHit, candidate answerSearchHit) bool {

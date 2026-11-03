@@ -388,16 +388,16 @@ secrets, daemon keys, or unrequested document text.
 
 `answer_question` returns evidence without writing an answer. By default,
 content passages require every word of `question` to appear in one segment. You
-can supply one to eight optional nonblank `terms` (each 1–64 characters) to search for
-additional lexical matches. Each term is searched separately; all words within
-one term must appear in one passage. Searches use the same resolved scope and
-selected profile, without reranking. Terms results alternate across terms. Question and
-terms results are interleaved with question results first, duplicate evidence
-is removed, and the combined list observes `limit`. The receipt records whether
-terms searches ran and a hash of the terms; it never returns the terms themselves.
-`ANSWERED` means
-that a content excerpt matched; it does not verify that the excerpt answers the
-question. Open the source to verify any quotation: excerpts can include omission
+can supply one to eight unique, nonblank `terms`, each 1–64 characters, for
+additional lexical matches. Each term runs a separate search; all its words must
+appear in one passage. Term searches share the question's scope and selected
+profile, without reranking. A failed term search fails the call. Results alternate
+across terms and interleave with question results, question first. Identical
+passages and duplicate leads are removed, and the combined list observes `limit`.
+The receipt includes `terms_sha256` when terms ran. It hashes the JSON encoding of
+the ordered, individually trimmed term list and returns the hash alone. `ANSWERED`
+means that a content excerpt matched; it does not verify that the excerpt answers
+the question. Open the source to verify any quotation: excerpts can include omission
 markers and are not necessarily contiguous spans. Results without content text
 are leads, not passages. `NO_MATCH` means a completed search returned no
 candidates, not that the vault contains no answer. A validated empty scope is

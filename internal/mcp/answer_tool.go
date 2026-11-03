@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"slices"
@@ -54,7 +55,6 @@ type answerCitation struct {
 type answerReceipt struct {
 	QuestionSHA256      string                              `json:"question_sha256"`
 	ExecutedQuerySHA256 string                              `json:"executed_query_sha256,omitempty"`
-	TermsSearched       bool                                `json:"terms_searched"`
 	TermsSHA256         string                              `json:"terms_sha256,omitempty"`
 	SearchExecuted      bool                                `json:"search_executed"`
 	ObservedScopeCount  int                                 `json:"observed_scope_count"`
@@ -151,7 +151,9 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		input.MaxPassageBytes = 12288
 	}
 	hash := sha256.Sum256([]byte(input.Question))
-	termsHashInput := strings.TrimSpace(strings.Join(input.Terms, " "))
+	for i := range input.Terms {
+		input.Terms[i] = strings.TrimSpace(input.Terms[i])
+	}
 	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
 		fence     api.DocumentSourceFenceResolution
@@ -223,16 +225,16 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if len(input.Terms) > 0 {
 			reports := make([]api.DocumentSearchReport, 0, len(input.Terms))
 			for _, term := range input.Terms {
-				termsReport, termsErr := run(strings.TrimSpace(term), selected.Name, "", "lexical", false)
+				termsReport, termsErr := run(term, selected.Name, "", "lexical", false)
 				if termsErr != nil {
 					return response{}, termsErr
 				}
 				reports = append(reports, termsReport)
+				truncated = truncated || termsReport.Truncated
 			}
-			termsReport := interleaveAnswerTerms(reports)
 			var mergeTruncated bool
-			hits, mergeTruncated = mergeAnswerSearchResults(report, termsReport, input.Limit)
-			truncated = truncated || termsReport.Truncated || mergeTruncated
+			hits, mergeTruncated = mergeAnswerSearchResults(hits, reports, input.Limit)
+			truncated = truncated || mergeTruncated
 		}
 		uniqueResults := make([]api.DocumentSearchResult, 0, len(hits))
 		seenDocuments := make(map[api.DocumentIdentity]struct{}, len(hits))
@@ -266,9 +268,12 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	out.Receipt.Profile = &answerProfile{Name: result.profile.Name, Fingerprint: result.profile.Fingerprint}
 	out.Receipt.BindingID = result.binding
 	out.Receipt.SearchExecuted = result.executed
-	out.Receipt.TermsSearched = result.executed && len(input.Terms) > 0
-	if out.Receipt.TermsSearched {
-		termsHash := sha256.Sum256([]byte(termsHashInput))
+	if result.executed && len(input.Terms) > 0 {
+		termsHashInput, err := json.Marshal(input.Terms)
+		if err != nil {
+			return answerOutput{}, nil, err
+		}
+		termsHash := sha256.Sum256(termsHashInput)
 		out.Receipt.TermsSHA256 = hex.EncodeToString(termsHash[:])
 	}
 	if result.executed {

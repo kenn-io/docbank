@@ -100,8 +100,7 @@ func TestAnswerQuestionTermsRecoverLexicalPassage(t *testing.T) {
 		require.Equal(t, f.requests[1].Profile, req.Profile)
 		require.Equal(t, f.requests[1].Fence, req.Fence)
 	}
-	hash := sha256.Sum256([]byte("lease renewal"))
-	require.True(t, with.Receipt.TermsSearched)
+	hash := sha256.Sum256([]byte(`["lease","renewal"]`))
 	require.Equal(t, hex.EncodeToString(hash[:]), with.Receipt.TermsSHA256)
 	encoded, err := json.Marshal(with)
 	require.NoError(t, err)
@@ -126,6 +125,26 @@ func TestAnswerQuestionTermsMatchIndependently(t *testing.T) {
 		} else {
 			require.Len(t, passages, 1)
 			require.Equal(t, member.VersionID, schemaMap(t, passages[0])["content_version_id"])
+		}
+	}
+}
+
+func TestAnswerQuestionTermsKeepDistinctPassages(t *testing.T) {
+	f := newNativeExportFixture(t)
+	text := "Lease renewal requires thirty days notice. " + strings.Repeat("Routine agreement details. ", 200) + "Lease termination requires sixty days notice."
+	member := f.addFile(t, "agreement.txt", text)
+	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+		BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: text,
+	}))
+	server, _, _ := newProcessingDocumentServer(t, f)
+	for _, terms := range [][]string{{"renewal"}, {"termination"}, {"renewal", "termination"}} {
+		out := exportCall(t, server, "answer_question", map[string]any{"question": "when must I act", "terms": terms})
+		passages := out["passages"].([]any)
+		require.Len(t, passages, len(terms))
+		for i, term := range terms {
+			passage := schemaMap(t, passages[i])
+			require.Equal(t, member.VersionID, passage["content_version_id"])
+			require.Contains(t, passage["text"], term)
 		}
 	}
 }
@@ -208,7 +227,7 @@ func TestAnswerQuestionTermsSchema(t *testing.T) {
 	for _, terms := range []any{[]any{"lease"}, []any{strings.Repeat("界", 64)}, []any{"a", "b", "c", "d", "e", "f", "g", "h"}} {
 		assertSchemaAccepts(t, input, map[string]any{"question": "q", "terms": terms})
 	}
-	for _, terms := range []any{nil, []any{}, []any{""}, []any{strings.Repeat("界", 65)}, []any{"a", "b", "c", "d", "e", "f", "g", "h", "i"}} {
+	for _, terms := range []any{nil, []any{}, []any{""}, []any{"lease", "lease"}, []any{strings.Repeat("界", 65)}, []any{"a", "b", "c", "d", "e", "f", "g", "h", "i"}} {
 		assertSchemaRejects(t, input, map[string]any{"question": "q", "terms": terms})
 	}
 	fixture := newNativeExportFixture(t)
@@ -227,7 +246,6 @@ func TestAnswerQuestionTermsEmptyFence(t *testing.T) {
 	require.Empty(t, f.requests)
 	require.Equal(t, 3, f.validations)
 	require.Equal(t, answer.NoMatch, out.Status)
-	require.False(t, out.Receipt.TermsSearched)
 	require.Empty(t, out.Receipt.TermsSHA256)
 }
 
@@ -254,11 +272,26 @@ func TestAnswerQuestionTermsReceiptWithoutEcho(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "classified", f.requests[1].Query)
 	require.Equal(t, "token", f.requests[2].Query)
-	hash := sha256.Sum256([]byte("classified   token"))
-	require.True(t, out.Receipt.TermsSearched)
+	hash := sha256.Sum256([]byte(`["classified","token"]`))
 	require.Equal(t, hex.EncodeToString(hash[:]), out.Receipt.TermsSHA256)
 	encoded, err := json.Marshal(out)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "classified")
 	require.NotContains(t, string(encoded), "token")
+	for _, tc := range []struct {
+		terms string
+		same  bool
+	}{
+		{`["classified","token"]`, true},
+		{`["classified token"]`, false},
+		{`["token","classified"]`, false},
+	} {
+		other, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":`+tc.terms+`}`))
+		require.NoError(t, err)
+		if tc.same {
+			require.Equal(t, out.Receipt.TermsSHA256, other.Receipt.TermsSHA256)
+		} else {
+			require.NotEqual(t, out.Receipt.TermsSHA256, other.Receipt.TermsSHA256)
+		}
+	}
 }
