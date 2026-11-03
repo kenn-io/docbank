@@ -235,15 +235,17 @@ func TestAnswerQuestionTermsRetainedReceipt(t *testing.T) {
 			f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 				result := api.DocumentSearchResult{NodeID: member.NodeID, ContentVersionID: member.VersionID, Path: "/lease.txt", Excerpt: strings.Repeat("𐐀", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}}
 				if req.Mode == "hybrid" {
+					require.True(t, req.Rerank, "reranking places the lead before the passage found in both lanes")
+					result.Score = 0.7
 					result.Evidence = append(result.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: space, EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)})
-					lead := api.DocumentSearchResult{NodeID: leadMember.NodeID, ContentVersionID: leadMember.VersionID, Path: "/index.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
+					lead := api.DocumentSearchResult{NodeID: leadMember.NodeID, ContentVersionID: leadMember.VersionID, Path: "/index.txt", Score: 0.9, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
 					return answerTermsSearchReport(req, lead, result), nil
 				}
 				result.Excerpt = "Lease"
 				return answerTermsSearchReport(req, result), nil
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-			raw := fmt.Appendf(nil, `{"question":"renewal","terms":["lease"],"max_passage_bytes":%d}`, budget)
+			raw := fmt.Appendf(nil, `{"question":"renewal","terms":["lease"],"rerank":true,"max_passage_bytes":%d}`, budget)
 			out, _, err := answerQuestion(t.Context(), session, raw)
 			require.NoError(t, err)
 			if budget == 2048 {

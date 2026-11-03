@@ -392,9 +392,10 @@ can supply one to eight unique, nonblank `terms`, each 1–64 characters with no
 additional lexical matches. Each term runs a separate search; all its words must
 appear in one passage. Term searches share the question's scope and selected
 profile, without reranking. A failed term search fails the call. Results alternate
-across terms and interleave with question results, question first. Identical
-passages and duplicate leads are removed, and the combined list observes `limit`.
-The receipt includes `terms_sha256` when terms ran. Its input is the UTF-8 encoding of the compact JSON array of the terms in order, such as `["lease","renewal"]`, with no added spaces or trailing newline. The receipt returns the SHA-256 hash alone. `ANSWERED`
+across terms and interleave with question results, question first. Different snippets
+from one document are kept; identical snippets and duplicate leads are removed.
+The combined list observes `limit`.
+The receipt includes `terms_sha256` when terms ran: SHA-256 of the UTF-8 compact JSON array of terms in order, such as `["lease","renewal"]`, with strings escaped only where JSON requires, no HTML or non-ASCII escaping, and no trailing newline. `ANSWERED`
 means that a content excerpt matched; it does not verify that the excerpt answers
 the question. Open the source to verify any quotation: excerpts can include omission
 markers and are not necessarily contiguous spans. Results without content text

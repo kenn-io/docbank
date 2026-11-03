@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -26,11 +25,15 @@ func answerContentExcerpt(result api.DocumentSearchResult) bool {
 		return false
 	}
 	for _, evidence := range result.Evidence {
-		if evidence.Kind == "rendition_segment" || evidence.Kind == "content_blob" {
+		if answerContentKind(evidence.Kind) {
 			return true
 		}
 	}
 	return false
+}
+
+func answerContentKind(kind string) bool {
+	return kind == "rendition_segment" || kind == "content_blob"
 }
 
 type answerInput struct {
@@ -359,7 +362,10 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				}
 			}
 		}
-		out.Receipt.VectorSpaceIDs = slices.AppendSeq(out.Receipt.VectorSpaceIDs[:0], maps.Keys(spaces))
+		out.Receipt.VectorSpaceIDs = out.Receipt.VectorSpaceIDs[:0]
+		for space := range spaces {
+			out.Receipt.VectorSpaceIDs = append(out.Receipt.VectorSpaceIDs, space)
+		}
 		slices.Sort(out.Receipt.VectorSpaceIDs)
 		out.Receipt.CitedVersions = out.Receipt.CitedVersions[:0]
 		for _, p := range out.Passages {

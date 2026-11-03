@@ -24,7 +24,7 @@ func answerSearchHits(report api.DocumentSearchReport) []answerSearchHit {
 func answerContentEvidence(result api.DocumentSearchResult) []api.DocumentEvidenceReference {
 	evidence := make([]api.DocumentEvidenceReference, 0, len(result.Evidence))
 	for _, item := range result.Evidence {
-		if item.Kind == "rendition_segment" || item.Kind == "content_blob" {
+		if answerContentKind(item.Kind) {
 			evidence = append(evidence, item)
 		}
 	}
