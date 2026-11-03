@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -160,8 +161,13 @@ func TestAnswerMergeTermsKeepsQuestionPassageProvenance(t *testing.T) {
 func TestAnswerMergeTermsDeduplicatesIdenticalLeads(t *testing.T) {
 	lead := api.DocumentSearchResult{NodeID: 7, ContentVersionID: "v", Path: "/lease.pdf", Rank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
 	other := lead
+	other.NodeID = 9
+	other.ContentVersionID = "v3"
+	other.Path = "/other.pdf"
 	other.Evidence = append(slices.Clone(lead.Evidence), api.DocumentEvidenceReference{Kind: "embedding", InputID: "different"})
 	passage := lead
+	passage.NodeID = 8
+	passage.ContentVersionID = "v2"
 	passage.LexicalRank = 1
 	passage.Excerpt = "content"
 	passage.Evidence = []api.DocumentEvidenceReference{{Kind: "content_blob"}}
@@ -171,7 +177,7 @@ func TestAnswerMergeTermsDeduplicatesIdenticalLeads(t *testing.T) {
 	if truncated || len(hits) != 3 || hits[0].result.NodeID != 7 || !answerContentExcerpt(hits[1].result) || len(hits[2].result.Evidence) != 2 {
 		t.Fatalf("hits=%+v truncated=%t", hits, truncated)
 	}
-	first := api.DocumentSearchResult{NodeID: 8, Rank: 1}
+	first := api.DocumentSearchResult{NodeID: 8, ContentVersionID: "v0", Rank: 1}
 	lead.Rank, lead.Score = 2, 0.7
 	question = api.DocumentSearchReport{Results: []api.DocumentSearchResult{first, lead}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 2}}
 	terms = api.DocumentSearchReport{Results: []api.DocumentSearchResult{lead}}
@@ -191,12 +197,22 @@ func FuzzAnswerMergeIdenticalLeads(f *testing.F) {
 		question := api.DocumentSearchReport{}
 		terms := api.DocumentSearchReport{}
 		seen := map[byte]bool{}
+		questionVersions := map[byte]bool{}
+		termsVersions := map[byte]bool{}
 		for i, value := range data {
 			seen[value] = true
-			lead := api.DocumentSearchResult{NodeID: int64(value) + 1, ContentVersionID: "v", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
+			lead := api.DocumentSearchResult{NodeID: int64(value) + 1, ContentVersionID: fmt.Sprintf("version-%d", value), Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
 			if i%2 == 0 {
+				if questionVersions[value] {
+					continue
+				}
+				questionVersions[value] = true
 				question.Results = append(question.Results, lead)
 			} else {
+				if termsVersions[value] {
+					continue
+				}
+				termsVersions[value] = true
 				terms.Results = append(terms.Results, lead)
 			}
 		}
@@ -215,11 +231,11 @@ func FuzzAnswerMergeIdenticalLeads(f *testing.F) {
 }
 
 func TestAnswerMergeTermsKeepsDistinctContentIdentities(t *testing.T) {
-	question := api.DocumentSearchReport{Results: []api.DocumentSearchResult{{ContentVersionID: "v", Rank: 1, LexicalRank: 1, Excerpt: "text", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}, {Kind: "embedding"}}}}}
+	question := api.DocumentSearchReport{Results: []api.DocumentSearchResult{{NodeID: 1, ContentVersionID: "v", Rank: 1, LexicalRank: 1, Excerpt: "text", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}, {Kind: "embedding"}}}}}
 	terms := api.DocumentSearchReport{Results: []api.DocumentSearchResult{
-		{ContentVersionID: "v", Rank: 1, LexicalRank: 1, Excerpt: "text", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}},
-		{ContentVersionID: "v", Rank: 2, LexicalRank: 2, Excerpt: "other text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "one", SegmentID: "segment"}}},
-		{ContentVersionID: "v", Rank: 3, LexicalRank: 3, Excerpt: "other build", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "two", SegmentID: "segment"}}},
+		{NodeID: 1, ContentVersionID: "v", Rank: 1, LexicalRank: 1, Excerpt: "text", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}},
+		{NodeID: 2, ContentVersionID: "v2", Rank: 2, LexicalRank: 2, Excerpt: "other text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "one", SegmentID: "segment"}}},
+		{NodeID: 3, ContentVersionID: "v3", Rank: 3, LexicalRank: 3, Excerpt: "other build", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "two", SegmentID: "segment"}}},
 	}}
 	hits, truncated := mergeAnswerSearchResults(question, terms, 10)
 	if truncated || len(hits) != 3 || hits[0].result.Excerpt != "text" || hits[1].result.Excerpt != "other text" || hits[2].result.Excerpt != "other build" {
@@ -239,17 +255,27 @@ func FuzzAnswerMergeTerms(f *testing.F) {
 		terms := api.DocumentSearchReport{}
 		questionRelevance := map[int64]float64{}
 		allVersions := map[string]bool{}
+		questionVersions := map[string]bool{}
+		termsVersions := map[string]bool{}
 		for i, id := range data {
 			version := string(rune('a' + id%12))
-			r := api.DocumentSearchResult{NodeID: int64(i + 1), ContentVersionID: version, LexicalRank: 1, Excerpt: strings.Repeat("界", int(id%8)+1), Score: 0.9, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}
+			r := api.DocumentSearchResult{NodeID: int64(id%12) + 1, ContentVersionID: version, LexicalRank: 1, Excerpt: strings.Repeat("界", int(id%8)+1), Score: 0.9, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment"}}}
 			allVersions[version] = true
 			if i%2 == 0 {
+				if questionVersions[version] {
+					continue
+				}
+				questionVersions[version] = true
 				r.Rank = len(question.Results) + 1
 				question.Results = append(question.Results, r)
 				if r.Rank <= 2 {
 					questionRelevance[r.NodeID] = r.Score
 				}
 			} else {
+				if termsVersions[version] {
+					continue
+				}
+				termsVersions[version] = true
 				r.Rank = len(terms.Results) + 1
 				r.Evidence = append(r.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: "unrelated"})
 				terms.Results = append(terms.Results, r)
@@ -343,7 +369,7 @@ func TestAnswerQuestionTermsLimitAndPassageBudget(t *testing.T) {
 			if req.Mode == "lexical" {
 				nodeID += 2
 			}
-			report.Results = append(report.Results, api.DocumentSearchResult{NodeID: nodeID, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/fixture", Rank: i, LexicalRank: i, Excerpt: strings.Repeat("界", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: req.Mode, SegmentID: string(rune('a' + i))}}})
+			report.Results = append(report.Results, api.DocumentSearchResult{NodeID: nodeID, ContentVersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", nodeID), Path: "/fixture", Rank: i, LexicalRank: i, Excerpt: strings.Repeat("界", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: req.Mode, SegmentID: string(rune('a' + i))}}})
 		}
 		return report, nil
 	}}
