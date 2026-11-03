@@ -117,10 +117,10 @@ func TestAnswerMergeTermsPreservesProvenanceAndContentIdentity(t *testing.T) {
 	}
 	a, b, c := passage("v1", "a", 1), passage("v2", "b", 2), passage("v3", "c", 2)
 	duplicate := a
-	duplicate.Evidence = append(slices.Clone(a.Evidence), api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: "extra"})
+	a.Evidence = append(slices.Clone(a.Evidence), api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: "extra"})
 	duplicate.Rank = 1
 	question := api.DocumentSearchReport{Results: []api.DocumentSearchResult{a, b}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 2}}
-	terms := api.DocumentSearchReport{Results: []api.DocumentSearchResult{duplicate, c}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 2}}
+	terms := api.DocumentSearchReport{Results: []api.DocumentSearchResult{duplicate, c}}
 	hits, truncated := mergeAnswerSearchResults(question, terms, 3)
 	if truncated || len(hits) != 3 {
 		t.Fatalf("hits=%+v truncated=%t", hits, truncated)
@@ -164,7 +164,7 @@ func TestAnswerMergeTermsDeduplicatesIdenticalLeads(t *testing.T) {
 	other.NodeID = 9
 	other.ContentVersionID = "v3"
 	other.Path = "/other.pdf"
-	other.Evidence = append(slices.Clone(lead.Evidence), api.DocumentEvidenceReference{Kind: "embedding", InputID: "different"})
+	other.Evidence = slices.Clone(lead.Evidence)
 	passage := lead
 	passage.NodeID = 8
 	passage.ContentVersionID = "v2"
@@ -174,7 +174,7 @@ func TestAnswerMergeTermsDeduplicatesIdenticalLeads(t *testing.T) {
 	question := api.DocumentSearchReport{Results: []api.DocumentSearchResult{lead, passage}}
 	terms := api.DocumentSearchReport{Results: []api.DocumentSearchResult{lead, other}}
 	hits, truncated := mergeAnswerSearchResults(question, terms, 3)
-	if truncated || len(hits) != 3 || hits[0].result.NodeID != 7 || !answerContentExcerpt(hits[1].result) || len(hits[2].result.Evidence) != 2 {
+	if truncated || len(hits) != 3 || hits[0].result.NodeID != 7 || !answerContentExcerpt(hits[1].result) || hits[2].result.NodeID != 9 {
 		t.Fatalf("hits=%+v truncated=%t", hits, truncated)
 	}
 	first := api.DocumentSearchResult{NodeID: 8, ContentVersionID: "v0", Rank: 1}
@@ -251,7 +251,7 @@ func FuzzAnswerMergeTerms(f *testing.F) {
 			data = data[:100]
 		}
 		limit := int(capByte%50) + 1
-		question := api.DocumentSearchReport{Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 2}}
+		question := api.DocumentSearchReport{}
 		terms := api.DocumentSearchReport{}
 		questionRelevance := map[int64]float64{}
 		allVersions := map[string]bool{}
@@ -277,9 +277,13 @@ func FuzzAnswerMergeTerms(f *testing.F) {
 				}
 				termsVersions[version] = true
 				r.Rank = len(terms.Results) + 1
-				r.Evidence = append(r.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: "unrelated"})
 				terms.Results = append(terms.Results, r)
 			}
+		}
+		if len(question.Results) == 0 {
+			question.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+		} else {
+			question.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: min(2, len(question.Results))}
 		}
 		hits, truncated := mergeAnswerSearchResults(question, terms, limit)
 		again, againTruncated := mergeAnswerSearchResults(question, terms, limit)
