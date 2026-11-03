@@ -979,7 +979,7 @@ var backendSuites = []backendSuite{
 			checkDocumentWrites(t, newPostgresQueryStore)
 		}},
 		{"DocumentNegativeSize", nil, checkDocumentNegativeSizePostgres},
-		{"SupersessionMetadataGraphValidation", checkSupersessionMetadataGraphValidationSQLite, checkSupersessionMetadataGraphValidationPostgres},
+		{"SupersessionMetadataGraphValidation", nil, checkSupersessionMetadataGraphValidationPostgres},
 		{"DocumentPhotoMaintenance", nil, checkDocumentPhotoMaintenancePostgres},
 		{"DocumentSidecarWork", nil, checkDocumentSidecarWorkPostgres},
 		{"DocumentTextSuppression", nil, checkDocumentTextSuppressionPostgres},
