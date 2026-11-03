@@ -2921,8 +2921,8 @@ func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceCancellation(t *testi
 	close(release)
 	readDB := s.db
 	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
-		// Cancel coverage after the lease and source checks succeed.
-		if strings.Contains(query, "SELECT COUNT(*) FROM "+nodeFrom) {
+		// Cancel eligibility loading after the lease and source checks succeed.
+		if strings.Contains(query, "SELECT n.id,n.revision,n.current_version_id,") {
 			cancel()
 		}
 	}})
