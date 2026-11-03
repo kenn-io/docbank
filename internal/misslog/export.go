@@ -93,7 +93,10 @@ func (s *Service) exportItem(ctx context.Context, format string, r Receipt) (Exp
 	if r.Feedback == nil {
 		return item, "unlabeled", nil
 	}
-	if ValidateFeedback(*r.Feedback) != nil || !utf8.ValidString(r.Query) || len(r.Query) > 32768 || !validHits(r.Hits) {
+	if ValidateFeedback(*r.Feedback) != nil ||
+		!utf8.ValidString(r.Query) ||
+		utf8.RuneCountInString(r.Query) > 32768 ||
+		!validHits(r.Hits) {
 		return item, "invalid_record", nil
 	}
 	positive := r.Feedback.Verdict != "none_in_vault"
@@ -111,11 +114,11 @@ func (s *Service) exportItem(ctx context.Context, format string, r Receipt) (Exp
 			return item, "immutable_scope_required", nil
 		}
 		if fence != nil {
-			raw, err := json.Marshal(fence)
-			if err != nil {
+			scope, ok := encodeExportFence(fence)
+			if !ok {
 				return item, "invalid_scope", nil
 			}
-			item.Scope = string(raw)
+			item.Scope = scope
 		}
 	}
 	for _, expected := range r.Feedback.Expected {
@@ -164,6 +167,14 @@ func (s *Service) exportItem(ctx context.Context, format string, r Receipt) (Exp
 type exportFence struct {
 	VaultUID          string   `json:"vault_uid"`
 	ContentVersionIDs []string `json:"content_version_ids"`
+}
+
+func encodeExportFence(fence *exportFence) (string, bool) {
+	raw, err := json.Marshal(fence)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func recordedExportFence(r Receipt) (*exportFence, string) {

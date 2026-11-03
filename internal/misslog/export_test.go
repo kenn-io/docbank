@@ -18,6 +18,7 @@ import (
 
 func exportReceipt(t *testing.T, svc *Service, st *store.Store, receipt Receipt) string {
 	t.Helper()
+	require.True(t, svc.Enabled())
 	receipt.ID = strings.Repeat("a", 40) + strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")
 	receipt.CreatedAt = time.Now().UTC()
 	receipt.VaultUID = st.VaultID()
@@ -117,12 +118,35 @@ func TestExportBoundsReceiptAndPageBytes(t *testing.T) {
 	page, err := svc.Export(t.Context(), "eval", 100, 0)
 	require.NoError(t, err)
 	require.False(t, page.Done)
-	require.Greater(t, page.NextOffset, 0)
+	require.Positive(t, page.NextOffset)
 	require.Less(t, page.NextOffset, 3)
 	next, err := svc.Export(t.Context(), "eval", 100, page.NextOffset)
 	require.NoError(t, err)
 	require.True(t, next.Done)
 	require.Len(t, append(page.Items, next.Items...), 3)
+}
+
+func TestExportAcceptsMultibyteQueryAtRecorderCharacterLimit(t *testing.T) {
+	svc, st := feedbackService(t)
+	query := strings.Repeat("界", 32768)
+	require.Greater(t, len(query), 32768, "UTF-8 byte length should exceed the recorder's character limit")
+	ticket := svc.Observe(t.Context(), Receipt{Query: query})
+	require.NotEmpty(t, ticket.ID, "the recorder accepts 32,768 Unicode characters")
+	require.NoError(t, svc.Feedback(t.Context(), ticket.ID, ticket.Capability, Feedback{Verdict: "none_in_vault"}, false))
+	row, err := st.MissLogRecordByID(t.Context(), ticket.ID)
+	require.NoError(t, err)
+	require.Greater(t, len(row.Receipt), 32768)
+
+	for _, format := range []string{"eval", "cards"} {
+		t.Run(format, func(t *testing.T) {
+			page, err := svc.Export(t.Context(), format, 100, 0)
+			require.NoError(t, err)
+			require.True(t, page.Done)
+			require.Empty(t, page.Skipped)
+			require.Len(t, page.Items, 1)
+			require.Equal(t, query, page.Items[0].Question)
+		})
+	}
 }
 
 func TestExportBoundsProjectedPagesAndExplicitOldVersions(t *testing.T) {
