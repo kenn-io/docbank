@@ -3126,7 +3126,7 @@ func TestSemanticWholeSpaceEquivalence(t *testing.T) {
 			require.NoError(t, err)
 			var allowed []vectorindex.RowIdentity
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				allowed, err = semanticANNRowsTx(ctx, tx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
+				allowed, err = semanticANNRowsTx(ctx, tx, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{}, "", nil)
 				return err
 			}))
 			counted := &semanticQueryCountingQuerier{metadataQuerier: s.db}
@@ -3195,6 +3195,41 @@ func TestSemanticWholeSpaceEquivalence(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestSemanticSparseFilteredAcquisitionUsesEmbeddingCandidates(t *testing.T) {
+	t.Parallel()
+	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1,
+		Key:   EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind},
+		SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+	for i := range 16 {
+		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("unembedded-%d.pdf", i), testSHA256(fmt.Appendf(nil, "unembedded-%d", i)), 20, "application/pdf")
+		require.NoError(t, err)
+	}
+	q := &semanticScanPlanQuerier{metadataQuerier: s.db, store: s, t: t}
+	rows, wholeSpace, err := semanticANNRowsForSourceTx(t.Context(), q, profile.Fingerprint, "optional", record.InputKind, record.VectorSpace.ID, SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	require.False(t, wholeSpace)
+	require.Equal(t, []vectorindex.RowIdentity{{SetID: record.VectorSet.ID, InputKey: version, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum}}, rows)
+	// Start with embedding candidates. Materializing all matching files makes
+	// sparse semantic searches grow with unembedded files.
+	require.True(t, strings.HasPrefix(q.plan, "SEARCH es "), q.plan)
+}
+
+type semanticScanPlanQuerier struct {
+	metadataQuerier
+
+	store *Store
+	t     *testing.T
+	plan  string
+}
+
+func (q *semanticScanPlanQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	q.plan = explainQueryPlan(q.t, q.store, query, args...)
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
 
 type semanticQueryCountingQuerier struct {

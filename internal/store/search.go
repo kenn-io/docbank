@@ -801,11 +801,11 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space string, opts SearchOptions,
 ) ([]vectorindex.RowIdentity, bool, error) {
-	filter, _ := searchFilterSQL(opts)
-	if filter == "" && !opts.CollapsesPhotoDuplicates() {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	if filterSQL == "" && !opts.CollapsesPhotoDuplicates() {
 		return nil, true, nil
 	}
-	rows, err := semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts)
+	rows, err := semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts, filterSQL, filterArgs)
 	return rows, false, err
 }
 
@@ -813,14 +813,13 @@ func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile
 // This allowlist excludes other bindings, trashed, non-current,
 // out-of-scope, and non-representative rows before scoring.
 func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, filterSQL string, filterArgs []any,
 ) ([]vectorindex.RowIdentity, error) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
 	annRows := make([]vectorindex.RowIdentity, 0)
 	var lastHash string
 	var representative int64
 	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-		filterSQL, filterArgs, nil, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
 			if opts.CollapsesPhotoDuplicates() {
 				if hash != lastHash {
 					lastHash, representative = hash, nodeID
@@ -955,7 +954,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 				}
 			}
 			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-				filterSQL, filterArgs, hashes, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+				filterSQL, filterArgs, hashes, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
 					if representatives[hash] == 0 {
 						representatives[hash] = nodeID
 					}
@@ -1053,7 +1052,7 @@ func semanticMembershipSQL(driver string) string {
 // rows whose current content has one of those hashes.
 func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
-	blobHashes []string, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
+	blobHashes []string, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
 ) (retErr error) {
 	driver := `FROM embedding_sets es`
 	prefix := ""
@@ -1066,8 +1065,9 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 		args = append(args, string(encoded))
 		driver = `FROM json_each(?) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
    CROSS JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
-	} else if filterSQL != "" {
-		// An inner current-version join lets version fences use keyed lookups.
+	} else if versionFence {
+		// Explicit version fences are bounded to 4096 IDs. Other filters keep
+		// the embedding scan so unembedded files do not drive their cost.
 		prefix = `WITH scoped_nodes AS MATERIALIZED (
    SELECT n.id,n.current_version_id FROM nodes n
    JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id

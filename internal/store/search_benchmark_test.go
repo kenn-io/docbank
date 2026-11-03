@@ -261,7 +261,8 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 						opts.PhotoScope, opts.PhotoLexicalQuery = &PhotoBrowseRequest{}, &lexical
 						wantRows = count/100 + 1
 					}
-					allowed, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
+					filterSQL, filterArgs := searchFilterSQL(opts)
+					allowed, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, filterSQL, filterArgs)
 					require.NoError(b, err)
 					require.Len(b, allowed, wantRows)
 					allowlist := make(map[vectorindex.RowIdentity]struct{}, len(allowed))
@@ -309,7 +310,8 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 								b.StartTimer()
 								switch operation {
 								case "authority":
-									rows, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
+									filterSQL, filterArgs := searchFilterSQL(opts)
+									rows, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, filterSQL, filterArgs)
 									require.NoError(b, err)
 									require.Len(b, rows, wantRows)
 								case "resolve":
