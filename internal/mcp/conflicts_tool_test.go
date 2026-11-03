@@ -20,13 +20,16 @@ import (
 )
 
 type conflictTestClient struct {
-	results      []api.DocumentSearchResult
-	summaryCalls int
-	stale        bool
-	limit        int
-	truncated    bool
-	searchErr    error
-	summaryErr   error
+	results        []api.DocumentSearchResult
+	contentResults []api.DocumentSearchResult
+	nameMatch      bool
+	contentFirst   bool
+	summaryCalls   int
+	stale          bool
+	limit          int
+	truncated      bool
+	searchErr      error
+	summaryErr     error
 }
 
 func (c *conflictTestClient) VaultInfo(context.Context) (api.VaultInfo, error) {
@@ -43,7 +46,16 @@ func (c *conflictTestClient) ValidateDocumentSearch(context.Context, api.Documen
 }
 func (c *conflictTestClient) SearchDocuments(_ context.Context, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	c.limit = req.Limit
-	return api.DocumentSearchReport{ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: c.results, Truncated: c.truncated}, c.searchErr
+	c.contentFirst = req.ContentFirst
+	results := c.results
+	if c.nameMatch {
+		if req.ContentFirst {
+			results = c.contentResults
+		} else {
+			results = []api.DocumentSearchResult{conflictHit(1, "The fee is $5.", "node_name")}
+		}
+	}
+	return api.DocumentSearchReport{ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "complete"}, Results: results, Truncated: c.truncated}, c.searchErr
 }
 func (c *conflictTestClient) ResolveDocumentSummaries(_ context.Context, req api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error) {
 	c.summaryCalls++
@@ -70,6 +82,20 @@ func TestFindConflictsContentBlobAndUnicodeOffsets(t *testing.T) {
 	require.Equal(t, conflicts.Conflicting, out.Status)
 	require.Len(t, out.Conflicts, 1)
 	assertConflictCitations(t, out)
+}
+
+func TestFindConflictsSearchesContentFirstWhenNamesMatch(t *testing.T) {
+	c := &conflictTestClient{nameMatch: true, contentResults: []api.DocumentSearchResult{
+		conflictHit(1, "The service fee is $5.", "rendition_segment"),
+		conflictHit(2, "The service fee is $6.", "rendition_segment"),
+	}}
+	c.contentResults[0].Path = "/fee-policy.md"
+	c.contentResults[1].Path = "/fee-schedule.md"
+	out, err := findConflicts(t.Context(), c.session, []byte(`{"query":"fee","profile":"local","filters":{}}`))
+	require.NoError(t, err)
+	require.True(t, c.contentFirst)
+	require.Equal(t, conflicts.Conflicting, out.Status)
+	require.Len(t, out.Conflicts, 1)
 }
 
 func TestFindConflictsExpandedNormalizationConformsToSchema(t *testing.T) {
@@ -154,16 +180,29 @@ func TestFindConflictsResponseBounds(t *testing.T) {
 				hit := conflictHit(int64(i+1), text, "rendition_segment")
 				// Keep each identity and evidence set valid while making the complete
 				// envelope exceed its response budget.
-				hit.Path = "/" + strings.Repeat("🧭/", 7990) + fmt.Sprintf("doc%d", i)
+				hit.Path = "/" + strings.Repeat("🧭", 3990) + fmt.Sprintf("/doc%d", i)
 				hit.ContentVersionID = fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
 				require.LessOrEqual(t, len([]rune(hit.Path)), maxPathCharacters)
-				hit.Evidence = make([]api.DocumentEvidenceReference, 32)
+				require.LessOrEqual(t, len(hit.Path), maxPathBytes)
+				require.LessOrEqual(t, strings.Count(hit.Path, "/"), 256)
+				hit.Evidence = make([]api.DocumentEvidenceReference, 64)
 				for j := range hit.Evidence {
+					if j == 0 {
+						hit.Evidence[j] = api.DocumentEvidenceReference{
+							Kind:                   "content_blob",
+							BuildID:                strings.Repeat("a", 64),
+							SegmentID:              fmt.Sprintf("%064x", i*len(hit.Evidence)+j+1),
+							SourceManifestChecksum: fmt.Sprintf("%064x", i+1),
+						}
+						continue
+					}
 					hit.Evidence[j] = api.DocumentEvidenceReference{
-						Kind:                   "rendition_segment",
-						BuildID:                strings.Repeat("a", 64),
-						SegmentID:              fmt.Sprintf("%064x", i*len(hit.Evidence)+j+1),
-						SourceManifestChecksum: fmt.Sprintf("%064x", i+1),
+						Kind: "media_source",
+						MediaSources: []api.DocumentMediaSource{{
+							SourceID:         strings.Repeat("s", 249) + fmt.Sprintf("%03d-%03d", i, j),
+							SourceVersionID:  strings.Repeat("v", 249) + fmt.Sprintf("%03d-%03d", i, j),
+							ContentVersionID: hit.ContentVersionID,
+						}},
 					}
 				}
 				c.results = append(c.results, hit)
@@ -273,7 +312,7 @@ func TestFindConflictsSkipReasons(t *testing.T) {
 		{"name", "The fee is $20.", "node_name", "no_content_evidence"},
 		{"clipped_prefix", "…The fee is $20.", "rendition_segment", "saturated_excerpt"},
 		{"clipped_excerpt", "The fee is $20. " + strings.Repeat("x", 480) + "…", "rendition_segment", "saturated_excerpt"},
-		{"saturated_unicode", "The fee is $20. " + strings.Repeat("é", 497), "rendition_segment", "saturated_excerpt"},
+		{"saturated_unicode", "The fee is $20. " + strings.Repeat("é", 496), "rendition_segment", "saturated_excerpt"},
 		{"clipped_prefix_with_whitespace", " … The fee is $20.", "rendition_segment", "saturated_excerpt"},
 		{"no_figures", "The fee depends on the contract.", "content_blob", "no_figures"},
 		{"negated", "The fee is not $20.", "rendition_segment", "negated"},

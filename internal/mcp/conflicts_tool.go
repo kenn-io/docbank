@@ -78,7 +78,7 @@ func findConflicts(ctx context.Context, session documentReadSession, raw []byte)
 	if err != nil {
 		return conflictsOutput{}, err
 	}
-	search, _, err := searchDocuments(ctx, session, adjusted)
+	search, _, err := searchDocumentsWithContentFirst(ctx, session, adjusted, true)
 	if err != nil {
 		return conflictsOutput{}, err
 	}
