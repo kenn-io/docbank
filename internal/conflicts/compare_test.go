@@ -239,8 +239,12 @@ func TestFindRejectsUnsupportedRateDenominatorMeanings(t *testing.T) {
 		{"linear distance units", "The service fee is $5 per linear metre.", "The service fee is $6 per linear foot."},
 		{"passenger distance units", "The service fee is $5 per passenger mile.", "The service fee is $6 per passenger kilometre."},
 		{"credit units", "The service fee is $5 per credit hour.", "The service fee is $6 per credit point."},
+		{"unit of energy versus volume", "The service fee is $5 per unit of energy.", "The service fee is $6 per unit of volume."},
+		{"bottle of water versus wine", "The service fee is $5 per bottle of water.", "The service fee is $6 per bottle of wine."},
 		{"additional article rate", "The service fee is $5 per device a month.", "The service fee is $6 per device."},
 		{"wrapped article rate versus flat amount", "The service fee is $5 a (month).", "The service fee is $6."},
+		{"bracketed article rate versus flat amount", "The service fee is $5 a [month].", "The service fee is $6."},
+		{"quoted article rate versus flat amount", "The service fee is $5 a \"month\".", "The service fee is $6."},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Find(Input{Query: "service fee", Passages: []Passage{

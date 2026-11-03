@@ -69,7 +69,8 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
 var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
 var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s+(?:and\s+)?(?:a|an)\s+(?:\(\s*)?[\p{L}\p{Nd}]+\b`)
-var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*\(\s*[\p{L}\p{Nd}]+\s*\)`)
+var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
+var rateDenominatorExtensionRE = regexp.MustCompile(`(?i)^\s+(?:of|for|in|to|from|by|with|on|at|and|or)\s+(?:(?:a|an|the)\s+)?[\p{L}\p{Nd}]+\b`)
 var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
 var rateArithmeticContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[+*/×÷−]|-\s+)\s*(?:[$€£¥]\s*)?[0-9]`)
 var rateDenominatorContinuationWords = wordSet("apply applies applied bill bills billed charge charges charged cost costs cover covers covered expire expires include includes included start starts started end ends ended available")
@@ -203,7 +204,7 @@ func makeSubject(f Figure, figures []Figure) subject {
 						s.isDenominator = true
 					}
 					continuation := text[suffixStart+match[1]:]
-					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) {
+					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) || rateDenominatorExtensionRE.MatchString(continuation) {
 						invalidRate = true
 					}
 					if word := rateDenominatorContinuationRE.FindStringSubmatch(continuation); len(word) > 1 {
