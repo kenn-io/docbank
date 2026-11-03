@@ -329,8 +329,10 @@ numerators with the same denominator can conflict. Unsupported fractions or
 arithmetic after a rate omit the whole clause. Additional denominator words,
 such as `per passenger mile`, are unsupported. Denominator extensions such as
 `per unit of energy` and `per bottle of water` are omitted instead of compared
-using only the first noun. A second article rate after a supported denominator
-is also unsupported. Wrapped article denominators such as `a (month)`,
+using only the first noun. Incomplete composite abbreviations such as `sq.` are
+also omitted instead of treating the prefix as a complete denominator. A second
+article rate after a supported denominator is also unsupported. Wrapped article
+denominators such as `a (month)`,
 `a [month]`, or `a "month"` are omitted rather than compared as unqualified
 amounts.
 

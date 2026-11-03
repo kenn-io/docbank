@@ -174,7 +174,9 @@ func makeSubject(f Figure, figures []Figure) subject {
 					parts := strings.Fields(text[a:b])
 					noun := parts[len(parts)-1]
 					first := utfFirst(noun)
-					if strings.EqualFold(parts[0], "per") || strings.EqualFold(parts[0], "each") || !unicode.IsLetter(first) || numeralWord(noun) || stopWords[strings.ToLower(noun)] || rateDeterminers[strings.ToLower(noun)] || contrasts[strings.ToLower(noun)] {
+					// An abbreviated composite prefix such as "sq." is not a complete denominator.
+					incompleteCompositePrefix := strings.EqualFold(noun, "sq")
+					if incompleteCompositePrefix || strings.EqualFold(parts[0], "per") || strings.EqualFold(parts[0], "each") || !unicode.IsLetter(first) || numeralWord(noun) || stopWords[strings.ToLower(noun)] || rateDeterminers[strings.ToLower(noun)] || contrasts[strings.ToLower(noun)] {
 						invalidRate = true
 						continue
 					}

@@ -241,6 +241,7 @@ func TestFindRejectsUnsupportedRateDenominatorMeanings(t *testing.T) {
 		{"credit units", "The service fee is $5 per credit hour.", "The service fee is $6 per credit point."},
 		{"unit of energy versus volume", "The service fee is $5 per unit of energy.", "The service fee is $6 per unit of volume."},
 		{"bottle of water versus wine", "The service fee is $5 per bottle of water.", "The service fee is $6 per bottle of wine."},
+		{"abbreviated composite distance units", "The service fee is $5 per sq. ft.", "The service fee is $6 per sq. metre."},
 		{"additional article rate", "The service fee is $5 per device a month.", "The service fee is $6 per device."},
 		{"wrapped additional article rate", "The service fee is $5 per device (a month).", "The service fee is $6 per device."},
 		{"comma-separated additional article rate", "The service fee is $5 per device, a month.", "The service fee is $6 per device."},
