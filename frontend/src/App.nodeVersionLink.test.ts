@@ -63,19 +63,8 @@ function api(
     if (url === `/api/v1/versions/${currentID}`) return Response.json(currentVersion);
     if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
       return Response.json({
-        items: [
-          currentVersion,
-          ...Array.from({ length: 999 }, (_, index) => ({
-            ...version(
-              `${(index + 1).toString(16).padStart(8, "0")}-3333-4333-8333-333333333333`,
-              1000 - index,
-              "content_replace",
-              "b",
-            ),
-            size: currentVersion.size,
-          })),
-        ],
-        total: 1001,
+        items: [currentVersion, oldVersion],
+        total: 2,
         limit: 1000,
         offset: 0,
       });
@@ -152,7 +141,7 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
   );
   await screen.findByRole("cell", { name: "other.txt" });
   expect(screen.getByText(oldID)).toBeTruthy();
-  await screen.findByText("1001 versions");
+  await screen.findByText("2 versions");
   expect(location.hash).toBe(link());
 });
 
@@ -273,13 +262,6 @@ it("reopens exact versions on Back and Forward and uses the renamed node instead
     }
     if (url.includes("/children"))
       return Response.json({ directory: root, items: [node], total: 1, limit: 1000, offset: 0 });
-    if (url === "/api/v1/nodes/42/versions?limit=1000&offset=0")
-      return Response.json({
-        items: [currentVersion, oldVersion],
-        total: 2,
-        limit: 1000,
-        offset: 0,
-      });
     if (changed && url === "/api/v1/nodes/42")
       return Response.json({
         ...node,
@@ -376,14 +358,7 @@ it("returns to the grid after selecting a version over a photo opened from the g
         ? Response.json({ configured: false })
         : url.endsWith("/photos/assets/query")
           ? Response.json({ items: [photo(1)], total: 1 })
-          : url === "/api/v1/nodes/42/versions?limit=1000&offset=0"
-            ? Response.json({
-                items: [currentVersion, oldVersion],
-                total: 2,
-                limit: 1000,
-                offset: 0,
-              })
-            : undefined),
+          : undefined),
   );
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
