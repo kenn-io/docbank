@@ -22,7 +22,10 @@ try {
       scratch,
       `docbank-${mode}${process.platform === "win32" ? ".exe" : ""}`,
     );
-    const report = path.join(scratch, `${mode}.json`);
+    // CI keeps each mode's JSON report for upload.
+    const report = process.env.CI
+      ? path.join(repository, "frontend/test-results/playwright", `report-export-${mode}.json`)
+      : path.join(scratch, `${mode}.json`);
     const env = {
       ...process.env,
       CGO_ENABLED: cgo,
@@ -55,8 +58,7 @@ try {
           "--project",
           "chromium",
           "--reporter",
-          // CI lists every test result by name so reruns can confirm flaky tests.
-          process.env.CI ? "list,json" : "line,json",
+          "line,json",
         ],
         { cwd: repository, env, stdio: "inherit", timeout: 360_000 },
       );

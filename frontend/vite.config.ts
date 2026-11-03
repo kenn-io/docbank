@@ -37,9 +37,13 @@ export default defineConfig({
     execArgv: ["--no-experimental-webstorage"],
     exclude: ["docs-site/**", "node_modules/**"],
     maxWorkers: 2,
-    // GitHub Actions lists every passing test by name so reruns can confirm
-    // flaky tests, and keeps Vitest's default failure annotations.
-    ...(process.env.GITHUB_ACTIONS === "true" && { reporters: ["verbose", "github-actions"] }),
+    // CI retries a failed test and records every result as JSON, which CI
+    // uploads so a test that passed only on a retry stays visible.
+    ...(process.env.CI && {
+      retry: 2,
+      reporters: ["default", "github-actions", "json"],
+      outputFile: { json: "test-results/vitest/frontend.json" },
+    }),
     testTimeout: 30_000,
     server: {
       deps: {

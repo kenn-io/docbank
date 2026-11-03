@@ -1401,6 +1401,13 @@ the `gotestsum/*.json` reports as the `gotestsum-<suite>-attempt-<n>` artifact
 for 14 days, so a flaky test stays visible after the job passes. Clean runs
 upload nothing.
 
+In CI, Vitest and Playwright also retry a failed test up to two more times and
+write JSON reports under `frontend/test-results/`. Each test step uploads its
+report as the `vitest-<suite>-attempt-<n>` or `playwright-<suite>-attempt-<n>`
+artifact for 14 days, whatever the result. A test that passed only on a retry
+has Vitest status `passed` with failure messages, or Playwright status `flaky`.
+The report-export browser check still requires one unretried pass.
+
 Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
 
 CLI redaction verification tests run in separate test processes because the PDF worker's 1 GiB RSS ceiling counts all memory in its process. Each child keeps the real PDF checks and the qualified memory limit.

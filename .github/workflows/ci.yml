@@ -194,6 +194,15 @@ jobs:
           npm --prefix frontend run docs-site:check
           npm --prefix frontend run docs-site:test
 
+      - name: Upload Playwright docs-site results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-docs-site-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/docs-site.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Print Playwright browser server logs on failure
         if: failure() && steps.browser_server.outcome == 'success'
         run: docker logs playwright-browser-server
@@ -219,6 +228,15 @@ jobs:
 
       - name: Check and build web application
         run: make frontend-test
+
+      - name: Upload Vitest frontend results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-frontend-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/vitest/frontend.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   released-schemas:
     name: Released storage schemas
@@ -272,15 +290,42 @@ jobs:
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
 
+      - name: Upload Playwright report-export results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-report-export-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/report-export-*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Qualify photo map in Chromium
         env:
           CGO_ENABLED: "0"
         run: make photo-map-browser-test
 
+      - name: Upload Playwright photo-map results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-photo-map-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/photo-map.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Qualify live photo tabs in Chromium
         env:
           CGO_ENABLED: "0"
         run: make photo-tabs-browser-test
+
+      - name: Upload Playwright photo-tabs results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-photo-tabs-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/photo-tabs.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test:
     needs: changes
