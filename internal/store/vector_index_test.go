@@ -755,7 +755,7 @@ func TestVectorIndexSourceMemoSurvivesUnrelatedWrites(t *testing.T) {
 	}
 }
 
-func TestVectorIndexSourceMemoRestartAndRecipe(t *testing.T) {
+func TestVectorIndexSourceMemoRestart(t *testing.T) {
 	t.Parallel()
 	s, _, source := newPublishedVectorIndexFixture(t)
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
@@ -765,15 +765,8 @@ func TestVectorIndexSourceMemoRestartAndRecipe(t *testing.T) {
 	captures := countVectorSourceCaptures(t, reopened)
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, reopened, source.VectorSpaceID))
 	require.EqualValues(t, 1, captures.Load(), "a new Store starts with an empty memo")
-	reopened.vectorSourceMu.Lock()
-	memo := reopened.vectorSourceMemos[source.VectorSpaceID]
-	memo.recipe = "old-recipe"
-	reopened.vectorSourceMemos[source.VectorSpaceID] = memo
-	reopened.vectorSourceMu.Unlock()
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, reopened, source.VectorSpaceID))
-	require.EqualValues(t, 2, captures.Load(), "a changed recipe needs a fresh capture")
-	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, reopened, source.VectorSpaceID))
-	require.EqualValues(t, 2, captures.Load())
+	require.EqualValues(t, 1, captures.Load())
 }
 
 func TestVectorIndexSourceMemoKeepsNewerSnapshot(t *testing.T) {

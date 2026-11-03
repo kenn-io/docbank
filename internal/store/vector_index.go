@@ -147,7 +147,6 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 
 type vectorSourceMemo struct {
 	revision int64
-	recipe   string
 	checksum string
 }
 
@@ -157,14 +156,10 @@ func (s *Store) vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, spa
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM vector_membership_epochs WHERE vector_space_id=?),0)`, space).Scan(&revision); err != nil {
 		return "", err
 	}
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
-	if err != nil {
-		return "", err
-	}
 	s.vectorSourceMu.Lock()
 	memo, ok := s.vectorSourceMemos[space]
 	s.vectorSourceMu.Unlock()
-	if ok && memo.revision == revision && memo.recipe == fingerprints.GridRecipe {
+	if ok && memo.revision == revision {
 		return memo.checksum, nil
 	}
 	source, err := captureVectorIndexSourceTx(ctx, tx, space)
@@ -183,7 +178,7 @@ func (s *Store) vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, spa
 				break
 			}
 		}
-		s.vectorSourceMemos[space] = vectorSourceMemo{revision: revision, recipe: fingerprints.GridRecipe, checksum: source.ManifestChecksum}
+		s.vectorSourceMemos[space] = vectorSourceMemo{revision: revision, checksum: source.ManifestChecksum}
 	}
 	return source.ManifestChecksum, nil
 }
