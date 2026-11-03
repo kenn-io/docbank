@@ -542,7 +542,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := vectorIndexSourceChecksumTx(ctx, tx, semanticSpace)
+			current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, semanticSpace)
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
@@ -778,7 +778,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 ) (source string, annRows []vectorindex.RowIdentity, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
-		source, err = vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
+		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
 		}
@@ -886,7 +886,7 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
 		filterSQL, filterArgs := searchFilterSQL(normalized)
-		current, captureErr := vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
+		current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale

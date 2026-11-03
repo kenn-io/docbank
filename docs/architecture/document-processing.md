@@ -242,15 +242,8 @@ Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
 
-SQLite records the source revision and grid-preview recipe verified for each
-published vector-index head. Search fences reuse its checksum in the same read
-snapshot while those values match. Changes to embedding or rendition heads,
-current or trashed content, previews, or photo visibility and display ownership
-force a fresh capture. Publication and the idle vector worker record verification;
-searches stay read-only. Verification survives a restart, and a changed grid recipe
-requires a new capture.
-After a membership write, searches capture in full until the vector worker
-re-verifies the head on its idle scan.
+SQLite maintains a derived membership revision for each vector space as embedding heads, rendition heads, content versions, previews, and photo eligibility change.
+Search checkpoints reuse an in-process checksum memo while the snapshot's revision and current grid-preview recipe match; the first checkpoint after a membership change or restart captures the source again without writing bookkeeping.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact

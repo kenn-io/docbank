@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -97,7 +98,7 @@ func publishVectorIndexMembersForTest(tb testing.TB, s *Store, first EmbeddingSe
 
 // ResolveSemanticCandidates includes the source fence and downstream eligibility
 // work, so accidentally recapturing during search is included in these timings.
-func BenchmarkVectorIndexSourceCapture(b *testing.B) {
+func BenchmarkVectorIndexSourceSearch(b *testing.B) {
 	for _, heads := range []int{1000, 4000, 16000, 64000} {
 		b.Run(fmt.Sprintf("heads=%d", heads), func(b *testing.B) {
 			s, first, _ := newPublishedVectorIndexFixture(b)
@@ -111,17 +112,41 @@ func BenchmarkVectorIndexSourceCapture(b *testing.B) {
 			generation := vectorIndexGenerationFixture("benchmark", source, []byte("index"), now)
 			require.NoError(b, s.StageVectorIndexGeneration(b.Context(), claim, generation, now))
 			require.NoError(b, s.PublishVectorIndexGeneration(b.Context(), claim, generation.ID, now))
-			for _, verified := range []bool{true, false} {
-				b.Run(fmt.Sprintf("verified=%t", verified), func(b *testing.B) {
-					if !verified {
-						_, err := s.db.ExecContext(b.Context(), `DELETE FROM vector_index_source_verifications`)
-						require.NoError(b, err)
-					}
+			for _, warm := range []bool{false, true} {
+				b.Run(fmt.Sprintf("warm=%t", warm), func(b *testing.B) {
 					for b.Loop() {
+						if !warm {
+							clear(s.vectorSourceMemos)
+						}
 						_, err := s.ResolveSemanticCandidates(b.Context(), first.ProcessingProfileFingerprint, first.BindingID, first.InputKind, source.VectorSpaceID, source.ManifestChecksum,
 							[]vectorindex.Neighbor{{SetID: first.VectorSet.ID, InputKey: first.InputGeneration.Inputs[0].ID, InputChecksum: first.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}}, 10, SearchOptions{}, nil)
 						require.NoError(b, err)
 					}
+				})
+			}
+		})
+	}
+}
+
+func BenchmarkVectorIndexSourceCapture(b *testing.B) {
+	for _, heads := range []int{1000, 4000, 16000, 64000} {
+		b.Run(fmt.Sprintf("heads=%d", heads), func(b *testing.B) {
+			s, first, _ := newPublishedVectorIndexFixture(b)
+			publishVectorIndexMembersForTest(b, s, first, heads)
+			for _, warm := range []bool{false, true} {
+				b.Run(fmt.Sprintf("warm=%t", warm), func(b *testing.B) {
+					require.NoError(b, s.withReadTx(b.Context(), func(tx *sql.Tx) error {
+						_, err := s.vectorIndexSourceChecksumTx(b.Context(), tx, first.VectorSpace.ID)
+						require.NoError(b, err)
+						for b.Loop() {
+							if !warm {
+								clear(s.vectorSourceMemos)
+							}
+							_, err := s.vectorIndexSourceChecksumTx(b.Context(), tx, first.VectorSpace.ID)
+							require.NoError(b, err)
+						}
+						return nil
+					}))
 				})
 			}
 		})

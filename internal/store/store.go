@@ -38,6 +38,8 @@ type Store struct {
 	photoPublicationMu     sync.Mutex
 	photoPublicationLocks  map[string]*photoPublicationLock
 	photoEvents            photoEventFeed
+	vectorSourceMu         sync.Mutex
+	vectorSourceMemos      map[string]vectorSourceMemo
 	photoStackVectorsMu    sync.Mutex
 	photoStackVectors      map[string]photoStackOpenedGeneration
 	photoHiddenNow         func() time.Time

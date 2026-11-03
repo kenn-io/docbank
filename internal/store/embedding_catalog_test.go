@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1993,7 +1994,7 @@ type imageEmbeddingCatalogFixture struct {
 	binding document.EmbeddingBindingV1
 }
 
-func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture {
+func newImageEmbeddingCatalogFixture(t *testing.T, inputKinds ...document.EmbeddingInputKind) imageEmbeddingCatalogFixture {
 	t.Helper()
 	s, _, profile, _ := newEmbeddingCatalogFixture(t)
 	bindingID := "optional"
@@ -2006,15 +2007,20 @@ func newImageEmbeddingCatalogFixture(t *testing.T) imageEmbeddingCatalogFixture 
 	require.NoError(t, err)
 	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, bindingID, "")
 	descriptor := record.VectorSpace.Descriptor
-	descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	if len(inputKinds) == 0 {
+		inputKinds = []document.EmbeddingInputKind{document.EmbeddingInputImage}
+	}
+	descriptor.InputKinds = inputKinds
 	descriptor, err = document.NewEmbeddingDescriptor(descriptor)
 	require.NoError(t, err)
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(profile.CanonicalProfile, &portable))
 	for i := range portable.Embeddings {
+		if portable.Embeddings[i].Name == bindingID || slices.Contains(inputKinds, portable.Embeddings[i].InputKind) {
+			portable.Embeddings[i].Descriptor.Fingerprint = descriptor.Fingerprint
+		}
 		if portable.Embeddings[i].Name == bindingID {
 			portable.Embeddings[i].InputKind = document.EmbeddingInputImage
-			portable.Embeddings[i].Descriptor.Fingerprint = descriptor.Fingerprint
 		}
 	}
 	// Two image bindings must retain separate generation authority.

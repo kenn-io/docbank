@@ -137,7 +137,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			}
 			return err
 		}
-		current, err := vectorIndexSourceChecksumTx(ctx, tx, space)
+		current, err := s.vectorIndexSourceChecksumTx(ctx, tx, space)
 		if errors.Is(err, ErrNotFound) {
 			return ErrVectorIndexSourceStale
 		}

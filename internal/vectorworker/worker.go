@@ -28,7 +28,6 @@ type IndexRestoreReport struct {
 }
 
 type Catalog interface {
-	MarkVectorIndexHeadVerified(ctx context.Context, source store.VectorIndexSource) error
 	RetireEmptyVectorIndexHead(ctx context.Context, vectorSpaceID string, at time.Time) error
 	AbandonVectorIndexBuild(ctx context.Context, claim store.VectorIndexBuildClaim, at time.Time) error
 	CaptureVectorIndexSource(ctx context.Context, vectorSpaceID string) (store.VectorIndexSource, error)
@@ -480,15 +479,12 @@ func (worker *IndexWorker) refresh(ctx context.Context, space string) error {
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	if err == nil && head.Verified {
-		return nil
-	}
 	source, err := worker.catalog.CaptureVectorIndexSource(ctx, space)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 	if err == nil && head.SourceManifestChecksum == source.ManifestChecksum {
-		return worker.mutate(ctx, func() error { return worker.catalog.MarkVectorIndexHeadVerified(ctx, source) })
+		return nil
 	}
 	jobs.ReportBusy(ctx, true)
 	defer jobs.ReportBusy(ctx, false)

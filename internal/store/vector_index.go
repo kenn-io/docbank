@@ -35,7 +35,6 @@ type VectorIndexMember struct {
 }
 
 type VectorIndexSource struct {
-	Revision         int64
 	VectorSpaceID    string
 	ManifestChecksum string
 	Members          []VectorIndexMember
@@ -98,7 +97,7 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 		return VectorIndexSource{}, err
 	}
 	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
-	rows, err := tx.QueryContext(ctx, `SELECT (SELECT revision FROM vector_index_source_state WHERE singleton=1),es.embedding_set_id,vs.vector_set_id,vs.payload_blob_hash,vs.payload_size,
+	rows, err := tx.QueryContext(ctx, `SELECT es.embedding_set_id,vs.vector_set_id,vs.payload_blob_hash,vs.payload_size,
 		es.input_kind,es.binding_id,g.generation_id,g.source_version_id,g.profile_fingerprint,g.evidence_fingerprint,g.chunk_policy_fingerprint,
 		(es.profile_fingerprint=h.profile_fingerprint AND es.vector_space_id=h.vector_space_id AND
 		CASE WHEN es.input_kind='image' THEN
@@ -121,7 +120,7 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 		var binding string
 		var generation EmbeddingInputGenerationRecord
 		var eligible bool
-		if err := rows.Scan(&source.Revision, &member.EmbeddingSetID, &member.VectorSetID, &member.PayloadBlobHash, &member.PayloadSize,
+		if err := rows.Scan(&member.EmbeddingSetID, &member.VectorSetID, &member.PayloadBlobHash, &member.PayloadSize,
 			&kind, &binding, &generation.ID, &generation.SourceVersionID, &generation.ProcessingProfileFingerprint,
 			&generation.EvidenceFingerprint, &generation.ChunkPolicyFingerprint, &eligible); err != nil {
 			return VectorIndexSource{}, err
@@ -146,34 +145,47 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 	return source, nil
 }
 
-// vectorIndexSourceChecksumTx checks verification in the same snapshot as its consumer.
-func vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, space string) (string, error) {
-	head, err := activeVectorIndexHeadTx(ctx, tx, space)
-	if err == nil && head.Verified {
-		return head.SourceManifestChecksum, nil
-	}
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return "", err
-	}
-	source, err := captureVectorIndexSourceTx(ctx, tx, space)
-	return source.ManifestChecksum, err
+type vectorSourceMemo struct {
+	revision int64
+	recipe   string
+	checksum string
 }
 
-// MarkVectorIndexHeadVerified keeps a capture valid only while its snapshot's
-// revision and the published source still match.
-func (s *Store) MarkVectorIndexHeadVerified(ctx context.Context, source VectorIndexSource) error {
+// vectorIndexSourceChecksumTx reads the revision and membership in the consumer's snapshot.
+func (s *Store) vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, space string) (string, error) {
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM vector_membership_epochs WHERE vector_space_id=?),0)`, space).Scan(&revision); err != nil {
+		return "", err
+	}
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO vector_index_source_verifications(vector_space_id,generation_id,verified_revision,grid_recipe)
-			SELECT h.vector_space_id,h.generation_id,s.revision,? FROM vector_index_heads h,vector_index_source_state s
-			WHERE h.vector_space_id=? AND h.source_manifest_checksum=? AND s.singleton=1 AND s.revision=?
-			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,verified_revision=excluded.verified_revision,grid_recipe=excluded.grid_recipe`,
-			fingerprints.GridRecipe, source.VectorSpaceID, source.ManifestChecksum, source.Revision)
-		return err
-	})
+	s.vectorSourceMu.Lock()
+	memo, ok := s.vectorSourceMemos[space]
+	s.vectorSourceMu.Unlock()
+	if ok && memo.revision == revision && memo.recipe == fingerprints.GridRecipe {
+		return memo.checksum, nil
+	}
+	source, err := captureVectorIndexSourceTx(ctx, tx, space)
+	if err != nil {
+		return "", err
+	}
+	s.vectorSourceMu.Lock()
+	defer s.vectorSourceMu.Unlock()
+	if s.vectorSourceMemos == nil {
+		s.vectorSourceMemos = make(map[string]vectorSourceMemo)
+	}
+	if prior, ok := s.vectorSourceMemos[space]; !ok || prior.revision <= revision {
+		if !ok && len(s.vectorSourceMemos) >= 64 {
+			for key := range s.vectorSourceMemos {
+				delete(s.vectorSourceMemos, key)
+				break
+			}
+		}
+		s.vectorSourceMemos[space] = vectorSourceMemo{revision: revision, recipe: fingerprints.GridRecipe, checksum: source.ManifestChecksum}
+	}
+	return source.ManifestChecksum, nil
 }
 
 func vectorIndexSourceChecksum(members []VectorIndexMember) string {
@@ -412,15 +424,6 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 			generationID, claim.SourceManifestChecksum); err != nil {
 			return err
 		}
-		fingerprints, err := document.CurrentPhotoQualityFingerprints()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO vector_index_source_verifications(vector_space_id,generation_id,verified_revision,grid_recipe)
-			VALUES(?,?,?,?) ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,verified_revision=excluded.verified_revision,grid_recipe=excluded.grid_recipe`,
-			claim.VectorSpaceID, generationID, current.Revision, fingerprints.GridRecipe); err != nil {
-			return err
-		}
 		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=?
 			WHERE vector_space_id=? AND fencing_token=?`, at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.FencingToken)
 		return err
@@ -455,7 +458,6 @@ func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, gen
 // VectorIndexHead is the publication metadata needed by an idle worker scan.
 // Generation bytes are immutable and validated before this head is published.
 type VectorIndexHead struct {
-	Verified               bool
 	GenerationID           string
 	SourceManifestChecksum string
 }
@@ -466,14 +468,8 @@ func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string)
 
 func activeVectorIndexHeadTx(ctx context.Context, query metadataQuerier, vectorSpaceID string) (VectorIndexHead, error) {
 	var head VectorIndexHead
-	fingerprints, err := document.CurrentPhotoQualityFingerprints()
-	if err != nil {
-		return head, err
-	}
-	err = query.QueryRowContext(ctx, `SELECT h.generation_id,h.source_manifest_checksum,
-		EXISTS(SELECT 1 FROM vector_index_source_verifications v JOIN vector_index_source_state s ON s.singleton=1
-			WHERE v.vector_space_id=h.vector_space_id AND v.generation_id=h.generation_id AND v.verified_revision=s.revision AND v.grid_recipe=?)
-		FROM vector_index_heads h WHERE h.vector_space_id=?`, fingerprints.GridRecipe, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum, &head.Verified)
+	err := query.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
+		FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return head, ErrNotFound
 	}
@@ -560,7 +556,7 @@ func (s *Store) acquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 			return err
 		}
 		if checkSource {
-			current, err := vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
+			current, err := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 			if err != nil {
 				return err
 			}
