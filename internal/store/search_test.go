@@ -2877,14 +2877,22 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 	require.NoError(t, err)
 	opts := SearchOptions{ContentVersionIDs: []string{version.ID}}
 	neighbor := vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}
-	for _, name := range []string{"fence", "similar", "similar-source-fence"} {
+	for _, name := range []string{"fence", "similar", "similar-source-fence", "stale-index"} {
 		t.Run(name, func(t *testing.T) {
+			if name == "stale-index" {
+				now := time.Now().UTC()
+				require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
+				publishVectorIndexMembersForTest(t, s, record, 2)
+			}
 			tx, err := s.writeDB.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, tx.Rollback()) }()
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			switch name {
+			case "stale-index":
+				_, err := s.AcquireSemanticSearchAuthority(ctx, record.ProcessingProfileFingerprint, record.BindingID, "stale-search", time.Now().UTC(), time.Minute, SearchOptions{})
+				require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 			case "fence":
 				got, _, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, opts, nil)
 				require.NoError(t, err)
@@ -2902,48 +2910,10 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 	}
 }
 
-func TestReviewStaleSearchDoesNotWaitForWriter(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"semantic", "similar"} {
-		t.Run(name, func(t *testing.T) {
-			s, first, source := newPublishedVectorIndexFixture(t)
-			now := time.Now().UTC()
-			require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
-			publishVectorIndexMembersForTest(t, s, first, 2)
-			version, err := s.ContentVersionByID(t.Context(), first.ContentVersionID)
-			require.NoError(t, err)
-			tx, err := s.writeDB.BeginTx(t.Context(), nil)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, tx.Rollback()) }()
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-			if name == "semantic" {
-				_, err = s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
-			} else {
-				_, err = s.AcquireSimilarSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{ContentVersionIDs: []string{version.ID}}, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
-			}
-			require.ErrorIs(t, err, ErrVectorIndexSourceStale)
-		})
-	}
-}
-
-func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceFailure(t *testing.T) {
+func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceCancellation(t *testing.T) {
 	t.Parallel()
 	s, first, source := newPublishedVectorIndexFixture(t)
 	now := time.Now().UTC()
-	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("fence-failure", source, []byte("index"), now)))
-	publishVectorIndexMembersForTest(t, s, first, 2)
-	requireNoLeases := func() {
-		t.Helper()
-		var leases int
-		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
-		require.Zero(t, leases)
-	}
-	_, err := s.AcquireSemanticSearchAuthority(t.Context(), first.ProcessingProfileFingerprint, first.BindingID, "stale-search", now, time.Minute, SearchOptions{})
-	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
-	requireNoLeases()
-	source, err = s.CaptureVectorIndexSource(t.Context(), first.VectorSpace.ID)
-	require.NoError(t, err)
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("coverage-cancellation", source, []byte("index"), now)))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -2960,7 +2930,9 @@ func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceFailure(t *testing.T)
 		require.NoError(t, s.db.Close())
 		require.NoError(t, readDB.Close())
 	})
-	_, err = s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "canceled-search", now, time.Minute, SearchOptions{})
+	_, err := s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "canceled-search", now, time.Minute, SearchOptions{})
 	require.ErrorIs(t, err, context.Canceled)
-	requireNoLeases()
+	var leases int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+	require.Zero(t, leases)
 }

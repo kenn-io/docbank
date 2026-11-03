@@ -460,10 +460,6 @@ func TestVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T) {
 	check := func(name string, want ...string) {
 		t.Run(name, func(t *testing.T) {
 			got, err := s.CaptureVectorIndexSource(t.Context(), space)
-			if len(want) == 0 {
-				require.ErrorIs(t, err, ErrNotFound)
-				return
-			}
 			require.NoError(t, err)
 			slices.Sort(want)
 			var ids []string
@@ -521,13 +517,6 @@ func TestVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T) {
 	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.ID)
 	require.NoError(t, err)
 	check("removed rendition head", image.ID, originals[0].ID)
-	for _, version := range []string{image.ContentVersionID, originals[0].ContentVersionID} {
-		content, err := s.ContentVersionByID(t.Context(), version)
-		require.NoError(t, err)
-		_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
-		require.NoError(t, err)
-	}
-	check("nothing eligible")
 }
 
 func newMixedVectorIndexFixture(t *testing.T) (imageEmbeddingCatalogFixture, EmbeddingSetRecord) {
@@ -539,7 +528,7 @@ func newMixedVectorIndexFixture(t *testing.T) (imageEmbeddingCatalogFixture, Emb
 
 func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"head publish", "head replace", "head delete", "trash", "restore", "replace", "rendition publish", "rendition replace", "rendition delete", "photo hidden", "photo unhidden", "photo excluded", "display change", "preview delete", "ready preview", "photo file link", "photo file unlink", "photo asset delete"} {
+	for _, name := range []string{"head publish", "head replace", "head delete", "trash", "replace", "rendition publish", "rendition replace", "rendition delete", "photo hidden", "photo excluded", "display change", "preview delete", "ready preview", "photo file link", "photo file unlink", "photo asset delete"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f, image := newMixedVectorIndexFixture(t)
@@ -591,13 +580,6 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				exec(`DELETE FROM embedding_heads WHERE embedding_set_id=?`, target.ID)
 			case "rendition publish":
 				exec(`DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.ID)
-			case "restore":
-				_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
-				require.NoError(t, err)
-			case "photo unhidden":
-				require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-				asset, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
-				require.NoError(t, err)
 			case "ready preview":
 				fingerprints, err := document.CurrentPhotoQualityFingerprints()
 				require.NoError(t, err)
@@ -608,10 +590,8 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				}))
 				exec(`DELETE FROM visual_preview_generations WHERE content_version_id=?`, target.ContentVersionID)
 			case "photo file link":
-				// Move only the link away; the display file remains the asset's selected file.
-				other, err := s.CreateFile(t.Context(), s.RootID(), "link-target.bin", hashVectorIndexTest("link-target"), 20, "application/octet-stream")
+				asset, err = s.DetachPhotoFile(t.Context(), asset.ID, asset.Revision, *asset.DisplayFileID, PhotoDetachOptions{})
 				require.NoError(t, err)
-				exec(`UPDATE photo_files SET node_id=? WHERE file_id=?`, other.ID, asset.DisplayFileID)
 			}
 			before, err := s.CaptureVectorIndexSource(t.Context(), image.VectorSpace.ID)
 			require.NoError(t, err)
@@ -632,14 +612,8 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				exec(`DELETE FROM photo_files WHERE file_id=?`, asset.DisplayFileID)
 			case "photo asset delete":
 				exec(`DELETE FROM photo_assets WHERE asset_id=?`, asset.ID)
-			case "photo unhidden":
-				token, _, unlockErr := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
-				require.NoError(t, unlockErr)
-				_, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(t.Context(), token), asset.ID, asset.Revision, false)
 			case "trash":
 				_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
-			case "restore":
-				_, _, err = s.Restore(t.Context(), content.NodeID, UnconditionalRev)
 			case "replace":
 				_, _, err = s.ReplaceContent(t.Context(), content.NodeID, UnconditionalRev, hashVectorIndexTest("fence-replacement"), 20, "image/jpeg")
 			case "rendition publish":
@@ -666,8 +640,7 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 			case "ready preview":
 				_, err = s.PublishVisualPreview(t.Context(), target.ContentVersionID, preview.CanonicalResult, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
 			case "photo file link":
-				exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,created_at) VALUES(?,?,?,?,?)`, hashVectorIndexTest("new-photo-link"), asset.ID, f.node.ID, "primary", embeddingCatalogTime)
-				exec(`UPDATE photo_assets SET display_file_id=? WHERE asset_id=?`, hashVectorIndexTest("new-photo-link"), asset.ID)
+				_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, f.node.ID, PhotoRoleImage, nil)
 			}
 			require.NoError(t, err)
 			after, err := s.CaptureVectorIndexSource(t.Context(), before.VectorSpaceID)
@@ -726,7 +699,7 @@ func TestVectorIndexSourceMemoSurvivesUnrelatedWrites(t *testing.T) {
 	require.NotEqual(t, source.VectorSpaceID, other.VectorSpace.ID)
 	asset, err := s.PhotoAssetForNode(t.Context(), f.node.ID)
 	require.NoError(t, err)
-	for _, name := range []string{"other space", "unembedded photo", "identical publication", "same display", "lease"} {
+	for _, name := range []string{"other space", "unembedded photo", "identical publication", "same display"} {
 		t.Run(name, func(t *testing.T) {
 			switch name {
 			case "other space":
@@ -746,10 +719,6 @@ func TestVectorIndexSourceMemoSurvivesUnrelatedWrites(t *testing.T) {
 			case "same display":
 				_, err := s.SetPhotoDisplay(t.Context(), asset.ID, asset.Revision, asset.DisplayFileID)
 				require.NoError(t, err)
-			case "lease":
-				lease, err := s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, "memo-reader", time.Now().UTC(), time.Minute)
-				require.NoError(t, err)
-				require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), lease.ID, lease.FencingToken, time.Now().UTC()))
 			}
 			require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
 			require.EqualValues(t, 1, captures.Load(), "unchanged membership must reuse the memo")

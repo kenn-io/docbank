@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -122,31 +121,6 @@ func BenchmarkVectorIndexSourceSearch(b *testing.B) {
 							[]vectorindex.Neighbor{{SetID: first.VectorSet.ID, InputKey: first.InputGeneration.Inputs[0].ID, InputChecksum: first.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}}, 10, SearchOptions{}, nil)
 						require.NoError(b, err)
 					}
-				})
-			}
-		})
-	}
-}
-
-func BenchmarkVectorIndexSourceCapture(b *testing.B) {
-	for _, heads := range []int{1000, 4000, 16000, 64000} {
-		b.Run(fmt.Sprintf("heads=%d", heads), func(b *testing.B) {
-			s, first, _ := newPublishedVectorIndexFixture(b)
-			publishVectorIndexMembersForTest(b, s, first, heads)
-			for _, warm := range []bool{false, true} {
-				b.Run(fmt.Sprintf("warm=%t", warm), func(b *testing.B) {
-					require.NoError(b, s.withReadTx(b.Context(), func(tx *sql.Tx) error {
-						_, err := s.vectorIndexSourceChecksumTx(b.Context(), tx, first.VectorSpace.ID)
-						require.NoError(b, err)
-						for b.Loop() {
-							if !warm {
-								clear(s.vectorSourceMemos)
-							}
-							_, err := s.vectorIndexSourceChecksumTx(b.Context(), tx, first.VectorSpace.ID)
-							require.NoError(b, err)
-						}
-						return nil
-					}))
 				})
 			}
 		})
