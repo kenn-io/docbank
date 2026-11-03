@@ -156,7 +156,8 @@ func check(ctx context.Context, c *daemonconn.Connection, root string, deep, run
 					return Report{}, e
 				}
 				if e = writeCard(ctx, c, *node, out); e != nil {
-					if errors.Is(e, store.ErrStaleRevision) {
+					code, _ := daemonconn.ProblemCode(e)
+					if errors.Is(e, store.ErrStaleRevision) || code == "not_found" {
 						row.State = string(state.State)
 						row.Reason = "stale_revision"
 						report.Items = append(report.Items, row)

@@ -286,6 +286,66 @@ func TestCheckRunSkipsDisappearedCard(t *testing.T) {
 	}
 }
 
+func TestCheckRunSkipsCardDisappearedDuringReplacement(t *testing.T) {
+	card, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := strings.Replace(sample, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1)
+	digest := sha256.Sum256([]byte(data))
+	const cardVersion = "00000000-0000-4000-8000-000000000003"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/info":
+			_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": card.Citations[0].VaultUID.String()})
+		case "/api/v1/documents":
+			_ = json.NewEncoder(w).Encode(api.DocumentPage{
+				PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250,
+				Items: []api.DocumentSummary{
+					{NodeID: 1, ContentVersionID: cardVersion, Path: "/answer-cards/card.md", Name: "card.md", MediaType: "text/markdown; charset=utf-8", Size: int64(len(data)), ModifiedAt: "2026-10-27T00:00:00Z"},
+					{NodeID: 2, ContentVersionID: "00000000-0000-4000-8000-000000000004", Path: "/answer-cards/later.bin", Name: "later.bin", MediaType: "application/octet-stream", ModifiedAt: "2026-10-27T00:00:00Z"},
+				},
+			})
+		case "/api/v1/versions/" + cardVersion + "/content":
+			w.Header().Set(api.ContentVersionHeader, cardVersion)
+			w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+			w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(data)))
+			w.Header().Set("Trailer", "Content-Digest")
+			_, _ = w.Write([]byte(data))
+			w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+		case "/api/v1/nodes/42":
+			_ = json.NewEncoder(w).Encode(api.Node{ID: 42, Kind: "file", TrashedAt: "2026-10-27T00:00:00Z"})
+		case "/api/v1/nodes/1":
+			_ = json.NewEncoder(w).Encode(api.Node{ID: 1, Kind: "file", Path: "/answer-cards/card.md", CurrentVersionID: cardVersion, Revision: 4, MimeType: "text/markdown"})
+		case "/api/v1/nodes/1/content":
+			if r.Method != http.MethodPut {
+				t.Errorf("replacement used %s, want PUT", r.Method)
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": http.StatusNotFound, "code": "not_found", "detail": "synthetic"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	report, err := CheckRun(t.Context(), daemonconn.New(server.URL, "synthetic-key"), "/answer-cards", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Items) != 2 {
+		t.Fatalf("report did not continue after the disappeared card: %+v", report.Items)
+	}
+	if got := report.Items[0]; got.State != "stale" || got.Reason != "stale_revision" {
+		t.Fatalf("disappeared card row = %+v, want stale_revision", got)
+	}
+	if got := report.Items[1]; got.Path != "/answer-cards/later.bin" || got.State != "not_a_card" {
+		t.Fatalf("later row = %+v, want the report to continue", got)
+	}
+}
+
 func TestCheckRunSkipsUnsafeYAML(t *testing.T) {
 	card, err := Parse([]byte(sample))
 	if err != nil {
