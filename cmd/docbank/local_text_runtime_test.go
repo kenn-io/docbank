@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
-	"fmt"
-	"io"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -34,56 +34,45 @@ import (
 	"go.kenn.io/kit/embedlocal"
 )
 
-func TestLocalTextApproval(t *testing.T) {
+func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, answer         string
-		ready                bool
-		missingBytes         int64
-		downloaded           bool
-		wantError, bytesLine string
+		name         string
+		ready        bool
+		missingBytes int64
+		installed    bool
+		output       string
 	}{
-		{"installed_decline", "n\n", false, 0, false, "declined", "missing download: 0 bytes"},
-		{"installed_approve", "y\n", false, 0, false, "", "missing download: 0 bytes"},
-		{"missing_decline", "n\n", false, 295000000, false, "declined", "missing download: 295000000 bytes"},
-		{"missing_approve", "y\n", false, 295000000, true, "", "missing download: 295000000 bytes"},
-		{"ready_approve", "y\n", true, 0, false, "", "missing download: 0 bytes"},
+		{"ready", true, 0, false, ""},
+		{"installed_offline", false, 0, true, ""},
+		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(t.Context())
-			cmd.SetIn(bytes.NewBufferString(tc.answer))
+			// A failing stdin proves the command never waits for an answer.
+			cmd.SetIn(iotest.ErrReader(errors.New("stdin must not be read")))
 			output := new(bytes.Buffer)
 			cmd.SetOut(output)
-			downloaded := false
-			err := approveLocalTextWithRuntime(cmd, true, func(_ context.Context, opts embedlocal.Options) (string, error) {
+			installed := false
+			err := installLocalTextWithRuntime(cmd, true, func(_ context.Context, opts embedlocal.Options) (string, error) {
 				require.True(t, opts.SkipOllama)
-
 				if tc.ready {
 					return "http://127.0.0.1:11434/v1", nil
 				}
 				return "", embedlocal.ErrNotFound
 			}, func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				require.False(t, tc.ready, "a ready server must not trigger installation")
+				installed = true
 				if tc.missingBytes > 0 {
 					approved, err := opts.Confirm(ctx, tc.missingBytes)
-					if err != nil {
-						return embedlocal.Installation{}, fmt.Errorf("approve installation: %w", err)
-					}
-					require.True(t, approved)
-					require.Contains(t, output.String(), "[y/N]")
-					downloaded = true
+					require.NoError(t, err)
+					require.True(t, approved, "running the command approves the download")
 				}
 				return embedlocal.Installation{Executable: "synthetic-kennembed", DataDir: t.TempDir()}, nil
 			})
-			if tc.wantError != "" {
-				require.ErrorContains(t, err, tc.wantError)
-			} else {
-				require.NoError(t, err)
-			}
-			require.Equal(t, tc.downloaded, downloaded)
-			require.Contains(t, output.String(), tc.bytesLine)
-			require.Equal(t, 1, bytes.Count(output.Bytes(), []byte("[y/N]")))
+			require.NoError(t, err)
+			require.Equal(t, tc.installed, installed)
+			require.Equal(t, tc.output, output.String())
 		})
 	}
 }
@@ -366,13 +355,12 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
 }
 
-func TestLocalTextApprovalSurvivesDaemonIdleExit(t *testing.T) {
+func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	bin := buildDocbank(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"500ms\"\n"), 0600))
 	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
 	server := httptest.NewServer(ping)
 	defer server.Close()
@@ -384,39 +372,14 @@ func TestLocalTextApprovalSurvivesDaemonIdleExit(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
+	defer func() { _, _ = daemonconn.Stop(context.Background(), root) }()
 	command := exec.CommandContext(ctx, bin, "processing", "local", "--server", "local")
-	input, err := command.StdinPipe()
-	require.NoError(t, err)
-	defer func() { _ = input.Close() }()
-	output, err := os.CreateTemp(t.TempDir(), "command-output-")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, output.Close()) }()
-	command.Stdout, command.Stderr = output, output
-	require.NoError(t, command.Start())
-	waited := false
-	defer func() {
-		cancel()
-		if !waited {
-			_ = command.Wait()
-		}
-		_, _ = daemonconn.Stop(context.Background(), root)
-	}()
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(output.Name())
-		return err == nil && strings.Contains(string(data), "[y/N]")
-	}, 10*time.Second, 20*time.Millisecond)
-	require.Eventually(t, func() bool {
-		records, err := daemonconn.RuntimeStore(root).List()
-		return err == nil && len(records) == 0
-	}, 5*time.Second, 20*time.Millisecond, "approval remains open after the preview daemon idles out")
-	_, err = io.WriteString(input, "y\n")
-	require.NoError(t, err)
-	require.NoError(t, input.Close())
-	err = command.Wait()
-	waited = true
-	data, readErr := os.ReadFile(output.Name())
-	require.NoError(t, readErr)
+	// No stdin: the command must finish without asking a question.
+	command.Stdin = nil
+	data, err := command.CombinedOutput()
 	require.NoError(t, err, string(data))
+	require.NotContains(t, string(data), "[y/N]")
+	require.Contains(t, string(data), "Text indexing enabled for this vault and new imports.")
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
 	require.Equal(t, config.LocalTextProfile, choice.Profile)

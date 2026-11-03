@@ -1092,7 +1092,7 @@ configuration, or mismatched descriptor.
 
 #### Local text indexing
 
-Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile, all provider disclosures, and missing download bytes before one confirmation. It starts the shared server, grants consent, saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, and restarts the daemon. Your TOML stays intact.
+Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile and all provider disclosures, downloads any missing server and model files, and needs no confirmation. It starts the shared server, grants consent, saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, and restarts the daemon. Your TOML stays intact.
 
 Setup builds a separate `local-text` index with Nomic v1.5 and the plaintext extractor. Both `auto` and `local` select Kit's shared per-user server. Other processing profiles keep their configured providers.
 

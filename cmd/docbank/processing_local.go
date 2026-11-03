@@ -40,7 +40,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err := closeClient(); err != nil {
 				return err
 			}
-			if err := approveLocalText(cmd, plan.Managed); err != nil {
+			if err := installLocalText(cmd, plan.Managed); err != nil {
 				return err
 			}
 			if err := applyLocalText(cmd.Context(), *plan); err != nil {
@@ -68,7 +68,7 @@ func newProcessingLocalCommand() *cobra.Command {
 	return cmd
 }
 
-// applyLocalText acquires a fresh proven connection after approval and download.
+// applyLocalText acquires a fresh proven connection after any download.
 func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) {
 	c, err := daemonconn.Ensure(ctx)
 	if err != nil {
@@ -89,53 +89,37 @@ func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	return writeProcessingFlow(cmd, p.Flow)
 }
 
-// approveLocalText uses Kit's single pre-download callback. An offline reuse
-// still needs the same explicit vault-wide approval before startup or writes.
-func approveLocalText(cmd *cobra.Command, managed bool) error {
-	return approveLocalTextWithRuntime(cmd, managed, embedlocal.Endpoint, embedlocal.Install)
+// installLocalText installs the shared embeddings server when it is missing.
+// Running the command is the approval, so Kit's pre-download callback only
+// reports the download size.
+func installLocalText(cmd *cobra.Command, managed bool) error {
+	return installLocalTextWithRuntime(cmd, managed, embedlocal.Endpoint, embedlocal.Install)
 }
 
-func approveLocalTextWithRuntime(cmd *cobra.Command, managed bool,
+func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
-	prompted := false
-	approve := func(_ context.Context, bytes int64) (bool, error) {
-		prompted = true
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "missing download: %d bytes\n", bytes); err != nil {
+	if !managed {
+		return nil
+	}
+	_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, embedlocal.ErrNotFound) {
+		return fmt.Errorf("discover embeddings server: %w", err)
+	}
+	dir, err := embedlocal.DefaultDir()
+	if err != nil {
+		return fmt.Errorf("find embeddings directory: %w", err)
+	}
+	report := func(_ context.Context, bytes int64) (bool, error) {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Downloading local embeddings: %d bytes\n", bytes); err != nil {
 			return false, fmt.Errorf("write download size: %w", err)
-		}
-		if err := cmd.Context().Err(); err != nil {
-			return false, err
-		}
-		approved, err := confirmPrompt(cmd, cmd.OutOrStdout(), "Enable text indexing for this vault and new imports?")
-		if err != nil {
-			return false, err
-		}
-		if !approved {
-			return false, errors.New("text indexing declined")
 		}
 		return true, nil
 	}
-	if managed {
-		_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true})
-		if errors.Is(err, embedlocal.ErrNotFound) {
-			dir, err := embedlocal.DefaultDir()
-			if err != nil {
-				return fmt.Errorf("find embeddings directory: %w", err)
-			}
-			_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: approve})
-			if err != nil {
-				return err
-			}
-		} else if err != nil {
-			return fmt.Errorf("discover embeddings server: %w", err)
-		}
-	}
-	if !prompted {
-		if _, err := approve(cmd.Context(), 0); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: report})
+	return err
 }

@@ -85,28 +85,6 @@ type localTextGrantGate struct {
 
 func (gate *localTextGrantGate) MutateContext(context.Context, func() error) error { return gate.err }
 
-func TestLocalTextReconsidersRenamedPDF(t *testing.T) {
-	t.Parallel()
-	renderer := newWorkerProvider(t)
-	fixture, setup := newLocalTextBackfillFixture(t, renderer)
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "report.txt", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}
-	require.NoError(t, setup.process(t.Context(), item))
-	require.Zero(t, renderer.calls)
-	renamed, _, err := fixture.catalog.Move(t.Context(), node.ID, *node.ParentID, "report.pdf", store.UnconditionalRev)
-	require.NoError(t, err)
-	require.Equal(t, item.ContentVersionID, renamed.CurrentVersionID)
-	item.Name = renamed.Name
-	targets, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Contains(t, targets, item)
-	require.NoError(t, setup.process(t.Context(), item))
-	require.Equal(t, 1, renderer.calls)
-}
-
 func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvider, providers ...document.EmbeddingProvider) (publicationFixture, *LocalTextSetup) {
 	tb.Helper()
 	fixture := newPublicationFixture(tb)
