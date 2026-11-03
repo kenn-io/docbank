@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
+func checkEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -41,12 +42,15 @@ func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
 	for hash := range f.bytes {
 		require.NotContains(t, report.PhysicalDerivativeBlobsPendingGC, hash)
 	}
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	_, err = restored.EmailMetadata(t.Context(), a.Version.ID)
-	require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
+	if s.postgresSchema == "" { // Metadata restore remains SQLite-only.
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		restored := newTestStore(t)
+		require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+		_, err = restored.EmailMetadata(t.Context(), a.Version.ID)
+		require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
+	}
+
 	report, err = s.PurgeDerivatives(t.Context(), PurgeRequest{All: true})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.RemovedEmailGenerations)
@@ -56,12 +60,13 @@ func TestEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T) {
 			require.Contains(t, report.PhysicalDerivativeBlobsPendingGC, hash)
 		}
 	}
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T) {
+func checkEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -156,7 +161,7 @@ func TestEmailTargetQueryUsesMIMEPartialIndex(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	rows, err := s.db.QueryContext(t.Context(),
-		"EXPLAIN QUERY PLAN "+missingEmailVersionIDsQuery, "", fakeHash("recipe"))
+		"EXPLAIN QUERY PLAN "+s.missingEmailVersionIDsQuery(), "", fakeHash("recipe"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	used := false
@@ -213,9 +218,10 @@ func TestEmailAuditPurgeRollbackReplayAndTamper(t *testing.T) {
 	require.Error(t, restored.ValidateMetadata(t.Context()), "unrecorded suppression rewrite must fail audit replay")
 }
 
-func TestEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T) {
+func checkEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	a, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -244,5 +250,5 @@ func TestEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, report.RemovedEmailGenerations)
 	require.Equal(t, len(f.publication.Artifacts), report.RemovedEmailPartArtifacts)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }

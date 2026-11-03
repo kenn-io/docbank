@@ -118,6 +118,12 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(state,claim_owner,claim_epoch,claim_count,lease_expires_at,available_at,failure_code,receipt_json,updated_at) ON "+schema+".embedding_jobs TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".page_documents,"+schema+".page_frames,"+schema+".page_recipes,"+schema+".page_images,"+schema+".email_generations,"+schema+".email_part_artifacts,"+schema+".email_attachments,"+schema+".email_body_results,"+schema+".email_document_publications,"+schema+".email_document_relations TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(state,results_json,failure_code,epoch,token,updated_at) ON "+schema+".page_render_jobs TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(attachment_id,published_at) ON "+schema+".email_heads TO "+quotedRole+
+		"; GRANT DELETE ON "+schema+".email_document_publications TO "+quotedRole)
+	require.NoError(t, err)
+
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

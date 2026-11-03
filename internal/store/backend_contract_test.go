@@ -22,6 +22,129 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "pages", postgres: "native operations", scope: "Native page job replay, claims, cancellation, frames and image publication; excludes rendering processes and recovery.", scenarios: []backendScenario{
+		{"PagePublicationRollback", nil, checkPagePublicationRollbackPostgres},
+		{"EmailPageSnapshots", nil, checkEmailPageSnapshotsPostgres},
+		{"PagePublicationFencesClaimsAndPreservesPartialAuthority", func(t *testing.T) {
+			t.Helper()
+			checkPagePublicationFencesClaimsAndPreservesPartialAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPagePublicationFencesClaimsAndPreservesPartialAuthority(t, newPostgresQueryStore)
+		}},
+		{"PageJobRestartCannotPublishAnOldClaim", func(t *testing.T) { t.Helper(); checkPageJobRestartCannotPublishAnOldClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPageJobRestartCannotPublishAnOldClaim(t, newPostgresQueryStore) }},
+		{"PageJobNewOperationRetriesFailedAndCanceledRequests", func(t *testing.T) {
+			t.Helper()
+			checkPageJobNewOperationRetriesFailedAndCanceledRequests(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPageJobNewOperationRetriesFailedAndCanceledRequests(t, newPostgresQueryStore)
+		}},
+		{"PageJobStaleCompletionRetiresClaim", func(t *testing.T) { t.Helper(); checkPageJobStaleCompletionRetiresClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPageJobStaleCompletionRetiresClaim(t, newPostgresQueryStore) }},
+		{"PageJobStaleCompletionRetiresOnlyItsOwnedClaim", func(t *testing.T) { t.Helper(); checkPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t, newPostgresQueryStore)
+		}},
+		{"PageJobsConcurrentIdentityLimitsAndSourceFences", func(t *testing.T) { t.Helper(); checkPageJobsConcurrentIdentityLimitsAndSourceFences(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPageJobsConcurrentIdentityLimitsAndSourceFences(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "email", postgres: "native operations", scope: "Native MIME inventories, body renditions, child documents, retention and relation reads; excludes plain-text extraction and recovery.", scenarios: []backendScenario{
+		{"EmailPublicationRollback", nil, checkEmailPublicationRollbackPostgres},
+		{"EmailBodyPublication", func(t *testing.T) { t.Helper(); checkEmailBodyPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailBodyPublication(t, newPostgresQueryStore) }},
+
+		{"EmailDocumentsProcessingReportsServingRenditionOutcomes", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsProcessingReportsServingRenditionOutcomes(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsProcessingReportsServingRenditionOutcomes(t, newPostgresQueryStore)
+		}},
+
+		{"EmailPublicationSharesGenerationAndRetiresStaging", func(t *testing.T) {
+			t.Helper()
+			checkEmailPublicationSharesGenerationAndRetiresStaging(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailPublicationSharesGenerationAndRetiresStaging(t, newPostgresQueryStore)
+		}},
+		{"EmailSupersededBeforeBodyPublication", func(t *testing.T) { t.Helper(); checkEmailSupersededBeforeBodyPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailSupersededBeforeBodyPublication(t, newPostgresQueryStore) }},
+		{"EmailMissingStatesAndDeterministicRefusal", func(t *testing.T) { t.Helper(); checkEmailMissingStatesAndDeterministicRefusal(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailMissingStatesAndDeterministicRefusal(t, newPostgresQueryStore)
+		}},
+		{"EmailPurgeSharedGenerationAndPendingSuppression", func(t *testing.T) { t.Helper(); checkEmailPurgeSharedGenerationAndPendingSuppression(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailPurgeSharedGenerationAndPendingSuppression(t, newPostgresQueryStore)
+		}},
+		{"EmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins", func(t *testing.T) {
+			t.Helper()
+			checkEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t, newPostgresQueryStore)
+		}},
+		{"EmailVersionPruneAndLastTrashLeaveOrphansForCollection", func(t *testing.T) {
+			t.Helper()
+			checkEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsPublicationRetryAndExactOccurrence", func(t *testing.T) { t.Helper(); checkEmailDocumentsPublicationRetryAndExactOccurrence(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsPublicationRetryAndExactOccurrence(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsAtomicStaleDestinationAndExplicitReuse", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsExplicitRootAttachment", func(t *testing.T) { t.Helper(); checkEmailDocumentsExplicitRootAttachment(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailDocumentsExplicitRootAttachment(t, newPostgresQueryStore) }},
+		{"EmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsConcurrentReplayBoundedPagesAndRollback", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsBulkPurgeSkipsRetainedInventory", func(t *testing.T) { t.Helper(); checkEmailDocumentsBulkPurgeSkipsRetainedInventory(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsBulkPurgeSkipsRetainedInventory(t, newPostgresQueryStore)
+		}},
+
+		{"EmailDocumentsRepublishReleasedReceiptReportsConflict", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRepublishReleasedReceiptReportsConflict(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRepublishReleasedReceiptReportsConflict(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; excludes image preparation and ranked search.", scenarios: []backendScenario{
 		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
@@ -610,7 +733,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, image embedding preparation, page, email and media producers remain unqualified; retained-state cleanup is covered above."},
+	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, image embedding preparation, email PDF and other media producers remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
