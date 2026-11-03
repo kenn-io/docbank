@@ -1097,6 +1097,7 @@ func normalizedDurationContinuation(prefix, suffix string) bool {
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^\s+(?:after|before|prior\s+to)\s+`)
 var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)`)
+var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s+(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?)\b`)
 
 func numericRelativeDurationContinuation(suffix string) bool {
 	loc := relativeDurationConnectorRE.FindStringIndex(suffix)
@@ -1109,6 +1110,9 @@ func numericRelativeDurationContinuation(suffix string) bool {
 	}
 	unit := unitRE.FindStringIndex(operand)
 	if unit == nil || unit[0] != 0 {
+		return false
+	}
+	if relativeDurationIndependentAssertionRE.MatchString(operand[unit[1]:]) {
 		return false
 	}
 	parsed, ok := parseUnit(operand[:unit[1]], unitRE.FindStringSubmatch(operand))
@@ -1516,7 +1520,7 @@ func unsafeCandidates(s string, checks, cs []candidate) bool {
 
 var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:` + number + `)\b`)
 
-var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+)[\s(["'‘’“”«»]*$`)
+var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?)[\s(["'‘’“”«»]*$`)
 
 var commaMoneyGroupRE = regexp.MustCompile(`^[0-9]{3}(?:,[0-9]{3})*(?:\.[0-9]+)?(?:\s|[a-zA-Z$€£¥]|$)`)
 

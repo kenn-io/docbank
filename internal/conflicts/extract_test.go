@@ -522,7 +522,8 @@ func FuzzExtract(f *testing.F) {
 		"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", "From 1 July 2026 the fee is $5． The deposit is $7.", "The fee is $5 approximately per 2 devices.",
 		"The fee is $5/month < $10/month.", "The fee is $5/month < EUR 10/month.", "The fee is $5．．．",
 		"The minimum fee is five dollars and shipping is $7.", "The maximum fee is five dollars and shipping is $7.",
-		"The wait is max. ７ days.", "Policy Ｎｏ. is $1234.", "The fee is $5 more or less per 2 devices.", "The fee is $5 (approximately) per 2 devices.", "The fee is 5% of $100 per month and $200 per year."} {
+		"The wait is max. ７ days.", "Policy Ｎｏ. is $1234.", "The fee is $5 more or less per 2 devices.", "The fee is $5 (approximately) per 2 devices.", "The fee is 5% of $100 per month and $200 per year.",
+		"The deadline is 7 min. after about 10 min.", "The deadline is 7 min. After about 10 min.", "The wait is 7 min. After 10 minutes the fee is $5."} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -547,6 +548,25 @@ func FuzzExtract(f *testing.F) {
 				}
 			}
 			prev = v.End
+		}
+	})
+}
+
+func FuzzExtractRejectsQualifiedAbbreviatedRelativeDurationComparisons(f *testing.F) {
+	connectors := []string{"after", "before", "prior to", "After", "Before", "Prior to"}
+	qualifiers := []string{"about ", "approximately ", "at least ", "no more than ", "~"}
+	for connector := range connectors {
+		for qualifier := range qualifiers {
+			f.Add(uint8(connector), uint8(qualifier), uint8(7))
+		}
+	}
+	f.Fuzz(func(t *testing.T, connectorChoice, qualifierChoice, amountChoice uint8) {
+		amounts := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+		amount := amounts[int(amountChoice)%len(amounts)]
+		operand := amounts[(int(amountChoice)+1)%len(amounts)]
+		text := "The deadline is " + amount + " min. " + connectors[int(connectorChoice)%len(connectors)] + " " + qualifiers[int(qualifierChoice)%len(qualifiers)] + operand + " min."
+		if got := Extract(text); len(got) != 0 {
+			t.Fatalf("qualified relative-duration comparison retained exact figures for %q: %+v", text, got)
 		}
 	})
 }
@@ -2480,6 +2500,12 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. after 10 min.",
 		"The deadline is 7 min. before 10 min.",
 		"The deadline is 7 min. prior to 10 min.",
+		"The deadline is 7 min. After 10 min.",
+		"The deadline is 7 min. before about 10 min.",
+		"The deadline is 7 min. After approximately 10 min.",
+		"The deadline is 7 min. prior to at least 10 min.",
+		"The deadline is 7 min. before no more than 10 min.",
+		"The deadline is 7 min. After ~10 min.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("relative duration comparison retained exact figures for %q: %+v", text, got)
@@ -2493,6 +2519,26 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 	for i, want := range []string{"7 min", "$5"} {
 		if string([]rune(text)[got[i].Start:got[i].End]) != want {
 			t.Errorf("independent sentence has incorrect source span: %+v", got[i])
+		}
+	}
+}
+
+func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) {
+	for _, text := range []string{
+		"The wait is 7 min. After 10 minutes the fee is $5.",
+		"The wait is 7 min. after 10 minutes the fee is $5.",
+	} {
+		got := Extract(text)
+		foundWait, foundFee := false, false
+		for _, figure := range got {
+			if string([]rune(text)[figure.Start:figure.End]) != figure.Text {
+				t.Errorf("incorrect source span for %q: %+v", text, figure)
+			}
+			foundWait = foundWait || figure.Kind == "duration" && figure.Text == "7 min"
+			foundFee = foundFee || figure.Kind == "money" && figure.Text == "$5"
+		}
+		if !foundWait || !foundFee {
+			t.Errorf("independent assertion after abbreviated duration was suppressed for %q: %+v", text, got)
 		}
 	}
 }
