@@ -423,7 +423,7 @@ type searchDocumentsOutput struct {
 	VaultID            string                              `json:"vault_id,omitzero"`
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
-	ObservedScopeCount int                                 `json:"observed_scope_count,omitzero"`
+	ObservedScopeCount *int                                `json:"observed_scope_count,omitzero"`
 	RequestedMode      string                              `json:"requested_mode"`
 	ActualMode         string                              `json:"actual_mode"`
 	Coverage           searchCoverageOutput                `json:"coverage"`
@@ -460,7 +460,7 @@ func searchDocuments(
 		output.Fence = &sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)}
 		output.FenceFingerprint = result.resolution.FenceFingerprint
-		output.ObservedScopeCount = result.resolution.ObservedScopeCount
+		output.ObservedScopeCount = &result.resolution.ObservedScopeCount
 	}
 	for index, item := range result.report.Results {
 		evidence, err := encodeSearchEvidenceIDs(item.Evidence)

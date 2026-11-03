@@ -179,6 +179,8 @@ func TestSearchValidityDateInputAndEmptyFence(t *testing.T) {
 	assert.Equal(t, 1, client.validationCalls)
 	assert.Zero(t, client.searchCalls, "an empty exact fence must not become an unscoped search")
 	assert.Equal(t, "2024-06-01", output.AsOf)
+	require.NotNil(t, output.ObservedScopeCount)
+	assert.Zero(t, *output.ObservedScopeCount)
 	encoded, err := json.Marshal(output)
 	require.NoError(t, err)
 	var mapped map[string]any
