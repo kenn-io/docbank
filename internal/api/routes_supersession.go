@@ -29,7 +29,7 @@ type ValidityReceipt struct {
 	Changed bool `json:"changed"`
 }
 type SupersessionRequest struct {
-	Note string `json:"note,omitempty"`
+	Note *string `json:"note,omitzero"`
 }
 type EffectiveWindowRequest struct {
 	EffectiveFrom string `json:"effective_from,omitempty"`
@@ -65,7 +65,7 @@ type effectiveWindowInput struct {
 }
 
 func registerSupersessionRoutes(api huma.API, d Deps, g *gate) {
-	huma.Register(api, huma.Operation{OperationID: "putSupersession", Method: http.MethodPut, Path: "/api/v1/nodes/{id}/supersedes/{predecessor_id}", Summary: "Declare a document replacement", Description: "If-Match guards the predecessor's revision.", MaxBodyBytes: 1 << 20}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{OperationID: "putSupersession", Method: http.MethodPut, Path: "/api/v1/nodes/{id}/supersedes/{predecessor_id}", Summary: "Declare a document replacement", Description: "If-Match guards the predecessor's revision. If note is omitted or null, an existing declaration's note is preserved and a new declaration defaults to empty; an explicit empty note clears it.", MaxBodyBytes: 1 << 20}, func(ctx context.Context, in *struct {
 		ID            int64  `path:"id" minimum:"1"`
 		PredecessorID int64  `path:"predecessor_id" minimum:"1"`
 		IfMatch       string `header:"If-Match"`

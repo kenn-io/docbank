@@ -195,7 +195,8 @@ docbank document validity /leases/lease-2024.pdf --as-of 2025-06-01
 
 Dates are inclusive calendar dates. An undated successor takes effect for every
 inspection date, and validity reports that uncertainty. Use `supersede --remove`
-to remove a link. If its successor is trashed, select that successor by
+to remove a link. Omit `--note` to keep an existing note; pass `--note ""` to
+clear it. If its successor is trashed, select that successor by
 `id:<positive-decimal>`; paths resolve only live nodes. The predecessor must
 still be live. Use `effective --clear` to clear a window. These declarations do
 not change document content or search order.

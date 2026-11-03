@@ -586,7 +586,8 @@ Declare or remove a replacement, set or clear an inclusive effective window,
 and inspect a document's standing on a date. Select nodes by absolute virtual
 path or `id:<positive-decimal>`. `--remove` cannot be combined with `--note`;
 `--clear` cannot be combined with `--from` or `--to`. Without `--clear`, provide
-at least one date. To remove a link to a trashed successor, select that
+at least one date. Omit `--note` to keep an existing note, or pass
+`--note ""` to clear it. To remove a link to a trashed successor, select that
 successor by ID; paths resolve only live nodes. The predecessor must still be
 live. Declaring a link requires both files to be live. `validity --json` prints
 the full validity response.
