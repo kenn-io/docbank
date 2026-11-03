@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"errors"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -381,6 +382,26 @@ type DocumentResultValidity struct {
 	SupersededBy  []DocumentValiditySuccessor `json:"superseded_by" maxItems:"16"`
 	EffectiveFrom string                      `json:"effective_from,omitzero" format:"date"`
 	EffectiveTo   string                      `json:"effective_to,omitzero" format:"date"`
+}
+
+// Reason says why a search result is out of force, or "" when it is in force.
+func (v *DocumentResultValidity) Reason() string {
+	if v == nil {
+		return ""
+	}
+	switch v.State {
+	case "expired":
+		return "expired"
+	case "not_yet_effective":
+		return "not yet effective"
+	case "superseded":
+		names := []string{}
+		for _, next := range v.SupersededBy {
+			names = append(names, next.Path)
+		}
+		return "superseded by " + strings.Join(names, ", ")
+	}
+	return ""
 }
 
 type DocumentValiditySuccessor struct {

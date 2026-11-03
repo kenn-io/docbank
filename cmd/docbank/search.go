@@ -588,20 +588,8 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 }
 
 func documentValidityReason(result api.DocumentSearchResult) string {
-	if result.Validity == nil {
-		return ""
-	}
-	switch result.Validity.State {
-	case "expired":
-		return " (expired)"
-	case "not_yet_effective":
-		return " (not yet effective)"
-	case "superseded":
-		names := []string{}
-		for _, next := range result.Validity.SupersededBy {
-			names = append(names, next.Path)
-		}
-		return " (superseded by " + strings.Join(names, ", ") + ")"
+	if reason := result.Validity.Reason(); reason != "" {
+		return " (" + reason + ")"
 	}
 	return ""
 }
