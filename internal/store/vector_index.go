@@ -513,7 +513,7 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 	if err != nil {
 		return lease, err
 	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		return insertVectorIndexReaderLeaseTx(ctx, tx, lease, owner)
 	})
 	return lease, err
