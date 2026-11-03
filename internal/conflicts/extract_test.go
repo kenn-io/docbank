@@ -2460,6 +2460,91 @@ func TestExtractRejectsUnquantifiedCompoundComponents(t *testing.T) {
 	}
 }
 
+func TestExtractRejectsUnquantifiedMonetaryComponents(t *testing.T) {
+	if got := Extract("The fee is $7 and a dollar."); len(got) != 0 {
+		t.Fatalf("unsupported compound amount retained exact component: %+v", got)
+	}
+	if got := Extract("The fee is $7 and a dollar is refunded."); len(got) != 1 || got[0].Text != "$7" {
+		t.Fatalf("independent monetary assertion was suppressed: %+v", got)
+	}
+	if got := Extract("The fee is $7 and an account."); len(got) != 0 {
+		t.Fatalf("unsupported compound count retained exact component: %+v", got)
+	}
+	if got := Extract("The fee is $7 and an account is required."); len(got) != 1 || got[0].Text != "$7" {
+		t.Fatalf("independent count assertion was suppressed: %+v", got)
+	}
+}
+
+func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is 7 min. after 10 min.",
+		"The deadline is 7 min. before 10 min.",
+		"The deadline is 7 min. prior to 10 min.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("relative duration comparison retained exact figures for %q: %+v", text, got)
+		}
+	}
+	text := "The wait is 7 min. The fee is $5."
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "7 min" || got[1].Text != "$5" {
+		t.Fatalf("independent sentence was suppressed: %+v", got)
+	}
+	for i, want := range []string{"7 min", "$5"} {
+		if string([]rune(text)[got[i].Start:got[i].End]) != want {
+			t.Errorf("independent sentence has incorrect source span: %+v", got[i])
+		}
+	}
+}
+
+func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
+	for _, text := range []string{
+		"The fee is $5/month < about $10/month.",
+		"The fee is $5 < about $10.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("qualified comparison retained exact figures for %q: %+v", text, got)
+		}
+	}
+	text := "The fee is $5/month. The other fee is $10/month."
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "$5" || got[1].Text != "$10" {
+		t.Fatalf("independent rate assertions were suppressed: %+v", got)
+	}
+}
+
+func TestExtractRejectsGuillemetEstimatedValuesAndPeriodBounds(t *testing.T) {
+	if got := Extract("«The estimated fee is $5.»"); len(got) != 0 {
+		t.Fatalf("guillemet wrapped estimated fee retained: %+v", got)
+	}
+	text := "«Orders before 1 July 2026 cost $5.»"
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$5" || got[0].Period != (Period{}) || string([]rune(text)[got[0].Start:got[0].End]) != "$5" {
+		t.Fatalf("guillemet wrapped subject gained an unsupported period: %+v", got)
+	}
+}
+
+func TestExtractKeepsQuotedIndependentAssertions(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{`The fee is about $5 and "$10" is deposited.`, []string{"$10"}},
+		{`The fee is 5% of $100 and "$200" is deposited.`, []string{"5%", "$200"}},
+		{`The fee is about $5 and "$10".`, nil},
+	} {
+		got := Extract(tt.text)
+		if len(got) != len(tt.want) {
+			t.Fatalf("%q got %+v, want %v", tt.text, got, tt.want)
+		}
+		for i, want := range tt.want {
+			if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+				t.Errorf("%q got %+v, want %q", tt.text, got[i], want)
+			}
+		}
+	}
+}
+
 func TestExtractInvalidExplicitIdentifierToken(t *testing.T) {
 	for _, text := range []string{
 		"Policy number: $ 1234. The fee is $5.",
