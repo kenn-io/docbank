@@ -10,12 +10,14 @@
     mime,
     excerpt = "",
     validityReason = "",
+    validityReasonTitle = validityReason,
   }: {
     name: string;
     folder?: string;
     mime?: string;
     excerpt?: string;
     validityReason?: string;
+    validityReasonTitle?: string;
   } = $props();
 </script>
 
@@ -25,7 +27,8 @@
     <span class="title">{name}</span>
     {#if folder}<span class="folder"><bdi>{folder}</bdi></span>{/if}
     {#if excerpt}<span class="excerpt">{excerpt}</span>{/if}
-    {#if validityReason}<span class="validity-reason" title={validityReason}>{validityReason}</span
+    {#if validityReason}<span class="validity-reason" title={validityReasonTitle}
+        >{validityReason}</span
       >{/if}
   </span>
 </span>
@@ -43,8 +46,7 @@
   }
   .title,
   .folder,
-  .excerpt,
-  .validity-reason {
+  .excerpt {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -58,6 +60,10 @@
   .validity-reason {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+  .validity-reason {
+    color: var(--accent-amber);
+    overflow-wrap: anywhere;
   }
   /* Right-to-left clips the start of the line, so the ellipsis eats the root. */
   .folder {

@@ -2450,10 +2450,13 @@
     return hydrated;
   }
 
-  function validityReason(validity: generated.DocumentResultValidity | undefined): string {
+  function validityReason(
+    validity: generated.DocumentResultValidity | undefined,
+    fullPaths = false,
+  ): string {
     switch (validity?.state) {
       case "superseded":
-        return `superseded by ${validity.superseded_by.map((next) => next.path).join(", ")}`;
+        return `superseded by ${validity.superseded_by.map((next) => (fullPaths ? next.path : next.path.slice(next.path.lastIndexOf("/") + 1))).join(", ")}`;
       case "expired":
         return "expired";
       case "not_yet_effective":
@@ -4896,6 +4899,7 @@
                               mime={row.node.mime_type}
                               excerpt={matchExcerpt(row)}
                               validityReason={validityReason(row.validity)}
+                              validityReasonTitle={validityReason(row.validity, true)}
                             />
                           {:else}
                             <span class="document-name">

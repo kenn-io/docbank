@@ -1877,12 +1877,24 @@ it.each(["names", "meaning", "frozen"])(
 it.each([
   [
     { state: "superseded", superseded_by: [{ node_id: 3, path: "/leases/lease-2025.pdf" }] },
+    "superseded by lease-2025.pdf",
     "superseded by /leases/lease-2025.pdf",
   ],
-  [{ state: "expired", superseded_by: [] }, "expired"],
-  [{ state: "not_yet_effective", superseded_by: [] }, "not yet effective"],
-  [undefined, ""],
-])("shows the validity reason beneath the search result for %j", async (validity, reason) => {
+  [
+    {
+      state: "superseded",
+      superseded_by: [
+        { node_id: 3, path: "/leases/lease-2025.pdf" },
+        { node_id: 4, path: "/leases/addenda/renewal.txt" },
+      ],
+    },
+    "superseded by lease-2025.pdf, renewal.txt",
+    "superseded by /leases/lease-2025.pdf, /leases/addenda/renewal.txt",
+  ],
+  [{ state: "expired", superseded_by: [] }, "expired", "expired"],
+  [{ state: "not_yet_effective", superseded_by: [] }, "not yet effective", "not yet effective"],
+  [undefined, "", ""],
+])("shows the validity reason beneath the search result for %j", async (validity, reason, title) => {
   const file = node(2, "lease-2024.pdf", baseVersion);
   installHarness({
     profiles: [{ name: "private", fingerprint: "a".repeat(64), embedding_bindings: ["embed"] }],
@@ -1896,6 +1908,7 @@ it.each([
   const row = excerpt.closest("tr")!;
   if (reason) {
     const label = within(row).getByText(reason);
+    expect(label.title).toBe(title);
     const text = excerpt.parentElement!;
     expect(text.querySelector(".folder")).toBeTruthy();
     expect(label.parentElement).toBe(text);
