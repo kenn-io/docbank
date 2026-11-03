@@ -2886,10 +2886,9 @@ func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
 			defer cancel()
 			switch name {
 			case "fence":
-				got, _, complete, _, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, opts, nil)
+				got, _, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, opts, nil)
 				require.NoError(t, err)
 				require.Equal(t, source.ManifestChecksum, got.ManifestChecksum)
-				require.Equal(t, 1, complete)
 			case "similar":
 				got, err := s.ResolveSimilarCandidates(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, source.ManifestChecksum, []vectorindex.Neighbor{neighbor}, 10, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
 				require.NoError(t, err)
