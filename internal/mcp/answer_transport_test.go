@@ -405,9 +405,19 @@ func TestAnswerQuestionRejectsBlankQuestionTransport(t *testing.T) {
 	}))
 	defer daemon.Close()
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
-	raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": map[string]any{"question": " \t\n "}}))
-	require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
-	require.Zero(t, calls)
+	for _, args := range []map[string]any{
+		{"question": " \t\n "},
+		{"question": "q", "terms": []string{" "}},
+		{"question": "q", "terms": []string{"lease", "\t\n"}},
+		{"question": "q", "terms": []string{" lease", "lease"}},
+		{"question": "q", "terms": []string{"lease "}},
+		{"question": "q", "terms": []string{"\tlease"}},
+		{"question": "q", "terms": []string{"lease\n"}},
+	} {
+		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": args}))
+		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
+		require.Zero(t, calls)
+	}
 }
 
 func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {

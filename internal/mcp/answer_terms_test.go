@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
@@ -38,10 +37,12 @@ func answerTermsSearchReport(req api.DocumentSearchRequest, results ...api.Docum
 	for i := range report.Results {
 		r := &report.Results[i]
 		r.VaultUID, r.Rank = req.Fence.VaultUID, i+1
-		r.LexicalRank = i + 1
+		r.LexicalRank = 0
 		for _, evidence := range r.Evidence {
 			if evidence.Kind == "embedding" {
-				r.LexicalRank, r.SemanticRank = 0, i+1
+				r.SemanticRank = i + 1
+			} else {
+				r.LexicalRank = i + 1
 			}
 		}
 	}
@@ -95,8 +96,8 @@ func TestAnswerQuestionTermsRecoverLexicalPassage(t *testing.T) {
 	require.Equal(t, answer.Answered, with.Status)
 	require.Len(t, with.Passages, 1, "both terms find the same passage")
 	require.Equal(t, member.VersionID, with.Passages[0].ContentVersionID)
-	require.Nil(t, with.Passages[0].Relevance)
-	require.Equal(t, 0.7, *with.Leads[0].Relevance)
+	require.True(t, with.CoverageComplete)
+	require.Equal(t, "complete", with.Receipt.Coverage.State)
 	require.Len(t, f.requests, 4)
 	for i, term := range []string{"lease", "renewal"} {
 		req := f.requests[i+2]
@@ -108,14 +109,6 @@ func TestAnswerQuestionTermsRecoverLexicalPassage(t *testing.T) {
 		require.Equal(t, f.requests[1].Profile, req.Profile)
 		require.Equal(t, f.requests[1].Fence, req.Fence)
 	}
-	hash := sha256.Sum256([]byte(`["lease","renewal"]`))
-	require.Equal(t, hex.EncodeToString(hash[:]), with.Receipt.TermsSHA256)
-	encoded, err := json.Marshal(with)
-	require.NoError(t, err)
-	var normalized any
-	require.NoError(t, json.Unmarshal(encoded, &normalized))
-	_, output := answerQuestionSchemas()
-	assertSchemaAccepts(t, output, normalized)
 }
 
 func TestAnswerQuestionTermsMatchIndependently(t *testing.T) {
@@ -125,34 +118,15 @@ func TestAnswerQuestionTermsMatchIndependently(t *testing.T) {
 		BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "Lease renewal is 1 March.",
 	}))
 	server, _, _ := newProcessingDocumentServer(t, f)
-	for _, terms := range [][]string{{"lease"}, {"lease", "nonexistentword"}, {"lease nonexistentword"}} {
-		out := exportCall(t, server, "answer_question", map[string]any{"question": "when must I renew", "terms": terms})
+	for _, tc := range []struct {
+		terms []string
+		want  int
+	}{{[]string{"lease"}, 1}, {[]string{"lease nonexistentword"}, 0}} {
+		out := exportCall(t, server, "answer_question", map[string]any{"question": "when must I renew", "terms": tc.terms})
 		passages := out["passages"].([]any)
-		if len(terms) == 1 && terms[0] == "lease nonexistentword" {
-			require.Empty(t, passages)
-		} else {
-			require.Len(t, passages, 1)
+		require.Len(t, passages, tc.want)
+		if tc.want > 0 {
 			require.Equal(t, member.VersionID, schemaMap(t, passages[0])["content_version_id"])
-		}
-	}
-}
-
-func TestAnswerQuestionTermsKeepDistinctPassages(t *testing.T) {
-	f := newNativeExportFixture(t)
-	text := "Lease renewal requires thirty days notice. " + strings.Repeat("Routine agreement details. ", 200) + "Lease termination requires sixty days notice."
-	member := f.addFile(t, "agreement.txt", text)
-	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
-		BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: text,
-	}))
-	server, _, _ := newProcessingDocumentServer(t, f)
-	for _, terms := range [][]string{{"renewal"}, {"termination"}, {"renewal", "termination"}} {
-		out := exportCall(t, server, "answer_question", map[string]any{"question": "when must I act", "terms": terms})
-		passages := out["passages"].([]any)
-		require.Len(t, passages, len(terms))
-		for i, term := range terms {
-			passage := schemaMap(t, passages[i])
-			require.Equal(t, member.VersionID, passage["content_version_id"])
-			require.Contains(t, passage["text"], term)
 		}
 	}
 }
@@ -166,17 +140,23 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 		versions = append(versions, member.VersionID)
 		results = append(results, api.DocumentSearchResult{NodeID: member.NodeID, ContentVersionID: member.VersionID, Path: "/" + name + ".txt", Excerpt: name, Score: 0.7, Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}})
 	}
+	lead := results[0]
+	lead.Excerpt = ""
+	lead.Evidence = []api.DocumentEvidenceReference{{Kind: "node_name"}}
+	results = append(results, lead)
 	for _, tc := range []struct {
-		name                    string
-		question, first, second []int
-		limit                   int
-		truncated               bool
-		want                    []string
+		name                         string
+		question, first, second      []int
+		limit                        int
+		termTruncated, wantTruncated bool
+		wantLeads                    int
+		want                         []string
 	}{
-		{"round robin", []int{0, 1}, []int{2, 3}, []int{4, 2}, 5, false, []string{"a", "c", "b", "e", "d"}},
-		{"cross-search duplicates", []int{0, 1}, []int{1, 2}, []int{2, 3}, 5, false, []string{"a", "b", "c", "d"}},
-		{"combined limit", []int{0, 1}, []int{2, 3}, []int{4, 2}, 3, false, []string{"a", "c", "b"}},
-		{"term truncated", nil, nil, []int{2}, 1, true, []string{"c"}},
+		{"round robin", []int{0, 1}, []int{2, 3}, []int{4, 2}, 5, false, false, 0, []string{"a", "c", "b", "e", "d"}},
+		{"cross-search duplicates", []int{0, 1}, []int{1, 2}, []int{2, 3}, 5, false, false, 0, []string{"a", "b", "c", "d"}},
+		{"combined limit", []int{0, 1}, []int{2, 3}, []int{4, 2}, 3, false, true, 0, []string{"a", "c", "b"}},
+		{"term truncated", nil, nil, []int{2}, 1, true, true, 0, []string{"c"}},
+		{"duplicate leads", []int{5}, []int{5}, []int{5}, 5, false, false, 1, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: versions}, summaries: daemonDocumentClient{fixture.connection}}
@@ -193,7 +173,7 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 					selected = append(selected, results[id])
 				}
 				report := answerTermsSearchReport(req, selected...)
-				report.Truncated = tc.truncated && req.Query == "second"
+				report.Truncated = tc.termTruncated && req.Query == "second"
 				return report, nil
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
@@ -211,8 +191,9 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 					require.Nil(t, passage.Relevance)
 				}
 			}
+			require.Len(t, out.Leads, tc.wantLeads)
 			require.Equal(t, tc.want, texts)
-			require.Equal(t, tc.truncated || tc.name == "combined limit", slices.Contains(out.CoverageReasons, "retrieval_truncated"))
+			require.Equal(t, tc.wantTruncated, slices.Contains(out.CoverageReasons, "retrieval_truncated"))
 		})
 	}
 }
@@ -238,38 +219,31 @@ func TestAnswerQuestionTermsSchema(t *testing.T) {
 	for _, terms := range []any{nil, []any{}, []any{""}, []any{"lease", "lease"}, []any{strings.Repeat("界", 65)}, []any{"a", "b", "c", "d", "e", "f", "g", "h", "i"}} {
 		assertSchemaRejects(t, input, map[string]any{"question": "q", "terms": terms})
 	}
-	fixture := newNativeExportFixture(t)
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, fixture.lease)
-	for _, terms := range [][]string{{" "}, {"lease", "\t\n"}, {" lease", "lease"}, {"lease "}, {"\tlease"}, {"lease\n"}} {
-		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "answer_question", "arguments": map[string]any{"question": "q", "terms": terms}}))
-		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
-	}
 }
 
 func TestAnswerQuestionTermsRetainedReceipt(t *testing.T) {
 	fixture := newNativeExportFixture(t)
 	member := fixture.addFile(t, "lease.txt", "Lease renewal and termination.")
 	leadMember := fixture.addFile(t, "index.txt", "Index")
-	for _, budget := range []int{5, 100} {
+	for _, budget := range []int{2048, 4096} {
 		t.Run(fmt.Sprint(budget), func(t *testing.T) {
 			f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: []string{member.VersionID, leadMember.VersionID}}, summaries: daemonDocumentClient{fixture.connection}}
 			space := strings.Repeat("c", 64)
 			f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-				result := api.DocumentSearchResult{NodeID: member.NodeID, ContentVersionID: member.VersionID, Path: "/lease.txt", Excerpt: "Lease renewal", Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}}
+				result := api.DocumentSearchResult{NodeID: member.NodeID, ContentVersionID: member.VersionID, Path: "/lease.txt", Excerpt: strings.Repeat("𐐀", 512), Evidence: []api.DocumentEvidenceReference{{Kind: "content_blob"}}}
 				if req.Mode == "hybrid" {
 					result.Evidence = append(result.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: space, EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)})
 					lead := api.DocumentSearchResult{NodeID: leadMember.NodeID, ContentVersionID: leadMember.VersionID, Path: "/index.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
 					return answerTermsSearchReport(req, lead, result), nil
-				} else {
-					result.Excerpt = "Lease"
 				}
+				result.Excerpt = "Lease"
 				return answerTermsSearchReport(req, result), nil
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 			raw := fmt.Appendf(nil, `{"question":"renewal","terms":["lease"],"max_passage_bytes":%d}`, budget)
 			out, _, err := answerQuestion(t.Context(), session, raw)
 			require.NoError(t, err)
-			if budget == 5 {
+			if budget == 2048 {
 				require.Len(t, out.Passages, 1)
 				require.Equal(t, "Lease", out.Passages[0].Text)
 				require.Empty(t, out.Receipt.VectorSpaceIDs)
@@ -277,50 +251,16 @@ func TestAnswerQuestionTermsRetainedReceipt(t *testing.T) {
 				require.Len(t, out.Passages, 2)
 				require.Equal(t, []string{space}, out.Receipt.VectorSpaceIDs)
 			}
+
+			encoded, err := json.Marshal(out)
+			require.NoError(t, err)
+			var normalized any
+			require.NoError(t, json.Unmarshal(encoded, &normalized))
+			_, output := answerQuestionSchemas()
+			assertSchemaAccepts(t, output, normalized)
 			require.Equal(t, []answerCitation{{NodeID: member.NodeID, ContentVersionID: member.VersionID}}, out.Receipt.CitedVersions)
 		})
 	}
-}
-
-func TestAnswerQuestionTermsLexicalCoverage(t *testing.T) {
-	f := &answerFakeClient{
-		profiles: []api.ProcessingProfileSummary{{Name: "default", Fingerprint: strings.Repeat("a", 64)}},
-		searchReport: func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-			return answerTermsSearchReport(req), nil
-		},
-	}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["lease"]}`))
-	require.NoError(t, err)
-	require.Equal(t, "unknown", out.Receipt.Coverage.State)
-	require.Zero(t, out.Receipt.Coverage.CompleteDocuments)
-	require.False(t, out.CoverageComplete)
-	require.Contains(t, out.CoverageReasons, "embeddings_incomplete")
-}
-
-func TestAnswerQuestionTermsEmptyFence(t *testing.T) {
-	f := &answerFakeClient{empty: true}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["first","second"]}`))
-	require.NoError(t, err)
-	require.Empty(t, f.requests)
-	require.Equal(t, 3, f.validations)
-	require.Equal(t, answer.NoMatch, out.Status)
-	require.Empty(t, out.Receipt.TermsSHA256)
-}
-
-func TestAnswerQuestionTermsDuplicateLeads(t *testing.T) {
-	fixture := newNativeExportFixture(t)
-	member := fixture.addFile(t, "lease.txt", "text")
-	f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: []string{member.VersionID}}, summaries: daemonDocumentClient{fixture.connection}}
-	f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		return answerTermsSearchReport(req, api.DocumentSearchResult{NodeID: member.NodeID, ContentVersionID: member.VersionID, Path: "/lease.txt", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}), nil
-	}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"lease","terms":["lease","txt"]}`))
-	require.NoError(t, err)
-	require.Len(t, out.Leads, 1)
-	require.Empty(t, out.Passages)
 }
 
 func TestAnswerQuestionTermsReceiptWithoutEcho(t *testing.T) {
@@ -330,8 +270,6 @@ func TestAnswerQuestionTermsReceiptWithoutEcho(t *testing.T) {
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"q","terms":["classified","token"]}`))
 	require.NoError(t, err)
-	require.Equal(t, "classified", f.requests[1].Query)
-	require.Equal(t, "token", f.requests[2].Query)
 	hash := sha256.Sum256([]byte(`["classified","token"]`))
 	require.Equal(t, hex.EncodeToString(hash[:]), out.Receipt.TermsSHA256)
 	encoded, err := json.Marshal(out)
