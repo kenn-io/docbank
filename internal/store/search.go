@@ -654,7 +654,7 @@ func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts
 				 AND es.profile_fingerprint=? AND es.binding_id=?
 				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
 				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
-				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint", "") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `)))
+				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `)))
 			ELSE 1 END
 		) ORDER BY scoped.position`
 }
@@ -845,7 +845,7 @@ func currentEmbeddingHeadsSQL() string {
 		 AND es.profile_fingerprint=eh.profile_fingerprint
 		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint", "") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))`
+		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))`
 }
 
 func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
@@ -1014,7 +1014,7 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 		WHERE es.vector_space_id=?
 		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
 		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint", "")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`))
+		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`))
 		  `+filterSQL, args...)
 	if err != nil {
 		return nil, err

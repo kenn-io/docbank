@@ -11,10 +11,14 @@ type PhotoRanking struct {
 }
 
 // currentImageEmbeddingSQL accepts catalog-owned SQL expressions.
-func currentImageEmbeddingSQL(version, evidence, recipe string) string {
-	previewRecipe := ""
-	if recipe != "" {
-		previewRecipe = ` AND image_preview.recipe_fingerprint=` + recipe
-	}
-	return `EXISTS(SELECT 1 FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id JOIN nodes n ON n.id=f.node_id JOIN visual_preview_generations image_preview ON image_preview.content_version_id=` + version + ` WHERE f.asset_id=a.asset_id AND n.current_version_id=` + version + ` AND ` + photoDescriptionEligibility + ` AND image_preview.checksum=` + evidence + ` AND image_preview.state='ready'` + previewRecipe + `)`
+func currentImageEmbeddingSQL(version, evidence string) string {
+	return currentImageEmbeddingPreviewSQL(version, `image_preview.checksum=`+evidence)
+}
+
+func currentImageEmbeddingRecipeSQL(version, evidence, recipe string) string {
+	return currentImageEmbeddingPreviewSQL(version, `image_preview.checksum=`+evidence+` AND image_preview.recipe_fingerprint=`+recipe)
+}
+
+func currentImageEmbeddingPreviewSQL(version, previewPredicate string) string {
+	return `EXISTS(SELECT 1 FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id JOIN nodes n ON n.id=f.node_id JOIN visual_preview_generations image_preview ON image_preview.content_version_id=` + version + ` WHERE f.asset_id=a.asset_id AND n.current_version_id=` + version + ` AND ` + photoDescriptionEligibility + ` AND ` + previewPredicate + ` AND image_preview.state='ready')`
 }
