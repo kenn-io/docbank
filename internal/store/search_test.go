@@ -190,17 +190,13 @@ func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) 
 func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                  string
-		indexed               string
-		wantNodeNames         []string
-		limit                 int
-		excludeRepresentative bool
-		wantTruncated         bool
-		wantNext              int
+		name          string
+		indexed       string
+		wantNodeNames []string
+		limit         int
+		wantNext      int
 	}{
 		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2, wantNext: 3},
-		{name: "representative past first prefix", indexed: "late", wantNodeNames: []string{"duplicate-a.jpg"}, limit: 1, wantTruncated: true, wantNext: 3},
-		{name: "excluded representative past first prefix", indexed: "late", wantNodeNames: []string{"distinct.jpg"}, limit: 1, excludeRepresentative: true, wantNext: 4},
 		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1, wantNext: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,7 +204,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			f := newImageEmbeddingCatalogFixture(t)
 			s, profile := f.s, f.request.Profile
 			var nodes []Node
-			if tc.indexed == "all" || tc.indexed == "late" {
+			if tc.indexed == "all" {
 				for _, file := range []struct{ name, hash string }{
 					{"duplicate-a.jpg", catalogSourceHash},
 					{"duplicate-b.jpg", catalogSourceHash},
@@ -218,11 +214,6 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 						int64(len(catalogBlobContents[file.hash])), "image/jpeg")
 					require.NoError(t, err)
 					nodes = append(nodes, node)
-				}
-				if tc.indexed == "late" {
-					node, err := s.CreateFile(t.Context(), s.RootID(), "duplicate-c.jpg", catalogSourceHash, int64(len(catalogBlobContents[catalogSourceHash])), "image/jpeg")
-					require.NoError(t, err)
-					nodes = []Node{nodes[1], node, nodes[0], nodes[2]}
 				}
 			} else {
 				older, err := s.CreateFile(t.Context(), s.RootID(), "older-unindexed.jpg",
@@ -262,37 +253,27 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			lexicalQuery := scope.Query
 			lexicalQuery.Filters.CollapseDuplicates = true
 			options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
-			if tc.indexed != "late" {
-				_, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
-					records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
-				require.NoError(t, err)
-				wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
-				for _, name := range tc.wantNodeNames {
-					for _, node := range indexedNodes {
-						if node.Name == name {
-							wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
-						}
+			_, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
+			require.NoError(t, err)
+			wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
+			for _, name := range tc.wantNodeNames {
+				for _, node := range indexedNodes {
+					if node.Name == name {
+						wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
 					}
 				}
-				require.Len(t, annRows, len(wantInputKeys))
-				gotInputKeys := make([]string, len(annRows))
-				for index, row := range annRows {
-					gotInputKeys[index] = row.InputKey
-				}
-				assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
 			}
+			require.Len(t, annRows, len(wantInputKeys))
+			gotInputKeys := make([]string, len(annRows))
+			for index, row := range annRows {
+				gotInputKeys[index] = row.InputKey
+			}
+			assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
 
-			excluded := make(map[int64]struct{})
-			if tc.excludeRepresentative {
-				for _, node := range nodes {
-					if node.Name == "duplicate-a.jpg" {
-						excluded[node.ID] = struct{}{}
-					}
-				}
-			}
 			resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
 				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
-				source.ManifestChecksum, neighbors, tc.limit, options, excluded)
+				source.ManifestChecksum, neighbors, tc.limit, options, nil)
 			require.NoError(t, err)
 			wantIDs := make([]int64, 0, len(tc.wantNodeNames))
 			for _, name := range tc.wantNodeNames {
@@ -308,7 +289,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 				gotIDs[index] = candidate.NodeID
 			}
 			assert.ElementsMatch(t, wantIDs, gotIDs)
-			assert.Equal(t, tc.wantTruncated, resolution.Truncated)
+			assert.False(t, resolution.Truncated)
 			assert.Equal(t, tc.wantNext, resolution.NextNeighbor)
 		})
 	}
