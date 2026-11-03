@@ -12,7 +12,7 @@ import (
 )
 
 // PutSupersession declares a replacement under the predecessor's revision.
-func (c *Connection) PutSupersession(ctx context.Context, successorID, predecessorID, revision int64, note string) (api.ValidityReceipt, error) {
+func (c *Connection) PutSupersession(ctx context.Context, successorID, predecessorID, revision int64, note *string) (api.ValidityReceipt, error) {
 	var response *http.Response
 	receipt, err := c.apiWithResponse(&response).PutSupersession(ctx, &apiclient.PutSupersessionRequestOptions{PathParams: &apiclient.PutSupersessionPath{ID: successorID, PredecessorID: predecessorID}, Header: &apiclient.PutSupersessionHeaders{IfMatch: revisionIfMatch(revision)}, Body: &api.SupersessionRequest{Note: note}})
 	return checkedValidityReceipt(receipt, response, predecessorID, revision, err)

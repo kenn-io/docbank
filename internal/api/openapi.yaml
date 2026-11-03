@@ -20763,7 +20763,9 @@ components:
           readOnly: true
           type: string
         note:
-          type: string
+          type:
+            - string
+            - "null"
       type: object
       x-go-type: api.SupersessionRequest
       x-go-type-import:
@@ -26794,7 +26796,7 @@ paths:
           description: Error
       summary: Remove a document replacement
     put:
-      description: If-Match guards the predecessor's revision.
+      description: If-Match guards the predecessor's revision. If note is omitted or null, an existing declaration's note is preserved and a new declaration defaults to empty; an explicit empty note clears it.
       operationId: putSupersession
       parameters:
         - in: path

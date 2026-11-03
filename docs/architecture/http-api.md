@@ -1834,6 +1834,10 @@ versions and provenance facts. These routes do not change search order.
 | `DELETE /nodes/{id}/effective-window` | Clear the window; no request body | Node |
 | `GET /nodes/{id}/validity?as_of=YYYY-MM-DD` | Inspect the node, direct live links, window and evaluated standing | None |
 
+On `PUT /nodes/{id}/supersedes/{predecessor_id}`, omitting `note` or setting it
+to `null` preserves an existing declaration's note and defaults to empty for a
+new declaration. Set `note` to an empty string to clear it.
+
 Mutation responses contain `node` and `changed`, with an ETag matching the
 returned node revision. The receipt describes the guarded node: the predecessor
 for a link, or the node whose effective window changed.

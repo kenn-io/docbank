@@ -35,7 +35,7 @@ func TestSupersessionClientBindsMutationReceipts(t *testing.T) {
 				_ = json.MarshalWrite(w, api.ValidityReceipt{Node: api.Node{ID: tc.nodeID, Revision: tc.revision}, Changed: tc.changed})
 			}))
 			t.Cleanup(server.Close)
-			receipt, err := New(server.URL, "synthetic-key").PutSupersession(t.Context(), 5, 3, 7, "replacement")
+			receipt, err := New(server.URL, "synthetic-key").PutSupersession(t.Context(), 5, 3, 7, new("replacement"))
 			if tc.bad {
 				require.Error(t, err)
 				assert.True(t, IsResponseDecodeError(err))

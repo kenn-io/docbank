@@ -18,14 +18,14 @@ func TestSupersessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	b, err := s.CreateFile(ctx, s.RootID(), "b", fakeHash("b"), 1, "text/plain")
 	require.NoError(t, err)
-	c, err := s.PutSupersession(ctx, b.ID, a.ID, a.Revision, "replacement")
+	c, err := s.PutSupersession(ctx, b.ID, a.ID, a.Revision, new("replacement"))
 	require.NoError(t, err)
 	require.True(t, c.Changed)
-	unchanged, err := s.PutSupersession(ctx, b.ID, a.ID, c.Node.Revision, "replacement")
+	unchanged, err := s.PutSupersession(ctx, b.ID, a.ID, c.Node.Revision, new("replacement"))
 	require.NoError(t, err)
 	require.False(t, unchanged.Changed)
 	require.Equal(t, c.Node.Revision, unchanged.Node.Revision)
-	_, err = s.PutSupersession(ctx, b.ID, a.ID, a.Revision, "")
+	_, err = s.PutSupersession(ctx, b.ID, a.ID, a.Revision, new(""))
 	require.ErrorIs(t, err, ErrStaleRevision)
 	v, err := s.NodeValidity(ctx, a.ID, "2025-01-01")
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestSupersessionAuditRejected(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.DeleteSupersession(t.Context(), other.ID, n.ID, n.Revision)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	_, err = s.PutSupersession(t.Context(), other.ID, n.ID, n.Revision, "")
+	_, err = s.PutSupersession(t.Context(), other.ID, n.ID, n.Revision, new(""))
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.DeleteEffectiveWindow(t.Context(), n.ID, n.Revision)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
@@ -76,7 +76,7 @@ func TestSupersessionGraphValidation(t *testing.T) {
 				nodes = append(nodes, n)
 			}
 			for i := range 2 {
-				c, err := s.PutSupersession(ctx, nodes[i+1].ID, nodes[i].ID, nodes[i].Revision, "")
+				c, err := s.PutSupersession(ctx, nodes[i+1].ID, nodes[i].ID, nodes[i].Revision, new(""))
 				require.NoError(t, err)
 				nodes[i] = c.Node
 			}
@@ -84,7 +84,7 @@ func TestSupersessionGraphValidation(t *testing.T) {
 				_, _, err := s.Trash(ctx, nodes[1].ID, nodes[1].Revision)
 				require.NoError(t, err)
 			}
-			_, err := s.PutSupersession(ctx, nodes[0].ID, nodes[2].ID, nodes[2].Revision, "")
+			_, err := s.PutSupersession(ctx, nodes[0].ID, nodes[2].ID, nodes[2].Revision, new(""))
 			require.ErrorIs(t, err, ErrInvalidSupersession)
 			require.NoError(t, s.ValidateMetadata(ctx))
 			var snapshot bytes.Buffer
@@ -113,7 +113,7 @@ func TestSupersessionDegreeAndTrash(t *testing.T) {
 				if direction == "in-degree" {
 					successor, predecessor = center, n
 				}
-				change, err := s.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, "")
+				change, err := s.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, new(""))
 				if i == 16 {
 					require.ErrorIs(t, err, ErrInvalidSupersession)
 					after, err := s.NodeByID(ctx, predecessor.ID)
@@ -164,12 +164,12 @@ func TestSupersessionNodeBudget(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	parent := nodes[2047]
-	change, err := s.PutSupersession(ctx, nodes[4095].ID, parent.ID, parent.Revision, "")
+	change, err := s.PutSupersession(ctx, nodes[4095].ID, parent.ID, parent.Revision, new(""))
 	require.NoError(t, err)
 	require.True(t, change.Changed)
 	require.Equal(t, parent.Revision+1, change.Node.Revision)
 
-	_, err = s.PutSupersession(ctx, nodes[4096].ID, parent.ID, change.Node.Revision, "")
+	_, err = s.PutSupersession(ctx, nodes[4096].ID, parent.ID, change.Node.Revision, new(""))
 	require.ErrorIs(t, err, ErrInvalidSupersession)
 	after, err := s.NodeByID(ctx, parent.ID)
 	require.NoError(t, err)
@@ -222,11 +222,11 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	require.NoError(t, err)
 	other, err := s.CreateFile(ctx, s.RootID(), "replacement.txt", fakeHash("a8"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.PutSupersession(ctx, n.ID, n.ID, n.Revision, "")
+	_, err = s.PutSupersession(ctx, n.ID, n.ID, n.Revision, new(""))
 	require.ErrorIs(t, err, ErrInvalidSupersession)
-	_, err = s.PutSupersession(ctx, dir.ID, n.ID, n.Revision, "")
+	_, err = s.PutSupersession(ctx, dir.ID, n.ID, n.Revision, new(""))
 	require.ErrorIs(t, err, ErrNotFile)
-	_, err = s.PutSupersession(ctx, n.ID, dir.ID, dir.Revision, "")
+	_, err = s.PutSupersession(ctx, n.ID, dir.ID, dir.Revision, new(""))
 	require.ErrorIs(t, err, ErrNotFile)
 	_, err = s.PutEffectiveWindow(ctx, dir.ID, dir.Revision, "2025-01-01", "")
 	require.ErrorIs(t, err, ErrNotFile)
@@ -234,11 +234,12 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSupersession)
 	_, err = s.PutEffectiveWindow(ctx, n.ID, n.Revision, "2025-02-30", "")
 	require.ErrorIs(t, err, ErrInvalidSupersession)
-	_, err = s.PutSupersession(ctx, other.ID, n.ID, n.Revision, strings.Repeat("x", 1025))
+	longNote := strings.Repeat("x", 1025)
+	_, err = s.PutSupersession(ctx, other.ID, n.ID, n.Revision, &longNote)
 	require.ErrorIs(t, err, ErrInvalidSupersession)
 	trashed, _, err := s.Trash(ctx, n.ID, n.Revision)
 	require.NoError(t, err)
-	_, err = s.PutSupersession(ctx, n.ID, other.ID, other.Revision, "")
+	_, err = s.PutSupersession(ctx, n.ID, other.ID, other.Revision, new(""))
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.PutEffectiveWindow(ctx, n.ID, trashed.Revision, "2025-01-01", "")
 	require.ErrorIs(t, err, ErrNotFound)
@@ -252,7 +253,7 @@ func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	require.NoError(t, err)
 	next, err := s.CreateFile(ctx, s.RootID(), "new.txt", fakeHash("a7"), 1, "text/plain")
 	require.NoError(t, err)
-	link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, "replacement")
+	link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, new("replacement"))
 	require.NoError(t, err)
 	window, err := s.PutEffectiveWindow(ctx, next.ID, next.Revision, "2025-01-01", "")
 	require.NoError(t, err)
@@ -342,7 +343,7 @@ func TestAuditEnrollmentRejectsValidityDeclarations(t *testing.T) {
 			plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "api", nil)
 			require.NoError(t, err)
 			if declaration == "link" {
-				_, err = s.PutSupersession(ctx, b.ID, a.ID, a.Revision, "replacement")
+				_, err = s.PutSupersession(ctx, b.ID, a.ID, a.Revision, new("replacement"))
 				require.NoError(t, err)
 			}
 			if declaration == "window" {
@@ -400,7 +401,7 @@ func TestReplaceContentKeepsValidityDeclarations(t *testing.T) {
 	require.NoError(t, err)
 	b, err := s.CreateFile(ctx, s.RootID(), "new.txt", fakeHash("b2"), 1, "text/plain")
 	require.NoError(t, err)
-	link, err := s.PutSupersession(ctx, b.ID, a.ID, a.Revision, "replacement")
+	link, err := s.PutSupersession(ctx, b.ID, a.ID, a.Revision, new("replacement"))
 	require.NoError(t, err)
 	window, err := s.PutEffectiveWindow(ctx, b.ID, b.Revision, "2025-01-01", "2025-12-31")
 	require.NoError(t, err)

@@ -59,22 +59,25 @@ func liveFileTx(ctx context.Context, tx *sql.Tx, id int64) (Node, error) {
 	return n, nil
 }
 
-// PutSupersession declares or updates a replacement.
-func (s *Store) PutSupersession(ctx context.Context, successorID, predecessorID, revision int64, note string) (SupersessionChange, error) {
+// PutSupersession declares or updates a replacement. A nil note preserves the
+// existing note, or uses an empty note when creating a new declaration.
+func (s *Store) PutSupersession(ctx context.Context, successorID, predecessorID, revision int64, note *string) (SupersessionChange, error) {
 	return s.changeSupersession(ctx, successorID, predecessorID, revision, note, true)
 }
 
 // DeleteSupersession removes a replacement declaration.
 func (s *Store) DeleteSupersession(ctx context.Context, successorID, predecessorID, revision int64) (SupersessionChange, error) {
-	return s.changeSupersession(ctx, successorID, predecessorID, revision, "", false)
+	return s.changeSupersession(ctx, successorID, predecessorID, revision, nil, false)
 }
-func (s *Store) changeSupersession(ctx context.Context, successorID, predecessorID, revision int64, note string, put bool) (SupersessionChange, error) {
+func (s *Store) changeSupersession(ctx context.Context, successorID, predecessorID, revision int64, note *string, put bool) (SupersessionChange, error) {
 	var result SupersessionChange
 	if successorID == predecessorID {
 		return result, fmt.Errorf("self link: %w", ErrInvalidSupersession)
 	}
-	if err := validSupersessionNote(note); err != nil {
-		return result, err
+	if put && note != nil {
+		if err := validSupersessionNote(*note); err != nil {
+			return result, err
+		}
 	}
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := liveFileTx(ctx, tx, predecessorID)
@@ -103,10 +106,21 @@ func (s *Store) changeSupersession(ctx context.Context, successorID, predecessor
 			return err
 		}
 		present := err == nil
-		changed := put && (!present || existing != note) || !put && present
+		noteValue := ""
+		if note != nil {
+			noteValue = *note
+		} else if present {
+			noteValue = existing
+		}
+		if put {
+			if err := validSupersessionNote(noteValue); err != nil {
+				return err
+			}
+		}
+		changed := put && (!present || existing != noteValue) || !put && present
 		if changed {
 			if put {
-				_, err = tx.ExecContext(ctx, `INSERT INTO node_supersessions(successor_node_id,predecessor_node_id,note,recorded_at) VALUES(?,?,?,?) ON CONFLICT(successor_node_id,predecessor_node_id) DO UPDATE SET note=excluded.note,recorded_at=excluded.recorded_at`, successorID, predecessorID, note, nowRFC3339())
+				_, err = tx.ExecContext(ctx, `INSERT INTO node_supersessions(successor_node_id,predecessor_node_id,note,recorded_at) VALUES(?,?,?,?) ON CONFLICT(successor_node_id,predecessor_node_id) DO UPDATE SET note=excluded.note,recorded_at=excluded.recorded_at`, successorID, predecessorID, noteValue, nowRFC3339())
 			} else {
 				_, err = tx.ExecContext(ctx, `DELETE FROM node_supersessions WHERE successor_node_id=? AND predecessor_node_id=?`, successorID, predecessorID)
 			}

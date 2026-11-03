@@ -59,18 +59,9 @@ var supersedeCmd = &cobra.Command{
 		if supersessionRemove {
 			receipt, err = c.DeleteSupersession(cmd.Context(), next.ID, old.ID, old.Revision)
 		} else {
-			note := supersessionNote
-			if !cmd.Flags().Changed("note") {
-				view, err := c.NodeValidity(cmd.Context(), old.ID, "")
-				if err != nil {
-					return err
-				}
-				for _, link := range view.Successors {
-					if link.SuccessorID == next.ID {
-						note = link.Note
-						break
-					}
-				}
+			var note *string
+			if cmd.Flags().Changed("note") {
+				note = &supersessionNote
 			}
 			receipt, err = c.PutSupersession(cmd.Context(), next.ID, old.ID, old.Revision, note)
 		}
@@ -204,7 +195,7 @@ var validityCmd = &cobra.Command{
 
 func init() {
 	supersedeCmd.Flags().StringVar(&supersessionReplaces, "replaces", "", "predecessor absolute virtual path or id:<positive-decimal>")
-	supersedeCmd.Flags().StringVar(&supersessionNote, "note", "", "explanation of the replacement (up to 1024 UTF-8 bytes)")
+	supersedeCmd.Flags().StringVar(&supersessionNote, "note", "", "explanation of the replacement (up to 1024 UTF-8 bytes; omit to keep an existing note)")
 	supersedeCmd.Flags().BoolVar(&supersessionRemove, "remove", false, "remove the replacement declaration")
 	effectiveCmd.Flags().StringVar(&effectiveFrom, "from", "", "inclusive first effective date (YYYY-MM-DD)")
 	effectiveCmd.Flags().StringVar(&effectiveTo, "to", "", "inclusive last effective date (YYYY-MM-DD)")

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,6 +109,55 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/renamed-lease.txt: current (as of 2025-06-01)\n", out)
 	assert.Equal(t, []string{"GET /api/v1/nodes/42", "GET /api/v1/nodes/42/validity"}, requests)
+}
+
+func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {
+	var requests []string
+	var requestBodies []map[string]string
+	successorResolved := false
+	predecessorResolved := false
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/nodes/5":
+			successorResolved = true
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 5, Path: "/next.txt", Revision: 4}))
+		case "GET /api/v1/nodes/3":
+			assert.True(t, successorResolved)
+			predecessorResolved = true
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 3, Path: "/old.txt", Revision: 7}))
+		case "PUT /api/v1/nodes/5/supersedes/3":
+			assert.True(t, predecessorResolved)
+			// The store-backed regression exercises trash/restore before this write.
+			var body map[string]string
+			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+			requestBodies = append(requestBodies, body)
+			changed, revision := false, int64(7)
+			if _, present := body["note"]; present {
+				changed, revision = true, 8
+			}
+			w.Header().Set("ETag", fmt.Sprintf("%q", strconv.FormatInt(revision, 10)))
+			assert.NoError(t, json.MarshalWrite(w, api.ValidityReceipt{Node: api.Node{ID: 3, Revision: revision}, Changed: changed}))
+		default:
+			http.Error(w, r.URL.Path, http.StatusNotFound)
+		}
+	})
+
+	out, err := runCLI(t, "document", "supersede", "id:5", "--replaces", "id:3")
+	require.NoError(t, err)
+	assert.Contains(t, out, "changed: false")
+	out, err = runCLI(t, "document", "supersede", "id:5", "--replaces", "id:3", "--note", "")
+	require.NoError(t, err)
+	assert.Contains(t, out, "changed: true")
+	require.Len(t, requestBodies, 2)
+	assert.NotContains(t, requestBodies[0], "note")
+	require.Contains(t, requestBodies[1], "note")
+	assert.Empty(t, requestBodies[1]["note"])
+	assert.Equal(t, []string{
+		"GET /api/v1/nodes/5", "GET /api/v1/nodes/3", "PUT /api/v1/nodes/5/supersedes/3",
+		"GET /api/v1/nodes/5", "GET /api/v1/nodes/3", "PUT /api/v1/nodes/5/supersedes/3",
+	}, requests)
 }
 
 func TestSupersessionCLIRejectsInvalidFlags(t *testing.T) {

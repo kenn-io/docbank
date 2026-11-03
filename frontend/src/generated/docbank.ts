@@ -8641,7 +8641,8 @@ export interface Summary {
 export interface SupersessionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  note?: string;
+  /** @nullable */
+  note?: string | null;
 }
 
 export interface Tag {
@@ -15324,7 +15325,7 @@ export const getPutSupersessionUrl = (id: number,
 }
 
 /**
- * If-Match guards the predecessor's revision.
+ * If-Match guards the predecessor's revision. If note is omitted or null, an existing declaration's note is preserved and a new declaration defaults to empty; an explicit empty note clears it.
  * @summary Declare a document replacement
  */
 export const putSupersession = async (id: number,
