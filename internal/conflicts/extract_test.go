@@ -2527,6 +2527,8 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 	for _, text := range []string{
 		"The wait is 7 min. After 10 minutes the fee is $5.",
 		"The wait is 7 min. after 10 minutes the fee is $5.",
+		"The wait is 7 min. After 10 minutes shipping costs $5.",
+		"The wait is 7 min. After 10 minutes, the fee is $5.",
 	} {
 		got := Extract(text)
 		foundWait, foundFee := false, false
@@ -2543,10 +2545,23 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 	}
 }
 
+func TestExtractRejectsSymbolicRelativeDurationBounds(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is 7 minutes before ≥10 minutes.",
+		"The deadline is 7 days before >= 10 days.",
+		"The deadline is 7 min. before ≥10 min.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("symbolic relative-duration comparison retained exact figures for %q: %+v", text, got)
+		}
+	}
+}
+
 func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5/month < about $10/month.",
 		"The fee is $5 < about $10.",
+		"The fee is $5/month < -10.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("qualified comparison retained exact figures for %q: %+v", text, got)
