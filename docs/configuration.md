@@ -1096,7 +1096,7 @@ Use `docbank processing local --server local` to approve Nomic indexing for the 
 
 Setup builds a separate `local-text` index with Nomic v1.5 and the plaintext extractor. Both `auto` and `local` select Kit's shared per-user server. Other processing profiles keep their configured providers.
 
-The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Declining or failing startup leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
+The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
 
 #### Runtime settings
 
