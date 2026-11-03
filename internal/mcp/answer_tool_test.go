@@ -412,20 +412,24 @@ func TestAnswerQuestionOversizedRerankerReceipt(t *testing.T) {
 
 func rerankerIdentityClient(receipt *api.DocumentSearchRerankingReceipt) *answerTermsClient {
 	f := &answerTermsClient{answerFakeClient: &answerFakeClient{
+		fenceVersions: []string{"00000000-0000-4000-8000-000000000002"},
 		report: api.DocumentSearchReport{
 			Reranking: receipt,
 			Coverage:  api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1},
 		},
 		results: []api.DocumentSearchResult{{
-			VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1,
-			ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1,
+			NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", SemanticRank: 1,
+			Evidence: []api.DocumentEvidenceReference{{
+				Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64),
+				InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk",
+				BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64),
+			}},
 		}},
 	}}
-	f.search = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		report := f.report
-		report.RequestedMode = req.Mode
-		report.ActualMode = req.Mode
-		report.Results = f.results
+	f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+		report := answerTermsSearchReport(req, f.report.Coverage, f.results...)
+		report.Reranking = f.report.Reranking
+		report.Degradations = slices.Clone(f.report.Degradations)
 		return report, nil
 	}
 	return f
