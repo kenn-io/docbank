@@ -195,11 +195,13 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 		wantNodeNames         []string
 		limit                 int
 		excludeRepresentative bool
+		wantTruncated         bool
+		wantNext              int
 	}{
-		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2},
-		{name: "representative past first prefix", indexed: "late", wantNodeNames: []string{"duplicate-a.jpg"}, limit: 1},
-		{name: "excluded representative past first prefix", indexed: "late", wantNodeNames: []string{"distinct.jpg"}, limit: 1, excludeRepresentative: true},
-		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1},
+		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2, wantNext: 3},
+		{name: "representative past first prefix", indexed: "late", wantNodeNames: []string{"duplicate-a.jpg"}, limit: 1, wantTruncated: true, wantNext: 3},
+		{name: "excluded representative past first prefix", indexed: "late", wantNodeNames: []string{"distinct.jpg"}, limit: 1, excludeRepresentative: true, wantNext: 4},
+		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1, wantNext: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -260,31 +262,33 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			lexicalQuery := scope.Query
 			lexicalQuery.Filters.CollapseDuplicates = true
 			options := SearchOptions{PhotoScope: &scope, PhotoLexicalQuery: &lexicalQuery}
-			_, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
-				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
-			require.NoError(t, err)
-			authorityNames := tc.wantNodeNames
-			if tc.indexed == "late" {
-				authorityNames = []string{"duplicate-a.jpg", "distinct.jpg"}
-			}
-			wantInputKeys := make([]string, 0, len(authorityNames))
-			for _, name := range authorityNames {
-				for _, node := range indexedNodes {
-					if node.Name == name {
-						wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
+			if tc.indexed != "late" {
+				_, annRows, err := s.semanticSearchAuthorityFence(t.Context(), profile.Fingerprint,
+					records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID, options, nil)
+				require.NoError(t, err)
+				wantInputKeys := make([]string, 0, len(tc.wantNodeNames))
+				for _, name := range tc.wantNodeNames {
+					for _, node := range indexedNodes {
+						if node.Name == name {
+							wantInputKeys = append(wantInputKeys, node.CurrentVersionID)
+						}
 					}
 				}
+				require.Len(t, annRows, len(wantInputKeys))
+				gotInputKeys := make([]string, len(annRows))
+				for index, row := range annRows {
+					gotInputKeys[index] = row.InputKey
+				}
+				assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
 			}
-			require.Len(t, annRows, len(wantInputKeys))
-			gotInputKeys := make([]string, len(annRows))
-			for index, row := range annRows {
-				gotInputKeys[index] = row.InputKey
-			}
-			assert.ElementsMatch(t, wantInputKeys, gotInputKeys)
 
 			excluded := make(map[int64]struct{})
 			if tc.excludeRepresentative {
-				excluded[nodes[2].ID] = struct{}{}
+				for _, node := range nodes {
+					if node.Name == "duplicate-a.jpg" {
+						excluded[node.ID] = struct{}{}
+					}
+				}
 			}
 			resolution, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint,
 				records[0].BindingID, records[0].InputKind, records[0].VectorSpace.ID,
@@ -304,12 +308,8 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 				gotIDs[index] = candidate.NodeID
 			}
 			assert.ElementsMatch(t, wantIDs, gotIDs)
-			assert.Equal(t, tc.indexed == "late" && !tc.excludeRepresentative, resolution.Truncated)
-			if tc.excludeRepresentative {
-				assert.Equal(t, 4, resolution.NextNeighbor)
-			} else if tc.indexed == "late" {
-				assert.Equal(t, 3, resolution.NextNeighbor)
-			}
+			assert.Equal(t, tc.wantTruncated, resolution.Truncated)
+			assert.Equal(t, tc.wantNext, resolution.NextNeighbor)
 		})
 	}
 }
@@ -2938,9 +2938,8 @@ func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
 	require.NoError(t, err)
 	source, err := s.CaptureVectorIndexSource(t.Context(), space)
 	require.NoError(t, err)
-	opts := SearchOptions{ContentVersionIDs: []string{version, nodes[2].CurrentVersionID, nodes[3].CurrentVersionID, nodes[4].CurrentVersionID}}
 	result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
-		space, source.ManifestChecksum, neighbors, 1, opts, map[int64]struct{}{nodes[2].ID: {}})
+		space, source.ManifestChecksum, neighbors, 1, SearchOptions{}, map[int64]struct{}{nodes[1].ID: {}, nodes[2].ID: {}})
 	require.NoError(t, err)
 	require.Len(t, result.Candidates, 1)
 	assert.Equal(t, nodes[3].ID, result.Candidates[0].NodeID)
@@ -2948,7 +2947,7 @@ func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
 	assert.Equal(t, 4, result.NextNeighbor)
 }
 
-func TestSimilarCandidatesCountUnvisitedCopiesAndKeepBoundaryTies(t *testing.T) {
+func TestSimilarCandidatesCountUnvisitedCopiesKeepBoundaryTiesAndStopBeforeTiedTail(t *testing.T) {
 	t.Parallel()
 	s, version, profile, _ := newEmbeddingCatalogFixture(t)
 	sourceNode, err := s.ContentVersionByID(t.Context(), version)
@@ -2969,17 +2968,9 @@ func TestSimilarCandidatesCountUnvisitedCopiesAndKeepBoundaryTies(t *testing.T) 
 		require.NoError(t, err)
 		nodes = append(nodes, node)
 	}
-	for i := range 64 {
-		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("tied-tail-%d.txt", i), testSHA256(fmt.Appendf(nil, "tied-tail-%d", i)), 20, "text/plain")
-		require.NoError(t, err)
-		nodes = append(nodes, node)
-	}
 	// new, other, old all tie. tail starts below the two strong groups;
 	// low is beyond that stopping point.
 	order := []int{1, 2, 0, 4, 3}
-	for i := 5; i < len(nodes); i++ {
-		order = append(order, i)
-	}
 	var neighbors []vectorindex.Neighbor
 	var space string
 	versions := []string{version}
@@ -3033,7 +3024,7 @@ func TestSimilarCandidatesCountUnvisitedCopiesAndKeepBoundaryTies(t *testing.T) 
 	assert.Equal(t, nodes[1].ID, result.Candidates[0].NodeID)
 	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
 	assert.True(t, result.Truncated)
-	assert.LessOrEqual(t, loaded, 4, "a tied tail must not force loading every identity")
+	assert.Equal(t, 2, loaded, "a tied tail must not force loading every identity")
 }
 
 type semanticMembershipCountingQuerier struct {

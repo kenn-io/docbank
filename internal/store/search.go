@@ -999,9 +999,9 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 }
 
 type semanticEligibilityKey struct {
-	VectorSetID   string
-	InputID       string
-	InputChecksum string
+	VectorSetID   string `json:"VectorSetID"`
+	InputID       string `json:"InputID"`
+	InputChecksum string `json:"InputChecksum"`
 }
 
 // semanticNeighborKeys preserves the unique row identities returned by vector search.

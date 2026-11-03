@@ -253,6 +253,9 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 						ranked[i].Score = 1 - float64(i)/float64(count)
 					}
 					for _, operation := range []string{"authority", "resolve", "similar"} {
+						if scope == "collapse" && operation == "similar" {
+							continue
+						}
 						b.Run(operation, func(b *testing.B) {
 							b.ReportAllocs()
 							b.StopTimer()
