@@ -98,16 +98,23 @@ func (g *OperationGate) PhysicalMutate(fn func() error) error {
 }
 
 func (g *OperationGate) mutate(fn func() error) error {
+	return g.MutateRejectMaintenanceContext(context.Background(), fn)
+}
+
+// MutateRejectMaintenanceContext admits a normal mutation unless maintenance
+// is running or queued. It keeps admission pinned until the shared side is
+// held, so new maintenance cannot overtake the mutation.
+func (g *OperationGate) MutateRejectMaintenanceContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	g.admission.RLock()
 	if g.maintenance > 0 {
 		g.admission.RUnlock()
 		return NewError(http.StatusServiceUnavailable, "maintenance_busy",
 			"vault maintenance is running or queued; retry this mutation after it finishes")
 	}
-	// Keep admission pinned until the shared side is held. A short backup
-	// freeze can therefore delay this mutation without being mistaken for
-	// maintenance, while newly queued maintenance cannot overtake it.
-	err := g.mu.Acquire(context.Background(), 1)
+	err := g.mu.Acquire(ctx, 1)
 	g.admission.RUnlock()
 	if err != nil {
 		return fmt.Errorf("acquiring route mutation gate: %w", err)

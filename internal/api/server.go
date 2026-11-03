@@ -135,7 +135,7 @@ func NewServer(d Deps) *Server {
 		d.Gate = NewOperationGate()
 	}
 	if d.MissLog == nil {
-		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext, d.Gate.TryMutateContext)
+		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext, d.Gate.TryMutateContext, d.Gate.MutateRejectMaintenanceContext)
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)

@@ -121,6 +121,9 @@ func registerMissLogRoutes(api huma.API, d Deps, _ *OperationGate) {
 			return nil, err
 		}
 		if err := d.MissLog.Delete(ctx, in.ID, time.Time{}); err != nil {
+			if apiError, ok := errors.AsType[*Error](err); ok {
+				return nil, apiError
+			}
 			return nil, missLogFailure()
 		}
 		return &struct{}{}, nil
@@ -138,8 +141,14 @@ func registerMissLogRoutes(api huma.API, d Deps, _ *OperationGate) {
 			if err != nil {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", "before must be an RFC 3339 timestamp")
 			}
+			if cutoff.IsZero() {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", "before must be a nonzero RFC 3339 timestamp")
+			}
 		}
 		if err := d.MissLog.Delete(ctx, "", cutoff); err != nil {
+			if apiError, ok := errors.AsType[*Error](err); ok {
+				return nil, apiError
+			}
 			return nil, missLogFailure()
 		}
 		return &struct{}{}, nil

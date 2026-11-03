@@ -175,7 +175,7 @@ func (s *Service) Delete(ctx context.Context, id string, cutoff time.Time) error
 	if s == nil || s.store == nil {
 		return ErrPersistence
 	}
-	return s.mutate(ctx, func() error {
+	return s.deleteMutate(ctx, func() error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		var err error

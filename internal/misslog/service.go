@@ -49,11 +49,13 @@ type Service struct {
 	logger       *slog.Logger
 	mutate       func(context.Context, func() error) error
 	recordMutate func(context.Context, func() error) error
+	deleteMutate func(context.Context, func() error) error
 }
 
 // New prunes on enabled startup only. The first mutator admits explicit writes;
-// the optional second mutator admits automatic recording without waiting for
-// maintenance. Failures never expose sensitive payloads.
+// the optional second admits automatic recording without waiting for
+// maintenance, and the third admits deletion only when maintenance is idle.
+// Failures never expose sensitive payloads.
 func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutators ...func(context.Context, func() error) error) *Service {
 	if logger == nil {
 		logger = slog.Default()
@@ -68,6 +70,10 @@ func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutator
 	s.recordMutate = s.mutate
 	if len(mutators) > 1 && mutators[1] != nil {
 		s.recordMutate = mutators[1]
+	}
+	s.deleteMutate = s.mutate
+	if len(mutators) > 2 && mutators[2] != nil {
+		s.deleteMutate = mutators[2]
 	}
 	if cfg.Enabled && st != nil {
 		if err := s.mutate(context.Background(), func() error {
