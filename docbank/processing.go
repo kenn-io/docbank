@@ -2,6 +2,7 @@ package docbank
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 
 	"go.kenn.io/docbank/document"
