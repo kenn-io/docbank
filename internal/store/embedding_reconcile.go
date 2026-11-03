@@ -304,6 +304,7 @@ func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, prof
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads h
 		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
 		WHERE h.content_version_id=$1 AND h.binding_id=$2 AND h.input_kind=$3
+		AND h.profile_fingerprint=$4
 		AND s.profile_fingerprint=$4 AND s.input_generation_id=$5 AND s.vector_space_id=$6)`,
 		versionID, binding.Name, binding.InputKind, profile, generationID, spaceID).Scan(&exists)
 	return exists, err
