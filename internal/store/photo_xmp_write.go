@@ -192,7 +192,7 @@ func livePhotoXMPSourcesTx(ctx context.Context, tx *sql.Tx, nodeID int64, source
 // CheckPhotoXMPPairing validates the packet against its saved attachment. Publication
 // checks the work's freshness, so the pairing read does not.
 func (s *Store) CheckPhotoXMPPairing(ctx context.Context, w PhotoXMPWork, extension string) error {
-	return s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	return s.withReadTx(ctx, func(tx *sql.Tx) error {
 		intended, err := photoSidecarIntendedTarget(ctx, tx, PhotoFile{Role: PhotoRoleSidecar, AssetID: w.Original.AssetID, SidecarOfID: &w.Original.ID}, w.Sidecar.Node, extension)
 		if err != nil {
 			return err
@@ -214,7 +214,7 @@ func (s *Store) CheckPhotoXMPClaim(ctx context.Context, w PhotoXMPWork, sourcePa
 		return nil
 	}
 	names := []string{}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		folder := strings.ToLower(path.Dir(normalizePhotoSourcePath(sourcePath)))
 		var local []string
 		err := queryRows(ctx, tx, `SELECT p.original_path FROM provenance p JOIN ingests i ON i.id=p.ingest_id

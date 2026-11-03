@@ -542,14 +542,14 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, semanticSpace)
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
 				}
 				return captureErr
 			}
-			if current.ManifestChecksum != semanticSource {
+			if current != semanticSource {
 				return ErrVectorIndexSourceStale
 			}
 		}
@@ -726,19 +726,14 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		vectorSpaceID = normalized.VectorSpaceID
 	}
 	if similar != nil {
-		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 		})
 		if err != nil {
 			return SemanticSearchAuthority{}, err
 		}
 	}
-	var space EmbeddingVectorSpaceRecord
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var loadErr error
-		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
-		return loadErr
-	})
+	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -758,7 +753,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	current, annRows, wholeSpace, err := s.semanticSearchAuthorityFence(ctx,
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
-	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+	if err != nil || current != lease.Generation.SourceManifestChecksum {
 		release()
 		if err != nil {
 			return SemanticSearchAuthority{}, err
@@ -780,7 +775,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
-) (source VectorIndexSource, annRows []vectorindex.RowIdentity, wholeSpace bool, retErr error) {
+) (source string, annRows []vectorindex.RowIdentity, wholeSpace bool, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
@@ -788,7 +783,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 				return err
 			}
 		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
 		}
@@ -909,17 +904,17 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	}
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
-		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale
 			}
 			return captureErr
 		}
-		if current.ManifestChecksum != expectedSourceManifest {
+		if current != expectedSourceManifest {
 			return ErrVectorIndexSourceStale
 		}
-		result.SourceManifestChecksum = current.ManifestChecksum
+		result.SourceManifestChecksum = current
 		return s.semanticCandidatesTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, neighbors, limit, normalized, excludedNodes, &result)
 	})
 	if err != nil {
@@ -2393,10 +2388,10 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
-// withSearchOptionsTx binds photo predicates to the transaction consuming them.
+// withSearchOptionsTx binds photo predicates to the read snapshot consuming them.
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) (retErr error) {
+	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
 		if opts.PhotoScope != nil {
 			lease, err := s.acquireLexicalGeneration(ctx, tx)
 			if err != nil && !errors.Is(err, ErrNotFound) {

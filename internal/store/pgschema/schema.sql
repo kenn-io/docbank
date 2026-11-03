@@ -2270,6 +2270,19 @@ CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_w
 CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
 CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
 
+-- Blob deletion checks every referencing table.
+CREATE INDEX export_members_blob ON {{schema}}.export_members(blob_hash);
+CREATE INDEX export_role_roots_blob ON {{schema}}.export_role_roots(blob_hash);
+CREATE INDEX bates_artifacts_blob ON {{schema}}.bates_artifacts(blob_hash);
+CREATE INDEX page_images_blob ON {{schema}}.page_images(blob_hash);
+CREATE INDEX visual_preview_generations_source ON {{schema}}.visual_preview_generations(source_sha256);
+CREATE INDEX embedding_input_generations_blob ON {{schema}}.embedding_input_generations(generation_blob_hash);
+CREATE INDEX rendition_jobs_source ON {{schema}}.rendition_jobs(source_sha256);
+CREATE INDEX mailbox_chunks_blob ON {{schema}}.mailbox_chunks(blob_hash);
+CREATE INDEX visual_preview_generations_output
+    ON {{schema}}.visual_preview_generations(output_blob_hash, generation_id)
+    WHERE output_blob_hash IS NOT NULL;
+
 CREATE INDEX embedding_jobs_ready
     ON {{schema}}.embedding_jobs(state,available_at,job_id);
 

@@ -202,7 +202,7 @@ func (s *Store) VisualPreviewGenerationByRecipe(
 func visualPreviewGenerationByRecipeTx(
 	ctx context.Context, q metadataQuerier, versionID, recipeFingerprint string,
 ) (VisualPreviewGeneration, error) {
-	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=? AND recipe_fingerprint=?`, versionID, recipeFingerprint))
+	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=$1 AND recipe_fingerprint=$2`, versionID, recipeFingerprint))
 }
 
 const visualPreviewGenerationColumns = `generation_id,vault_uid,content_version_id,
@@ -418,7 +418,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
 
 // PersonPhotoPreviewSource authorizes an assigned source version through its live photo.
 func (s *Store) PersonPhotoPreviewSource(ctx context.Context, assetID, versionID, personID string) error {
-	return s.photoReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
+	return s.withReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
 }
 
 func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, assetID, versionID, personID string) error {

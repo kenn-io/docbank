@@ -8,6 +8,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEveryBlobReferenceLeadsAnIndex(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	rows, err := s.db.QueryContext(t.Context(), `
+		SELECT tables.name || '.' || fk."from"
+		FROM pragma_table_list() AS tables, pragma_foreign_key_list(tables.name) AS fk
+		WHERE tables.schema = 'main' AND fk."table" = 'blobs'
+		AND NOT EXISTS (
+			SELECT 1 FROM pragma_index_list(tables.name) AS indexes,
+			pragma_index_info(indexes.name) AS columns
+			WHERE columns.seqno = 0 AND columns.name = fk."from"
+		)
+		ORDER BY tables.name, fk."from"`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var missing []string
+	for rows.Next() {
+		var column string
+		require.NoError(t, rows.Scan(&column))
+		missing = append(missing, column)
+	}
+	require.NoError(t, rows.Err())
+	assert.Empty(t, missing, "blob references need a leading index for GC deletes")
+}
+
 // Every consumer of blob reachability must agree on one rule: GC candidates,
 // the derivative purge inventory, version-prune reference counts, and backup
 // capture all read blobRootReferences. This fixture holds one blob per root

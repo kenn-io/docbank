@@ -3,6 +3,7 @@ package store
 // These exact exceptions describe the current boundary, not permission to omit
 // future objects. The comparison fails when an exception is stale or resolved.
 var sqliteOnlyBackendTables = map[string]string{
+	"vector_membership_epochs":           "vector index lifecycle is unqualified",
 	"photo_description_explicit_waiters": "description worker publication is unqualified",
 	"photo_face_scans":                   "face detection publication is unqualified",
 	"photo_timeline_pending":             "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
@@ -34,7 +35,6 @@ var deferredBackendIndexes = map[string]string{
 	"email_document_relations_child":              "email_document_relations",
 	"email_part_artifacts_blob":                   "email_part_artifacts",
 	"export_jobs_pending":                         "export_jobs",
-	"mailbox_chunks_blob":                         "mailbox_chunks",
 	"mailbox_containers_owner":                    "mailbox_containers",
 	"mailbox_transfer_receipts_source":            "mailbox_transfer_receipts",
 	"mailbox_transfer_versions":                   "mailbox_transfer_receipts",
@@ -65,7 +65,6 @@ var deferredBackendIndexes = map[string]string{
 	"storage_operations_retention":                "storage_operations",
 	"storage_operations_state":                    "storage_operations",
 	"term_report_history_recent":                  "term_report_history",
-	"visual_preview_generations_output":           "visual_preview_generations",
 	"visual_preview_generations_ready":            "visual_preview_generations",
 	// This is a write invariant, not a deferred access optimization. The
 	// multi-store port must enforce active evacuation uniqueness in Go; copying

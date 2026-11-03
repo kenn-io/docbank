@@ -251,7 +251,7 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 func (s *Store) OpenPersonCandidateCount(ctx context.Context) (int64, bool, error) {
 	var count int64
 	var full bool
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		visible, e := s.personCandidateVisibility(ctx, tx)
 		if e != nil {
 			return e

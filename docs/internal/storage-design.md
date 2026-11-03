@@ -295,6 +295,8 @@ historical—as a reachability root, and backup capture uses the same shared roo
 list for portable blob authority. GC-only holds stay outside portable backup
 authority; new logical reference types must be added to reachability before
 their schema is usable.
+Every column that references `blobs(hash)` needs an index led by that column,
+because deleting a blob row checks each reference.
 
 GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
 prevents a mutation from deduplicating against bytes between GC's reachability

@@ -3231,3 +3231,70 @@ func (q *semanticScanPlanQuerier) QueryContext(ctx context.Context, query string
 	q.plan = explainQueryPlan(q.t, q.store, query, args...)
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
+
+func TestSemanticSearchReadsDoNotWaitForOpenWriter(t *testing.T) {
+	t.Parallel()
+	s, record, source := newPublishedVectorIndexFixture(t)
+	version, err := s.ContentVersionByID(t.Context(), record.InputGeneration.SourceVersionID)
+	require.NoError(t, err)
+	opts := SearchOptions{ContentVersionIDs: []string{version.ID}}
+	neighbor := vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 0.8}
+	for _, name := range []string{"fence", "similar", "similar-source-fence", "stale-index"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "stale-index" {
+				now := time.Now().UTC()
+				require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("stale-search", source, []byte("index"), now)))
+				publishVectorIndexMembersForTest(t, s, record, 2)
+			}
+			tx, err := s.writeDB.BeginTx(t.Context(), nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, tx.Rollback()) }()
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			switch name {
+			case "stale-index":
+				_, err := s.AcquireSemanticSearchAuthority(ctx, record.ProcessingProfileFingerprint, record.BindingID, "stale-search", time.Now().UTC(), time.Minute, SearchOptions{})
+				require.ErrorIs(t, err, ErrVectorIndexSourceStale)
+			case "fence":
+				got, _, _, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, opts, nil)
+				require.NoError(t, err)
+				require.Equal(t, source.ManifestChecksum, got)
+			case "similar":
+				got, err := s.ResolveSimilarCandidates(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, source.VectorSpaceID, source.ManifestChecksum, []vectorindex.Neighbor{neighbor}, 10, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+				require.NoError(t, err)
+				require.Equal(t, 1, got.CompleteDocuments)
+			case "similar-source-fence":
+				now := time.Now().UTC()
+				_, err := s.AcquireSimilarSearchAuthority(ctx, record.ProcessingProfileFingerprint, "binding-without-head", "reader", now, time.Minute, opts, SimilarSource{NodeID: version.NodeID, ContentVersionID: version.ID})
+				require.ErrorIs(t, err, ErrSimilarSourceUnavailable)
+			}
+		})
+	}
+}
+
+func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceCancellation(t *testing.T) {
+	t.Parallel()
+	s, first, source := newPublishedVectorIndexFixture(t)
+	now := time.Now().UTC()
+	require.NoError(t, putVectorIndexGenerationForTest(t, s, vectorIndexGenerationFixture("coverage-cancellation", source, []byte("index"), now)))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	release := make(chan struct{})
+	close(release)
+	readDB := s.db
+	s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
+		// Cancel eligibility loading after the lease and source checks succeed.
+		if strings.Contains(query, "SELECT evr.vector_set_id,evr.input_id,evr.checksum") {
+			cancel()
+		}
+	}})
+	t.Cleanup(func() {
+		require.NoError(t, s.db.Close())
+		require.NoError(t, readDB.Close())
+	})
+	_, err := s.AcquireSemanticSearchAuthority(ctx, first.ProcessingProfileFingerprint, first.BindingID, "canceled-search", now, time.Minute, SearchOptions{MIMEType: "text/plain"})
+	require.ErrorIs(t, err, context.Canceled)
+	var leases int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
+	require.Zero(t, leases)
+}

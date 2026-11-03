@@ -59,21 +59,6 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 	return asset, nil
 }
 
-func (s *Store) photoReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return fmt.Errorf("beginning photo read transaction: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing photo read transaction: %w", err)
-	}
-	return nil
-}
-
 func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, error) {
 	var settings PhotoSettings
 	var preference sql.NullString
@@ -100,7 +85,7 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 // PhotoAssetByID returns one bounded photo graph.
 func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, error) {
 	var asset PhotoAsset
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
@@ -116,7 +101,7 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 		return PhotoAsset{}, fmt.Errorf("invalid photo node: %w", ErrNotFound)
 	}
 	var asset PhotoAsset
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var id string
 		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -140,7 +125,7 @@ func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64, coll
 		return nil, err
 	}
 	population := selectCompiledPopulation(compiledQueryFragment{sql: `n.id IN (SELECT value FROM json_each(?))`, args: []any{string(encoded)}}, collapseDuplicates)
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
 		rows, err := tx.QueryContext(ctx, `SELECT pf.node_id,pf.asset_id FROM photo_files pf JOIN (`+population.sql+`) accepted ON accepted.node_id=pf.node_id WHERE pf.asset_id IS NOT NULL`, population.args...)
 		if err != nil {
 			return err
@@ -162,7 +147,7 @@ func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64, coll
 // PhotoSettings returns the virtual or stored vault preference.
 func (s *Store) PhotoSettings(ctx context.Context) (PhotoSettings, error) {
 	var settings PhotoSettings
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		settings, err = photoSettingsTx(ctx, tx)
 		return err

@@ -717,7 +717,7 @@ func (s *Store) deletePhotoXMPReceiptTx(ctx context.Context, tx *sql.Tx, fileID 
 
 // PhotoXMPConflict loads a recorded conflict for a person's choice.
 func (s *Store) PhotoXMPConflict(ctx context.Context, id, conflictID string) (w PhotoXMPWork, err error) {
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		w, err = s.loadPhotoXMPSyncWorkTx(ctx, tx, id)
 		if errors.Is(err, ErrNotFound) || err == nil && w.Original.AssetID == "" {
 			return ErrStaleRevision
