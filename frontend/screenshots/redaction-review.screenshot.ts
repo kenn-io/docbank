@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { RedactionPreview } from "../src/generated/docbank.js";
+import type { PluginRegistry, ViewportPlugin } from "@embedpdf/svelte-pdf-viewer";
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captures = process.env.DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR;
@@ -207,7 +208,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     };
     await expectFitPage();
     const fitZoom = await drawer.getByRole("textbox", { name: "Set zoom" }).inputValue();
-    // A new zoom/scroll position can appear before replacement images start
+    // A new zoom position can appear before replacement images start
     // decoding. Observe that redraw before using the ready marking surface.
     const redraw = async (action: () => Promise<unknown>, target: Locator = drawer) => {
       await page.evaluate(() => (window.reviewDecode.mode = "delay"));
@@ -232,6 +233,49 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await zoom.fill(value);
         await zoom.press("Enter");
       }, target);
+    };
+    const scrollIdle = async (target: Locator = drawer) => {
+      await expect
+        .poll(() =>
+          target.locator("embedpdf-container").evaluate(async (host) => {
+            const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+              .registry;
+            return registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling();
+          }),
+        )
+        .toBe(false);
+    };
+    const scrollPage = async (layer: Locator, x = 0, y = 0, target: Locator = drawer) => {
+      const before = await layer.evaluate(
+        async (element, { x, y }) => {
+          let viewport = element.parentElement;
+          while (viewport && getComputedStyle(viewport).overflowY !== "auto")
+            viewport = viewport.parentElement;
+          if (!viewport) throw new Error("Reader scroll container absent");
+          let top = element.getBoundingClientRect().y;
+          const previous = { x: viewport.scrollLeft, y: viewport.scrollTop };
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              viewport.removeEventListener("scrollend", done);
+              resolve();
+            };
+            viewport.addEventListener("scrollend", done);
+            element.scrollIntoView({ block: "start", inline: "start", behavior: "instant" });
+            top = element.getBoundingClientRect().y;
+            viewport.scrollBy({ left: x, top: y, behavior: "instant" });
+            if (viewport.scrollLeft === previous.x && viewport.scrollTop === previous.y) done();
+          });
+          return top;
+        },
+        { x, y },
+      );
+      // Scrolling may reuse existing tiles. Wait for the viewer to settle,
+      // rather than requiring an image decode that might never be needed.
+      await scrollIdle(target);
+      await expect(
+        target.getByRole("switch", { name: "Draw rectangle", exact: true }),
+      ).toBeEnabled();
+      return before;
     };
     const drawToggle = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
     await page.evaluate(() => (window.reviewDecode.mode = "delay"));
@@ -279,7 +323,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await drawToggle.click();
     const cursorStatus = drawer.getByRole("status", { name: "Mask cursor", exact: true });
     await drawer.locator("embedpdf-container").focus();
-    for (const key of [
+    for (const [index, key] of [
       "Shift+ArrowRight",
       "Shift+ArrowRight",
       "Shift+ArrowDown",
@@ -290,8 +334,11 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       "Shift+ArrowDown",
       "Shift+ArrowDown",
       "Enter",
-    ])
+    ].entries()) {
       await page.keyboard.press(key);
+      // Finishing a prior scroll cannot cancel a draft on a stationary page.
+      if (index === 4) await scrollIdle();
+    }
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.40 inches.");
     const cursor = canvas.locator('svg [stroke="#0076d6"]').last();
@@ -338,6 +385,25 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await drawer.getByRole("menuitem", { name: "Rotate Counter-Clockwise", exact: true }).click();
     await expect(drawToggle).toBeEnabled();
     const previewAction = drawer.getByRole("button", { name: "Preview redaction", exact: true });
+    // Touch cancellation has no pointerup. It must abandon only the unfinished
+    // stroke so the already committed mask can still be previewed.
+    const touch = await page.context().newCDPSession(page);
+    const touchBounds = (await canvas.boundingBox())!;
+    const touchPoint = {
+      x: touchBounds.x + touchBounds.width / 3,
+      y: touchBounds.y + touchBounds.height / 3,
+    };
+    await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touchPoint] });
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: touchPoint.x + 20, y: touchPoint.y + 20 }],
+    });
+    await expect(previewAction).toBeDisabled();
+    await touch.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await expect(previewAction).toBeEnabled();
+    await expect(drawToggle).toBeChecked();
+    await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
+    await touch.detach();
     for (const { gesture, failedPage } of [
       { gesture: "keyboard", failedPage: 2 },
       { gesture: "pointer", failedPage: 2 },
@@ -449,9 +515,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await drawer.getByRole("button", { name: "Keep editing", exact: true }).click();
     await drawer.getByRole("button", { name: "Remove", exact: true }).click();
     await setZoom("200");
-    await redraw(() =>
-      canvas.evaluate((element) => element.scrollIntoView({ block: "start", inline: "start" })),
-    );
+    await scrollPage(canvas);
     await drag(9000, 7800, 17000, 11000);
     await drag(24000, 12000, 28000, 15000);
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
@@ -837,19 +901,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       name: "Page 1 review layer",
       exact: true,
     });
-    let beforeScroll = 0;
-    await redraw(async () => {
-      beforeScroll = await fractionalLayer.evaluate((layer) => {
-        let viewport = layer.parentElement;
-        while (viewport && getComputedStyle(viewport).overflowY !== "auto")
-          viewport = viewport.parentElement;
-        if (!viewport) throw new Error("Reader scroll container absent");
-        viewport.scrollTo({ top: 0, left: 0, behavior: "instant" });
-        const top = layer.getBoundingClientRect().y;
-        viewport.scrollBy({ top: 200, left: 200, behavior: "instant" });
-        return top;
-      });
-    }, fractional);
+    const beforeScroll = await scrollPage(fractionalLayer, 200, 200, fractional);
     await expect
       .poll(async () => (await fractionalLayer.boundingBox())!.y)
       .toBeLessThan(beforeScroll - 100);

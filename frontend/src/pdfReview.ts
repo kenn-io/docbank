@@ -74,7 +74,7 @@ export class PDFReviewBridge {
   };
   private updating = false;
   private settingMode = false;
-  private pointer?: PageIdentity;
+  private pointer?: PageIdentity & { pointerId: number };
   private lastStatus = "";
   private frame = 0;
   constructor(
@@ -193,11 +193,11 @@ export class PDFReviewBridge {
         .provides()
         .onRotateChange(() => this.cancelDraft()),
     );
+    const viewport = registry.getPlugin<ViewportPlugin>("viewport")!.provides();
+    // General viewport events also announce idle scrolling without any movement.
     this.subscriptions.push(
-      registry
-        .getPlugin<ViewportPlugin>("viewport")!
-        .provides()
-        .onViewportChange(() => this.cancelDraft()),
+      viewport.onScrollChange(() => this.cancelDraft()),
+      viewport.onViewportResize(() => this.cancelDraft()),
     );
     this.update();
   }
@@ -329,17 +329,21 @@ export class PDFReviewBridge {
           e.stopImmediatePropagation();
           return;
         }
-        this.pointer = event;
+        this.pointer = { ...event, pointerId: e.pointerId };
         this.review.ondrag(true);
         this.host.focus({ preventScroll: true });
       };
       surface.addEventListener("pointerdown", down, true);
-      const up = () => {
-        if (!this.pointer) return;
+      const up = (e: PointerEvent) => {
+        if (this.pointer?.pointerId !== e.pointerId) return;
         this.pointer = undefined;
         this.review?.ondrag([...this.layers.values()].some((l) => l.start));
       };
+      const cancel = (e: PointerEvent) => {
+        if (this.pointer?.pointerId === e.pointerId) this.cancelDraft(this.pointer);
+      };
       window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
       this.layers.set(event.target, {
         event,
         svg,
@@ -347,6 +351,7 @@ export class PDFReviewBridge {
         remove: () => {
           surface.removeEventListener("pointerdown", down, true);
           window.removeEventListener("pointerup", up);
+          window.removeEventListener("pointercancel", cancel);
         },
       });
     }
