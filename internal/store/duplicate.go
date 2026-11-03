@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -30,6 +31,14 @@ const CurrentContentMembershipCTE = `current_content_members AS (
 // must apply it after establishing their population, not to a global
 // prefiltered winner.
 const DuplicateRepresentativeOrder = `modified_at ASC, node_id ASC`
+
+// compareDuplicateRepresentatives applies DuplicateRepresentativeOrder to Go candidates.
+func compareDuplicateRepresentatives(aModified string, aNode int64, bModified string, bNode int64) int {
+	if order := cmp.Compare(aModified, bModified); order != 0 {
+		return order
+	}
+	return cmp.Compare(aNode, bNode)
+}
 
 // ErrInvalidDuplicatePage reports a duplicate page outside its bounded range.
 var ErrInvalidDuplicatePage = errors.New("invalid duplicate page")
