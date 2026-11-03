@@ -58,7 +58,7 @@ func newProcessingLocalCommand() *cobra.Command {
 				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
 			}
 			defer func() { _ = reconnected.Close() }()
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Text indexing enabled.")
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Text indexing enabled for this vault and new imports.")
 			if err != nil {
 				return fmt.Errorf("write text indexing result: %w", err)
 			}
@@ -81,7 +81,7 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nvector space:\t%s\nscope:\tthis vault and new imports\n", p.Profile, p.Server, p.VectorEffect)
+	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nmodel:\t%s\nvector space:\t%s\nscope:\tthis vault and new imports\n", p.Profile, p.Server, strings.Join(p.Models, ","), p.VectorEffect)
 	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)

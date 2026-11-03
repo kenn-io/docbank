@@ -376,7 +376,7 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	command.Stdin = nil
 	data, err := command.CombinedOutput()
 	require.NoError(t, err, string(data))
-	require.Contains(t, string(data), "Text indexing enabled.")
+	require.Contains(t, string(data), "Text indexing enabled for this vault and new imports.")
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
 	require.Equal(t, config.LocalTextProfile, choice.Profile)

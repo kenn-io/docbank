@@ -74,7 +74,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 	}
 	plan := LocalTextPlan{VaultUID: service.catalog.VaultID(), Profile: name, Server: mode, ProfileFingerprint: profile.record.Fingerprint,
 		Managed: true, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
-		VectorEffect: "Separate local-text index"}
+		VectorEffect: "builds the separate local-text index; embeds inputs it is missing"}
 	for _, binding := range profile.portable.Embeddings {
 		plan.Models = append(plan.Models, binding.Model)
 	}
