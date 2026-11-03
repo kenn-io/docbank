@@ -67,6 +67,8 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 // A denominator is one noun, optionally preceded by a number/range and one
 // supported time/count modifier. Rate conversion is deliberately unsupported.
 var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:` + numRange + `\s+)?(?:(?:business|working|calendar|free|paid|additional|extra)\s+)?[\p{L}\p{Nd}]+)`)
+var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
+var rateArithmeticContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[+*/×÷−]|-\s+)\s*(?:[$€£¥]\s*)?[0-9]`)
 var rateDeterminers = wordSet("my your his her its our their this that these those some any every")
 var rateMarkerRE = regexp.MustCompile(`(?i)\b(?:per|each|every)\b|/`)
 var contrasts = wordSet("new existing old current previous first second third last minimum maximum monthly annual yearly daily weekly per each additional extra business personal domestic international free paid")
@@ -141,6 +143,11 @@ func makeSubject(f Figure, figures []Figure) subject {
 			end, endOK := normalizedOffsets[runeBytes[b]]
 			if startOK && endOK {
 				erase(start, end)
+				if other.Qualifier != "" {
+					if qualifierStart, qualifierEnd, ok := subjectQualifierSpan(text[:start], other.Qualifier); ok {
+						erase(qualifierStart, qualifierEnd)
+					}
+				}
 				if match := rateDenominatorRE.FindStringSubmatchIndex(text[end:]); match != nil {
 					a, b := end+match[2], end+match[3]
 					parts := strings.Fields(text[a:b])
@@ -161,6 +168,10 @@ func makeSubject(f Figure, figures []Figure) subject {
 					// not an independently comparable assertion.
 					if ownStart >= a && ownEnd <= b {
 						s.isDenominator = true
+					}
+					continuation := text[end+match[1]:]
+					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) {
+						invalidRate = true
 					}
 				}
 			}
@@ -200,7 +211,7 @@ func makeSubject(f Figure, figures []Figure) subject {
 			}
 		}
 		first := utfFirst(w)
-		if digit || (upper && letters >= 2) || (span[0] > initialToken && unicode.IsUpper(first)) || contrasts[strings.ToLower(w)] || contrasts[n] {
+		if digit || (upper && letters >= 2) || (span[0] >= initialToken && unicode.IsUpper(first)) || contrasts[strings.ToLower(w)] || contrasts[n] {
 			s.discriminators[n] = true
 		}
 	}
@@ -212,6 +223,30 @@ func makeSubject(f Figure, figures []Figure) subject {
 	}
 	return s
 }
+
+func subjectQualifierSpan(prefix, qualifier string) (int, int, bool) {
+	normalizedPrefix := strings.ToLower(strings.Join(strings.Fields(prefix), " "))
+	before, found := splitQualifier(normalizedPrefix)
+	if found == "" || found != qualifier {
+		return 0, 0, false
+	}
+	qualifierWords := subjectWordRE.FindAllString(strings.TrimSpace(strings.TrimPrefix(normalizedPrefix, before)), -1)
+	if len(qualifierWords) == 0 {
+		return 0, 0, false
+	}
+	tokens := subjectWordRE.FindAllStringIndex(prefix, -1)
+	if len(tokens) < len(qualifierWords) {
+		return 0, 0, false
+	}
+	first := len(tokens) - len(qualifierWords)
+	for i, word := range qualifierWords {
+		if !strings.EqualFold(prefix[tokens[first+i][0]:tokens[first+i][1]], word) {
+			return 0, 0, false
+		}
+	}
+	return tokens[first][0], tokens[len(tokens)-1][1], true
+}
+
 func utfFirst(s string) rune {
 	for _, r := range s {
 		return r

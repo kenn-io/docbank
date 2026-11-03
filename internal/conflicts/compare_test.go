@@ -312,6 +312,23 @@ func TestFindSlashRateDoesNotAcceptArithmetic(t *testing.T) {
 	}
 }
 
+func TestFindRateDenominatorRejectsArithmeticContinuation(t *testing.T) {
+	for _, pair := range []struct{ a, b string }{
+		{"The fee is $5 per month and a half.", "The fee is $5 per month."},
+		{"The fee is $5 per month + $10.", "The fee is $6 per month."},
+	} {
+		t.Run(pair.a, func(t *testing.T) {
+			got := Find(Input{Query: "fee", Passages: []Passage{
+				{Document: "a", Text: pair.a},
+				{Document: "b", Text: pair.b},
+			}})
+			if got.Status != NotComparable || got.Stats.AlignedPairs != 0 {
+				t.Fatalf("rate denominator accepted unsupported continuation: %+v", got)
+			}
+		})
+	}
+}
+
 func TestFindRejectsUnitlessRateDenominators(t *testing.T) {
 	for _, suffix := range []string{" per 2", " each 2", " a 2", " per five", " each five", " a five"} {
 		t.Run(suffix, func(t *testing.T) {
@@ -448,11 +465,31 @@ func TestFindCapitalizedSubjectAfterFigure(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"$10 Premium service fee.", "$20 Standard service fee."},
 		{"１０ dollars Premium service fee.", "２０ dollars Standard service fee."},
+		{"Premium service fee is $10.", "Standard service fee is $20."},
 	} {
 		got := Find(Input{Passages: []Passage{{Document: "a", Text: pair[0]}, {Document: "b", Text: pair[1]}}})
 		if got.Status != NotComparable || len(got.Conflicts) != 0 {
 			t.Fatalf("%q: variant subjects aligned: %+v", pair, got)
 		}
+	}
+}
+
+func TestFindEquivalentQualifierSpellings(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"The wait is at least 7 days.", "The wait is a minimum of 10 days."},
+		{"The wait is at most 7 days.", "The wait is a maximum of 10 days."},
+	} {
+		got := Find(Input{Query: "wait", Passages: []Passage{{Document: "a", Text: pair[0]}, {Document: "b", Text: pair[1]}}})
+		if got.Status != Conflicting || len(got.Conflicts) != 1 {
+			t.Fatalf("equivalent qualifier spellings did not align for %q: %+v", pair, got)
+		}
+	}
+	got := Find(Input{Query: "wait", Passages: []Passage{
+		{Document: "a", Text: "The minimum wait is 7 days."},
+		{Document: "b", Text: "The maximum wait is 10 days."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 {
+		t.Fatalf("subject minimum/maximum lost their discriminator role: %+v", got)
 	}
 }
 
