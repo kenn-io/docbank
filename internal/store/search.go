@@ -1062,12 +1062,12 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	} else if versionFence {
 		// Explicit version fences are bounded to 4096 IDs. Other filters keep
 		// the embedding scan so unembedded files do not drive their cost.
-		scopeSQL, scopeArgs := liveSearchScopeSQL(filterSQL, filterArgs)
-		prefix = `WITH scoped_nodes AS MATERIALIZED (
-   SELECT n.id,n.current_version_id ` + scopeSQL + `) `
-		driver = `FROM scoped_nodes scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
-   ON es.content_version_id=scope.current_version_id`
-		args = append(args, scopeArgs...)
+		prefix = `WITH scoped_versions AS MATERIALIZED (
+   SELECT cv.version_id FROM content_versions cv
+   CROSS JOIN nodes n ON n.id=cv.node_id WHERE 1=1 ` + filterSQL + `) `
+		driver = `FROM scoped_versions scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
+   ON es.content_version_id=scope.version_id`
+		args = append(args, filterArgs...)
 		filterSQL, filterArgs = "", nil
 	}
 	args = append(args, space, profile, binding, kind)
