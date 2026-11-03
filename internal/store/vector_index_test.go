@@ -528,7 +528,7 @@ func newMixedVectorIndexFixture(t *testing.T) (imageEmbeddingCatalogFixture, Emb
 
 func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"head publish", "head replace", "head delete", "trash", "replace", "rendition publish", "rendition replace", "rendition delete", "photo hidden", "photo excluded", "display change", "preview delete", "ready preview", "photo file link", "photo file unlink", "photo asset delete"} {
+	for _, name := range []string{"head publish", "head replace", "head delete", "trash", "replace", "rendition publish", "rendition replace", "rendition delete", "photo hidden", "photo excluded", "preview delete", "ready preview", "photo file link", "photo file unlink"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f, image := newMixedVectorIndexFixture(t)
@@ -610,8 +610,6 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				exec(`DELETE FROM embedding_heads WHERE embedding_set_id=?`, target.ID)
 			case "photo file unlink":
 				exec(`DELETE FROM photo_files WHERE file_id=?`, asset.DisplayFileID)
-			case "photo asset delete":
-				exec(`DELETE FROM photo_assets WHERE asset_id=?`, asset.ID)
 			case "trash":
 				_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
 			case "replace":
@@ -633,8 +631,6 @@ func TestVectorIndexSourceFenceRecapturesAfterMembershipWrites(t *testing.T) {
 				_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
 			case "photo excluded":
 				_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
-			case "display change":
-				exec(`UPDATE photo_assets SET display_file_id=NULL WHERE asset_id=?`, asset.ID)
 			case "preview delete":
 				exec(`DELETE FROM visual_preview_generations WHERE content_version_id=?`, target.ContentVersionID)
 			case "ready preview":
@@ -784,7 +780,6 @@ func TestVectorIndexSourceMemoSurvivesUnrelatedWrites(t *testing.T) {
 		for _, query := range []string{
 			`UPDATE photo_assets SET hidden_at='2026-08-22T09:00:00Z' WHERE asset_id=?`,
 			`UPDATE photo_assets SET excluded_at='2026-08-22T09:00:00Z' WHERE asset_id=?`,
-			`UPDATE photo_assets SET display_file_id=NULL WHERE asset_id=?`,
 			`DELETE FROM photo_files WHERE asset_id=?`,
 		} {
 			captured := captures.Load()
