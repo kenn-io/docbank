@@ -364,6 +364,28 @@ func TestFindSameRateDenominator(t *testing.T) {
 	}
 }
 
+func TestFindCanonicalizesNumericRateDenominators(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"The service fee is $5 per 2 devices.", "The service fee is $6 per two devices."},
+		{"The service fee is $5 per 2.0 devices.", "The service fee is $6 per two devices."},
+	} {
+		got := Find(Input{Query: "fee", Passages: []Passage{{Document: "a", Text: pair[0]}, {Document: "b", Text: pair[1]}}})
+		if got.Status != Conflicting || len(got.Conflicts) != 1 {
+			t.Errorf("equivalent numeric rate denominators did not compare: %+v", got)
+		}
+	}
+}
+
+func TestFindDoesNotCompareApproximateCompositeRate(t *testing.T) {
+	got := Find(Input{Query: "service fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per square metre approximately."},
+		{Document: "b", Text: "The service fee is $6 per square metre."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("approximate composite rate compared as an exact conflict: %+v", got)
+	}
+}
+
 func TestFindAbbreviatedDurationRateDenominators(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"The service fee takes 7 min. a day.", "The service fee takes 10 min. an hour."},
@@ -384,6 +406,16 @@ func TestFindAbbreviatedDurationRateDenominators(t *testing.T) {
 	}
 }
 
+func TestFindMixedKindAbbreviatedDurationRateDenominators(t *testing.T) {
+	got := Find(Input{Query: "fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per 2 min. a day."},
+		{Document: "b", Text: "The service fee is $6 per 2 min. an hour."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("mixed-kind abbreviated rates with different denominators compared: %+v", got)
+	}
+}
+
 func TestFindSquareUnitRateDenominators(t *testing.T) {
 	got := Find(Input{Query: "fee", Passages: []Passage{
 		{Document: "a", Text: "The service fee is $5 per square metre."},
@@ -391,6 +423,30 @@ func TestFindSquareUnitRateDenominators(t *testing.T) {
 	}})
 	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
 		t.Fatalf("different square-unit rates compared: %+v", got)
+	}
+	got = Find(Input{Query: "fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per fluid ounce."},
+		{Document: "b", Text: "The service fee is $6 per fluid dram."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("different fluid-unit rates compared: %+v", got)
+	}
+	got = Find(Input{Query: "fee", Passages: []Passage{
+		{Document: "a", Text: "The service fee is $5 per fluid ounce."},
+		{Document: "b", Text: "The service fee is $6 per fluid ounce."},
+	}})
+	if got.Status != Conflicting || len(got.Conflicts) != 1 {
+		t.Fatalf("same fluid-unit rates stopped comparing: %+v", got)
+	}
+}
+
+func TestFindPossessiveSubjectsRemainDistinct(t *testing.T) {
+	got := Find(Input{Query: "fee", Passages: []Passage{
+		{Document: "a", Text: "The customer's fee is $5."},
+		{Document: "b", Text: "The merchant's fee is $10."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("different possessive subjects compared: %+v", got)
 	}
 }
 

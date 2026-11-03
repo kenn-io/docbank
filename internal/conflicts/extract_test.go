@@ -3034,6 +3034,13 @@ func TestRelativeDurationClauseOperandNormalizesConnectorWhitespace(t *testing.T
 	}
 }
 
+func TestExtractKeepsDurationBeforeUppercaseArticleAssertion(t *testing.T) {
+	got := Extract("The wait is 7 min. AN ACCOUNT IS NOT REQUIRED.")
+	if len(got) != 1 || got[0].Text != "7 min" || got[0].Kind != durationKind {
+		t.Fatalf("independent uppercase assertion suppressed the duration: %+v", got)
+	}
+}
+
 func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5/month < about $10/month.",
@@ -5870,6 +5877,8 @@ func TestExtractApproximateRateDoesNotExposeDenominator(t *testing.T) {
 		want []string
 	}{
 		{"The fee is $5 approximately per 2 devices.", nil},
+		{"The service fee is $5 per square metre approximately.", nil},
+		{"The service fee is $5 per fluid ounce approximately.", nil},
 		{"The fee is $5 approximately per 2 devices, and the deposit is $7.", []string{"$7"}},
 		{`The service fee is "$5" a month (approximately).`, nil},
 		{`The service fee is "$5" a month (approximately), and the deposit is $7.`, []string{"$7"}},

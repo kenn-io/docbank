@@ -64,9 +64,9 @@ type words map[string]bool
 var stopWords = wordSet("a an the is are was were be been being of for to from in on at by with as and or that this it its their has have had will can may does do up than no more less most least within effective since starting beginning until till through ending before date")
 var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 
-// A denominator is one noun, optionally preceded by a number/range and one
-// supported time/count modifier. Rate conversion is deliberately unsupported.
-var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:` + numRange + `\s+)?(?:(?:business|working|calendar|free|paid|additional|extra|square|cubic)\s+)?[\p{L}\p{Nd}]+)`)
+// Rate conversion is deliberately unsupported; the full denominator remains
+// part of the comparison signature.
+var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
 var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
 var rateArithmeticContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[+*/×÷−]|-\s+)\s*(?:[$€£¥]\s*)?[0-9]`)
 var rateDeterminers = wordSet("my your his her its our their this that these those some any every")
@@ -89,7 +89,7 @@ func content(s string) words {
 	m := words{}
 	for _, w := range tokens(s) {
 		n := normalized(w)
-		if !stopWords[strings.ToLower(w)] && !stopWords[n] {
+		if n != "" && !stopWords[strings.ToLower(w)] && !stopWords[n] {
 			m[n] = true
 		}
 	}
@@ -149,7 +149,7 @@ func makeSubject(f Figure, figures []Figure) subject {
 					}
 				}
 				suffixStart := end
-				if f.Kind == durationKind && strings.HasPrefix(text[suffixStart:], ".") && durationAbbrevRE.MatchString(text[:suffixStart+1]) {
+				if other.Kind == durationKind && strings.HasPrefix(text[suffixStart:], ".") && durationAbbrevRE.MatchString(text[:suffixStart+1]) {
 					suffixStart++
 				}
 				if match := rateDenominatorRE.FindStringSubmatchIndex(text[suffixStart:]); match != nil {
@@ -163,6 +163,19 @@ func makeSubject(f Figure, figures []Figure) subject {
 					}
 					rates = append(rates, [2]int{suffixStart + match[0], suffixStart + match[1]})
 					if start == ownStart && end == ownEnd {
+						if match[4] >= 0 {
+							numberStart, numberEnd := suffixStart+match[4], suffixStart+match[5]
+							first, last, ok := numbers(text[numberStart:numberEnd], 1)
+							if !ok {
+								invalidRate = true
+								continue
+							}
+							number := first
+							if last != "" {
+								number += "-" + last
+							}
+							parts = append([]string{number}, strings.Fields(text[numberEnd:b])...)
+						}
 						for i, part := range parts {
 							parts[i] = normalized(part)
 						}
@@ -198,7 +211,7 @@ func makeSubject(f Figure, figures []Figure) subject {
 	for _, span := range subjectWordRE.FindAllStringIndex(text, -1) {
 		w := text[span[0]:span[1]]
 		n := normalized(w)
-		if stopWords[strings.ToLower(w)] || stopWords[n] {
+		if n == "" || stopWords[strings.ToLower(w)] || stopWords[n] {
 			continue
 		}
 		s.words[n] = true

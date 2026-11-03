@@ -2341,7 +2341,9 @@ var rateBoundLeadRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a
 
 var rateFractionRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)\s+)[(\["'‘’“”\s]*(?:` + number + `\s+)?` + fractionWords + `s?\b`)
 
-var rateRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)\s+)[(\["'‘’“”]?\s*(?:(?:` + approximation + `(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?\s+|[~≈]\s*)[(\["'‘’“”]?\s*)?(?:(?:` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:((?:` + numRange + `))\s+)?(?:(?:business|working|calendar|free|paid|additional|extra)\s+)?(percentage\s+points?|per\s+cent|[\p{L}][\p{L}\p{Nd}]*)`)
+const rateDenominatorModifier = `(?:business|working|calendar|free|paid|additional|extra|square|cubic|fluid)`
+
+var rateRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)\s+)[(\["'‘’“”]?\s*(?:(?:` + approximation + `(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?\s+|[~≈]\s*)[(\["'‘’“”]?\s*)?(?:(?:` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:((?:` + numRange + `))\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?(percentage\s+points?|per\s+cent|[\p{L}][\p{L}\p{Nd}]*)`)
 
 func boundedRateRange(s string) bool {
 	s = s[rateNumeratorQuotePrefix(s):]
