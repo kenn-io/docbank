@@ -2620,6 +2620,8 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 		"The wait is 7 min. After 1/2 hour, $5 is charged.",
 		"The wait is 7 min. After seven point five minutes customers pay $5.",
 		"The wait is 7 min. After seven point five minutes, $5 is charged.",
+		"The wait is 7 min. After twenty-one minutes customers pay $5.",
+		"The wait is 7 min. After twenty-one minutes, $5 is charged.",
 	} {
 		t.Run(text, func(t *testing.T) {
 			got := Extract(text)
@@ -2632,6 +2634,44 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 				}
 			}
 		})
+	}
+}
+
+func TestExtractRejectsCoordinatedRelativeDurationContinuations(t *testing.T) {
+	for _, conjunction := range []string{"and", "or", "but", "while"} {
+		text := "The deadline is 7 min. before 10 minutes " + conjunction + " the monthly fee is $5."
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("coordinated continuation split an unsupported relative-duration clause for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractRejectsDurationShapedRelativeOperandsBeforeValueValidation(t *testing.T) {
+	overlong := strings.Repeat("9", 129)
+	for _, text := range []string{
+		"The deadline is 7 min. before 10-7 min.",
+		"The deadline is 7 min. before half an hour.",
+		"The deadline is 7 min. before a half hour.",
+		"The deadline is 7 min. before " + overlong + " minutes.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			if got := Extract(text); len(got) != 0 {
+				t.Fatalf("unsupported relative-duration operand retained a partial figure: %+v", got)
+			}
+		})
+	}
+}
+
+func TestExtractKeepsAssertionAfterClosingRelativeDurationWrapper(t *testing.T) {
+	text := "The wait is 7 min. After (10 minutes), $5 is charged."
+	got := Extract(text)
+	foundWait, foundFee := false, false
+	for _, figure := range got {
+		foundWait = foundWait || figure.Text == "7 min"
+		foundFee = foundFee || figure.Text == "$5"
+	}
+	if !foundWait || !foundFee {
+		t.Fatalf("closing wrapper hid an independent typed-figure assertion: %+v", got)
 	}
 }
 

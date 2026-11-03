@@ -72,8 +72,10 @@ fraction-word operands such as `$5/month higher than thirty`, `$5/month greater
 than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
 duration operands such as `7 days before thirty days` or
 `7 min. before thirty-five min.`; fractional or spoken-decimal durations such
-as `7 min. before 1/2 hour` or `7 min. before seven point five minutes`; and
-wrapped bounds such as `7 min. before (about 10 min.)` or
+as `7 min. before 1/2 hour`, `7 min. before half an hour`, or
+`7 min. before seven point five minutes`; rejected ranges such as
+`7 min. before 10-7 min.`; and wrapped bounds such as
+`7 min. before (about 10 min.)` or
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
 the connector, so `(7 days ) before (about 10 days)` remains one unsupported
 comparison.
@@ -82,10 +84,14 @@ An independent temporal assertion after an abbreviated duration remains
 separate when it starts with its own subject and predicate, or with a typed
 figure followed directly by an assertion predicate. For example, `The wait is
 7 min. After 10 minutes, $5 is charged.`, `The wait is 7 min. After 1/2 hour
-customers pay $5.`, and `The wait is 7 min. After seven point five minutes,
-$5 is charged.` keep both figures. A coordinated continuation such as
-`The deadline is 7 min. before 10 minutes and $5 is charged.` remains one
-ambiguous clause and yields no figures.
+customers pay $5.`, `The wait is 7 min. After seven point five minutes,
+$5 is charged.`, and `The wait is 7 min. After twenty-one minutes customers
+pay $5.` keep both figures, even when the duration operand itself is rejected.
+Closing wrappers after the duration do not hide the following assertion:
+`The wait is 7 min. After (10 minutes), $5 is charged.` also keeps both figures.
+A coordinated continuation does not start an independent assertion, even when
+it names a new subject: `The deadline is 7 min. before 10 minutes and the
+monthly fee is $5.` remains one ambiguous clause and yields no figures.
 Sentence punctuation followed by closing quotes or brackets ends a clause. Soft
 line wraps stay in the same clause; blank lines and list or table rows separate
 clauses.
