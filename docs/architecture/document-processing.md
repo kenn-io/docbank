@@ -238,6 +238,7 @@ The internal searcher treats omitted and `auto` modes as lexical. Explicit
 semantic and hybrid modes require compatible active vector authority and a
 query encoder. The source-version fence selects eligible vectors from current,
 live attachments before scoring. Missing vector-row authority stops the search.
+Whole-library searches reuse the eligible-row list while the vector space's source manifest is unchanged, filtered searches intersect it with a fresh scope query, and collapsed photo searches select it again.
 Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.

@@ -791,10 +791,106 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		if err != nil {
 			return err
 		}
-		annRows, err = semanticANNRowsTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		annRows, err = s.semanticANNRowsForSourceTx(ctx, tx, source.ManifestChecksum, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
 		return err
 	})
 	return source, annRows, err
+}
+
+type semanticRowsKey struct {
+	space, profile, binding string
+	kind                    document.EmbeddingInputKind
+}
+
+type semanticRowsEntry struct {
+	manifest string
+	rows     []vectorindex.RowIdentity
+	allRows  []vectorindex.RowIdentity
+	nodes    []int64
+}
+
+func (e semanticRowsEntry) Len() int { return len(e.rows) }
+func (e semanticRowsEntry) Less(i, j int) bool {
+	return vectorindex.CompareIdentity(e.rows[i], e.rows[j]) < 0
+}
+func (e semanticRowsEntry) Swap(i, j int) {
+	e.rows[i], e.rows[j] = e.rows[j], e.rows[i]
+	e.nodes[i], e.nodes[j] = e.nodes[j], e.nodes[i]
+}
+
+// semanticANNRowsForSourceTx reuses immutable set, generation, and row identities.
+// Source capture gates the same heads, current versions, trash, rendition heads,
+// photo display, and previews as unfiltered eligibility. Scope stays fresh because
+// tags, moves, and modification times can change without changing that manifest.
+func (s *Store) semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, manifest, profile, binding string,
+	kind document.EmbeddingInputKind, space string, opts SearchOptions,
+) (_ []vectorindex.RowIdentity, retErr error) {
+	if opts.CollapsesPhotoDuplicates() {
+		return semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts)
+	}
+	key := semanticRowsKey{space, profile, binding, kind}
+	s.semanticRowsMu.Lock()
+	entry, ok := s.semanticRows[key]
+	s.semanticRowsMu.Unlock()
+	if !ok || entry.manifest != manifest {
+		entry = semanticRowsEntry{manifest: manifest}
+		var err error
+		entry.rows, err = semanticANNRowsWithNodesTx(ctx, tx, profile, binding, kind, space, SearchOptions{}, &entry.nodes)
+		if err != nil {
+			return nil, err
+		}
+		sort.Sort(entry)
+		entry.allRows = entry.rows
+		for i := 1; i < len(entry.rows); i++ {
+			if entry.rows[i] == entry.rows[i-1] {
+				// Shared identities retain every owner for fresh scope intersections.
+				entry.allRows = slices.Compact(slices.Clone(entry.rows))
+				break
+			}
+		}
+		s.semanticRowsMu.Lock()
+		if err := ctx.Err(); err != nil {
+			s.semanticRowsMu.Unlock()
+			return nil, err
+		}
+		if s.semanticRows == nil {
+			s.semanticRows = make(map[semanticRowsKey]semanticRowsEntry)
+		}
+		for cachedKey, cached := range s.semanticRows {
+			if cachedKey.space == space && cached.manifest != manifest {
+				delete(s.semanticRows, cachedKey)
+			}
+		}
+		s.semanticRows[key] = entry
+		s.semanticRowsMu.Unlock()
+	}
+	filterSQL, args := searchFilterSQL(opts)
+	if filterSQL == "" {
+		return slices.Clip(entry.allRows), nil
+	}
+	scope, err := tx.QueryContext(ctx, `SELECT n.id FROM `+nodeFrom+` WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, scope.Close()) }()
+	allowed := make(map[int64]struct{})
+	for scope.Next() {
+		var node int64
+		if err := scope.Scan(&node); err != nil {
+			return nil, err
+		}
+		allowed[node] = struct{}{}
+	}
+	if err := scope.Err(); err != nil {
+		return nil, err
+	}
+	rows := make([]vectorindex.RowIdentity, 0)
+	for i, node := range entry.nodes {
+		if _, ok := allowed[node]; ok {
+			rows = append(rows, entry.rows[i])
+		}
+	}
+	return slices.Clip(slices.Compact(rows)), nil
 }
 
 // semanticANNRowsTx reads the whole eligible space because SearchRows scores only
@@ -802,6 +898,12 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 // out-of-scope, and non-representative rows before scoring.
 func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
+) ([]vectorindex.RowIdentity, error) {
+	return semanticANNRowsWithNodesTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts, nil)
+}
+
+func semanticANNRowsWithNodesTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, nodes *[]int64,
 ) ([]vectorindex.RowIdentity, error) {
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	annRows := make([]vectorindex.RowIdentity, 0)
@@ -817,10 +919,16 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 					return
 				}
 			}
+			if nodes != nil {
+				*nodes = append(*nodes, nodeID)
+			}
 			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
 		})
 	if err != nil {
 		return nil, err
+	}
+	if nodes != nil {
+		return annRows, nil
 	}
 	slices.SortFunc(annRows, vectorindex.CompareIdentity)
 	return slices.Compact(annRows), nil

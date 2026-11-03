@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -3027,4 +3028,186 @@ func (q semanticMembershipCountingQuerier) QueryContext(ctx context.Context, que
 		*q.loaded += len(keys)
 	}
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
+func TestSemanticANNRowsReuseMatchesFreshLoad(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"head publish", "head replace", "head delete", "trash", "replace content",
+		"rendition publish", "rendition replace", "rendition head delete",
+		"hidden", "excluded", "preview delete", "detach", "unrelated write",
+		"tag filter", "folder filter", "version filter", "modified filter",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			f := newImageEmbeddingCatalogFixture(t)
+			s := f.s
+			image, _ := f.publish(t)
+			anchor, err := s.CreateFile(ctx, s.RootID(), "anchor.jpg", catalogSourceHash, 20, "image/jpeg")
+			require.NoError(t, err)
+			f.forNode(t, anchor).publish(t)
+			profile := embeddingCatalogProfile(t)
+			var version, otherVersion, buildID string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT content_version_id,build_id FROM rendition_attachments WHERE attachment_id=?`, catalogAttachmentFirst).Scan(&version, &buildID))
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, version, catalogSourceHash).Scan(&otherVersion))
+			attachment := RenditionAttachmentRecord{ID: testSHA256([]byte("allowlist-anchor-attachment")), VaultID: s.VaultID(), ContentVersionID: otherVersion, BuildID: buildID, Profile: profile, AttachedAt: embeddingCatalogTime}
+			require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, testSHA256([]byte("allowlist-anchor-lexical"))))
+			original := embeddingSetFixture(ctx, s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+			chunk := embeddingSetFixture(ctx, s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", catalogAttachmentFirst)
+			publish := func(record EmbeddingSetRecord, epoch int64) {
+				require.NoError(t, s.StageEmbeddingSet(ctx, record))
+				require.NoError(t, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{
+					Key:   EmbeddingHeadKey{ContentVersionID: record.ContentVersionID, BindingID: record.BindingID, InputKind: record.InputKind},
+					SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: record.ProcessingProfileFingerprint,
+					PublishedAt: embeddingCatalogTime, FencingToken: epoch,
+				}))
+			}
+			for _, record := range []EmbeddingSetRecord{
+				embeddingSetFixture(ctx, s, otherVersion, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", ""),
+				embeddingSetFixture(ctx, s, otherVersion, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment.ID),
+				chunk,
+			} {
+				publish(record, 1)
+			}
+			if name != "head publish" {
+				publish(original, 1)
+			}
+			if name == "rendition publish" {
+				_, err = s.db.ExecContext(ctx, `DELETE FROM rendition_heads WHERE content_version_id=?`, version)
+				require.NoError(t, err)
+			}
+			content, err := s.ContentVersionByID(ctx, version)
+			require.NoError(t, err)
+			node, err := s.NodeByID(ctx, content.NodeID)
+			require.NoError(t, err)
+			tag, err := s.CreateTag(ctx, "allowlist-scope")
+			require.NoError(t, err)
+			folder, err := s.MkdirAll(ctx, "/allowlist-scope")
+			require.NoError(t, err)
+			opts := SearchOptions{}
+			switch name {
+			case "tag filter":
+				opts.TagID = tag.ID
+			case "folder filter":
+				opts.UnderNodeID = folder.ID
+			case "version filter":
+				opts.ContentVersionIDs = []string{version}
+			case "modified filter":
+				opts.ModifiedSince = "2090-01-01T00:00:00Z"
+			}
+			records := []EmbeddingSetRecord{original, chunk, image}
+			before := make([]string, len(records))
+			warm := make([][]vectorindex.RowIdentity, len(records))
+			for i, record := range records {
+				source, rows, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, SearchOptions{}, nil)
+				require.NoError(t, err)
+				before[i], warm[i] = source.ManifestChecksum, slices.Clone(rows)
+				if name == "tag filter" || name == "folder filter" || name == "version filter" || name == "modified filter" {
+					_, _, err = s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, nil)
+					require.NoError(t, err)
+				}
+			}
+			switch name {
+			case "head publish":
+				publish(original, 1)
+			case "head replace":
+				original.ID = testSHA256([]byte("replacement-allowlist-head"))
+				vectors, err := document.NewVectorSetV1(document.VectorSetV1Input{
+					VectorSpaceFingerprint: original.VectorSpace.ID, Metric: original.VectorSpace.Descriptor.Metric,
+					Normalization: original.VectorSpace.Descriptor.Normalization, Dimension: 8,
+					InputKeys: []string{version}, InputChecksums: []string{original.InputGeneration.Inputs[0].RenderedChecksum},
+					Values: [][]float64{{8, 7, 6, 5, 4, 3, 2, 1}},
+				})
+				require.NoError(t, err)
+				payload, checksum, err := document.EncodeVectorSetV1(vectors)
+				require.NoError(t, err)
+				original.VectorSet = EmbeddingVectorSetRecord{ID: checksum, ContractVersion: EmbeddingVectorSetContractV1,
+					VectorSpaceID: original.VectorSpace.ID, PayloadBlobHash: testSHA256(payload), PayloadChecksum: checksum, Payload: payload}
+				require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return s.EnsureBlobTx(ctx, tx, testSHA256(payload), int64(len(payload))) }))
+				publish(original, 2)
+			case "head delete":
+				_, err = s.db.ExecContext(ctx, `DELETE FROM embedding_heads WHERE embedding_set_id=?`, original.ID)
+			case "trash":
+				_, _, err = s.Trash(ctx, node.ID, node.Revision)
+			case "replace content":
+				_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, catalogMarkdownBlobHash, int64(len(catalogBlobContents[catalogMarkdownBlobHash])), "text/plain")
+			case "rendition publish", "rendition replace":
+				attachment.ContentVersionID = version
+				if name == "rendition publish" {
+					attachment.ID = catalogAttachmentFirst
+				} else {
+					attachment.ID = testSHA256([]byte("replacement-allowlist-rendition"))
+					build := catalogRenditionBuild(s, profile)
+					build.ID = testSHA256([]byte("replacement-allowlist-build"))
+					build.ProviderOperationID = "replacement-allowlist-operation"
+					build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
+					require.NoError(t, s.StageRenditionBuild(ctx, build))
+					attachment.BuildID = build.ID
+				}
+				err = publishRenditionForTest(t, s, attachment, embeddingCatalogTime, testSHA256([]byte("replacement-allowlist-lexical")))
+			case "rendition head delete":
+				_, err = s.db.ExecContext(ctx, `DELETE FROM rendition_heads WHERE content_version_id=?`, version)
+			case "hidden", "excluded", "detach":
+				asset, assetErr := s.PhotoAssetForNode(ctx, f.node.ID)
+				require.NoError(t, assetErr)
+				switch name {
+				case "hidden":
+					require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+				case "excluded":
+					_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+				case "detach":
+					require.NotNil(t, asset.DisplayFileID)
+					_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, *asset.DisplayFileID, PhotoDetachOptions{})
+				}
+			case "preview delete":
+				_, err = s.db.ExecContext(ctx, `DELETE FROM visual_preview_generations WHERE content_version_id=?`, f.node.CurrentVersionID)
+			case "unrelated write":
+				_, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed.pdf", UnconditionalRev)
+				require.NoError(t, err)
+				_, err = s.AssignTag(ctx, tag.ID, node.ID, UnconditionalRev)
+			case "tag filter":
+				_, err = s.AssignTag(ctx, tag.ID, node.ID, UnconditionalRev)
+			case "folder filter", "version filter":
+				_, _, err = s.Move(ctx, node.ID, folder.ID, "moved.pdf", UnconditionalRev)
+			case "modified filter":
+				_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=? WHERE id=?`, "2091-01-01T00:00:00.000000000Z", node.ID)
+			}
+			require.NoError(t, err)
+			changed := false
+			for i, record := range records {
+				source, rows, err := s.semanticSearchAuthorityFence(ctx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, nil)
+				require.NoError(t, err)
+				require.NoError(t, s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, normalized SearchOptions) error {
+					current, err := captureVectorIndexSourceTx(ctx, tx, record.VectorSpace.ID)
+					require.NoError(t, err)
+					reused, err := s.semanticANNRowsForSourceTx(ctx, tx, current.ManifestChecksum, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, normalized)
+					require.NoError(t, err)
+					fresh, err := semanticANNRowsTx(ctx, tx, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, normalized)
+					require.NoError(t, err)
+					require.Equal(t, fresh, reused)
+					require.Equal(t, fresh, rows)
+					reused = append(reused, vectorindex.RowIdentity{InputKey: "first-caller"})
+					again, err := s.semanticANNRowsForSourceTx(ctx, tx, current.ManifestChecksum, record.ProcessingProfileFingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, normalized)
+					require.NoError(t, err)
+					require.Equal(t, fresh, again, "appending must preserve the shared list")
+					again = append(again, vectorindex.RowIdentity{InputKey: "second-caller"})
+					require.Equal(t, "second-caller", again[len(again)-1].InputKey)
+					require.Equal(t, "first-caller", reused[len(reused)-1].InputKey)
+					return nil
+				}))
+				changed = changed || before[i] != source.ManifestChecksum
+				if name == "unrelated write" || strings.HasSuffix(name, "filter") {
+					require.Equal(t, before[i], source.ManifestChecksum)
+				}
+				if name == "unrelated write" {
+					require.Equal(t, warm[i], rows)
+				}
+			}
+			if name != "unrelated write" && !strings.HasSuffix(name, "filter") {
+				require.True(t, changed, "eligibility changes must change the source manifest")
+			}
+		})
+	}
 }
