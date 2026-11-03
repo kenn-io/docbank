@@ -53,7 +53,7 @@ func registerMissLogFeedbackRoutes(h huma.API, d Deps) {
 			return nil, err
 		}
 		if !d.MissLog.Enabled() {
-			return &completionOutput{CacheControl: "no-store", Body: EmptySearchCompletion{}}, nil
+			return &completionOutput{CacheControl: noStoreCacheControl, Body: EmptySearchCompletion{}}, nil
 		}
 		input := in.Body
 		request := input.Search
@@ -96,7 +96,7 @@ func registerMissLogFeedbackRoutes(h huma.API, d Deps) {
 		coverage := receiptScope(input.Coverage)
 		coverage["truncated"] = input.Truncated
 		ticket := d.MissLog.Observe(ctx, misslog.Receipt{Source: "client_finalized", Query: request.Query, Profile: request.Profile, RequestedMode: request.Mode, ActualMode: input.ActualMode, Scope: scope, Coverage: coverage, FenceFingerprint: fingerprint, Hits: input.Hits})
-		return &completionOutput{CacheControl: "no-store", Body: EmptySearchCompletion{MissLogID: ticket.ID, MissLogCapability: ticket.Capability}}, nil
+		return &completionOutput{CacheControl: noStoreCacheControl, Body: EmptySearchCompletion{MissLogID: ticket.ID, MissLogCapability: ticket.Capability}}, nil
 	})
 
 	type output struct{ Body SearchFeedbackResult }

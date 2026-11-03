@@ -13,6 +13,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const noStoreCacheControl = "no-store"
+
 // MissLogPage contains sensitive receipts and is available only to the operator.
 type MissLogPage struct {
 	Items  []misslog.Receipt `json:"items"`
@@ -55,7 +57,7 @@ func registerMissLogRoutes(api huma.API, d Deps, _ *OperationGate) {
 		if json.Unmarshal([]byte(row.Receipt), &receipt) != nil {
 			return nil, missLogFailure()
 		}
-		return &recordOutput{CacheControl: "no-store", Body: receipt}, nil
+		return &recordOutput{CacheControl: noStoreCacheControl, Body: receipt}, nil
 	})
 	type completionInput struct{ Body EmptySearchCompletionRequest }
 	type completionOutput struct {
@@ -87,7 +89,7 @@ func registerMissLogRoutes(api huma.API, d Deps, _ *OperationGate) {
 		scope := receiptScope(request)
 		scope["folder_search"] = map[string]any{packageLimitParameter: request.Limit}
 		ticket := d.MissLog.Observe(ctx, misslog.Receipt{Source: "client_finalized", Query: request.Query, Profile: request.Profile, RequestedMode: report.RequestedMode, ActualMode: report.ActualMode, Scope: scope, Coverage: receiptScope(report.Coverage), FenceFingerprint: fingerprint})
-		return &completionOutput{CacheControl: "no-store", Body: EmptySearchCompletion{MissLogID: ticket.ID, MissLogCapability: ticket.Capability}}, nil
+		return &completionOutput{CacheControl: noStoreCacheControl, Body: EmptySearchCompletion{MissLogID: ticket.ID, MissLogCapability: ticket.Capability}}, nil
 	})
 	type pageOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -112,7 +114,7 @@ func registerMissLogRoutes(api huma.API, d Deps, _ *OperationGate) {
 			}
 			page.Items = append(page.Items, receipt)
 		}
-		return &pageOutput{CacheControl: "no-store", Body: page}, nil
+		return &pageOutput{CacheControl: noStoreCacheControl, Body: page}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "deleteMissLogRecord", Method: http.MethodDelete, Path: "/api/v1/miss-log/{id}", Summary: "Delete one private search receipt (operator only)"}, func(ctx context.Context, in *struct {
 		ID string `path:"id" maxLength:"128"`

@@ -22,6 +22,9 @@ const (
 	schemaJobIDField          = "job_id"
 	schemaCreatedAtField      = "created_at"
 	jsonSchemaConst           = "const"
+	schemaPatternField        = "pattern"
+	schemaTypeField           = "type"
+	schemaStringType          = "string"
 	maxToolResponseBytes      = 1 << 20
 	maxToolErrorBytes         = 1024
 	maxPathBytes              = 16 << 10

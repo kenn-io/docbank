@@ -15,6 +15,8 @@ import (
 const (
 	maxOriginalBytes = 32 << 20
 	maxOriginalChunk = 256 << 10
+	nodeField        = "node_id"
+	versionField     = "content_version_id"
 )
 
 var originalContentTool = toolDefinition{
@@ -139,7 +141,7 @@ func (in originalContentInput) readChunk(stream *daemonconn.ContentStream) (data
 }
 
 func originalContentSchemas() (schema, schema) {
-	const nodeField, versionField, sizeField = "node_id", "content_version_id", "size"
+	const sizeField = "size"
 	selection := schema{
 		"vault_id": uuidSchema(), nodeField: integerSchema(1, 0),
 		versionField: uuidSchema(), "blob_hash": sha256Schema(),

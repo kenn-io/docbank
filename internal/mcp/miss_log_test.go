@@ -22,10 +22,10 @@ func TestMissLogFeedbackMCPWritesWithoutReadTools(t *testing.T) {
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(root, "vault.db"))
 	require.NoError(t, err)
-	defer st.Close()
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(st), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
-	defer blobs.Close()
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-key"
 	cfg.MissLog.Enabled = true
@@ -35,7 +35,7 @@ func TestMissLogFeedbackMCPWritesWithoutReadTools(t *testing.T) {
 	httpServer := httptest.NewServer(daemon.Handler())
 	defer httpServer.Close()
 	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
-	defer connection.Close()
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return connection, nil }, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 	ticket := svc.Observe(t.Context(), misslog.Receipt{Query: "synthetic private question", Hits: []misslog.Hit{{Rank: 1, NodeID: 2}}})

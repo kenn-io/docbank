@@ -446,7 +446,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		report.MissLogID, report.MissLogCapability = ticket.ID, ticket.Capability
 		cacheControl := ""
 		if ticket.Capability != "" {
-			cacheControl = "no-store"
+			cacheControl = noStoreCacheControl
 		}
 		return &searchOutput{CacheControl: cacheControl, Body: report}, nil
 	})

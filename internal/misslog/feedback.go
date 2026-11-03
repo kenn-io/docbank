@@ -190,7 +190,7 @@ func (s *Service) Delete(ctx context.Context, id string, cutoff time.Time) error
 		if err != nil {
 			return ErrPersistence
 		}
-		for i := len(s.pending) - 1; i >= 0; i-- {
+		for i := range slices.Backward(s.pending) {
 			r := s.pending[i]
 			if (id != "" && r.id == id) || (id == "" && (cutoff.IsZero() || r.createdAt.Before(cutoff))) {
 				s.removePending(i)

@@ -58,7 +58,7 @@ func TestMissLogLabelUsesMasterDaemon(t *testing.T) {
 	defer stop()
 	record := waitForDaemon(t, root)
 	c := daemonconn.New("http://"+record.Address, record.Metadata["api_key"])
-	defer c.Close()
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	result, err := c.Search(t.Context(), "synthetic label miss", 20)
 	require.NoError(t, err)
 	cmd := newMissLogCmd()

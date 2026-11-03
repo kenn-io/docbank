@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -103,7 +104,7 @@ func TestFeedbackDeleteCannotResurrect(t *testing.T) {
 	t.Parallel()
 	svc, st := feedbackService(t)
 	for i := range 30 {
-		ticket := svc.Observe(t.Context(), Receipt{Query: fmt.Sprint(i), Hits: []Hit{{Rank: 1, NodeID: 2}}})
+		ticket := svc.Observe(t.Context(), Receipt{Query: strconv.Itoa(i), Hits: []Hit{{Rank: 1, NodeID: 2}}})
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
@@ -196,7 +197,7 @@ func TestAutomaticReceiptAdmissionIsSeparateFromFeedback(t *testing.T) {
 	t.Parallel()
 	st, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
-	defer st.Close()
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	cfg := config.Default().MissLog
 	cfg.Enabled = true
 	ordinary, automatic := 0, 0

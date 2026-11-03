@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -172,7 +173,7 @@ func (s *Service) removePending(i int) {
 	s.pending = s.pending[:len(s.pending)-1]
 }
 func (s *Service) expirePending() {
-	for i := len(s.pending) - 1; i >= 0; i-- {
+	for i := range slices.Backward(s.pending) {
 		if !s.pending[i].createdAt.Add(15 * time.Minute).After(s.now()) {
 			s.removePending(i)
 		}

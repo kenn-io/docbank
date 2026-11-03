@@ -19,11 +19,11 @@ var searchFeedbackTool = toolDefinition{
 func searchFeedbackSchemas() (schema, schema) {
 	feedback := objectSchema(schema{
 		"verdict":  enumSchema("wrong", "missing", "low_confidence", "none_in_vault"),
-		"expected": arraySchema(objectSchema(schema{"node_id": integerSchema(1, 0), "content_version_id": uuidSchema()}, "node_id"), 20),
+		"expected": arraySchema(objectSchema(schema{nodeField: integerSchema(1, 0), versionField: uuidSchema()}, nodeField), 20),
 		"note":     stringSchema(1000),
 	}, "verdict")
-	input := rootObjectSchema(schema{"id": schema{"type": "string", "pattern": "^[0-9a-f]{48}$"}, "capability": schema{"type": "string", "pattern": "^[0-9a-f]{64}$"}, "feedback": feedback}, "id", "capability", "feedback")
-	output := rootObjectSchema(schema{"id": schema{"type": "string", "pattern": "^[0-9a-f]{48}$"}, "success": schema{"type": "boolean", jsonSchemaConst: true}}, "id", "success")
+	input := rootObjectSchema(schema{"id": schema{schemaTypeField: schemaStringType, schemaPatternField: "^[0-9a-f]{48}$"}, "capability": schema{schemaTypeField: schemaStringType, schemaPatternField: "^[0-9a-f]{64}$"}, "feedback": feedback}, "id", "capability", "feedback")
+	output := rootObjectSchema(schema{"id": schema{schemaTypeField: schemaStringType, schemaPatternField: "^[0-9a-f]{48}$"}, "success": schema{schemaTypeField: "boolean", jsonSchemaConst: true}}, "id", "success")
 	return input, output
 }
 func searchFeedbackHandler(lease *daemonLease, validator *jsonschema.Resolved, logger *slog.Logger) sdkmcp.ToolHandler {

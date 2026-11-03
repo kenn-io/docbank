@@ -151,8 +151,7 @@ func (s *Store) SaveMissLogFeedback(ctx context.Context, record MissLogRecord, n
 		var exists int
 		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM miss_log_records WHERE id=$1`, record.ID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
-		} else {
-			return err
 		}
+		return err
 	})
 }

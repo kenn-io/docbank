@@ -405,13 +405,16 @@ func TestMissLogMergedHitCompletionKeepsFinalReceipt(t *testing.T) {
 	t.Parallel()
 	ts, st := newTestServer(t, func(d *api.Deps) { configureProcessingTestService(t)(d); d.Cfg.MissLog.Enabled = true })
 	node := createFileWithContent(t, ts, st, "/synthetic.txt", "synthetic content")
-	input := map[string]any{"search": map[string]any{"query": "synthetic merged hit", "mode": "lexical", "profile": "private", "fence": map[string]any{"vault_uid": st.VaultID(), "content_version_ids": []string{node.CurrentVersionID}}}, "actual_mode": "lexical", "coverage": map[string]any{"state": "complete", "binding_required": false, "scoped_documents": 1, "complete_documents": 1}, "hits": []map[string]any{{"rank": 1, "node_id": node.ID, "content_version_id": node.CurrentVersionID, "path": "/synthetic.txt", "score": 0.5}}}
+	search := map[string]any{"query": "synthetic merged hit", "mode": "lexical", "profile": "private", "fence": map[string]any{"vault_uid": st.VaultID(), "content_version_ids": []string{node.CurrentVersionID}}}
+	hits := []map[string]any{{"rank": 1, "node_id": node.ID, "content_version_id": node.CurrentVersionID, "path": "/synthetic.txt", "score": 0.5}}
+	input := map[string]any{"search": search, "actual_mode": "lexical", "coverage": map[string]any{"state": "complete", "binding_required": false, "scoped_documents": 1, "complete_documents": 1}, "hits": hits}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/search/complete", nil, input)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	var completion map[string]any
 	require.NoError(t, json.Unmarshal([]byte(body), &completion))
-	id := completion["miss_log_id"].(string)
+	id, ok := completion["miss_log_id"].(string)
+	require.True(t, ok, "completion should return a miss-log ID")
 	rows, err := st.ListMissLogRecords(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
@@ -424,7 +427,7 @@ func TestMissLogMergedHitCompletionKeepsFinalReceipt(t *testing.T) {
 	require.Equal(t, "client_finalized", receipt.Source)
 	require.Len(t, receipt.Hits, 1)
 	require.Len(t, receipt.Feedback.Expected, 1)
-	input["hits"].([]map[string]any)[0]["excerpt"] = "private excerpt must be rejected"
+	hits[0]["excerpt"] = "private excerpt must be rejected"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/search/complete", nil, input)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
@@ -449,15 +452,17 @@ func TestMissLogCompletionValidationNeverEchoesPrivateReceipt(t *testing.T) {
 	for _, field := range []string{"query", "path", "evidence", "capability"} {
 		t.Run(field, func(t *testing.T) {
 			sentinel := "private-" + field + "-sentinel"
-			input := map[string]any{"search": map[string]any{"query": "synthetic", "mode": "lexical", "profile": "private", "fence": map[string]any{"vault_uid": st.VaultID(), "content_version_ids": []string{node.CurrentVersionID}}}, "actual_mode": "lexical", "coverage": map[string]any{"state": "complete", "binding_required": false, "scoped_documents": 1, "complete_documents": 1}, "hits": []map[string]any{{"rank": 1, "node_id": node.ID, "content_version_id": node.CurrentVersionID, "path": "/synthetic.txt"}}}
+			search := map[string]any{"query": "synthetic", "mode": "lexical", "profile": "private", "fence": map[string]any{"vault_uid": st.VaultID(), "content_version_ids": []string{node.CurrentVersionID}}}
+			hits := []map[string]any{{"rank": 1, "node_id": node.ID, "content_version_id": node.CurrentVersionID, "path": "/synthetic.txt"}}
+			input := map[string]any{"search": search, "actual_mode": "lexical", "coverage": map[string]any{"state": "complete", "binding_required": false, "scoped_documents": 1, "complete_documents": 1}, "hits": hits}
 			path := "/api/v1/search/complete"
 			switch field {
 			case "query":
-				input["search"].(map[string]any)["query"] = sentinel + strings.Repeat("x", 8193)
+				search["query"] = sentinel + strings.Repeat("x", 8193)
 			case "path":
-				input["hits"].([]map[string]any)[0]["path"] = "/" + sentinel + strings.Repeat("x", 16385)
+				hits[0]["path"] = "/" + sentinel + strings.Repeat("x", 16385)
 			case "evidence":
-				input["hits"].([]map[string]any)[0]["evidence_ids"] = []string{sentinel + strings.Repeat("x", 1025)}
+				hits[0]["evidence_ids"] = []string{sentinel + strings.Repeat("x", 1025)}
 			case "capability":
 				path = "/api/v1/search/feedback"
 				input = map[string]any{"id": strings.Repeat("a", 48), "capability": sentinel + strings.Repeat("x", 65), "feedback": map[string]any{"verdict": "wrong"}}
