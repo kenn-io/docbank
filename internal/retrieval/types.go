@@ -111,17 +111,18 @@ type ValiditySuccessor struct {
 }
 
 type Result struct {
-	Validity      *ResultValidity
-	Document      DocumentIdentity
-	Rank          int
-	Score         float64
-	Path          string
-	Excerpt       string
-	LexicalRank   int
-	SemanticRank  int
-	Evidence      []EvidenceReference
-	Explanation   []Contribution
-	rerankExcerpt string
+	Validity        *ResultValidity
+	Document        DocumentIdentity
+	Rank            int
+	Score           float64
+	RerankRelevance *float64
+	Path            string
+	Excerpt         string
+	LexicalRank     int
+	SemanticRank    int
+	Evidence        []EvidenceReference
+	Explanation     []Contribution
+	rerankExcerpt   string
 }
 
 type CoverageState string

@@ -692,7 +692,7 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 	for index, item := range report.Results {
 		converted := DocumentSearchResult{VaultUID: item.Document.VaultID, NodeID: item.Document.NodeID,
 			ContentVersionID: item.Document.ContentVersionID, Rank: item.Rank, Score: item.Score,
-			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
+			RerankRelevance: item.RerankRelevance, Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		if v := item.Validity; v != nil {
 			converted.Validity = &DocumentResultValidity{State: string(v.State), EffectiveFrom: v.EffectiveFrom, EffectiveTo: v.EffectiveTo, SupersededBy: make([]DocumentValiditySuccessor, 0, len(v.SupersededBy))}

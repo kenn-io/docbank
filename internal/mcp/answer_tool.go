@@ -264,16 +264,15 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	if result.report.Truncated {
 		out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 	}
-	for index, item := range result.report.Results {
+	for _, item := range result.report.Results {
 		ids, err := encodeSearchEvidenceIDs(item.Evidence)
 		if err != nil {
 			return answerOutput{}, nil, err
 		}
-		relevance := searchRerankRelevance(item, index, result.report.Reranking)
 		if answerContentExcerpt(item) {
-			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: relevance})
+			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: item.RerankRelevance})
 		} else {
-			out.Leads = append(out.Leads, answer.Lead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: relevance})
+			out.Leads = append(out.Leads, answer.Lead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: item.RerankRelevance})
 		}
 	}
 	out.Passages, out.PassageBytes, out.OmittedPassages = answer.Budget(out.Passages, input.MaxPassageBytes)

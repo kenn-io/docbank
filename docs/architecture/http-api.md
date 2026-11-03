@@ -873,6 +873,9 @@ the trace). An opted-in request also returns a `reranking` receipt with
 `applied`, `degraded`, or `skipped`, a bounded candidate count, and a cause for
 degradation. Each result retains its vault, node, and content-version identity
 with bounded evidence references. The source fence applies before retrieval.
+When reranking is applied, each reranked result includes `rerank_relevance`,
+equal to its `score` even when zero; other results omit it. Validity ordering
+can move reranked results past the first `candidate_count` positions.
 Vector scoring uses only eligible rows from current, live attachments.
 Semantic and hybrid search revalidate the complete result set after query
 embedding, including lexical matches without embeddings. Trashed or replaced

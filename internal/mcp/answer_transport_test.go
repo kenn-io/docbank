@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -441,4 +442,88 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 		})
 		require.Equal(t, "processing_profile_unavailable", unknown["code"])
 	}
+}
+
+type prefixReranker struct{}
+
+func (prefixReranker) Rerank(_ context.Context, request retrieval.RerankingRequest) ([]retrieval.RerankScore, error) {
+	scores := make([]retrieval.RerankScore, len(request.Candidates))
+	for i, candidate := range request.Candidates {
+		scores[i] = retrieval.RerankScore{Document: candidate.Document, Score: 0.9 - 0.1*float64(i)}
+	}
+	return scores, nil
+}
+
+func TestSearchRerankRelevanceFollowsDemotedResults(t *testing.T) {
+	f := newNativeExportFixture(t)
+	var members []bundle.Member
+	for _, name := range []string{"lease-a.txt", "lease-b.txt", "lease-c.txt"} {
+		member := f.addFile(t, name, "renewal "+name)
+		require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: member.SHA256,
+			Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "renewal " + name}))
+		members = append(members, member)
+	}
+	name, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
+	require.NoError(t, err)
+	profile.RerankingProvider = prefixReranker{}
+	profile.RerankingProfile = retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 2, MaxExcerptBytes: 4096}
+	profile.RerankingDisclosure = processing.RuntimeDisclosure{
+		ImmediateProcessor: "synthetic-reranker", UltimateProcessor: "synthetic-reranker",
+		Endpoint: "https://reranker.example.invalid", Deployment: strings.Repeat("a", 64),
+		Model: "synthetic-reranker", ModelRevision: "v1",
+		MetadataClasses: []string{"query_text", "candidate_excerpt", "candidate_identity", "evidence_reference"},
+	}
+	profile.RerankingDeadline = time.Second
+	profile.RerankingFailurePolicy = retrieval.ProviderFailureFailClosed
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
+	selector := processing.Selector{NodeID: members[0].NodeID, ContentVersionID: members[0].VersionID, Profile: name}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.GrantConsent(t.Context(), processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
+	t.Cleanup(apiServer.Close)
+	httpServer := httptest.NewServer(apiServer.Handler())
+	t.Cleanup(httpServer.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	args := map[string]any{"query": "renewal", "mode": "lexical", "profile": name, "filters": map[string]any{}, "rerank": true}
+	search := func() []any {
+		hits, ok := exportCall(t, server, "search_documents", args)["results"].([]any)
+		require.True(t, ok)
+		require.Len(t, hits, 3)
+		return hits
+	}
+	node := func(hit any) store.Node {
+		id, ok := schemaMap(t, hit)["node_id"].(float64)
+		require.True(t, ok)
+		found, err := f.catalog.NodeByID(t.Context(), int64(id))
+		require.NoError(t, err)
+		return found
+	}
+	before := search()
+	unscored := schemaMap(t, before[2])
+	require.NotContains(t, unscored, "rerank_relevance", "precondition: the reranker scores only two candidates")
+	successor := node(unscored)
+	for _, hit := range before[:2] {
+		old := node(hit)
+		_, err = f.catalog.PutSupersession(t.Context(), successor.ID, old.ID, old.Revision, new(""))
+		require.NoError(t, err)
+	}
+	after := search()
+	require.Equal(t, unscored["node_id"], schemaMap(t, after[0])["node_id"], "the in-force match moves ahead of reranked ones")
+	require.NotContains(t, schemaMap(t, after[0]), "rerank_relevance")
+	for i, hit := range after[1:] {
+		require.Equal(t, schemaMap(t, before[i])["rerank_relevance"], schemaMap(t, hit)["rerank_relevance"])
+	}
+	answer := exportCall(t, server, "answer_question", map[string]any{"question": "renewal", "rerank": true})
+	passages, ok := answer["passages"].([]any)
+	require.True(t, ok)
+	require.Len(t, passages, 3)
+	require.NotContains(t, schemaMap(t, passages[0]), "relevance")
+	require.Contains(t, schemaMap(t, passages[1]), "relevance")
 }

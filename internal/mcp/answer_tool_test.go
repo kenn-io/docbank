@@ -211,7 +211,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	}
 }
 
-func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
+func TestAnswerQuestionRelevanceOnlyForRerankedResults(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 2, CompleteDocuments: 2}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}}}
 	const providerScore = 2.7
 	for i, score := range []float64{providerScore, 1.0 / 62} {
@@ -220,6 +220,7 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 		f.fenceVersions = append(f.fenceVersions, version)
 		f.results = append(f.results, api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i), ContentVersionID: version, Path: fmt.Sprintf("/example-%d", i), Rank: i, LexicalRank: i, Excerpt: "example", Score: score, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}})
 	}
+	f.results[0].RerankRelevance = new(providerScore)
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","rerank":true}`))
 	if err != nil || len(out.Passages) != 2 || out.Passages[0].Relevance == nil || *out.Passages[0].Relevance != providerScore || out.Passages[1].Relevance != nil {
