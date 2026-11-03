@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,6 +22,7 @@ import (
 // the fixture daemon and its catalog validation.
 type answerTermsClient struct {
 	*answerFakeClient
+
 	summaries documentClient
 }
 
@@ -123,7 +125,8 @@ func TestAnswerQuestionTermsMatchIndependently(t *testing.T) {
 		want  int
 	}{{[]string{"lease"}, 1}, {[]string{"lease nonexistentword"}, 0}} {
 		out := exportCall(t, server, "answer_question", map[string]any{"question": "when must I renew", "terms": tc.terms})
-		passages := out["passages"].([]any)
+		passages, ok := out["passages"].([]any)
+		require.True(t, ok)
 		require.Len(t, passages, tc.want)
 		if tc.want > 0 {
 			require.Equal(t, member.VersionID, schemaMap(t, passages[0])["content_version_id"])
@@ -186,7 +189,7 @@ func TestAnswerQuestionTermsMerge(t *testing.T) {
 				texts = append(texts, passage.Text)
 				require.Equal(t, i+1, passage.Rank)
 				if passage.Text == "a" || passage.Text == "b" {
-					require.Equal(t, 0.7, *passage.Relevance)
+					require.InDelta(t, 0.7, *passage.Relevance, 1e-12)
 				} else {
 					require.Nil(t, passage.Relevance)
 				}
@@ -226,7 +229,7 @@ func TestAnswerQuestionTermsRetainedReceipt(t *testing.T) {
 	member := fixture.addFile(t, "lease.txt", "Lease renewal and termination.")
 	leadMember := fixture.addFile(t, "index.txt", "Index")
 	for _, budget := range []int{2048, 4096} {
-		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+		t.Run(strconv.Itoa(budget), func(t *testing.T) {
 			f := &answerTermsClient{answerFakeClient: &answerFakeClient{fenceVersions: []string{member.VersionID, leadMember.VersionID}}, summaries: daemonDocumentClient{fixture.connection}}
 			space := strings.Repeat("c", 64)
 			f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {

@@ -9,9 +9,9 @@ const (
 
 func answerQuestionSchemas() (schema, schema) {
 	input := fenceInputProperties()
-	input["question"] = schema{"type": "string", "minLength": 1, "maxLength": 8192} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
-	input["terms"] = schema{"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": schema{"type": "string", "minLength": 1, "maxLength": 64}}
-	input["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+	input["question"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}                                                                                 //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+	input["terms"] = schema{"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": schema{"type": "string", "minLength": 1, "maxLength": 64}} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+	input["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}                                                  //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 	input["binding_id"] = schema{"type": "string", "minLength": 1, "maxLength": 128}
 	input["limit"] = integerSchema(1, 50)
 	input["rerank"] = booleanSchema()
