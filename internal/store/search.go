@@ -829,7 +829,10 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 		return nil, err
 	}
 	slices.SortFunc(annRows, vectorindex.CompareIdentity)
-	return slices.Compact(annRows), nil
+	uniqueRows := slices.Compact(annRows)
+	annRows = make([]vectorindex.RowIdentity, len(uniqueRows))
+	copy(annRows, uniqueRows)
+	return annRows, nil
 }
 
 // LiveSearchScopeExists reports whether normalized search filters match a live file.
