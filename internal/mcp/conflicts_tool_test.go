@@ -180,7 +180,7 @@ func TestFindConflictsResponseBounds(t *testing.T) {
 				hit := conflictHit(int64(i+1), text, "rendition_segment")
 				// Keep each identity and evidence set valid while making the complete
 				// envelope exceed its response budget.
-				hit.Path = "/" + strings.Repeat("🧭", 3990) + fmt.Sprintf("/doc%d", i)
+				hit.Path = "/" + strings.Repeat(strings.Repeat("n", 60)+"/", 254) + fmt.Sprintf("doc%d", i)
 				hit.ContentVersionID = fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
 				require.LessOrEqual(t, len([]rune(hit.Path)), maxPathCharacters)
 				require.LessOrEqual(t, len(hit.Path), maxPathBytes)
