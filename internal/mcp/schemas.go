@@ -724,6 +724,7 @@ func searchRerankingSchema() schema {
 		"outcome":         enumSchema("applied", "skipped", "degraded"),
 		"cause":           stringSchema(64),
 		"candidate_count": integerSchema(0, 1000),
+		"profile_id":      schema{"type": "string", "minLength": 1, "maxLength": 1024},
 	}, "outcome", "candidate_count")
 }
 

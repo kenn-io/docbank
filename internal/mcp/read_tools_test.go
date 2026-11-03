@@ -845,7 +845,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 					if tc.outcome == "applied" {
 						hit["score"] = 0.0
 						report["results"] = []any{hit, map[string]any{"vault_uid": testVaultID, "node_id": 8, "content_version_id": secondVersionID, "rank": 2, "score": 1.0 / 62, "path": "/second.md", "lexical_rank": 2, "evidence": []any{map[string]any{"kind": "node_name"}}}}
-						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1}
+						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1, "profile_id": "synthetic-reranker/v2"}
 					}
 					if tc.outcome == "degraded" {
 						report["reranking"] = map[string]any{"outcome": "degraded", "cause": "authorization_denied", "candidate_count": 1}
@@ -881,6 +881,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 				assert.Equal(t, tc.outcome, receipt["outcome"])
 				if tc.outcome == "applied" {
 					assert.EqualValues(t, 1, receipt["candidate_count"])
+					assert.Equal(t, "synthetic-reranker/v2", receipt["profile_id"])
 					require.Contains(t, hit, "rerank_relevance")
 					assert.EqualValues(t, 0, hit["rerank_relevance"])
 					secondHit, ok := hits[1].(map[string]any)

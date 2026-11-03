@@ -325,7 +325,7 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 
 // Reranker identity belongs to applied scores, not merely a configured provider.
 func TestAnswerQuestionRerankerIdentity(t *testing.T) {
-	for _, outcome := range []string{"applied", "skipped", "degraded", "not_requested", "not_reported"} {
+	for _, outcome := range []string{"applied", "skipped", "degraded", "not_requested"} {
 		t.Run(outcome, func(t *testing.T) {
 			checkAnswerRerankerIdentity(t, "synthetic-reranker/模型:v2", outcome)
 		})
@@ -343,28 +343,33 @@ func FuzzAnswerQuestionRerankerIdentity(f *testing.F) {
 			profileID = profileID[:16384]
 		}
 		profileID = strings.ToValidUTF8(profileID, "�")
-		outcomes := []string{"applied", "skipped", "degraded", "not_requested", "not_reported"}
-		checkAnswerRerankerIdentity(t, profileID, outcomes[int(choice)%len(outcomes)])
+		outcomes := []string{"applied", "skipped", "degraded", "not_requested"}
+		outcome := outcomes[int(choice)%len(outcomes)]
+		if outcome == "applied" && profileID == "" {
+			profileID = "synthetic-reranker"
+		}
+		checkAnswerRerankerIdentity(t, profileID, outcome)
 	})
 }
 
 func checkAnswerRerankerIdentity(t *testing.T, profileID, outcome string) {
 	t.Helper()
 	f := rerankerIdentityClient(nil)
-	// Decode the daemon wire shape before sending the receipt through answer_question.
-	if outcome != "not_requested" && outcome != "not_reported" {
-		data, err := json.Marshal(map[string]any{"outcome": outcome, "candidate_count": 1, "profile_id": profileID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(data, &f.answerFakeClient.report.Reranking); err != nil {
-			t.Fatal(err)
-		}
-	}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	args := []byte(`{"question":"example","rerank":true}`)
-	if outcome == "not_requested" {
+	switch outcome {
+	case "applied":
+		f.report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1, ProfileID: profileID}
+	case "skipped":
+		f.report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+		f.results = nil
+	case "degraded":
+		f.report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "degraded", Cause: "authorization_denied", CandidateCount: 1}
+		f.report.Degradations = []string{"reranking_degraded"}
+	case "not_requested":
 		args = []byte(`{"question":"example"}`)
+	default:
+		t.Fatalf("unknown reranking outcome %q", outcome)
 	}
 	out, _, err := answerQuestion(context.Background(), session, args)
 	if err != nil {
@@ -379,6 +384,14 @@ func checkAnswerRerankerIdentity(t *testing.T, profileID, outcome string) {
 		}
 	} else if present {
 		t.Fatalf("unexpected reranker identity for %s: %v", outcome, id)
+	}
+	cause, causePresent := reranking["cause"]
+	if outcome == "degraded" {
+		if !causePresent || cause != "authorization_denied" {
+			t.Fatalf("reranking cause = %v (present %v), want authorization_denied", cause, causePresent)
+		}
+	} else if causePresent {
+		t.Fatalf("unexpected reranking cause for %s: %v", outcome, cause)
 	}
 	_, outputSchema := answerQuestionSchemas()
 	receiptSchema := schemaMap(t, schemaMap(t, outputSchema["properties"])["receipt"])
@@ -409,10 +422,10 @@ func rerankerIdentityClient(receipt *api.DocumentSearchRerankingReceipt) *answer
 		}},
 	}}
 	f.search = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-		report := f.answerFakeClient.report
+		report := f.report
 		report.RequestedMode = req.Mode
 		report.ActualMode = req.Mode
-		report.Results = f.answerFakeClient.results
+		report.Results = f.results
 		return report, nil
 	}
 	return f

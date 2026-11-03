@@ -54,6 +54,7 @@ type answerProfile struct {
 }
 type answerReranking struct {
 	RerankerID     string `json:"reranker_id,omitempty"`
+	Cause          string `json:"cause,omitempty"`
 	Requested      bool   `json:"requested"`
 	Outcome        string `json:"outcome"`
 	CandidateCount int    `json:"candidate_count"`
@@ -296,7 +297,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	coverage := result.report.Coverage
 	out.Receipt.Coverage = &coverage
 	if result.report.Reranking != nil {
-		out.Receipt.Reranking = &answerReranking{Requested: input.Rerank, Outcome: result.report.Reranking.Outcome, CandidateCount: result.report.Reranking.CandidateCount}
+		out.Receipt.Reranking = &answerReranking{Requested: input.Rerank, Outcome: result.report.Reranking.Outcome, Cause: result.report.Reranking.Cause, CandidateCount: result.report.Reranking.CandidateCount}
 		if result.report.Reranking.Outcome == "applied" {
 			out.Receipt.Reranking.RerankerID = result.report.Reranking.ProfileID
 		}
