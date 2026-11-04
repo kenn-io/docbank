@@ -44,11 +44,7 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 				if err := bulkBenchmarkFileVersionsTx(ctx, tx, retained, pending.ID, sets-1); err != nil {
 					return err
 				}
-				_, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+$1 WHERE id=$2`, sets-1, s.RootID())
-				if err != nil {
-					return err
-				}
-				_, err = tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
+				_, err := tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
 					INSERT INTO embedding_input_generations (generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,
 					source_version_id,profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
 					chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at)

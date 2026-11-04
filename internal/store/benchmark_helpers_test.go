@@ -22,5 +22,9 @@ func bulkBenchmarkFileVersionsTx(ctx context.Context, tx *sql.Tx, source Node, l
 		SELECT printf('00000000-0000-4000-8000-%012x',i),$2+i,blob_hash,size,mime_type,recorded_at,1,
 		printf('00000000-0000-4000-9000-%012x',i),'content_create',NULL
 		FROM seq CROSS JOIN content_versions WHERE version_id=$3`, count, lastNodeID, source.CurrentVersionID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+$1 WHERE id=$2`, count, source.ParentID)
 	return err
 }
