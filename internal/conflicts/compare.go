@@ -69,7 +69,7 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:["'’”»]+\s*)?(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
 var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
 var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:and\s+)?(?:[(\["'‘’“”«»]\s*)*(?:a|an)\b\s*(?:[(\["'‘’“”«»]\s*)*[\p{L}\p{Nd}]+\b`)
-var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
+var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s*(?:["'’”»]+\s*)?(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
 var rateDenominatorExtensionRE = regexp.MustCompile(`(?i)^\s+(?:[\(\[\{\"'‘’“”«»]\s*)?(?:of|for|in|to|from|by|with|on|at|and|or)\s+(?:(?:a|an|the)\s+)?[\p{L}\p{Nd}]+\b`)
 var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
 var rateArithmeticContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[+*/×÷−]|-\s+)\s*(?:[$€£¥]\s*)?[0-9]`)
@@ -206,6 +206,12 @@ func makeSubject(f Figure, figures []Figure) subject {
 						s.isDenominator = true
 					}
 					continuation := text[suffixStart+match[1]:]
+					if strings.HasPrefix(continuation, ".") && durationAbbrevRE.MatchString(text[a:b]+".") {
+						fields := strings.Fields(continuation[1:])
+						if len(fields) > 1 && (fields[0] == "a" || fields[0] == "an") {
+							continuation = continuation[1:]
+						}
+					}
 					acceptedDateBound := acceptedRateDateBound(text, suffixStart+match[1], f)
 					unsupportedExtension := rateDenominatorExtensionRE.MatchString(continuation) && !acceptedDateBound
 					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) || unsupportedExtension {
@@ -278,7 +284,9 @@ func acceptedRateDateBound(text string, start int, f Figure) bool {
 		if span.start < start || span.end < span.start || span.end > len(text) {
 			continue
 		}
-		lead := strings.TrimSpace(strings.Trim(text[start:span.start], `.,;:()[]{}"'‘’“”«»`))
+		lead := strings.TrimFunc(text[start:span.start], func(r rune) bool {
+			return unicode.IsSpace(r) || strings.ContainsRune(`.,;:()[]{}"'‘’“”«»`, r)
+		})
 		lead = strings.Join(strings.Fields(lead), " ")
 		for _, word := range periodWords {
 			if strings.EqualFold(lead, word) {

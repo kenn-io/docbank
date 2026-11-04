@@ -242,6 +242,23 @@ func TestFindDifferentRateDenominatorsWithQuotedNumerators(t *testing.T) {
 	}
 }
 
+func TestFindRejectsQuotedAndAbbreviatedRateContinuations(t *testing.T) {
+	for _, pair := range []struct{ name, a, b string }{
+		{"abbreviated compound denominator", "The service fee is $5/hr. a day.", "The service fee is $6/hr. a year."},
+		{"quoted numerator with wrapped denominator", `The service fee is "$5" a (month).`, "The service fee is $6."},
+	} {
+		t.Run(pair.name, func(t *testing.T) {
+			got := Find(Input{Query: "service fee", Passages: []Passage{
+				{Document: "a", Text: pair.a},
+				{Document: "b", Text: pair.b},
+			}})
+			if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+				t.Fatalf("unsupported rate continuation compared as an exact amount: %+v", got)
+			}
+		})
+	}
+}
+
 func TestFindRejectsUnsupportedRateDenominatorMeanings(t *testing.T) {
 	for _, tt := range []struct{ name, a, b string }{
 		{"second symbol versus flat amount", "The service fee is $5/s.", "The service fee is $6."},
@@ -448,6 +465,17 @@ func TestFindAllowsAcceptedTrailingDateBoundsOnRates(t *testing.T) {
 	}})
 	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
 		t.Fatalf("unaccepted trailing date was treated as a rate period: %+v", got)
+	}
+}
+
+func TestFindAllowsWrappedAcceptedRateDateBound(t *testing.T) {
+	text := "The service fee is $5 per month prior to ( 1 July 2026)."
+	got := Find(Input{Query: "service fee", Passages: []Passage{
+		{Document: "a", Text: text},
+		{Document: "b", Text: "The service fee is $6 per month."},
+	}})
+	if got.Status != Conflicting || len(got.Conflicts) != 1 || got.Conflicts[0].PeriodsOverlap != "unknown" {
+		t.Fatalf("wrapped accepted date bound prevented rate comparison (figures: %+v): %+v", Extract(text), got)
 	}
 }
 
