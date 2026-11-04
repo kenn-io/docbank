@@ -118,7 +118,7 @@ func exportAuditRecords(ctx context.Context, tx metadataQuerier, write metadataW
 		  WHEN 'scope_chain_entry' THEN 7
 		  WHEN 'allocation_entry' THEN 8
 		  ELSE 99 END,
-		COALESCE(operation_sequence,0),COALESCE(scope_id,''),
+		CASE WHEN kind='event' THEN 0 ELSE COALESCE(operation_sequence,0) END,COALESCE(scope_id,''),
 		COALESCE(entry_count,0),COALESCE(event_ordinal,0),digest`)
 	if err != nil {
 		return fmt.Errorf("exporting audit records: %w", err)
