@@ -2798,6 +2798,29 @@ func TestExtractDoesNotSplitRelativeDurationBeforeConjoinedAssertion(t *testing.
 	}
 }
 
+func TestExtractRejectsArithmeticRelativeDurationAndKeepsFollowingSentence(t *testing.T) {
+	text := "The deadline is 7 min. before 10 + 5 min. The deposit is $7."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+		t.Fatalf("arithmetic relative duration leaked or hid the next assertion: %+v", got)
+	}
+}
+
+func FuzzExtractRejectsArithmeticRelativeDurationOperands(f *testing.F) {
+	f.Add("10", "5")
+	f.Add("100", "25")
+	f.Fuzz(func(t *testing.T, left, right string) {
+		if len(left) == 0 || len(left) > 5 || len(right) == 0 || len(right) > 5 || strings.Trim(left, "0123456789") != "" || strings.Trim(right, "0123456789") != "" {
+			t.Skip()
+		}
+		text := "The deadline is 7 min. before " + left + " + " + right + " min. The deposit is $7."
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+			t.Fatalf("arithmetic relative duration leaked or hid the next assertion for %q: %+v", text, got)
+		}
+	})
+}
+
 func TestExtractPreservesIndependentAssertionAfterUnsupportedQualifiedDurations(t *testing.T) {
 	for _, text := range []string{
 		"The wait is 7 min. After about -10 minutes customers pay $5.",
@@ -3040,6 +3063,7 @@ func TestExtractRejectsVerbalComparisonsWithWordOperands(t *testing.T) {
 		"The service fee is $5/month lower than minus thirty.",
 		"The deadline is 7 days before thirty days.",
 		"The deadline is 7 min. before thirty-five min.",
+		"The fee is $5/month higher than an estimated $10/month.",
 		"The deadline is 7 minutes before thirty-five minutes.",
 	} {
 		if got := Extract(text); len(got) != 0 {
@@ -4514,6 +4538,14 @@ func TestExtractReviewRateAndRelativeDateBounds(t *testing.T) {
 	}
 }
 
+func TestExtractKeepsQuotedRateDateBoundBeforeFollowingSentence(t *testing.T) {
+	text := "«The fee is $5/hr. before 1 July 2026.» The deposit is $7."
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "$5" || got[0].Period != (Period{To: "2026-06-30"}) || got[0].Clause != "«The fee is $5/hr. before 1 July 2026.»" || got[1].Text != "$7" || got[1].Clause != "The deposit is $7." {
+		t.Fatalf("quoted rate bound or independent following sentence was lost: %+v", got)
+	}
+}
+
 func TestExtractReviewIndependentScopeAndRates(t *testing.T) {
 	for _, tt := range []struct {
 		text    string
@@ -5654,7 +5686,9 @@ func TestExtractKeepsPredicatedFigureAfterApproximateAndPercentageBases(t *testi
 		want []string
 	}{
 		{"The fee is about $5 and $10 covers shipping costs.", []string{"$10"}},
+		{"The fee is about $5 and $10 pays shipping costs.", []string{"$10"}},
 		{"The surcharge is 5% of $100 and $10 covers shipping costs.", []string{"5%", "$10"}},
+		{"The surcharge is 5% of $100 and $10 pays shipping costs.", []string{"5%", "$10"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)
@@ -5687,5 +5721,13 @@ func TestExtractRejectsLeadingDecimalRateComparison(t *testing.T) {
 	got := Extract(text)
 	if len(got) != 1 || got[0].Text != "$7" || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
 		t.Errorf("independent following sentence was lost or rate leaked: %+v", got)
+	}
+}
+
+func TestExtractKeepsFollowingSentenceAfterArticleLedEstimatedComparison(t *testing.T) {
+	text := "The fee is $5/month higher than an estimated $10/month. The deposit is $7."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+		t.Fatalf("article-led estimated comparison leaked or hid the next assertion: %+v", got)
 	}
 }

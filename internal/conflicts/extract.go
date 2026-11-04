@@ -1183,6 +1183,11 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 	connector := strings.ToLower(strings.Join(strings.Fields(suffix[loc[2]:loc[3]]), " "))
 	operand := trimRelativeDurationWrappers(suffix[loc[1]:])
 	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
+	if relativeDurationArithmeticAmountRE.MatchString(operand) {
+		if _, _, _, ok := relativeDurationOperandParts(operand); ok {
+			return true
+		}
+	}
 	unit := unitRE.FindStringIndex(operand)
 	if unit == nil || unit[0] != 0 {
 		return unsupportedRelativeDurationOperand(operand, connector)
@@ -1200,7 +1205,12 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 
 const numericGroupingSeparatorChars = `_'’‘ʼ`
 
+// Arithmetic expressions stay attached to a relative-duration operand until
+// the full unsupported comparison can be omitted.
+var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` + number + `)\s*(?:[+*×÷±∓^]|(?:multiplied\s+by|divided\s+by|times|plus|minus|x))\s*(?:` + number + `)`)
+
 var relativeDurationAmountREs = []*regexp.Regexp{
+	relativeDurationArithmeticAmountRE,
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
 	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
@@ -1501,7 +1511,8 @@ var nonPredicateFigurePrefixWords = map[string]struct{}{
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
 var rateDateOperandPattern = `(?:\(\s*` + dateRE.String() + `\s*\)|\[\s*` + dateRE.String() + `\s*\]|["'‘’“”«]\s*` + dateRE.String() + `\s*["'”’»]|` + dateRE.String() + `)`
-var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+(?:until|till|through|to)\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?\s*(?:[.!?;:](?:\s|$)|$)`)
+var rateDateClosingPunctuationPattern = `[` + regexp.QuoteMeta(closingPunctuation) + `]*`
+var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+(?:until|till|through|to)\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?\s*(?:[.!?;:]` + rateDateClosingPunctuationPattern + `(?:\s|$)|$)`)
 
 func rateDateContinuation(s string) bool {
 	if rateDateContinuationRE.MatchString(s) {
@@ -1942,9 +1953,9 @@ func comparisonContinuationAfterRate(s string) bool {
 }
 
 var symbolicComparisonContinuationRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥)\s*[^\p{L}\p{N}]*[\p{L}\p{N}]`)
-var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:[+\-−]\s*)?(?:` + number + `)\b`)
+var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:[+\-−]\s*)?(?:` + number + `)\b`)
 
-var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
+var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
 var verbalComparisonCurrencyPrefixRE = regexp.MustCompile(`(?i)^(?:[$€£¥]|` + currencyCodes + `\s+)`)
 var verbalComparisonSignPrefixRE = regexp.MustCompile(`(?i)^(?:(?:minus|negative|plus|positive)\s+|[+−-]\s*)`)
 var leadingDecimalComparisonOperandRE = regexp.MustCompile(`^\.[0-9]+`)
@@ -2240,7 +2251,7 @@ var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closin
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
 var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
-var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|covers?)\b`)
+var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|covers?|pay(?:s|ing)?|paid)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {

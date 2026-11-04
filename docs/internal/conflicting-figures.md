@@ -50,6 +50,8 @@ Closing quotes after a terminal mark stay with that bound, so
 `«The fee is $5/hr. before 1 July 2026.»` also retains it. A quote after the
 abbreviated rate may precede the bound connector, as in
 `The fee is "$5/hr." until 1 July 2026.`
+The bound also survives a closing quote before an independent sentence, as in
+`«The fee is $5/hr. before 1 July 2026.» The deposit is $7.`
 The bound also survives when the clause ends at that date or a semicolon, as in
 `The fee is $5/hr. before 1 July 2026` and
 `The fee is $5/hr. before 1 July 2026;`. Parenthesized endpoints in a stated
@@ -84,7 +86,8 @@ and `exceeding` mark an exclusive lower bound when they precede a figure.
 Comparison continuations omit the clause even when the right operand cannot be
 parsed. This includes symbolic comparisons after a rate; word-number or
 fraction-word operands such as `$5/month higher than thirty`, `$5/month greater
-than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
+than thirty dollars`, `$5/month higher than half a dollar`, or
+`$5/month higher than an estimated $10/month`; spelled-out
 duration operands such as `7 days before thirty days` or
 `7 min. before thirty-five min.`; grouped numeric, fractional or spoken-decimal
 durations such as `7 min. before 1 000 minutes`,
@@ -109,6 +112,9 @@ or `1 00 minutes` is also unsupported: `The deadline is 7 min. before 1,00
 minutes.` and `The deadline is 7 min. before 1 00 minutes.` yield no figures.
 A malformed mixed-separator operand such as `1, 00 minutes` is also
 unsupported: `The deadline is 7 min. before 1, 00 minutes.` yields no figures.
+Arithmetic-shaped relative operands stay attached across an abbreviated unit,
+so `The deadline is 7 min. before 10 + 5 min. The deposit is $7.` omits the
+relative comparison and keeps the independent `$7`.
 Complements such as `including breaks` and `excluding breaks` stay attached to
 the duration operand, so `The deadline is 7 min. before 10 minutes including
 breaks.` and `The deadline is 7 min. before 10 minutes excluding breaks.`
@@ -135,8 +141,10 @@ wait is 7 min. and an hour later, $5 is charged.` keep `7 min` and `$5`.
 A signed duration in an independent later assertion also stays separate, as in
 `The wait is 7 min. and +10 minutes later the fee is $5.` Figures asserted
 after an approximate amount or percentage base remain separate too.
-`The fee is about $5 and $10 covers insurance.` keeps `$10`; `The fee is 5%
-of $100 and $200 covers insurance.` keeps `5%` and `$200`. A malformed operand
+`The fee is about $5 and $10 covers insurance.` and `The fee is about $5 and
+$10 pays shipping costs.` keep `$10`; `The fee is 5% of $100 and $200 covers
+insurance.` and `The fee is 5% of $100 and $200 pays shipping costs.` keep `5%`
+and `$200`. A malformed operand
 does not discard a later independent assertion: `The wait is 7 min. After 1,00
 minutes customers pay $5.` and `The wait is 7 min. After 1 00 minutes customers
 pay $5.` keep `7 min` and `$5`.
