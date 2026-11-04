@@ -1,4 +1,3 @@
-import { arrayView } from "./photoRows.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
@@ -378,8 +377,7 @@ it("scans only appended rows and recomputes replacements", async () => {
   const marker = mocks.marker.mock.results[0]!.value;
   const position = vi.spyOn(marker, "getLatLng");
   mocks.map.project.mockClear();
-  props.items.push(second);
-  await view.rerender({ items: arrayView(props.items) });
+  await view.rerender({ items: props.items.concat(second), appendedFrom: props.items });
   expect(mocks.map.project).toHaveBeenCalledTimes(1);
   expect(position).not.toHaveBeenCalled();
   frame();
@@ -398,8 +396,7 @@ it("keeps unfinished marker batches when another page appends", async () => {
   const { view } = setup(items);
   frame();
   expect(mocks.marker).toHaveBeenCalledTimes(200);
-  items.push(mapPhoto(251));
-  await view.rerender({ items: arrayView(items) });
+  await view.rerender({ items: items.concat(mapPhoto(251)), appendedFrom: items });
   frame();
   expect(mocks.marker).toHaveBeenCalledTimes(251);
   expect(mocks.frames.size).toBe(0);

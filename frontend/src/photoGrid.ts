@@ -1,5 +1,5 @@
 import type { PhotoPreviewSlot } from "./generated/docbank.js";
-import { arraySource, arrayView, type ArrayView, type PhotoBrowseRow } from "./photoRows.js";
+import type { PhotoBrowseRow } from "./photoRows.js";
 
 export type PhotoGridRow = Pick<
   PhotoBrowseRow,
@@ -166,9 +166,8 @@ export function groupPhotos(
     return items.length ? [{ key: "all", label: "Photos", year: "", items }] : [];
   if (grouping === "relevance")
     return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
-  const clocks = new Map(items.map((item) => [item, clockOf(item)]));
-  const undated = items.filter((item) => !Number.isFinite(clocks.get(item)));
-  const dated = items.filter((item) => Number.isFinite(clocks.get(item)));
+  const undated = items.filter((item) => !Number.isFinite(clockOf(item)));
+  const dated = items.filter((item) => Number.isFinite(clockOf(item)));
   const groups: PhotoGroup[] = [];
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();
@@ -184,10 +183,10 @@ export function groupPhotos(
     }
     groups.sort((a, b) => b.key.localeCompare(a.key));
   } else {
-    const sorted = [...dated].sort((a, b) => clocks.get(a)! - clocks.get(b)!);
+    const sorted = [...dated].sort((a, b) => clockOf(a) - clockOf(b));
     let previous = -Infinity;
     for (const item of sorted) {
-      const clock = clocks.get(item)!;
+      const clock = clockOf(item);
       if (clock - previous > 4 * 3600 * 1000) {
         groups.push({
           key: item.asset_id,
@@ -204,7 +203,7 @@ export function groupPhotos(
     for (const group of groups) {
       // The seed item (still items[0] before the sort below reorders them) carries the date.
       const date = photoDate(group.items[0])!.slice(0, 10);
-      group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
+      group.items.sort((a, b) => clockOf(b) - clockOf(a));
       // A group with any genuinely captured photo is a real capture session, even if an
       // mtime-placed photo lands in the same window; only an all-mtime group is file-modified.
       const label = group.items.every((item) => item.file_modified_time)
@@ -243,21 +242,20 @@ export function createPhotoGrouper() {
       rows: PhotoGridRow[],
       grouping: Grouping,
       nextExpanded: ReadonlySet<string>,
-    ): ArrayView<PhotoGroup> {
-      const buffer = arraySource(rows);
+    ): PhotoGroup[] {
       const append =
-        source === buffer &&
+        source !== undefined &&
         consumed <= rows.length &&
         mode === grouping &&
-        expanded === nextExpanded;
+        expanded === nextExpanded &&
+        source.every((row, index) => row === rows[index]);
       const added = (append ? rows.slice(consumed) : rows).filter(
         (row) => !stackHidden(row, nextExpanded),
       );
-      source = buffer;
+      source = rows;
       consumed = rows.length;
       mode = grouping;
       expanded = nextExpanded;
-      let changed = append ? groups.length : 0;
       if (!append) {
         groups = groupPhotos(added, grouping);
         byKey = new Map();
@@ -282,7 +280,6 @@ export function createPhotoGrouper() {
               groups.splice(index, 0, part);
               byKey.set(part.key, part);
             }
-            changed = Math.min(changed, index);
           }
         };
         if (grouping !== "sessions") merge(groupPhotos(added, grouping));
@@ -316,11 +313,10 @@ export function createPhotoGrouper() {
               }
             }
             groups.splice(start, end - start, ...regrouped);
-            changed = Math.min(changed, start);
           }
         }
       }
-      return arrayView(groups, changed);
+      return groups.slice();
     },
   };
 }
@@ -367,22 +363,23 @@ export type PhotoChunk = {
 
 export function createPhotoChunks() {
   let chunks: PhotoChunk[] = [];
-  let source: PhotoGroup[] | undefined;
   let width = 0,
     height = 0;
   let cache = new WeakMap<
     PhotoGridRow[],
     { count: number; layout: ReturnType<typeof computeMonthLayout> }
   >();
-  return (
-    groups: ArrayView<PhotoGroup>,
-    containerWidth: number,
-    targetRowHeight: number,
-  ): PhotoChunk[] => {
+  return (groups: PhotoGroup[], containerWidth: number, targetRowHeight: number): PhotoChunk[] => {
     const reset = width !== containerWidth || height !== targetRowHeight;
     if (reset) cache = new WeakMap();
-    const start = !reset && source === arraySource(groups) ? (groups.changedFrom ?? 0) : 0;
-    if (start === 0 && source !== arraySource(groups)) chunks = [];
+    let start = 0;
+    if (!reset)
+      while (
+        start < chunks.length &&
+        start < groups.length &&
+        chunks[start].group === groups[start]
+      )
+        start++;
     let offset = start ? chunks[start - 1].offset + chunks[start - 1].layout.intrinsicHeight : 0;
     chunks.length = start;
     for (let i = start; i < groups.length; i++) {
@@ -403,10 +400,9 @@ export function createPhotoChunks() {
       chunks.push({ group, layout, offset });
       offset += layout.intrinsicHeight;
     }
-    source = arraySource(groups);
     width = containerWidth;
     height = targetRowHeight;
-    return arrayView(chunks, start);
+    return chunks.slice();
   };
 }
 
@@ -441,12 +437,19 @@ export function createPhotoSeek() {
   let own: string | undefined, stack: string | undefined, older: string | undefined;
   let olderMonth = "";
   return (chunks: PhotoChunk[], month: string, ended = false, loadedItems: PhotoGridRow[] = []) => {
-    // Chunk and row buffers survive appends; a regroup or replacement changes their identity.
-    const buffer = arraySource(chunks);
-    const loadedBuffer = arraySource(loadedItems);
+    let start = 0;
+    while (
+      source &&
+      start < source.length &&
+      start < chunks.length &&
+      source[start] === chunks[start]
+    )
+      start++;
     const reset =
-      source !== buffer ||
-      loadedSource !== loadedBuffer ||
+      !loadedSource ||
+      !loadedSource.every((row, index) => row === loadedItems[index]) ||
+      (source && start === 0 && source[0]?.group.items !== chunks[0]?.group.items) ||
+      (consumed === loadedItems.length && start < (source?.length ?? 0)) ||
       consumed > loadedItems.length ||
       target !== month;
     if (reset) {
@@ -457,8 +460,8 @@ export function createPhotoSeek() {
       olderMonth = "";
       consumed = 0;
     }
-    source = buffer;
-    loadedSource = loadedBuffer;
+    source = chunks;
+    loadedSource = loadedItems;
     target = month;
     const earlier = (a: string | undefined, b: string): string => {
       if (!a) return b;
@@ -469,7 +472,7 @@ export function createPhotoSeek() {
         ? b
         : a;
     };
-    const start = reset ? 0 : ((chunks as ArrayView<PhotoChunk>).changedFrom ?? 0);
+    if (reset) start = 0;
     for (let c = start; c < chunks.length; c++) {
       const chunk = chunks[c],
         items = chunk.group.items;

@@ -280,7 +280,7 @@
       : photoID
         ? current
         : id
-          ? photos.items.find((row) => row.asset_id === id)
+          ? photos.rowByID(id)
           : undefined;
     const concealed = untrack(() => inspectorFaces.concealed);
     void reloadRevision;
@@ -923,9 +923,7 @@
   const outsideSelection = $derived(
     mapMode ? [...photos.selectedIDs].filter((id) => !shownIDs.has(id)).length : 0,
   );
-  const listedRow = $derived(
-    photoID ? photos.items.find((item) => item.asset_id === photoID) : undefined,
-  );
+  const listedRow = $derived(photoID ? photos.rowByID(photoID) : undefined);
   const listedDetail = $derived(!!listedRow && "content_version_id" in listedRow);
   const current = $derived(
     photoID
@@ -939,7 +937,9 @@
     photoID
       ? current
       : !photos.allResults && photos.selectedIDs.size === 1
-        ? shown.find((item) => photos.selectedIDs.has(item.asset_id))
+        ? mapMode
+          ? shown.find((item) => photos.selectedIDs.has(item.asset_id))
+          : photos.rowByID([...photos.selectedIDs][0]!)
         : undefined,
   );
   $effect(() => {
@@ -1750,6 +1750,7 @@
             <PhotoMap
               bind:this={map}
               items={photos.items as PhotoMapRow[]}
+              appendedFrom={photos.appendedFrom}
               {tiles}
               session={photos.session}
               onauthfailure={photos.onauthfailure}

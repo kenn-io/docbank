@@ -1,6 +1,5 @@
 import { tick } from "svelte";
 import { observeSelectionSize } from "./test/selection-observer.svelte.js";
-import { arraySource } from "./photoRows.js";
 import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
@@ -2105,7 +2104,7 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])(
   },
 );
 
-it("publishes a fresh view over appended rows and replaces the buffer on assignments", async () => {
+it("publishes appended rows without changing the previous page and clears append origin on replacement", async () => {
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   const previous = [mapPhoto(1)];
   photos.items = previous;
@@ -2113,11 +2112,12 @@ it("publishes a fresh view over appended rows and replaces the buffer on assignm
   photos.cursor = "next";
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([mapPhoto(2)])));
   await photos.loadMore();
-  expect(arraySource(photos.items)).toBe(previous);
+  expect(photos.appendedFrom).toBe(previous);
+  expect(previous).toEqual([mapPhoto(1)]);
   expect(photos.items).not.toBe(previous);
   expect(photos.items).toHaveLength(2);
   photos.items = photos.items.map((row) => ({ ...row, latitude: 3 }));
-  expect(arraySource(photos.items)).not.toBe(previous);
+  expect(photos.appendedFrom).toBeUndefined();
   photos.dispose();
 });
 

@@ -3,7 +3,6 @@ import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import PhotoGrid from "./PhotoGrid.svelte";
 import { createPhotoGrouper, groupPhotos } from "./photoGrid.js";
-import { arrayView } from "./photoRows.js";
 import { photo } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 
@@ -32,8 +31,8 @@ it("keeps mounted sections bounded while appending to 50,000 capture sessions", 
     expanded = new Set<string>();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const props = {
-    groups: grouper.sync(arrayView(rows), "sessions", expanded),
-    loadedItems: arrayView(rows),
+    groups: grouper.sync(rows.slice(), "sessions", expanded),
+    loadedItems: rows.slice(),
     cache,
     selectedIDs: new Set<string>(),
     targetRowHeight: 200,
@@ -48,8 +47,8 @@ it("keeps mounted sections bounded while appending to 50,000 capture sessions", 
   expect(document.querySelectorAll("[data-month]").length).toBeLessThan(12);
   rows.push(...Array.from({ length: 250 }, (_, i) => photo(100_000 + i, "1990-01-01T00:00:00Z")));
   await view.rerender({
-    groups: grouper.sync(arrayView(rows), "sessions", expanded),
-    loadedItems: arrayView(rows),
+    groups: grouper.sync(rows.slice(), "sessions", expanded),
+    loadedItems: rows.slice(),
   });
   expect(document.querySelectorAll("[data-month]").length).toBeLessThan(12);
   await waitFor(() => expect(document.querySelector('[data-asset="photo-0"]')).toBeTruthy());
@@ -66,8 +65,8 @@ it("keeps loading pages while a date jump is pending", async () => {
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const load = vi.fn();
   const view = render(PhotoGrid, {
-    groups: grouper.sync(arrayView(rows), "months", expanded),
-    loadedItems: arrayView(rows),
+    groups: grouper.sync(rows.slice(), "months", expanded),
+    loadedItems: rows.slice(),
     cache,
     selectedIDs: new Set<string>(),
     targetRowHeight: 200,
@@ -84,8 +83,8 @@ it("keeps loading pages while a date jump is pending", async () => {
   load.mockClear();
   rows.push(...Array.from({ length: 250 }, (_, i) => photo(20_000 + i, "2025-05-01T12:00:00Z")));
   await view.rerender({
-    groups: grouper.sync(arrayView(rows), "months", expanded),
-    loadedItems: arrayView(rows),
+    groups: grouper.sync(rows.slice(), "months", expanded),
+    loadedItems: rows.slice(),
   });
   await waitFor(() => expect(load).toHaveBeenCalled());
   await cache.dispose();

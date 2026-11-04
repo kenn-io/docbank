@@ -1,5 +1,4 @@
 import { SvelteSet } from "svelte/reactivity";
-import { arrayView } from "./photoRows.js";
 import { patchPhotoRows, photoRows, photoStacksChanged, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
@@ -349,17 +348,17 @@ export class Photos {
   filtersOpen = $state(false);
   private rows = $state.raw<PhotoRow[]>([]);
   private rowsByID = new Map<string, PhotoRow>();
-  private rowBuffer: PhotoRow[] = [];
+  appendedFrom = $state.raw<PhotoRow[] | undefined>();
   get items() {
     return this.rows;
   }
   set items(value: PhotoRow[]) {
-    this.rowBuffer = value;
+    this.appendedFrom = undefined;
     this.rowsByID = new Map(value.map((row) => [row.asset_id, row]));
-    this.rows = arrayView(value);
+    this.rows = value;
   }
   rowByID(id: string) {
-    // Track replacements and appends through the published row view.
+    // Track replacements and appends through the published rows.
     void this.rows;
     return this.rowsByID.get(id);
   }
@@ -873,8 +872,9 @@ export class Photos {
           added.push(item);
         }
         const restore = preserve?.();
-        this.rowBuffer.push(...added);
-        this.rows = arrayView(this.rowBuffer);
+        const previous = this.rows;
+        this.rows = previous.concat(added);
+        this.appendedFrom = previous;
         if (this.selectsAll) {
           // Photos owns this reactive set. Selection edits replace it.
           const selected = this.selection.selectedIDs;
