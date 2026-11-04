@@ -35,10 +35,21 @@ export type Row = {
 export type Layout = { rows: Row[]; totalHeight: number };
 
 export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layout {
+  return justify(items.length, (i) => items[i]!.aspect, opts);
+}
+
+function justify(
+  count: number,
+  aspectAt: (index: number) => number,
+  opts: LayoutOptions,
+  prev?: Layout,
+): Layout {
   const gap = opts.gap ?? 4;
   const maxH = opts.maxRowHeight ?? Math.ceil(opts.targetRowHeight * 1.6);
-  const rows: Row[] = [];
-  let y = 0;
+  const rows = prev?.rows ?? [];
+  const last = rows.pop();
+  const start = last?.items[0]?.index ?? 0;
+  let y = last?.y ?? 0;
 
   let pending: { index: number; aspect: number }[] = [];
   let pendingAspectSum = 0;
@@ -66,8 +77,8 @@ export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layo
     pendingAspectSum = 0;
   };
 
-  for (let i = 0; i < items.length; i++) {
-    const aspect = Math.max(items[i]!.aspect, 0.05);
+  for (let i = start; i < count; i++) {
+    const aspect = Math.max(aspectAt(i), 0.05);
     pending.push({ index: i, aspect });
     pendingAspectSum += aspect;
     const widthIfPacked = pendingAspectSum * opts.targetRowHeight + gap * (pending.length - 1);
@@ -127,6 +138,26 @@ function captureClock(value: string): number {
   return utcYear >= 1 && utcYear <= 9999 ? clock : NaN;
 }
 
+const clocks = new WeakMap<PhotoGridRow, number>();
+function clockOf(row: PhotoGridRow): number {
+  if (!clocks.has(row)) {
+    const value = photoDate(row);
+    clocks.set(row, value ? captureClock(value) : NaN);
+  }
+  return clocks.get(row)!;
+}
+
+export function stackHidden(
+  row: { asset_id: string; stack?: PhotoBrowseRow["stack"] },
+  expanded: ReadonlySet<string>,
+): boolean {
+  return (
+    !!row.stack &&
+    !expanded.has(row.stack.asset_ids[0]!) &&
+    row.asset_id !== row.stack.representative_id
+  );
+}
+
 export function groupPhotos(
   items: PhotoGridRow[],
   grouping: "months" | "sessions" | "flat" | "relevance",
@@ -135,11 +166,8 @@ export function groupPhotos(
     return items.length ? [{ key: "all", label: "Photos", year: "", items }] : [];
   if (grouping === "relevance")
     return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
-  const clocks = new Map(
-    items.map((item) => [item, photoDate(item) ? captureClock(photoDate(item)!) : NaN]),
-  );
-  const undated = items.filter((item) => !Number.isFinite(clocks.get(item)));
-  const dated = items.filter((item) => Number.isFinite(clocks.get(item)));
+  const undated = items.filter((item) => !Number.isFinite(clockOf(item)));
+  const dated = items.filter((item) => Number.isFinite(clockOf(item)));
   const groups: PhotoGroup[] = [];
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();
@@ -155,10 +183,10 @@ export function groupPhotos(
     }
     groups.sort((a, b) => b.key.localeCompare(a.key));
   } else {
-    const sorted = [...dated].sort((a, b) => clocks.get(a)! - clocks.get(b)!);
+    const sorted = [...dated].sort((a, b) => clockOf(a) - clockOf(b));
     let previous = -Infinity;
     for (const item of sorted) {
-      const clock = clocks.get(item)!;
+      const clock = clockOf(item);
       if (clock - previous > 4 * 3600 * 1000) {
         groups.push({
           key: item.asset_id,
@@ -175,7 +203,7 @@ export function groupPhotos(
     for (const group of groups) {
       // The seed item (still items[0] before the sort below reorders them) carries the date.
       const date = photoDate(group.items[0])!.slice(0, 10);
-      group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
+      group.items.sort((a, b) => clockOf(b) - clockOf(a));
       // A group with any genuinely captured photo is a real capture session, even if an
       // mtime-placed photo lands in the same window; only an all-mtime group is file-modified.
       const label = group.items.every((item) => item.file_modified_time)
@@ -189,15 +217,140 @@ export function groupPhotos(
   return groups;
 }
 
+type Grouping = "months" | "sessions" | "flat" | "relevance";
+
+// Returns the first index where before no longer holds.
+function boundary(count: number, before: (index: number) => boolean): number {
+  let lo = 0,
+    hi = count;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (before(mid)) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+export function createPhotoGrouper() {
+  let source: PhotoGridRow[] | undefined,
+    consumed = 0;
+  let mode: Grouping | undefined, expanded: ReadonlySet<string> | undefined;
+  let groups: PhotoGroup[] = [];
+  let byKey = new Map<string, PhotoGroup>();
+  return {
+    sync(
+      rows: PhotoGridRow[],
+      grouping: Grouping,
+      nextExpanded: ReadonlySet<string>,
+      appendedFrom?: PhotoGridRow[],
+    ): { groups: PhotoGroup[]; changedFrom: number } {
+      const append =
+        source !== undefined &&
+        consumed <= rows.length &&
+        mode === grouping &&
+        expanded === nextExpanded &&
+        source === appendedFrom;
+      let changedFrom = append ? groups.length : 0;
+      const added = (append ? rows.slice(consumed) : rows).filter(
+        (row) => !stackHidden(row, nextExpanded),
+      );
+      source = rows;
+      consumed = rows.length;
+      mode = grouping;
+      expanded = nextExpanded;
+      if (!append) {
+        groups = groupPhotos(added, grouping);
+        byKey = new Map();
+        for (const group of groups)
+          if (grouping !== "sessions" || group.key === "undated") byKey.set(group.key, group);
+      } else {
+        const merge = (page: PhotoGroup[]) => {
+          for (const part of page) {
+            const old = byKey.get(part.key);
+            const index = boundary(
+              groups.length,
+              (i) =>
+                groups[i].key !== "undated" &&
+                (part.key === "undated" || groups[i].key.localeCompare(part.key) > 0),
+            );
+            changedFrom = Math.min(changedFrom, index);
+            if (old) {
+              for (const item of part.items) old.items.push(item);
+              const next = { ...old };
+              groups[index] = next;
+              byKey.set(part.key, next);
+            } else {
+              groups.splice(index, 0, part);
+              byKey.set(part.key, part);
+            }
+          }
+        };
+        if (grouping !== "sessions") merge(groupPhotos(added, grouping));
+        else {
+          const page = groupPhotos(added, "sessions");
+          const replacements: { start: number; end: number; items: PhotoGridRow[] }[] = [];
+          const undated = page.at(-1)?.key === "undated" ? page.pop() : undefined;
+          const endOfDated = groups.length - (groups.at(-1)?.key === "undated" ? 1 : 0);
+          // Each page session is a separate clock cluster. A wide page touches only
+          // nearby retained sessions, even when Imported order spans many years.
+          for (const part of page) {
+            const hi = clockOf(part.items[0]),
+              lo = clockOf(part.items.at(-1)!);
+            const gap = 4 * 3600 * 1000;
+            const start = boundary(endOfDated, (i) => clockOf(groups[i].items.at(-1)!) > hi + gap);
+            const end = boundary(endOfDated, (i) => clockOf(groups[i].items[0]) >= lo - gap);
+            const previous = replacements.at(-1);
+            // Separate page clusters can still join through one retained session.
+            if (previous && start < previous.end) {
+              previous.end = end;
+              for (const item of part.items) previous.items.push(item);
+            } else replacements.push({ start, end, items: part.items });
+          }
+          const nextGroups: PhotoGroup[] = [];
+          let cursor = 0;
+          for (const { start, end, items } of replacements) {
+            while (cursor < start) nextGroups.push(groups[cursor++]);
+            const retained = groups.slice(start, end).flatMap((group) => group.items);
+            const regrouped = groupPhotos([...retained, ...items], "sessions");
+            for (let i = 0; i < regrouped.length; i++) {
+              const next = regrouped[i],
+                old = groups[start + i];
+              if (
+                old &&
+                old.items.length <= next.items.length &&
+                old.items.every((item, index) => item === next.items[index])
+              ) {
+                for (let j = old.items.length; j < next.items.length; j++)
+                  old.items.push(next.items[j]);
+                next.items = old.items;
+              }
+              nextGroups.push(next);
+            }
+            changedFrom = Math.min(changedFrom, start);
+            cursor = end;
+          }
+          while (cursor < groups.length) nextGroups.push(groups[cursor++]);
+          groups = nextGroups;
+          if (undated) merge([undated]);
+        }
+      }
+      return { groups: groups.slice(), changedFrom };
+    },
+  };
+}
+
 export function computeMonthLayout(
   items: PhotoGridRow[],
   containerWidth: number,
   targetRowHeight: number,
   contentOffset = HEADER_HEIGHT,
+  prev?: { layout: Layout; count: number },
 ) {
-  const layout = computeJustified(
-    items.map((item) => ({ aspect: photoAspect(item) })),
+  const layout = justify(
+    items.length,
+    (i) => photoAspect(items[i]),
     { containerWidth, targetRowHeight },
+    prev && prev.count < items.length ? prev.layout : undefined,
   );
   return {
     ...layout,
@@ -207,15 +360,10 @@ export function computeMonthLayout(
 }
 
 function rowBoundary(rows: Row[], top: number, after = false): number {
-  let start = 0;
-  let end = rows.length;
-  while (start < end) {
-    const mid = (start + end) >>> 1;
-    const bottom = rows[mid].y + rows[mid].height;
-    if (after ? bottom <= top : bottom < top) start = mid + 1;
-    else end = mid;
-  }
-  return start;
+  return boundary(rows.length, (i) => {
+    const bottom = rows[i].y + rows[i].height;
+    return after ? bottom <= top : bottom < top;
+  });
 }
 
 export function visibleRows(rows: Row[], top: number, bottom: number): Row[] {
@@ -231,49 +379,170 @@ export type PhotoChunk = {
   offset: number;
 };
 
+export function createPhotoChunks() {
+  let chunks: PhotoChunk[] = [];
+  let width = 0,
+    height = 0;
+  let cache = new WeakMap<
+    PhotoGridRow[],
+    { count: number; layout: ReturnType<typeof computeMonthLayout> }
+  >();
+  return (
+    groups: PhotoGroup[],
+    containerWidth: number,
+    targetRowHeight: number,
+    changedFrom = 0,
+  ): { chunks: PhotoChunk[]; changedFrom: number } => {
+    const reset = width !== containerWidth || height !== targetRowHeight;
+    if (reset) cache = new WeakMap();
+    const start = reset ? 0 : changedFrom;
+    let offset = start ? chunks[start - 1].offset + chunks[start - 1].layout.intrinsicHeight : 0;
+    chunks.length = start;
+    for (let i = start; i < groups.length; i++) {
+      const group = groups[i];
+      const previous = cache.get(group.items);
+      const contentOffset = group.key === "relevance" ? 12 : HEADER_HEIGHT;
+      const layout =
+        previous?.count === group.items.length
+          ? previous.layout
+          : computeMonthLayout(
+              group.items,
+              containerWidth,
+              targetRowHeight,
+              contentOffset,
+              previous,
+            );
+      cache.set(group.items, { count: group.items.length, layout });
+      chunks.push({ group, layout, offset });
+      offset += layout.intrinsicHeight;
+    }
+    width = containerWidth;
+    height = targetRowHeight;
+    return { chunks: chunks.slice(), changedFrom: start };
+  };
+}
+
+export function chunkAt(chunks: PhotoChunk[], top: number): number {
+  return boundary(chunks.length, (i) => chunks[i].offset + chunks[i].layout.intrinsicHeight < top);
+}
+
 const photoMonth = (item?: PhotoGridRow) => (item && photoDate(item)?.slice(0, 7)) ?? "";
 
 // layoutRow is the chunk's layout row holding the photo at index, if any.
 export function layoutRow(chunk: PhotoChunk, index: number): Row | undefined {
-  return chunk.layout.rows.find((row) => row.items.some((item) => item.index === index));
+  if (index < 0) return;
+  const rows = chunk.layout.rows;
+  const found = boundary(rows.length, (i) => rows[i].items.at(-1)!.index < index);
+  return rows[found];
 }
 
 export function rowTop(chunk: PhotoChunk, row: Row): number {
   return chunk.offset + chunk.layout.contentOffset + row.y;
 }
 
-// firstRow locates the first matching visible photo. A section's first row starts at its heading.
-function firstRow(chunks: PhotoChunk[], matches: (item: PhotoGridRow) => boolean) {
-  for (const chunk of chunks.filter((chunk) => chunk.group.year)) {
-    const row = layoutRow(chunk, chunk.group.items.findIndex(matches));
+// Keep a pending jump's scan position across appended pages. Replacements start a new scan.
+export function createPhotoSeek() {
+  let source: PhotoChunk[] | undefined, loadedSource: PhotoGridRow[] | undefined;
+  let target = "",
+    consumed = 0;
+  type Scan = { chunk: PhotoChunk; count: number };
+  let scanned = new WeakMap<PhotoGridRow[], Scan>();
+  type Location = { scan: Scan; index: number };
+  let locations = new Map<string, Location>();
+  let representatives = new Set<string>();
+  let stack: string | undefined, older: string | undefined;
+  let olderMonth = "";
+  return (
+    chunks: PhotoChunk[],
+    month: string,
+    ended = false,
+    loadedItems: PhotoGridRow[] = [],
+    appendedFrom?: PhotoGridRow[],
+    start = 0,
+  ) => {
+    const reset =
+      !loadedSource ||
+      (loadedSource !== loadedItems && loadedSource !== appendedFrom) ||
+      (source && start === 0 && source[0]?.group.items !== chunks[0]?.group.items) ||
+      (consumed === loadedItems.length && start < (source?.length ?? 0)) ||
+      consumed > loadedItems.length ||
+      target !== month;
+    if (reset) {
+      scanned = new WeakMap();
+      locations = new Map();
+      representatives = new Set();
+      stack = older = undefined;
+      olderMonth = "";
+      consumed = 0;
+    }
+    source = chunks;
+    loadedSource = loadedItems;
+    target = month;
+    const earlier = (a: string | undefined, b: string): string => {
+      if (!a) return b;
+      const left = locations.get(a)!,
+        right = locations.get(b)!;
+      return right.scan.chunk.offset < left.scan.chunk.offset ||
+        (right.scan.chunk.offset === left.scan.chunk.offset && right.index < left.index)
+        ? b
+        : a;
+    };
+    if (reset) start = 0;
+    let nextStack: string | undefined, nextOlder: string | undefined;
+    let nextOlderMonth = "";
+    for (let c = start; c < chunks.length; c++) {
+      const chunk = chunks[c],
+        items = chunk.group.items;
+      if (!chunk.group.year) continue;
+      let scan = scanned.get(items);
+      if (!scan) scanned.set(items, (scan = { chunk, count: 0 }));
+      scan.chunk = chunk;
+      for (let i = scan.count; i < items.length; i++) {
+        const item = items[i],
+          found = photoMonth(item);
+        if (found === month) {
+          // A resolved seek needs no resume state. The next call starts a fresh scan.
+          loadedSource = undefined;
+          const row = layoutRow(chunk, i);
+          if (row)
+            return row === chunk.layout.rows[0]
+              ? chunk.offset
+              : rowTop(chunk, row) - STICKY_HEADER_HEIGHT;
+        }
+        const id = item.asset_id;
+        locations.set(id, { scan, index: i });
+        if (found && found <= month && found > nextOlderMonth) {
+          nextOlder = id;
+          nextOlderMonth = found;
+        }
+        if (!nextStack && representatives.has(id)) nextStack = id;
+      }
+      scan.count = items.length;
+    }
+    // Regrouping can move retained candidates. Compare after updating their positions.
+    if (nextOlder && nextOlderMonth >= olderMonth) {
+      older = nextOlderMonth > olderMonth ? nextOlder : earlier(older, nextOlder);
+      olderMonth = nextOlderMonth;
+    }
+    if (nextStack) stack = earlier(stack, nextStack);
+    for (let i = consumed; i < loadedItems.length; i++) {
+      const row = loadedItems[i];
+      if (!row.stack || photoMonth(row) !== month) continue;
+      const id = row.stack.representative_id;
+      representatives.add(id);
+      if (locations.has(id)) stack = earlier(stack, id);
+    }
+    consumed = loadedItems.length;
+    const id = stack ?? (ended ? older : undefined);
+    if (!id) return;
+    const { scan, index } = locations.get(id)!;
+    const chunk = scan.chunk;
+    const row = layoutRow(chunk, index);
     if (row)
       return row === chunk.layout.rows[0]
         ? chunk.offset
         : rowTop(chunk, row) - STICKY_HEADER_HEIGHT;
-  }
-}
-
-// seekOffset returns where the month's first photo or its collapsed stack sits. Photos page in UTC
-// order but are filed by recorded date, so only a finished list can say it has none;
-// then the first row of the nearest older calendar month stands in. Undefined means the
-// caller should keep paging, or scroll to the end once the list has ended.
-export function seekOffset(
-  chunks: PhotoChunk[],
-  month: string,
-  ended = false,
-  loadedItems: PhotoGridRow[] = [],
-) {
-  const own = firstRow(chunks, (item) => photoMonth(item) === month);
-  if (own !== undefined) return own;
-  const members = new Set(
-    loadedItems.flatMap((row) => (row.stack && photoMonth(row) === month ? [row.asset_id] : [])),
-  );
-  const stack = firstRow(chunks, (item) => !!item.stack?.asset_ids.some((id) => members.has(id)));
-  if (stack !== undefined) return stack;
-  if (!ended) return;
-  const months = chunks.flatMap(({ group }) => (group.year ? group.items.map(photoMonth) : []));
-  const target = months.sort().findLast((found) => found <= month);
-  return firstRow(chunks, (item) => photoMonth(item) === target);
+  };
 }
 
 // topPhoto is the first photo in the chunk's top visible row.
@@ -284,7 +553,8 @@ function topPhoto({ layout, group, offset }: PhotoChunk, top: number) {
 
 // monthAt names the first photo visible below the sticky section heading in any order.
 export function monthAt(chunks: PhotoChunk[], top: number): string {
-  for (const chunk of chunks) {
+  for (let i = chunkAt(chunks, top); i < chunks.length; i++) {
+    const chunk = chunks[i];
     if (chunk.offset + chunk.layout.intrinsicHeight <= top) continue;
     const photo = topPhoto(
       chunk,

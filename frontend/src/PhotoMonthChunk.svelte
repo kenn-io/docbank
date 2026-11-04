@@ -53,6 +53,7 @@
     rows.flatMap((row) =>
       row.items.map((cell) => ({
         photo: group.items[cell.index],
+        index: cell.index,
         x: cell.x,
         y: row.y,
         width: cell.width,
@@ -81,6 +82,7 @@
         {@const photo = cell.photo}
         <div
           class="cell"
+          data-index={cell.index}
           style:left={`${cell.x}px`}
           style:top={`${cell.y}px`}
           style:width={`${cell.width}px`}
