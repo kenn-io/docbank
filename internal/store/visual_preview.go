@@ -515,7 +515,7 @@ func photoPreviewGenerations(ctx context.Context, q metadataQuerier, versions []
 	for _, recipe := range recipes {
 		args = append(args, recipe)
 	}
-	slots := strings.Split(numberedPlaceholders(len(args)), ",")
+	slots := strings.Split(numberedPlaceholders(len(args), 0), ",")
 	versionSlots := strings.Join(slots[:len(versions)], ",")
 	recipeSlots := strings.Join(slots[len(versions):], ",")
 	rows, err := q.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id IN (`+versionSlots+`) AND recipe_fingerprint IN (`+recipeSlots+`)`, args...)

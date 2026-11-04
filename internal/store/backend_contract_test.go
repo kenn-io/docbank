@@ -91,6 +91,57 @@ var backendSuites = []backendSuite{
 		{"BrowserPhotoDirectoryContinuation", func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newPostgresQueryStore) }},
 		{"BrowserPhotoSizeCandidates", func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newPostgresQueryStore) }},
 	}},
+	{name: "photo-edit", postgres: "native operations", scope: "Explicit photo metadata edits, keywords and undo; XMP classification, conflicts and sidecar publication. Excludes ranked photo selection, people and checkout.", scenarios: []backendScenario{
+		{"PhotoXMPEmbeddedSourceClaim", func(t *testing.T) { t.Helper(); checkPhotoXMPEmbeddedSourceClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPEmbeddedSourceClaim(t, newPostgresQueryStore) }},
+		{"PhotoEditRollback", nil, checkPhotoEditRollbackPostgres},
+		{"PhotoPreparationSnapshot", nil, checkPhotoPreparationSnapshotPostgres},
+		{"PhotoEditRetainedSuggestions", nil, checkPhotoEditRetainedSuggestionsPostgres},
+		{"PhotoXMPPublication", func(t *testing.T) { t.Helper(); checkPhotoXMPPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPPublication(t, newPostgresQueryStore) }},
+		{"PhotoXMPConflictResolution", func(t *testing.T) { t.Helper(); checkPhotoXMPConflictResolution(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPConflictResolution(t, newPostgresQueryStore) }},
+
+		{"PhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo", func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchConflictsAndAtomicFailure", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchConflictsAndAtomicFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchConflictsAndAtomicFailure(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchViewedContent", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchViewedContent(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchViewedContent(t, newPostgresQueryStore) }},
+		{"PhotoAuthoredBatchRevisionGroups", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchRevisionGroups(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchRevisionGroups(t, newPostgresQueryStore) }},
+		{"PhotoKeywordEditNoop", func(t *testing.T) { t.Helper(); checkPhotoKeywordEditNoop(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoKeywordEditNoop(t, newPostgresQueryStore) }},
+		{"PhotoKeywordUndo", func(t *testing.T) { t.Helper(); checkPhotoKeywordUndo(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoKeywordUndo(t, newPostgresQueryStore) }},
+		{"PhotoAuthoredInitialDecisionUndoRestoresConfirmation", func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchTargetChecksFollowRequestOrder", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchTargetChecksFollowRequestOrder(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchTargetChecksFollowRequestOrder(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchEditsTargetsAcrossLoadChunks", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchEditsTargetsAcrossLoadChunks(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchEditsTargetsAcrossLoadChunks(t, newPostgresQueryStore)
+		}},
+		{"PhotoXMPTargetCursorVisitsEveryOriginalOnce", func(t *testing.T) { t.Helper(); checkPhotoXMPTargetCursorVisitsEveryOriginalOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoXMPTargetCursorVisitsEveryOriginalOnce(t, newPostgresQueryStore)
+		}},
+		{"PhotoXMPInvalidation", func(t *testing.T) { t.Helper(); checkPhotoXMPInvalidation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPInvalidation(t, newPostgresQueryStore) }},
+		{"PhotoXMPInputEligibilityMatchesTargetRoles", func(t *testing.T) { t.Helper(); checkPhotoXMPInputEligibilityMatchesTargetRoles(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoXMPInputEligibilityMatchesTargetRoles(t, newPostgresQueryStore)
+		}},
+		{"PhotoXMPURLSidecarPairingAndClaim", func(t *testing.T) { t.Helper(); checkPhotoXMPURLSidecarPairingAndClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPURLSidecarPairingAndClaim(t, newPostgresQueryStore) }},
+		{"PhotoXMPReceiptLimit", func(t *testing.T) { t.Helper(); checkPhotoXMPReceiptLimit(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPReceiptLimit(t, newPostgresQueryStore) }},
+		{"PhotoXMPAuditClassification", func(t *testing.T) { t.Helper(); checkPhotoXMPAuditClassification(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPAuditClassification(t, newPostgresQueryStore) }},
+	}},
 	{name: "visual-evidence", postgres: "native operations", scope: "Preview publication, exact-version reads, image preparation and retained email PDF evidence; excludes renderer executables and photo/person workflows.", scenarios: []backendScenario{
 		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
 		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
@@ -974,7 +1025,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
+	{name: "photo-editing", postgres: "unqualified", scope: "People/face publication, best-shot/representative choices, hidden-session management, photo review and checkout remain unqualified. Photo query selection is covered by the search boundary."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{

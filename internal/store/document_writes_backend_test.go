@@ -191,7 +191,7 @@ func checkDocumentSidecarWorkPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	source, asset, raw := xmpSidecarPhoto(t)
+	source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	importXMP(t, source, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 	require.Empty(t, xmpTargets(t, source))
 	setup, owner := pgtest.NewDatabase(t)

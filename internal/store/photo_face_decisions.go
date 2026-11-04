@@ -1044,7 +1044,7 @@ func (s *Store) readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []Pho
 	for i, f := range faces {
 		index[f.FaceID] = i
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND f.content_version_id=? ORDER BY 1,2`, faces[0].ContentVersionID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND f.content_version_id=$1 ORDER BY 1,2`, faces[0].ContentVersionID)
 	if err != nil {
 		return err
 	}

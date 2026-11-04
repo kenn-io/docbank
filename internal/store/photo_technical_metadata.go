@@ -64,7 +64,7 @@ var (
 	photoTechnicalSelect = "p." + strings.Join(photoTechnicalColumns, ",p.")
 	photoTechnicalInsert = "INSERT INTO photo_technical_metadata(generation_id,capture_sort_key,capture_date," +
 		"camera_make_folded,camera_model_folded,lens_make_folded,lens_model_folded," +
-		strings.Join(photoTechnicalColumns, ",") + ") VALUES(" + numberedPlaceholders(7+len(photoTechnicalColumns)) +
+		strings.Join(photoTechnicalColumns, ",") + ") VALUES(" + numberedPlaceholders(7+len(photoTechnicalColumns), 0) +
 		") ON CONFLICT(generation_id) DO NOTHING"
 )
 

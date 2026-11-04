@@ -359,9 +359,11 @@ and read paths. Plain-text extraction covers queue discovery, retry scheduling,
 terminal results and publication of retained text under rendition authority.
 Grouped photo imports include pairing, source replay, browser folder
 continuation and import progress.
+Photo metadata edits and undo, XMP conflict settlement and sidecar publication
+also use shared operations for explicit asset selections.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. XMP sidecar writing, photo-derived processing, email PDF
+operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
 transfer, backup recovery, multi-store placement and their storage-operation jobs
 remain unqualified.
@@ -458,7 +460,9 @@ GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
     display_override_file_id, revision, updated_at)
     ON documents.photo_assets TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
-GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity)
+GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity,
+    revision, rating, flag, label, caption, creator, copyright, rotation,
+    confirmed_fields, flag_owner)
     ON documents.photo_files TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_timeline TO docbank_runtime;
 GRANT INSERT, UPDATE(original_path, original_mtime, folder_key)
@@ -757,8 +761,8 @@ the original versions, jobs, receipts, epochs and node revisions.
 `make backend-coverage` reports the recorded SQLite catalog effects,
 their PostgreSQL owners and their remaining boundaries. Audit enrollment already
 queues affected photos through `queueAuditPhotosTx`. Deleting authority or
-memberships during import/restore still needs that effect. XMP publication,
-people candidates and search also have unported effects; their
+memberships during import/restore still needs that effect. Source-head recovery,
+people candidates and search still have unported effects; their
 retained tables do not establish write support.
 
 For each remaining port, capture affected identities before cascades remove the
@@ -1069,9 +1073,40 @@ the shared operation records under writer admission. Expired receipts stay until
 pending physical cleanup is gone; this does not qualify multi-store operations.
 
 The `photo-import` suite covers these native Store workflows. Retained XMP
-receipts used by import are produced by SQLite's publisher; XMP publication,
-authored editing, people/review workflows and public PostgreSQL vault opening
-remain separate qualification boundaries.
+receipts used by import are produced by SQLite's publisher. Native XMP publication
+and authored editing are covered by the `photo-edit` suite below; people/review
+workflows and public PostgreSQL vault opening remain unqualified.
+
+#### Photo metadata edits and XMP synchronization
+
+The internal PostgreSQL Store supports metadata preparation by explicit asset
+IDs, batch edits, keyword changes and undo. Ratings, flags, labels, captions,
+creator, copyright and rotation keep the same file and node revision fences as
+SQLite. Audited edits append their history in the same writer transaction.
+Preparation reads the assets, file values, keywords, XMP status and retained
+suggestions from one repeatable-read snapshot.
+
+XMP classification, incoming metadata and keyword imports, conflict settlement,
+and sidecar creation or replacement use the shared Store operations. A plan must
+still match both its input token and last receipt when it publishes. A settled
+plan cannot be replayed by a second worker. Detaching a generated sidecar retains
+its history; a later edit can reuse it. Source pairing excludes caller-supplied
+embedded evidence case-insensitively on both backends.
+
+PostgreSQL refreshes photo export work inside authored edits and XMP settlement.
+Receipts, imported values, sidecar versions and queue changes commit together;
+a failed receipt write leaves the prior state and queued retry intact. SQLite
+retains its released triggers and receives no additional maintenance queries.
+The existing receipt lookup expressions keep their engine-specific indexes.
+
+The `photo-edit` contracts exercise native writes, stale plans, both conflict
+choices, generated sidecars, undo, audit history, queue invalidation and rollback.
+Retained face and description records also participate in metadata preparation;
+that read coverage does not qualify their producers. Query-based selections,
+`SkipUnavailable`, best-shot/representative choices, hidden-session management,
+photo review and checkout, and public PostgreSQL vault opening remain unqualified.
+The processing worker's XML encoding and filesystem publication still run through
+the SQLite vault; this qualification covers their Store calls.
 
 #### Recoverable deletion
 
@@ -1097,7 +1132,7 @@ assets from multiple statements. Backend qualification compares populated photo
 state, receipts and export inputs against SQLite and validates the resulting
 ordinary and audited metadata.
 
-General photo editing, portable backup/restore and public PostgreSQL vault
+Photo review and checkout, portable backup/restore and public PostgreSQL vault
 opening remain unqualified.
 
 #### Permanent cleanup
@@ -1242,8 +1277,8 @@ Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
 They force a late invalidation failure to verify rollback, and commit concurrent
 writes during history reads to verify snapshot consistency. These capabilities
-do not expose a public PostgreSQL vault or qualify XMP
-sidecar writing, portable metadata import, collection snapshots, reporting,
+do not expose a public PostgreSQL vault or qualify portable metadata import,
+collection snapshots, reporting,
 backup or restore.
 
 #### Tags and saved definitions

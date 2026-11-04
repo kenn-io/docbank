@@ -262,13 +262,13 @@ func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[s
 			args[i] = id
 		}
 		query := `SELECT content_version_id FROM collection_snapshot_members
-			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch), 0) + `)
 			UNION SELECT content_version_id FROM collection_snapshot_representations
-			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch), 0) + `)
 			UNION SELECT content_version_id FROM package_labels
-			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch), 0) + `)
 			UNION SELECT content_version_id FROM package_import_receipts
-			WHERE content_version_id IN (` + numberedPlaceholders(len(batch)) + `)
+			WHERE content_version_id IN (` + numberedPlaceholders(len(batch), 0) + `)
 			ORDER BY content_version_id LIMIT 1`
 		var retained string
 		err := tx.QueryRowContext(ctx, query, args...).Scan(&retained)
@@ -301,11 +301,11 @@ func retainMediaAuthorityVersionsTx(ctx context.Context, tx *sql.Tx, candidates,
 		}
 		err := func() error {
 			rows, err := tx.QueryContext(ctx, `SELECT content_version_id FROM media_source_versions
-		WHERE content_version_id IN (`+numberedPlaceholders(len(batch))+`)
+		WHERE content_version_id IN (`+numberedPlaceholders(len(batch), 0)+`)
 		UNION SELECT content_version_id FROM media_input_artifacts
-		WHERE content_version_id IN (`+numberedPlaceholders(len(batch))+`)
+		WHERE content_version_id IN (`+numberedPlaceholders(len(batch), 0)+`)
 		UNION SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE (`+photoCheckoutHoldPredicate+`)
-		AND e.version_id IN (`+numberedPlaceholders(len(batch))+`)`, args...)
+		AND e.version_id IN (`+numberedPlaceholders(len(batch), 0)+`)`, args...)
 			if err != nil {
 				return err
 			}
@@ -491,7 +491,7 @@ func contentVersionOwnersTx(ctx context.Context, tx *sql.Tx, versionIDs []string
 		args[index] = id
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT version_id, node_id FROM content_versions
-		WHERE version_id IN (`+numberedPlaceholders(len(versionIDs))+`)`, args...)
+		WHERE version_id IN (`+numberedPlaceholders(len(versionIDs), 0)+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("resolving selected content versions: %w", err)
 	}
@@ -614,7 +614,7 @@ func addVersionPruneOutputRefsBatchTx(
 			UNION ALL
 			SELECT version_id, blob_hash FROM page_images
 		)
-		WHERE version_id IN (`+numberedPlaceholders(len(args))+`)
+		WHERE version_id IN (`+numberedPlaceholders(len(args), 0)+`)
 		GROUP BY blob_hash`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune outputs: %w", err)
@@ -665,7 +665,7 @@ func versionPruneBlobStatsBatchTx(
 			`+blobReferenceRowsSQL(blobRootReferences)+`
 			) refs
 			JOIN blobs b ON b.hash = refs.blob_hash
-			WHERE refs.blob_hash IN (`+numberedPlaceholders(len(hashes))+`)
+			WHERE refs.blob_hash IN (`+numberedPlaceholders(len(hashes), 0)+`)
 			GROUP BY refs.blob_hash, b.size`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune blobs: %w", err)
@@ -701,7 +701,7 @@ func inventoryVersionPruneLocationsTx(
 		FROM blob_locations l
 		LEFT JOIN blob_pack_entries p
 		  ON p.blob_hash = l.blob_hash AND p.store_id = l.store_id
-		WHERE l.blob_hash IN (`+numberedPlaceholders(len(hashes))+`)
+		WHERE l.blob_hash IN (`+numberedPlaceholders(len(hashes), 0)+`)
 		ORDER BY l.blob_hash, l.store_id`, args...)
 	if err != nil {
 		return fmt.Errorf("inventorying version-prune locations: %w", err)
@@ -746,10 +746,10 @@ func inventoryVersionPruneLocationsTx(
 }
 
 // Numbered parameters can be reused by each arm of a UNION on both engines.
-func numberedPlaceholders(count int) string {
+func numberedPlaceholders(count, offset int) string {
 	values := make([]string, count)
 	for i := range values {
-		values[i] = fmt.Sprintf("$%d", i+1)
+		values[i] = fmt.Sprintf("$%d", offset+i+1)
 	}
 	return strings.Join(values, ",")
 }
