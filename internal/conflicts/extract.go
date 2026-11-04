@@ -1030,7 +1030,39 @@ func splitClauses(s string) []clause {
 			for candidateNext < len(s) {
 				closer, size := utf8.DecodeRuneInString(s[candidateNext:])
 				if unicode.IsSpace(closer) {
-					candidateNext += size
+					lookahead := candidateNext
+					for lookahead < len(s) {
+						space, spaceSize := utf8.DecodeRuneInString(s[lookahead:])
+						if !unicode.IsSpace(space) {
+							break
+						}
+						lookahead += spaceSize
+					}
+					if lookahead == len(s) {
+						break
+					}
+					wrapper, wrapperSize := utf8.DecodeRuneInString(s[lookahead:])
+					if !strings.ContainsRune(closingPunctuation, normalizedPunctuation(wrapper)) {
+						break
+					}
+					normalizedWrapper := normalizedPunctuation(wrapper)
+					if normalizedWrapper == '"' || normalizedWrapper == '\'' {
+						following := lookahead + wrapperSize
+						for following < len(s) {
+							space, spaceSize := utf8.DecodeRuneInString(s[following:])
+							if !unicode.IsSpace(space) {
+								break
+							}
+							following += spaceSize
+						}
+						if following < len(s) {
+							afterWrapper, _ := utf8.DecodeRuneInString(s[following:])
+							if !strings.ContainsRune(closingPunctuation, normalizedPunctuation(afterWrapper)) {
+								break
+							}
+						}
+					}
+					candidateNext = lookahead
 					continue
 				}
 				if !strings.ContainsRune(closingPunctuation, normalizedPunctuation(closer)) {
@@ -1206,8 +1238,20 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 const numericGroupingSeparatorChars = `_'’‘ʼ`
 
 // Arithmetic expressions stay attached to a relative-duration operand until
-// the full unsupported comparison can be omitted.
-var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` + number + `)\s*(?:[+*×÷±∓^]|(?:multiplied\s+by|divided\s+by|times|plus|minus|x))\s*(?:` + number + `)`)
+// the full unsupported comparison can be omitted. A single slash remains a
+// fraction; slash arithmetic must continue with another operator.
+var relativeDurationArithmeticNonDashOperator = `(?:[+*×÷±∓^]|multiplied\s+by|divided\s+by|times|plus|minus|x)`
+var relativeDurationArithmeticDashOperator = `[\p{Pd}−]`
+var relativeDurationArithmeticOperator = `(?:` + relativeDurationArithmeticNonDashOperator + `|[/⁄])`
+var relativeDurationArithmeticNumericOperator = `(?:` + relativeDurationArithmeticOperator + `|` + relativeDurationArithmeticDashOperator + `)`
+var relativeDurationArithmeticGroupedNumber = `(?:[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?|[0-9]+(?:(?:[,.][[:space:]]*|[[:space:]]+)[0-9]+)+)`
+var relativeDurationArithmeticNumber = `(?:` + number + `|` + relativeDurationArithmeticGroupedNumber + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
+var relativeDurationArithmeticNumericNumber = `(?:[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?|` + relativeDurationArithmeticGroupedNumber + `)`
+var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` +
+	`(?:` + relativeDurationArithmeticNumber + `)\s*` + relativeDurationArithmeticNonDashOperator + `\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))*` +
+	`|(?:` + relativeDurationArithmeticNumber + `)\s*[/⁄]\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))+` +
+	`|(?:` + relativeDurationArithmeticNumericNumber + `)(?:\s*` + relativeDurationArithmeticNumericOperator + `\s*(?:` + relativeDurationArithmeticNumericNumber + `))*\s*` + relativeDurationArithmeticDashOperator + `\s*(?:` + relativeDurationArithmeticNumericNumber + `)(?:\s*` + relativeDurationArithmeticNumericOperator + `\s*(?:` + relativeDurationArithmeticNumericNumber + `))*` +
+	`)`)
 
 var relativeDurationAmountREs = []*regexp.Regexp{
 	relativeDurationArithmeticAmountRE,
@@ -2251,7 +2295,7 @@ var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closin
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
 var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
-var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|covers?|pay(?:s|ing)?|paid)\b`)
+var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d)?|covers?|pay(?:s|ing)?|paid)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {

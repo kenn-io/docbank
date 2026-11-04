@@ -113,8 +113,10 @@ minutes.` and `The deadline is 7 min. before 1 00 minutes.` yield no figures.
 A malformed mixed-separator operand such as `1, 00 minutes` is also
 unsupported: `The deadline is 7 min. before 1, 00 minutes.` yields no figures.
 Arithmetic-shaped relative operands stay attached across an abbreviated unit,
-so `The deadline is 7 min. before 10 + 5 min. The deposit is $7.` omits the
-relative comparison and keeps the independent `$7`.
+including chained and Unicode-minus expressions: `The deadline is 7 min.
+before 10 + 5 + 2 min. The deposit is $7.` and `The deadline is 7 min. before
+10 − 5 − 2 min. The deposit is $7.` omit the relative comparison and keep the
+independent `$7`.
 Complements such as `including breaks` and `excluding breaks` stay attached to
 the duration operand, so `The deadline is 7 min. before 10 minutes including
 breaks.` and `The deadline is 7 min. before 10 minutes excluding breaks.`
@@ -142,9 +144,11 @@ A signed duration in an independent later assertion also stays separate, as in
 `The wait is 7 min. and +10 minutes later the fee is $5.` Figures asserted
 after an approximate amount or percentage base remain separate too.
 `The fee is about $5 and $10 covers insurance.` and `The fee is about $5 and
-$10 pays shipping costs.` keep `$10`; `The fee is 5% of $100 and $200 covers
-insurance.` and `The fee is 5% of $100 and $200 pays shipping costs.` keep `5%`
-and `$200`. A malformed operand
+$10 pays shipping costs.` and `The fee is about $5 and $10 includes shipping
+costs.` keep `$10`; `The fee is 5% of $100 and $200 covers insurance.` and `The
+fee is 5% of $100 and $200 pays shipping costs.` keep `5%` and `$200`. `The
+fee is 5% of $100 and $10 includes shipping costs.` keeps `5%` and `$10`. A
+malformed operand
 does not discard a later independent assertion: `The wait is 7 min. After 1,00
 minutes customers pay $5.` and `The wait is 7 min. After 1 00 minutes customers
 pay $5.` keep `7 min` and `$5`.

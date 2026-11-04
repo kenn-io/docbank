@@ -2798,22 +2798,20 @@ func TestExtractDoesNotSplitRelativeDurationBeforeConjoinedAssertion(t *testing.
 	}
 }
 
-func TestExtractRejectsArithmeticRelativeDurationAndKeepsFollowingSentence(t *testing.T) {
-	text := "The deadline is 7 min. before 10 + 5 min. The deposit is $7."
-	got := Extract(text)
-	if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
-		t.Fatalf("arithmetic relative duration leaked or hid the next assertion: %+v", got)
-	}
-}
-
 func FuzzExtractRejectsArithmeticRelativeDurationOperands(f *testing.F) {
-	f.Add("10", "5")
-	f.Add("100", "25")
-	f.Fuzz(func(t *testing.T, left, right string) {
-		if len(left) == 0 || len(left) > 5 || len(right) == 0 || len(right) > 5 || strings.Trim(left, "0123456789") != "" || strings.Trim(right, "0123456789") != "" {
+	for _, operand := range []string{
+		"10 + 5", "100 + 25", "10 + 5 + 2", "10 - 5 - 2", "10 − 5 − 2", "10 — 5 — 2",
+		"1 000 + 5", "1'000 + 5",
+		"10 * 5 * 2", "10 × 5 × 2", "10 ÷ 5 ÷ 2", "10 / 5 / 2", "10 ⁄ 5 ⁄ 2",
+		"10 ± 5 + 2", "10 ∓ 5 + 2", "10 ^ 5 ^ 2",
+	} {
+		f.Add(operand)
+	}
+	f.Fuzz(func(t *testing.T, operand string) {
+		if len(operand) == 0 || len(operand) > 64 || strings.Trim(operand, "0123456789 \t\r\n+-−–—*/⁄×÷±∓^xX_'’‘ʼ") != "" || !strings.ContainsAny(operand, "+-−–—*/⁄×÷±∓^xX") {
 			t.Skip()
 		}
-		text := "The deadline is 7 min. before " + left + " + " + right + " min. The deposit is $7."
+		text := "The deadline is 7 min. before " + operand + " min. The deposit is $7."
 		got := Extract(text)
 		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
 			t.Fatalf("arithmetic relative duration leaked or hid the next assertion for %q: %+v", text, got)
@@ -3111,6 +3109,43 @@ func TestExtractKeepsQuotedIndependentAssertions(t *testing.T) {
 		got := Extract(tt.text)
 		if len(got) != len(tt.want) {
 			t.Fatalf("%q got %+v, want %v", tt.text, got, tt.want)
+		}
+		for i, want := range tt.want {
+			if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+				t.Errorf("%q got %+v, want %q", tt.text, got[i], want)
+			}
+		}
+	}
+}
+
+func TestExtractKeepsIndependentQuotedSentenceAfterNegation(t *testing.T) {
+	text := `The wait is not 7 days. "The fee is $5."`
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$5" || got[0].Clause != `"The fee is $5."` {
+		t.Fatalf("negation crossed into the following quoted sentence: %+v", got)
+	}
+}
+
+func TestExtractDoesNotApplyQuotedSentenceDateToPriorRate(t *testing.T) {
+	text := `The fee is $5/hr. "Applies before 1 July 2026." The deposit is $7.`
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "$5" || got[0].Clause != "The fee is $5/hr." || got[0].Period != (Period{}) || got[1].Text != "$7" || got[1].Clause != "The deposit is $7." || got[1].Period != (Period{}) {
+		t.Fatalf("quoted sentence date leaked into adjacent figures: %+v", got)
+	}
+}
+
+func TestExtractKeepsIndependentAmountsAfterIncludesPredicates(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{`The fee is about $5 and $10 includes shipping costs.`, []string{"$10"}},
+		{`The fee is 5% of $100 and $10 includes shipping costs.`, []string{"5%", "$10"}},
+	} {
+		got := Extract(tt.text)
+		if len(got) != len(tt.want) {
+			t.Errorf("%q got %+v, want %v", tt.text, got, tt.want)
+			continue
 		}
 		for i, want := range tt.want {
 			if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
