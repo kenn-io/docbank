@@ -256,14 +256,14 @@ func (s *Store) SeedTextExtractionQueue(
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT v.version_id, v.blob_hash, COALESCE(v.mime_type, ''),
-			       CASE WHEN e.blob_hash IS NULL OR e.extractor_version < ? THEN 1 ELSE 0 END
+			       CASE WHEN e.blob_hash IS NULL OR e.extractor_version < $1 THEN 1 ELSE 0 END
 			FROM content_versions v
 			JOIN nodes n ON n.current_version_id = v.version_id
 			LEFT JOIN extracted_text e
-			  ON e.blob_hash=v.blob_hash AND e.extractor=?
+			  ON e.blob_hash=v.blob_hash AND e.extractor=$2
 			WHERE NOT EXISTS (SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=v.version_id)
-			   OR e.blob_hash IS NULL OR e.extractor_version < ?
-			ORDER BY v.version_id`, version, extractor, version)
+			   OR e.blob_hash IS NULL OR e.extractor_version < $1
+			ORDER BY v.version_id`, version, extractor)
 		if err != nil {
 			return fmt.Errorf("discovering text extraction work: %w", err)
 		}
@@ -278,15 +278,6 @@ func (s *Store) SeedTextExtractionQueue(
 			if !SupportsTextExtractionMIME(item.mimeType) {
 				continue
 			}
-			if suppressionProfile != "" {
-				suppressed, err := legacyDerivativeSuppressedTx(ctx, tx, item.hash, item.versionID, suppressionProfile)
-				if err != nil {
-					return fmt.Errorf("checking extraction purge suppression: %w", err)
-				}
-				if suppressed {
-					continue
-				}
-			}
 			seeds = append(seeds, item)
 		}
 		if err := rows.Err(); err != nil {
@@ -294,6 +285,20 @@ func (s *Store) SeedTextExtractionQueue(
 		}
 		if err := rows.Close(); err != nil {
 			return fmt.Errorf("discovering text extraction work: %w", err)
+		}
+		// PostgreSQL needs the cursor closed before further queries on this transaction.
+		if suppressionProfile != "" {
+			eligible := seeds[:0]
+			for _, item := range seeds {
+				suppressed, err := legacyDerivativeSuppressedTx(ctx, tx, item.hash, item.versionID, suppressionProfile)
+				if err != nil {
+					return fmt.Errorf("checking extraction purge suppression: %w", err)
+				}
+				if !suppressed {
+					eligible = append(eligible, item)
+				}
+			}
+			seeds = eligible
 		}
 		return nil
 	})
@@ -351,9 +356,9 @@ func (s *Store) PendingTextExtractions(
 		  JOIN text_searchable_versions sv ON sv.version_id=v.version_id
 		  WHERE v.blob_hash=q.blob_hash
 		)
-		  AND q.next_attempt_at <= ?
+		  AND q.next_attempt_at <= $1
 		ORDER BY q.next_attempt_at, q.blob_hash
-		LIMIT ?`, nowRFC3339(), limit)
+		LIMIT $2`, nowRFC3339(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing pending text extractions: %w", err)
 	}
@@ -382,7 +387,7 @@ func (s *Store) DeferTextExtraction(
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `
-			UPDATE text_extraction_queue SET next_attempt_at = ? WHERE blob_hash = ?`,
+			UPDATE text_extraction_queue SET next_attempt_at = $1 WHERE blob_hash = $2`,
 			notBefore.UTC().Format(timestampLayout), blobHash)
 		if err != nil {
 			return fmt.Errorf("deferring text extraction for %s: %w", blobHash, err)
@@ -431,7 +436,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = ?)`, result.BlobHash,
+			`SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = $1)`, result.BlobHash,
 		).Scan(&exists); err != nil {
 			return fmt.Errorf("checking extracted blob authority: %w", err)
 		}
@@ -472,18 +477,20 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 				}
 			}
 			if suppressed {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
-					SELECT rowid FROM extracted_text WHERE blob_hash=? AND extractor=?
+				if s.postgresSchema == "" {
+					if _, err := tx.ExecContext(ctx, `DELETE FROM content_fts WHERE rowid IN (
+					SELECT rowid FROM extracted_text WHERE blob_hash=$1 AND extractor=$2
 				)`, result.BlobHash, result.Extractor); err != nil {
-					return fmt.Errorf("removing suppressed extraction search row: %w", err)
+						return fmt.Errorf("removing suppressed extraction search row: %w", err)
+					}
 				}
 				if _, err := tx.ExecContext(ctx,
-					`DELETE FROM extracted_text WHERE blob_hash=? AND extractor=?`,
+					`DELETE FROM extracted_text WHERE blob_hash=$1 AND extractor=$2`,
 					result.BlobHash, result.Extractor); err != nil {
 					return fmt.Errorf("removing suppressed extraction result: %w", err)
 				}
 				if _, err := tx.ExecContext(ctx,
-					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, result.BlobHash); err != nil {
+					`DELETE FROM text_extraction_queue WHERE blob_hash=$1`, result.BlobHash); err != nil {
 					return fmt.Errorf("clearing suppressed extraction work: %w", err)
 				}
 				return nil
@@ -494,7 +501,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		var storedText sql.NullString
 		err := tx.QueryRowContext(ctx, `
 			SELECT extractor_version,status,text FROM extracted_text
-			WHERE blob_hash=? AND extractor=?`, result.BlobHash, result.Extractor,
+			WHERE blob_hash=$1 AND extractor=$2`, result.BlobHash, result.Extractor,
 		).Scan(&storedVersion, &storedStatus, &storedText)
 		if err == nil && result.ExtractorVersion < storedVersion {
 			return fmt.Errorf(
@@ -522,7 +529,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO extracted_text(
 			  blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
-			) VALUES(?,?,?,?,?,1,?,?)
+			) VALUES($1,$2,$3,$4,$5,1,$6,$7)
 			ON CONFLICT(blob_hash,extractor) DO UPDATE SET
 			  extractor_version=excluded.extractor_version,
 			  status=excluded.status,
@@ -534,8 +541,12 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			result.Status, extractErr, text, nowRFC3339()); err != nil {
 			return fmt.Errorf("recording text extraction: %w", err)
 		}
-		if err := replaceContentFTSTx(ctx, tx, result.BlobHash, result.Extractor, text); err != nil {
-			return err
+		// FTS5 is a SQLite projection. PostgreSQL retains the same text and
+		// rendition authority; its ranked search is qualified separately.
+		if s.postgresSchema == "" {
+			if err := replaceContentFTSTx(ctx, tx, result.BlobHash, result.Extractor, text); err != nil {
+				return err
+			}
 		}
 		if exactLegacySuccess {
 			published, publishErr := hasPublishedLexicalHeadTx(ctx, tx)
@@ -555,7 +566,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			}
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM text_extraction_queue WHERE blob_hash = ?`, result.BlobHash,
+			`DELETE FROM text_extraction_queue WHERE blob_hash = $1`, result.BlobHash,
 		); err != nil {
 			return fmt.Errorf("finishing text extraction: %w", err)
 		}
@@ -578,13 +589,13 @@ func replaceContentFTSTx(
 ) error {
 	var rowID int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT rowid FROM extracted_text WHERE blob_hash = ? AND extractor = ?`,
+		`SELECT rowid FROM extracted_text WHERE blob_hash = $1 AND extractor = $2`,
 		blobHash, extractor,
 	).Scan(&rowID); err != nil {
 		return fmt.Errorf("resolving extracted-text row: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM content_fts WHERE rowid = ?`, rowID,
+		`DELETE FROM content_fts WHERE rowid = $1`, rowID,
 	); err != nil {
 		return fmt.Errorf("removing prior content search row: %w", err)
 	}
@@ -592,7 +603,7 @@ func replaceContentFTSTx(
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO content_fts(rowid,blob_hash,extractor,text) VALUES(?,?,?,?)`,
+		`INSERT INTO content_fts(rowid,blob_hash,extractor,text) VALUES($1,$2,$3,$4)`,
 		rowID, blobHash, extractor, text,
 	); err != nil {
 		return fmt.Errorf("indexing extracted text: %w", err)

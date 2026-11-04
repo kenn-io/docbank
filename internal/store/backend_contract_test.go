@@ -81,6 +81,39 @@ var backendSuites = []backendSuite{
 		}},
 		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
 	}},
+	{name: "text-extraction", postgres: "native operations", scope: "Plain-text queue discovery, retries, results and rendition authority publication; excludes ranked search and recovery.", scenarios: []backendScenario{
+		{"TextPublication", nil, checkTextPublicationPostgres},
+		{"TextChangedResult", nil, checkTextChangedResultPostgres},
+		{"TextPublicationRollback", nil, checkTextPublicationRollbackPostgres},
+		{"TextPurgeScopes", nil, checkTextPurgeScopesPostgres},
+		{"PendingAndFailedTextExtractions", func(t *testing.T) { t.Helper(); checkPendingAndFailedTextExtractions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPendingAndFailedTextExtractions(t, newPostgresQueryStore) }},
+		{"RecordExtractionNotifiesCurrentLiveNodesOnce", func(t *testing.T) { t.Helper(); checkRecordExtractionNotifiesCurrentLiveNodesOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRecordExtractionNotifiesCurrentLiveNodesOnce(t, newPostgresQueryStore)
+		}},
+		{"RecordExtractionRetiresFailureAfterLegacyMigration", func(t *testing.T) {
+			t.Helper()
+			checkRecordExtractionRetiresFailureAfterLegacyMigration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRecordExtractionRetiresFailureAfterLegacyMigration(t, newPostgresQueryStore)
+		}},
+		{"PendingTextExtractionsSkipsSupersededQueuedContent", func(t *testing.T) {
+			t.Helper()
+			checkPendingTextExtractionsSkipsSupersededQueuedContent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPendingTextExtractionsSkipsSupersededQueuedContent(t, newPostgresQueryStore)
+		}},
+		{"TextExtractionQueueDefersFailuresBehindReadyWork", func(t *testing.T) { t.Helper(); checkTextExtractionQueueDefersFailuresBehindReadyWork(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkTextExtractionQueueDefersFailuresBehindReadyWork(t, newPostgresQueryStore)
+		}},
+		{"MigrateLegacyPlainTextRetryPreservesQueuedWork", func(t *testing.T) { t.Helper(); checkMigrateLegacyPlainTextRetryPreservesQueuedWork(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMigrateLegacyPlainTextRetryPreservesQueuedWork(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "pages", postgres: "native operations", scope: "Native page job replay, claims, cancellation, frames and image publication; excludes rendering processes and recovery.", scenarios: []backendScenario{
 		{"PagePublicationRollback", nil, checkPagePublicationRollbackPostgres},
 		{"EmailPageSnapshots", nil, checkEmailPageSnapshotsPostgres},
@@ -864,7 +897,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
+	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},

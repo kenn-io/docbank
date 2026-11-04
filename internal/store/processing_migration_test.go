@@ -749,9 +749,10 @@ func TestOpenMigratesLegacyPlainTextInCurrentSchema(t *testing.T) {
 
 // Mutation caught: reusing the ordinary enqueue upsert on migration retry
 // postpones already-scheduled repair work and makes convergence non-idempotent.
-func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
+func checkMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	seedLegacyMigrationRow(t, s, "stable.txt", "76", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "stable immutable legacy build",
@@ -763,7 +764,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 	first, err := s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
 	const scheduled = "2030-01-02T03:04:05.000000000Z"
-	_, err = s.db.ExecContext(t.Context(), `UPDATE text_extraction_queue SET next_attempt_at=? WHERE blob_hash=?`, scheduled, hash)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE text_extraction_queue SET next_attempt_at=$1 WHERE blob_hash=$2`, scheduled, hash)
 	require.NoError(t, err)
 
 	second, err := s.MigrateLegacyPlainText(t.Context())
@@ -774,7 +775,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 	assert.Zero(t, second.QueuedBlobs)
 	var stored string
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
-		`SELECT next_attempt_at FROM text_extraction_queue WHERE blob_hash=?`, hash,
+		`SELECT next_attempt_at FROM text_extraction_queue WHERE blob_hash=$1`, hash,
 	).Scan(&stored))
 	assert.Equal(t, scheduled, stored)
 	for _, table := range []string{
