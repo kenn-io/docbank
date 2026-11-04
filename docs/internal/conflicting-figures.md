@@ -46,6 +46,10 @@ Period words after an abbreviated rate are matched without regard to case, so
 `The fee is $5/hr. BEFORE 1 July 2026.` retains the exclusive end bound.
 Supported date wrappers remain part of that bound, so
 `The fee is $5/hr. before (1 July 2026).` also retains it.
+Closing quotes after a terminal mark stay with that bound, so
+`«The fee is $5/hr. before 1 July 2026.»` also retains it. A quote after the
+abbreviated rate may precede the bound connector, as in
+`The fee is "$5/hr." until 1 July 2026.`
 The bound also survives when the clause ends at that date or a semicolon, as in
 `The fee is $5/hr. before 1 July 2026` and
 `The fee is $5/hr. before 1 July 2026;`. Parenthesized endpoints in a stated
@@ -85,6 +89,7 @@ duration operands such as `7 days before thirty days` or
 `7 min. before thirty-five min.`; grouped numeric, fractional or spoken-decimal
 durations such as `7 min. before 1 000 minutes`,
 `7 min. before 1 000.5 minutes`, `7 min. before 1/2 hour`,
+`7 min. before ½ hour`,
 `7 min. before 1'000 minutes`, `7 min. before 1_000 minutes`,
 `7 min. before 1ʼ000 minutes`,
 `7 min. before 1, 000 minutes`, or `7 min. before 1  000 minutes`,
@@ -113,7 +118,8 @@ An independent temporal assertion after an abbreviated duration remains
 separate when it starts with its own subject and predicate, or with a typed
 figure followed directly by an assertion predicate. For example, `The wait is
 7 min. After 10 minutes, $5 is charged.`, `The wait is 7 min. After 1/2 hour
-customers pay $5.`, `The wait is 7 min. After 1 000 minutes customers pay
+customers pay $5.`, `The wait is 7 min. After ½ hour customers pay $5.`, and
+`The wait is 7 min. After 1 000 minutes customers pay
 $5.`, `The wait is 7 min. After seven point five minutes,
 $5 is charged.`, and `The wait is 7 min. After twenty-one minutes customers
 pay $5.` keep both figures, even when the duration operand itself is rejected.
@@ -140,8 +146,8 @@ Closing wrappers and their surrounding whitespace do not split arithmetic
 continuations: `The wait is (7 min. ) + 3 min.` yields no figures. The same
 wrapper before an independent sentence preserves both assertions, as in `The
 wait is (7 min. ) The fee is $5.`
-Nominal phrases such as `shipping charges` or `shipping and handling charges`
-stay inside an approximate group:
+Nominal phrases such as `shipping charges`, `access fees`, `express delivery
+charges`, or `shipping and handling charges` stay inside an approximate group:
 `The fees are about $5 and $10 shipping charges.` and `The fees are about 5%
 of $100 and $200 shipping charges.` yield no figures. The coordinated nominal
 form `The fees are about $5 and $10 shipping and handling charges.` also yields
@@ -152,8 +158,10 @@ are about $5 and $10 customs duties.` yield no figures. In a percentage-base
 phrase, the rate remains while the nominal continuation operands are omitted:
 `The fee is 5% of $100 and $200 fixed charges.`, `The fee is 5% of $100 and
 $200 fixed monthly charges.`, `The fee is 5% of $100 and $200 sales taxes.`,
-`The fee is 5% of $100 and $200 customs duties.`, and `The fee is 5% of $100
-and $200 shipping and handling charges.` keep `5%` only.
+`The fee is 5% of $100 and $200 customs duties.`, `The fee is 5% of $100 and
+$200 shipping and handling charges.`, `The fee is 5% of $100 and $200 access
+fees.`, and `The fee is 5% of $100 and $200 express delivery charges.` keep
+`5%` only.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
@@ -167,9 +175,11 @@ Closing wrappers after the duration do not hide the following assertion:
 A coordinated continuation does not start an independent assertion, even when
 it names a new subject: `The deadline is 7 min. before 10 minutes and the
 monthly fee is $5.` remains one ambiguous clause and yields no figures.
-Sentence punctuation followed by closing quotes or brackets ends a clause. Soft
-line wraps stay in the same clause; blank lines and list or table rows separate
-clauses.
+Sentence punctuation followed by closing quotes or brackets ends a clause,
+even when whitespace separates the punctuation and wrapper. The wrapper remains
+in the clause, so `The adjustment is ($5/hr. )` yields no figure, while a
+separate following sentence remains eligible. Soft line wraps stay in the same
+clause; blank lines and list or table rows separate clauses.
 Approximation markers (`about`, `approximately`, `around`, `roughly`, `nearly`,
 `almost`, `circa`, `estimated`, `~`, and `≈`) before or after a figure cause its
 omission, including markers before a bound or inside a range. The suffixes

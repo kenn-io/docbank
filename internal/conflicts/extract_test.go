@@ -518,6 +518,8 @@ func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) 
 		"The fees are about $5 and $10 fixed monthly charges.",
 		"The fees are about $5 and $10 fixed costs.",
 		"The fees are about $5 and $10 fixed fees.",
+		"The fees are about $5 and $10 access fees.",
+		"The fees are about $5 and $10 express delivery charges.",
 		"The fees are about $5 and $10 sales taxes.",
 		"The fees are about $5 and $10 taxes.",
 		"The fees are about $5 and $10 customs duties.",
@@ -537,6 +539,8 @@ func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) 
 		"The fee is 5% of $100 and $200 fixed monthly charges.",
 		"The fee is 5% of $100 and $200 fixed costs.",
 		"The fee is 5% of $100 and $200 fixed fees.",
+		"The fee is 5% of $100 and $200 access fees.",
+		"The fee is 5% of $100 and $200 express delivery charges.",
 		"The fee is 5% of $100 and $200 sales taxes.",
 		"The fee is 5% of $100 and $200 taxes.",
 		"The fee is 5% of $100 and $200 customs duties.",
@@ -2727,6 +2731,7 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperands(t *testing.T) {
 	for _, text := range []string{
 		"The wait is 7 min. After 1/2 hour customers pay $5.",
+		"The wait is 7 min. After ½ hour customers pay $5.",
 		"The wait is 7 min. After 1 000 minutes customers pay $5.",
 		"The wait is 7 min. After 1/2 hour, $5 is charged.",
 		"The wait is 7 min. After seven point five minutes customers pay $5.",
@@ -2752,6 +2757,17 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 				}
 			}
 		})
+	}
+}
+
+func TestExtractOmitsUnsupportedNormalizedFractionDurationComparison(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is 7 min. before ½ hour.",
+		"The deadline is 7 min. before 1⁄2 hour.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("unsupported fraction comparison produced exact figures for %q: %+v", text, got)
+		}
 	}
 }
 
@@ -4445,6 +4461,31 @@ func TestExtractReviewAbbreviatedNumericContexts(t *testing.T) {
 	}
 }
 
+func TestExtractRejectsWhitespaceWrappedAccountingRate(t *testing.T) {
+	for _, tt := range []struct {
+		text, wantClause string
+		want             []string
+	}{
+		{"The adjustment is ($5/hr. )", "", nil},
+		{"The adjustment is ($5/hr. ) The deposit is $7.", "The deposit is $7.", []string{"$7"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %+v, want %v", got, tt.want)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want {
+					t.Errorf("got %+v, want %s", got[i], want)
+				}
+			}
+			if tt.wantClause != "" && got[0].Clause != tt.wantClause {
+				t.Errorf("independent sentence was not preserved: %+v", got[0])
+			}
+		})
+	}
+}
+
 func TestExtractReviewRateAndRelativeDateBounds(t *testing.T) {
 	for _, tt := range []struct {
 		text, figure string
@@ -4461,6 +4502,8 @@ func TestExtractReviewRateAndRelativeDateBounds(t *testing.T) {
 		{"The wait is 7 days from (1 July 2026) and ending (31 July 2026).", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The wait is 7 days from 1 July 2026 and ending 31 July 2026.", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The fee is $5/hr. from 1 July 2026 and ending 31 July 2026.", "$5", Period{From: "2026-07-01", To: "2026-07-31"}},
+		{"«The fee is $5/hr. before 1 July 2026.»", "$5", Period{To: "2026-06-30"}},
+		{"The fee is \"$5/hr.\" until 1 July 2026.", "$5", Period{To: "2026-07-01"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)
