@@ -194,5 +194,23 @@ func observe(ctx context.Context, c *daemonconn.Connection, card Card, deep bool
 			}
 		}
 	}
-	return result, nil
+	return deduplicateObservations(result), nil
+}
+
+func deduplicateObservations(observations []Observation) []Observation {
+	type key struct {
+		citation int
+		reason   string
+	}
+	seen := make(map[key]struct{}, len(observations))
+	unique := observations[:0]
+	for _, observation := range observations {
+		observationKey := key{citation: observation.Citation, reason: observation.Reason}
+		if _, ok := seen[observationKey]; ok {
+			continue
+		}
+		seen[observationKey] = struct{}{}
+		unique = append(unique, observation)
+	}
+	return unique
 }

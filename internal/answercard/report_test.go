@@ -146,3 +146,47 @@ func TestDeepObservationDistinguishesUnavailableAndFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestDeepObservationDeduplicatesQuoteUnavailable(t *testing.T) {
+	card, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		blobHash string
+	}{
+		{name: "changed source digest", kind: "file", blobHash: "changed"},
+		{name: "directory citation", kind: "dir", blobHash: card.Citations[0].ContentSHA256},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/nodes/42" {
+					_ = json.NewEncoder(w).Encode(api.Node{
+						ID: 42, Kind: tc.kind,
+						CurrentVersionID: card.Citations[0].ContentVersionID.String(),
+						BlobHash:         tc.blobHash,
+					})
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": http.StatusNotFound,
+					"code":   "citation_unavailable",
+					"detail": "synthetic",
+				})
+			}))
+			defer server.Close()
+
+			got, err := observe(t.Context(), daemonconn.New(server.URL, "synthetic-key"), card, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Citation != 0 || got[0].Reason != "quote_unavailable" {
+				t.Fatalf("want one quote_unavailable issue for citation 0, got %+v", got)
+			}
+		})
+	}
+}
