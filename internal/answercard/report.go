@@ -125,7 +125,7 @@ func Check(ctx context.Context, c *daemonconn.Connection, root string, deep bool
 			break
 		}
 		if cursors[page.NextCursor] {
-			return Report{}, errors.New("repeated document cursor")
+			return Report{}, errors.New("Document listing stalled.") //nolint:revive,staticcheck // Printed verbatim to CLI users.
 		}
 		cursors[page.NextCursor] = true
 		query.Cursor = page.NextCursor

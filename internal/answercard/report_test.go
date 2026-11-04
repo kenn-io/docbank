@@ -13,6 +13,35 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
+func TestCheckReportsStalledDocumentListing(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/info":
+			_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": "00000000-0000-4000-8000-000000000001"})
+		case "/api/v1/documents":
+			requests++
+			_ = json.NewEncoder(w).Encode(api.DocumentPage{
+				PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250,
+				NextCursor: "same",
+			})
+		default:
+			t.Errorf("unexpected route %s", r.URL.Path)
+			http.Error(w, "unexpected route", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	_, err := Check(t.Context(), daemonconn.New(server.URL, "synthetic-key"), "/answer-cards", false)
+	if err == nil || err.Error() != "Document listing stalled." {
+		t.Fatalf("want stalled-listing message, got %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("want two requests before repeated cursor detection, got %d", requests)
+	}
+}
+
 func TestObserveStalenessAndFailures(t *testing.T) {
 	card, err := Parse([]byte(sample))
 	if err != nil {
