@@ -1110,7 +1110,7 @@ var relativeDurationClauseConnectorRE = regexp.MustCompile(`(?i)^\s*[` + regexp.
 var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `|minus|negative|plus|positive)\s+|(?:<=|>=|≤|≥|<|>)\s*|[+~≈−-]\s*)`)
 var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?|` + assertionPredicatePattern + `)\b`)
 var relativeDurationConjunctionLeadRE = regexp.MustCompile(`(?i)^\s*[,;:]*\s*(?:and|or|but|while)\b`)
-var relativeDurationPrepositionLeadRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:about|above|across|after|against|along|among|around|at|before|behind|below|beneath|beside|between|by|despite|down|during|except|for|from|in|inside|into|like|near|of|off|on|onto|out|outside|over|past|since|through|throughout|to|toward|under|until|unto|upon|with|within|without)\b`)
+var relativeDurationPrepositionLeadRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:about|above|across|after|against|along|among|around|at|before|behind|below|beneath|beside|between|by|despite|down|during|except|excluding|excepting|including|for|from|in|inside|into|like|near|of|off|on|onto|out|outside|over|past|since|through|throughout|to|toward|under|until|unto|upon|with|within|without)\b`)
 var relativeDurationBoundLeadRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPrefix + `)\b`)
 var relativeDurationAuxiliaryLeadRE = regexp.MustCompile(`(?i)^\s*(?:am|is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did)\b`)
 
@@ -1185,6 +1185,7 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
 	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
+	regexp.MustCompile(`^[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?`),
 	regexp.MustCompile(`^[0-9][0-9,.` + numericGroupingSeparatorChars + `]*`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
@@ -1466,7 +1467,8 @@ var nonPredicateFigurePrefixWords = map[string]struct{}{
 }
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
-var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + dateRE.String() + `(?:\s+(?:until|till|through|to)\s+` + dateRE.String() + `)?\s*[.!?](?:\s|$)`)
+var rateDateOperandPattern = `(?:\(\s*` + dateRE.String() + `\s*\)|\[\s*` + dateRE.String() + `\s*\]|["'‘’“”«]\s*` + dateRE.String() + `\s*["'”’»]|` + dateRE.String() + `)`
+var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:\s+(?:until|till|through|to)\s+` + rateDateOperandPattern + `)?\s*[.!?](?:\s|$)`)
 var durationArithmeticRE = regexp.MustCompile(`(?i)^\s*(?:[+−*/⁄×÷±∓^\p{Pd}⁓⁻₋<>=≤≥]|out\s+of\b|(?:multiplied\s+by|divided\s+by|times|plus|minus|x)\b|and\s+(?:a\s+few|few|some|several)\s+|and\s+(?:a|an)\s+(?:` + approximation + `\s+` + number + `\b|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*[.,;!?]|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*$)|and\s+(?:a\s+)?` + fractionWords + `s?\b|[(\[]\s*(?:[+−*/⁄×÷±∓^-]|(?:and|plus|minus|times|x|multiplied|divided)\b))`)
 var durationAlternativeRE = regexp.MustCompile(`(?i)^\s+(?:or|and|through|to|until|till)\s+[(\["'‘’“”«»]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:[$€£¥]|(?:` + currencyCodes + `)\s*)?(?:` + number + `)\b`)
 var listRowRE = regexp.MustCompile(`^\s*(?:[-*+]\s+|[0-9]+[.)]\s+)`)
@@ -2182,7 +2184,7 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
-var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+[\p{L}]+ing\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {

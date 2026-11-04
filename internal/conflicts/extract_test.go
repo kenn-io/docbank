@@ -3256,6 +3256,71 @@ func TestExtractReviewRatesEligibilitySeparators(t *testing.T) {
 	}
 }
 
+func TestExtractReviewLatestBoundaryFindings(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		text    string
+		figures []string
+		periods []Period
+	}{
+		{
+			name: "coordinated nominal continuation keeps approximate amounts grouped",
+			text: "The fees are about $5 and $10 shipping and handling charges.",
+		},
+		{
+			name:    "coordinated nominal continuation keeps percentage bases grouped",
+			text:    "The fee is about 5% of $100 and $200 shipping and handling charges. The deposit is $7.",
+			figures: []string{"$7"},
+			periods: []Period{{}},
+		},
+		{
+			name:    "independent predicate still exposes its exact amount",
+			text:    "The fees are about $5 and $10 covers insurance.",
+			figures: []string{"$10"},
+			periods: []Period{{}},
+		},
+		{
+			name:    "wrapped date after abbreviated rate remains a period bound",
+			text:    "The fee is $5/hr. before (1 July 2026).",
+			figures: []string{"$5"},
+			periods: []Period{{To: "2026-06-30"}},
+		},
+		{
+			name: "inclusion complement remains attached to relative duration",
+			text: "The deadline is 7 min. before 10 minutes including breaks.",
+		},
+		{
+			name: "exclusion complement remains attached to relative duration",
+			text: "The deadline is 7 min. before 10 minutes excluding breaks.",
+		},
+		{
+			name: "malformed whitespace group rejects the full comparison",
+			text: "The deadline is 7 min. before 1 00 minutes.",
+		},
+		{
+			name:    "malformed whitespace group preserves later assertion",
+			text:    "The wait is 7 min. After 1 00 minutes customers pay $5.",
+			figures: []string{"7 min", "$5"},
+			periods: []Period{{}, {}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.figures) {
+				t.Fatalf("got %+v, want %v", got, tt.figures)
+			}
+			for i, want := range tt.figures {
+				if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+					t.Errorf("unexpected figure: %+v", got[i])
+				}
+				if len(tt.periods) > 0 && got[i].Period != tt.periods[i] {
+					t.Errorf("unexpected period: %+v, want %+v", got[i].Period, tt.periods[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExtractReviewQualifiedToleranceAndOwnership(t *testing.T) {
 	for _, tt := range []struct {
 		text          string
