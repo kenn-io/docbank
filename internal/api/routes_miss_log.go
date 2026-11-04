@@ -14,6 +14,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const missLogCacheControlNoStore = "no-store"
+
 // MissLogPage contains sensitive receipts and is available only to the operator.
 type MissLogPage struct {
 	Items  []misslog.Receipt `json:"items"`
@@ -42,7 +44,7 @@ func missLogCutoff(cfg config.MissLogConfig) time.Time {
 func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent, MaxBodyBytes: 64 << 10}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
 		d.MissLog.Record(ctx, in.Body)
-		return nil, nil
+		return &struct{}{}, nil
 	})
 	type pageOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -67,7 +69,7 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 			}
 			page.Items = append(page.Items, receipt)
 		}
-		return &pageOutput{CacheControl: "no-store", Body: page}, nil
+		return &pageOutput{CacheControl: missLogCacheControlNoStore, Body: page}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "deleteMissLogRecord", Method: http.MethodDelete, Path: "/api/v1/miss-log/{id}", Summary: "Delete one private search miss (operator only)"}, func(ctx context.Context, in *struct {
 		ID string `path:"id" maxLength:"128"`

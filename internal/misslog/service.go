@@ -35,6 +35,7 @@ type Request struct {
 // Receipt adds daemon-owned identity and time to the submitted outcome.
 type Receipt struct {
 	Request
+
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	VaultUID  string    `json:"vault_uid"`

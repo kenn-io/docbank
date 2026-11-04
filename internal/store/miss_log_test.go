@@ -141,7 +141,7 @@ func TestMissLogOpensSchema43WithoutLocalTable(t *testing.T) {
 			require.NoError(t, err)
 			node, err := st.Mkdir(t.Context(), st.RootID(), "synthetic-retained")
 			require.NoError(t, err)
-			_, err = st.db.Exec(`DROP TABLE miss_log_records`)
+			_, err = st.db.ExecContext(t.Context(), `DROP TABLE miss_log_records`)
 			require.NoError(t, err)
 			require.NoError(t, st.Close())
 			reopened, err := Open(t.Context(), path, test.driver)

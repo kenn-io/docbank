@@ -57,7 +57,7 @@ const (
 // Backend is the bounded daemon surface needed by the TUI.
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
-	RecordMiss(context.Context, misslog.Request)
+	RecordMiss(ctx context.Context, request misslog.Request)
 	ReportScreen(ctx context.Context, screen string) error
 	ReportAction(ctx context.Context, event, searchType, kind string) error
 	Stat(ctx context.Context, path string) (api.Node, error)

@@ -54,7 +54,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		}
 		outcome, fallbackErr := automaticSearchFallback(ctx, err)
 		if fallbackErr == nil && outcome.reason != "" {
-			outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: "lexical",
+			outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: searchModeLexical,
 				Degradations: []string{outcome.reason}}
 		}
 		return outcome, fallbackErr
@@ -76,7 +76,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		if err != nil {
 			return automaticSearchOutcome{}, err
 		}
-		outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: "lexical",
+		outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: searchModeLexical,
 			Profile: candidate.Profile, BindingID: candidate.Binding, Degradations: []string{outcome.reason}}
 		if first.reason == "" {
 			first = outcome

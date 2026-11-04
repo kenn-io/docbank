@@ -19,6 +19,7 @@ import (
 const (
 	defaultSearchLimit = 50
 	maxSearchLimit     = 1000
+	searchModeLexical  = "lexical"
 )
 
 var (
@@ -234,7 +235,7 @@ See docs/usage/search.md.`,
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 				if empty {
-					receipt := misslog.Request{Query: query, RequestedMode: "lexical", ActualMode: "lexical", Truncated: rep.Truncated,
+					receipt := misslog.Request{Query: query, RequestedMode: searchModeLexical, ActualMode: searchModeLexical, Truncated: rep.Truncated,
 						Filters: searchMissFilters(opts)}
 					if rep.Fuzzy != nil {
 						receipt.Coverage = map[string]any{"fuzzy": rep.Fuzzy}
