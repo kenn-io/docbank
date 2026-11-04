@@ -433,7 +433,7 @@ func (s *Store) photoSetExplicitIDs(ctx context.Context, tx *sql.Tx, selection P
 			args[i] = id
 		}
 		count, hidden, err := func() (int, bool, error) {
-			rows, err := tx.QueryContext(ctx, `SELECT hidden_at FROM photo_assets WHERE asset_id IN (`+placeholders(len(chunk))+`)`, args...)
+			rows, err := tx.QueryContext(ctx, `SELECT hidden_at FROM photo_assets WHERE asset_id IN (`+numberedPlaceholders(len(chunk))+`)`, args...)
 			if err != nil {
 				return 0, false, err
 			}

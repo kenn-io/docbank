@@ -138,7 +138,7 @@ func checkTagPhotoReceiptsPostgres(t *testing.T) {
 	t.Helper()
 	for _, action := range []string{"rename", "delete", "sidecar batch", "unowned sidecar batch"} {
 		t.Run(action, func(t *testing.T) {
-			source, asset, raw := xmpSidecarPhoto(t)
+			source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 			var unowned int64
 			if action == "unowned sidecar batch" {
 				n, err := source.CreateFile(t.Context(), source.RootID(), "capture.cr2.xmp", fakeHash("e5"), 4, "application/rdf+xml")

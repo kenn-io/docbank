@@ -49,7 +49,7 @@ func checkAuditEnrollmentPhotosPostgres(t *testing.T) {
 
 	setup, owner := pgtest.NewDatabase(t)
 	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
-	source, asset, raw := xmpSidecarPhoto(t)
+	source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	// Both backends represent the same vault, including canonical record hashes.
 	source.vaultID = destination.vaultID
 	_, err := source.writeDB.ExecContext(ctx, `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)

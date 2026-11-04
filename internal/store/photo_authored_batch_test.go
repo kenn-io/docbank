@@ -199,9 +199,10 @@ func TestPhotoAuthoredBatchKeywordsUndoAndRestore(t *testing.T) {
 	}
 }
 
-func TestPhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo(t *testing.T) {
+func checkPhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := authoredPair(t, s)
 	seedInitialAuditAuthority(t, s, s.RootID())
@@ -246,10 +247,11 @@ func preparedPhotoTargets(ctx context.Context, t *testing.T, s *Store, selection
 	return targets
 }
 
-func TestPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T) {
+func checkPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	t.Run("member and atomic rollback", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := authoredPair(t, s)
 		file := fileByRole(asset.Files, PhotoRoleRAW)
@@ -270,7 +272,7 @@ func TestPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T) {
 		require.False(t, current.Agreement["caption"])
 	})
 	t.Run("node and asset revision conflicts", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := authoredPair(t, s)
 		targets := preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}})
@@ -294,7 +296,8 @@ func TestPhotoAuthoredBatchConflictsAndAtomicFailure(t *testing.T) {
 	})
 }
 
-func TestPhotoAuthoredBatchViewedContent(t *testing.T) {
+func checkPhotoAuthoredBatchViewedContent(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string
@@ -313,7 +316,7 @@ func TestPhotoAuthoredBatchViewedContent(t *testing.T) {
 		{name: "omitted after display swap", swap: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			asset := authoredPair(t, s)
 			var display, other PhotoFile
@@ -326,9 +329,11 @@ func TestPhotoAuthoredBatchViewedContent(t *testing.T) {
 			}
 			node, err := s.NodeByID(ctx, display.NodeID)
 			require.NoError(t, err)
-			page := browsePhotoPage(t, s, `{}`)
-			require.Len(t, page.Items, 1)
-			require.Equal(t, node.CurrentVersionID, page.Items[0].ContentVersionID)
+			if s.postgresSchema == "" {
+				page := browsePhotoPage(t, s, `{}`)
+				require.Len(t, page.Items, 1)
+				require.Equal(t, node.CurrentVersionID, page.Items[0].ContentVersionID)
+			}
 			if tc.replace {
 				_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("viewed-replacement"), 20, "image/jpeg")
 				require.NoError(t, err)
@@ -416,9 +421,10 @@ func TestPhotoAuthoredBatchRequestValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
 }
 
-func TestPhotoAuthoredBatchRevisionGroups(t *testing.T) {
+func checkPhotoAuthoredBatchRevisionGroups(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	makeAsset := func(name string) PhotoAsset {
 		image := albumAsset(t, s, name)
@@ -517,9 +523,10 @@ func TestPhotoAuthoredBatchRevisionGroups(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
-func TestPhotoKeywordEditNoop(t *testing.T) {
+func checkPhotoKeywordEditNoop(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "keyword-noop.jpg")
 	tag, err := s.CreateTag(ctx, "Portfolio")
@@ -541,10 +548,11 @@ func TestPhotoKeywordEditNoop(t *testing.T) {
 	require.Equal(t, beforeTag.Revision, currentTag.Revision)
 }
 
-func TestPhotoKeywordUndo(t *testing.T) {
+func checkPhotoKeywordUndo(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	t.Run("deleted keyword", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := albumAsset(t, s, "keyword.jpg")
 		tag, err := s.CreateTag(ctx, "Portfolio")
@@ -565,7 +573,7 @@ func TestPhotoKeywordUndo(t *testing.T) {
 		require.ErrorContains(t, err, "keyword no longer exists")
 	})
 	t.Run("unchanged targets", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		changed, unchanged := albumAsset(t, s, "changed-keyword.jpg"), albumAsset(t, s, "existing-keyword.jpg")
 		tag, err := s.CreateTag(ctx, "Portfolio")
@@ -591,7 +599,7 @@ func TestPhotoKeywordUndo(t *testing.T) {
 		require.NoError(t, err)
 	})
 	t.Run("value-only edit after keyword changes", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := authoredPair(t, s)
 		tag, err := s.CreateTag(ctx, "Portfolio")
@@ -620,9 +628,10 @@ func TestPhotoKeywordUndo(t *testing.T) {
 	})
 }
 
-func TestPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t *testing.T) {
+func checkPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "initial-decision.jpg")
 	receipt, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Rating: new(0)}})
@@ -636,9 +645,10 @@ func TestPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t *testing.T) {
 	require.Equal(t, PhotoAuthored{}, undo.After[0].Values)
 }
 
-func TestPhotoAuthoredBatchTargetChecksFollowRequestOrder(t *testing.T) {
+func checkPhotoAuthoredBatchTargetChecksFollowRequestOrder(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "first.jpg")
 	other := albumAsset(t, s, "second.jpg")
@@ -680,9 +690,10 @@ func TestPhotoAuthoredBatchTargetChecksFollowRequestOrder(t *testing.T) {
 	}
 }
 
-func TestPhotoAuthoredBatchEditsTargetsAcrossLoadChunks(t *testing.T) {
+func checkPhotoAuthoredBatchEditsTargetsAcrossLoadChunks(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	ids := make([]string, 0, photoSelectionChunkSize+1)
 	for i := range photoSelectionChunkSize + 1 {

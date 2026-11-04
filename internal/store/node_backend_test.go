@@ -66,7 +66,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(extractor_version,status,error,attempts,text,extracted_at) ON "+schema+".extracted_text TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(hidden_at,excluded_at,display_file_id,display_override_file_id,revision,updated_at) ON "+schema+".photo_assets TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_change_receipts TO "+quotedRole+
-		"; GRANT INSERT,UPDATE(asset_id,role,sidecar_of_file_id,source_provenance_identity) ON "+schema+".photo_files TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(asset_id,role,sidecar_of_file_id,source_provenance_identity,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields,flag_owner) ON "+schema+".photo_files TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_timeline TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(original_path,original_mtime,folder_key) ON "+schema+".photo_source_claims TO "+quotedRole)
 	require.NoError(t, err)

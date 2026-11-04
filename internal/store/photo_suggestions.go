@@ -92,13 +92,13 @@ func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID
 // version has no photo file.
 func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version string, description *document.PhotoDescription) (bool, error) {
 	var authored string
-	if err := q.QueryRowContext(ctx, `SELECT f.caption FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, version).Scan(&authored); errors.Is(err, sql.ErrNoRows) {
+	if err := q.QueryRowContext(ctx, `SELECT f.caption FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$1`, version).Scan(&authored); errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	} else if err != nil {
 		return false, err
 	}
 	var assigned []string
-	if err := queryRows(ctx, q, `SELECT t.name FROM content_versions v JOIN node_tags nt ON nt.node_id=v.node_id JOIN tags t ON t.id=nt.tag_id WHERE v.version_id=?`, []any{version}, func(rows *sql.Rows) error {
+	if err := queryRows(ctx, q, `SELECT t.name FROM content_versions v JOIN node_tags nt ON nt.node_id=v.node_id JOIN tags t ON t.id=nt.tag_id WHERE v.version_id=$1`, []any{version}, func(rows *sql.Rows) error {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return err
@@ -395,7 +395,7 @@ func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (st
 // photoSuggestionsQuery lists the pending description of an asset's displayed photo.
 func (s *Store) photoSuggestionsQuery(ctx context.Context, q *sql.Tx, assetID string) ([]PhotoSuggestion, error) {
 	out := []PhotoSuggestion{}
-	err := queryRows(ctx, q, photoSuggestionRowSQL+` WHERE a.asset_id=? AND a.display_file_id=f.file_id AND NOT s.dismissed AND NOT s.awaiting
+	err := queryRows(ctx, q, photoSuggestionRowSQL+` WHERE a.asset_id=$1 AND a.display_file_id=f.file_id AND s.dismissed=0 AND s.awaiting=0
  AND (s.caption<>'' OR s.tags_json<>'[]' OR s.visible_text<>'') ORDER BY s.created_at,s.suggestion_id`, []any{assetID}, func(rows *sql.Rows) error {
 		row, err := scanPhotoSuggestion(rows)
 		if err != nil {

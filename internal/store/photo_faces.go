@@ -65,7 +65,7 @@ func scanPhotoFace(row scanner) (PhotoFace, error) {
 }
 
 func photoFacesQuery(ctx context.Context, q metadataQuerier, versionID string) ([]PhotoFace, error) {
-	rows, err := q.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=? ORDER BY face_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
+	rows, err := q.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=$1 ORDER BY face_id LIMIT $2`, versionID, document.MaxPhotoRecordsPerVersion+1)
 	if err != nil {
 		return nil, err
 	}

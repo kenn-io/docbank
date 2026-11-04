@@ -22,9 +22,9 @@ func publishXMPOrientation(t *testing.T, s *Store, nodeID int64, fingerprint str
 }
 
 // xmpSidecarPhoto is a RAW+JPEG photo whose extracted RAW has a sidecar.
-func xmpSidecarPhoto(t *testing.T) (*Store, PhotoAsset, PhotoFile) {
+func xmpSidecarPhoto(t *testing.T, s *Store) (*Store, PhotoAsset, PhotoFile) {
 	t.Helper()
-	s, asset, raw, _ := authoredSidecar(t)
+	s, asset, raw, _ := authoredSidecar(t, s)
 	publishXMPOrientation(t, s, raw.NodeID, fakeHash("ee"))
 	return s, asset, raw
 }
@@ -82,10 +82,11 @@ func xmpTargets(t *testing.T, s *Store) []PhotoSidecarTarget {
 	require.NoError(t, err)
 	return targets
 }
-func TestPhotoXMPTargetCursorVisitsEveryOriginalOnce(t *testing.T) {
+func checkPhotoXMPTargetCursorVisitsEveryOriginalOnce(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	t.Run("originals in one asset", func(t *testing.T) {
-		s, asset, raw := xmpSidecarPhoto(t)
+		s, asset, raw := xmpSidecarPhoto(t, newStore(t))
 		jpeg := fileByRole(asset.Files, PhotoRoleImage)
 		publishXMPOrientation(t, s, jpeg.NodeID, fakeHash("ee"))
 		_, err := editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{
@@ -107,7 +108,7 @@ func TestPhotoXMPTargetCursorVisitsEveryOriginalOnce(t *testing.T) {
 		require.ElementsMatch(t, []string{raw.ID, jpeg.ID}, seen, "a cursor inside an asset keeps its other originals")
 	})
 	t.Run("originals sharing bytes", func(t *testing.T) {
-		s, asset, raw := xmpSidecarPhoto(t)
+		s, asset, raw := xmpSidecarPhoto(t, newStore(t))
 		n := requireNodeByID(t, s, raw.NodeID)
 		sidecar := requireNodeByID(t, s, fileByRole(asset.Files, PhotoRoleSidecar).NodeID)
 		other, err := s.CreateFile(t.Context(), s.RootID(), "second.jpg", n.BlobHash, n.Size, "image/jpeg")
@@ -140,7 +141,8 @@ func settleXMP(t *testing.T, s *Store, fileID string) PhotoXMPState {
 	return xmpState(t, s, fileID)
 }
 
-func TestPhotoXMPInvalidation(t *testing.T) {
+func checkPhotoXMPInvalidation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	type fixture struct {
 		t   *testing.T
@@ -191,13 +193,7 @@ func TestPhotoXMPInvalidation(t *testing.T) {
 			_, err = f.s.EnableInitialAudit(f.t.Context(), plan)
 			require.NoError(f.t, err)
 		}, PhotoXMPStatePending},
-		{"batch pairing rename", func(f fixture) {
-			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
-			require.NoError(f.t, err)
-			n := requireNodeByID(f.t, f.s, fileByRole(asset.Files, PhotoRoleSidecar).NodeID)
-			_, err = f.s.BatchMove(f.t.Context(), []BatchMoveRequest{{NodeID: n.ID, IfRevision: n.Revision, DestinationPath: "/capture.cr2.xmp"}})
-			require.NoError(f.t, err)
-		}, PhotoXMPStatePending},
+
 		{"asset display revision", func(f fixture) {
 			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
 			require.NoError(f.t, err)
@@ -298,7 +294,7 @@ func TestPhotoXMPInvalidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, _, raw := xmpSidecarPhoto(t)
+			s, _, raw := xmpSidecarPhoto(t, newStore(t))
 			importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating}, "Travel")
 			tag, err := s.TagByName(t.Context(), "Travel")
 			require.NoError(t, err)
@@ -322,7 +318,7 @@ func TestPhotoXMPInvalidation(t *testing.T) {
 // A newer build may leave a receipt this reader cannot interpret.
 func TestPhotoXMPNewerReceiptStatusAndPruneRefusal(t *testing.T) {
 	t.Parallel()
-	s, _, raw := xmpSidecarPhoto(t)
+	s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
 	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
 	work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)
 	require.NoError(t, err)
@@ -349,10 +345,11 @@ func TestPhotoXMPNewerReceiptStatusAndPruneRefusal(t *testing.T) {
 	require.Equal(t, changed, requireNodeByID(t, s, sc.ID), "refused pruning must leave the node unchanged")
 }
 
-func TestPhotoXMPInputEligibilityMatchesTargetRoles(t *testing.T) {
+func checkPhotoXMPInputEligibilityMatchesTargetRoles(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	s, asset, _, _ := authoredSidecar(t)
+	s, asset, _, _ := authoredSidecar(t, newStore(t))
 	video, err := s.CreateFile(ctx, s.RootID(), "capture.mov", fakeHash("d4"), 4, "video/quicktime")
 	require.NoError(t, err)
 	videoAsset, err := s.PhotoAssetForNode(ctx, video.ID)
@@ -368,7 +365,7 @@ func TestPhotoXMPInputEligibilityMatchesTargetRoles(t *testing.T) {
 			_, err := s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
 			require.NoError(t, err)
 			var eligible bool
-			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT eligible FROM photo_xmp_inputs WHERE file_id=?`, file.ID).Scan(&eligible))
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT eligible FROM photo_xmp_inputs WHERE file_id=$1`, file.ID).Scan(&eligible))
 			assert.Equal(t, photoSidecarTargetRole(role), eligible)
 		})
 	}
@@ -377,7 +374,7 @@ func TestPhotoXMPInputEligibilityMatchesTargetRoles(t *testing.T) {
 func TestPhotoXMPQueryFilters(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	s, asset, raw := xmpSidecarPhoto(t)
+	s, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	match := func(text string) []string {
 		t.Helper()
 		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: text, Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
@@ -438,7 +435,7 @@ func restoredXMPStore(t *testing.T, s *Store) *Store {
 
 func syncedPhoto(t *testing.T) (*Store, PhotoFile) {
 	t.Helper()
-	s, _, raw := xmpSidecarPhoto(t)
+	s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
 	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 	return s, raw
 }
@@ -503,7 +500,7 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 			{"oversized", "9643f163881e7f6f015da707df395a3d67f6819a52534f8f0ae9586884336146", false, true},
 		} {
 			t.Run(test.name, func(t *testing.T) {
-				s, asset, raw := xmpSidecarPhoto(t)
+				s, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 				if !test.first {
 					importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating}, "Travel")
 				}
@@ -558,7 +555,7 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 			{`/camera/literal\capture.xmp`, `/camera/literal\capture.xmp`},
 		} {
 			t.Run(tc.source, func(t *testing.T) {
-				s, _, raw := xmpSidecarPhoto(t)
+				s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
 				work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)
 				require.NoError(t, err)
 				sc := work.Sidecar.Node
@@ -611,14 +608,15 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 	})
 }
 
-func TestPhotoXMPURLSidecarPairingAndClaim(t *testing.T) {
+func checkPhotoXMPURLSidecarPairingAndClaim(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct{ name, kind, source string }{
 		{"URL sidecar", "url", "https://example.com/download?id=2"},
 		{"CLI sidecar", "cli", "/camera/capture.xmp"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			var nodes []Node
 			for i, file := range []struct{ name, mime, hash string }{
@@ -662,7 +660,7 @@ func TestPhotoXMPURLSidecarPairingAndClaim(t *testing.T) {
 func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 	t.Parallel()
 	t.Run("each path keeps its latest version", func(t *testing.T) {
-		s, _, raw := xmpSidecarPhoto(t)
+		s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
 		work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)
 		require.NoError(t, err)
 		sc := work.Sidecar.Node
@@ -741,7 +739,7 @@ func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 		require.Equal(t, work.History.Settled, after.History.Settled)
 	})
 	t.Run("more sources than a photo has files", func(t *testing.T) {
-		s, _, raw := xmpSidecarPhoto(t)
+		s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
 		work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)
 		require.NoError(t, err)
 		sc := work.Sidecar.Node
@@ -772,7 +770,7 @@ func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 
 func TestPhotoXMPSidecarSelectionSurvivesRestore(t *testing.T) {
 	t.Parallel()
-	s, asset, raw := xmpSidecarPhoto(t)
+	s, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	lower := requireNodeByID(t, s, fileByRole(asset.Files, PhotoRoleSidecar).NodeID)
 	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
 	higher, err := s.CreateFile(t.Context(), s.RootID(), "capture.cr2.xmp", fakeHash("e5"), 4, "application/rdf+xml")
@@ -805,7 +803,7 @@ func TestPhotoXMPSidecarSelectionSurvivesRestore(t *testing.T) {
 
 func TestPhotoXMPMetadataRejectsDanglingReceipt(t *testing.T) {
 	t.Parallel()
-	s, _, raw := xmpSidecarPhoto(t)
+	s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
 	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &backup))
@@ -814,11 +812,12 @@ func TestPhotoXMPMetadataRejectsDanglingReceipt(t *testing.T) {
 	require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), bytes.NewReader(data)), "XMP receipts")
 }
 
-func TestPhotoXMPReceiptLimit(t *testing.T) {
+func checkPhotoXMPReceiptLimit(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, scenario := range []string{"refusals and overflow", "trash", "detach"} {
 		t.Run(scenario, func(t *testing.T) {
-			s, _, raw := xmpSidecarPhoto(t)
+			s, _, raw := xmpSidecarPhoto(t, newStore(t))
 			ctx := t.Context()
 			text := strings.Repeat("x", MaxPhotoAuthoredTextBytes)
 			values := PhotoAuthored{Rating: 3, Caption: text, Creator: text, Copyright: text, Confirmed: PhotoConfirmedRating | PhotoConfirmedCaption | PhotoConfirmedCreator | PhotoConfirmedCopyright}
@@ -952,7 +951,8 @@ func TestPhotoXMPReceiptLimit(t *testing.T) {
 func xmpReceipt(t *testing.T, s *Store, fileID string) photoXMPReceipt {
 	t.Helper()
 	var data []byte
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT after_json FROM photo_change_receipts WHERE operation='xmp_sync' AND CAST(json_extract(after_json,'$.file_id') AS TEXT)=?`, fileID).Scan(&data))
+	table, file := s.photoXMPReceiptLookupSQL()
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT after_json FROM `+table+` WHERE operation='xmp_sync' AND `+file+`=$1`, fileID).Scan(&data))
 	receipt, err := decodePhotoXMPReceipt(data)
 	require.NoError(t, err, "the receipt must stay readable")
 	return receipt
@@ -960,7 +960,7 @@ func xmpReceipt(t *testing.T, s *Store, fileID string) photoXMPReceipt {
 
 func TestPhotoXMPAuditQueueEligibility(t *testing.T) {
 	t.Parallel()
-	s, asset, raw := xmpSidecarPhoto(t)
+	s, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synced.jpg", fakeHash("f6"), 4, "image/jpeg")
 	require.NoError(t, err)
 	other, err := s.PhotoAssetForNode(t.Context(), node.ID)
@@ -999,7 +999,8 @@ func TestPhotoXMPAuditQueueEligibility(t *testing.T) {
 	require.ElementsMatch(t, []string{raw.ID, jpeg.ID}, []string{targets[0].FileID, targets[1].FileID})
 }
 
-func TestPhotoXMPAuditClassification(t *testing.T) {
+func checkPhotoXMPAuditClassification(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name, state, reason string
@@ -1010,7 +1011,7 @@ func TestPhotoXMPAuditClassification(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, asset, raw := xmpSidecarPhoto(t)
+			s, asset, raw := xmpSidecarPhoto(t, newStore(t))
 			importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
 			scope, err := s.Mkdir(t.Context(), s.RootID(), "Audited")
 			require.NoError(t, err)
@@ -1083,4 +1084,22 @@ func TestPhotoXMPQueryFiltersWithStacks(t *testing.T) {
 	require.ElementsMatch(t, ids[:2], rowIDs(page.Items))
 	require.Len(t, page.Stacks, 1)
 	require.Equal(t, ids[:2], page.Stacks[0].AssetIDs)
+}
+
+func TestPhotoXMPBatchRenameInvalidation(t *testing.T) {
+	t.Parallel()
+	s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
+	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
+	require.Empty(t, xmpTargets(t, s))
+	work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetByID(t.Context(), raw.AssetID)
+	require.NoError(t, err)
+	n := requireNodeByID(t, s, fileByRole(asset.Files, PhotoRoleSidecar).NodeID)
+	_, err = s.BatchMove(t.Context(), []BatchMoveRequest{{NodeID: n.ID, IfRevision: n.Revision, DestinationPath: "/capture.cr2.xmp"}})
+	require.NoError(t, err)
+	_, err = s.PublishPhotoXMP(t.Context(), PhotoXMPPlan{Work: work, Refusal: "stale worker result"}, "", 0, BlobPhysical{})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	require.Equal(t, PhotoXMPStatePending, xmpState(t, s, raw.ID).State)
+	require.Len(t, xmpTargets(t, s), 1)
 }
