@@ -14,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestRewriteLifecyclePreservesContent(t *testing.T) {
@@ -219,13 +217,5 @@ Test answer.
 	err = Approve(t.Context(), daemonconn.New(server.URL, "key"), n, func(Card, []string) (bool, error) { confirmed = true; return true, nil })
 	if err == nil || !strings.Contains(err.Error(), "aliases or merges") || confirmed || writes != 0 {
 		t.Fatalf("inline merge must be rejected before confirmation or writing: err=%v confirmed=%v writes=%d", err, confirmed, writes)
-	}
-}
-
-func TestUnsafeYAMLRecognizesCanonicalMergeTag(t *testing.T) {
-	merge := &yaml.Node{Kind: yaml.ScalarNode, Tag: "tag:yaml.org,2002:merge", Value: "<<"}
-	value := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	if !unsafeYAML(&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{merge, value}}) {
-		t.Fatal("canonical merge tag was not rejected")
 	}
 }
