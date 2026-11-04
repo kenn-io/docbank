@@ -16,8 +16,17 @@ import (
 func BenchmarkIngestMetadata(b *testing.B) {
 	const batch = 128
 	for _, mimeType := range []string{"application/octet-stream", "text/plain"} {
-		for _, existing := range []int{0, 10000} {
-			b.Run(fmt.Sprintf("%s/existing=%d", mimeType, existing), func(b *testing.B) {
+		type ingestCase struct {
+			existing int
+			shared   bool
+		}
+		cases := []ingestCase{{0, false}, {1000, false}, {10000, false}, {1000, true}, {10000, true}}
+		if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
+			cases = append(cases, ingestCase{100000, false}, ingestCase{100000, true})
+		}
+		for _, tc := range cases {
+			existing := tc.existing
+			b.Run(fmt.Sprintf("%s/existing=%d/shared=%t", mimeType, existing, tc.shared), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -25,9 +34,21 @@ func BenchmarkIngestMetadata(b *testing.B) {
 					s, err := Open(b.Context(), filepath.Join(dir, "docbank.db"))
 					require.NoError(b, err)
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
+						parentID := s.RootID()
+						if tc.shared {
+							parent, err := s.mkdirTx(b.Context(), tx, s.RootID(), "elsewhere", nowRFC3339())
+							if err != nil {
+								return err
+							}
+							parentID = parent.ID
+						}
 						for i := range existing {
-							_, _, err := s.createFileTx(b.Context(), tx, s.RootID(),
-								fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1), 8192, "application/octet-stream")
+							hash := fmt.Sprintf("%064x", i+1)
+							if tc.shared {
+								hash = fakeHash("a1")
+							}
+							_, _, err := s.createFileTx(b.Context(), tx, parentID,
+								fmt.Sprintf("seed-%05d.bin", i), hash, 8192, "application/octet-stream")
 							if err != nil {
 								return err
 							}
@@ -40,8 +61,12 @@ func BenchmarkIngestMetadata(b *testing.B) {
 					b.StartTimer()
 					for i := range batch {
 						name := fmt.Sprintf("file-%04d", i)
+						hash := fmt.Sprintf("%064x", existing+i+1)
+						if tc.shared {
+							hash = fakeHash("a1")
+						}
 						_, added, err := s.IngestFileWithMembership(b.Context(), run, s.RootID(),
-							name, fmt.Sprintf("%064x", existing+i+1), 8192, mimeType, "/synthetic/"+name, "")
+							name, hash, 8192, mimeType, "/synthetic/"+name, "")
 						require.NoError(b, err)
 						require.True(b, added)
 					}

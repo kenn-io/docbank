@@ -24,10 +24,22 @@ func subscribeWarm(b *testing.B, s *Store) func() {
 // blob I/O; fixture creation and checkpointing are outside the timer.
 func BenchmarkPhotoImportMetadata(b *testing.B) {
 	const batch = 32
-	for _, existing := range []int{100, 10000} {
+	type ingestCase struct {
+		existing int
+		shared   bool
+	}
+	cases := []ingestCase{{100, false}, {1000, false}, {10000, false}, {1000, true}, {10000, true}}
+	if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
+		cases = append(cases, ingestCase{100000, false}, ingestCase{100000, true})
+	}
+	for _, tc := range cases {
+		existing := tc.existing
 		for _, mode := range []struct{ edit, subscribed bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 			edit, subscribed := mode.edit, mode.subscribed
-			b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%t", existing, edit, subscribed), func(b *testing.B) {
+			if tc.shared && edit {
+				continue
+			}
+			b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%t/shared=%t", existing, edit, subscribed, tc.shared), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -38,16 +50,31 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 					require.NoError(b, err)
 					var prior []Node
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-						for i := range existing {
-							name := fmt.Sprintf("photo-%05d.jpg", i)
-							receipt, _, _, err := s.ingestFileTx(b.Context(), tx, run, s.RootID(), name,
-								fmt.Sprintf("%064x", i+1), 128, "image/jpeg", "/synthetic/"+name, "",
-								ingestFileOptions{observeMembership: true})
+						parentID := s.RootID()
+						if tc.shared {
+							parent, err := s.mkdirTx(b.Context(), tx, s.RootID(), "elsewhere", nowRFC3339())
 							if err != nil {
 								return err
 							}
-							if i >= existing-batch {
+							parentID = parent.ID
+						}
+						for i := range existing {
+							name := fmt.Sprintf("photo-%05d.jpg", i)
+							hash := fmt.Sprintf("%064x", i+1)
+							if tc.shared {
+								hash = fakeHash("a1")
+							}
+							if edit && i >= existing-batch {
+								receipt, _, _, err := s.ingestFileTx(b.Context(), tx, run, parentID, name,
+									hash, 128, "image/jpeg", "/synthetic/"+name, "", ingestFileOptions{observeMembership: true})
+								if err != nil {
+									return err
+								}
 								prior = append(prior, receipt.Node)
+							} else {
+								if _, _, err := s.createFileTx(b.Context(), tx, parentID, name, hash, 128, "image/jpeg"); err != nil {
+									return err
+								}
 							}
 						}
 						return nil
@@ -65,6 +92,9 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 							Name: name, Role: PhotoRoleImage, BlobHash: fmt.Sprintf("%064x", existing+i+1),
 							Size: 128, MediaType: "image/jpeg", OriginalPath: "/synthetic/" + name,
 						}}}
+						if tc.shared {
+							groups[i].Members[0].BlobHash = fakeHash("a1")
+						}
 					}
 					require.NoError(b, s.Checkpoint(b.Context()))
 					stop := func() {}

@@ -14,23 +14,29 @@ import (
 func TestIngestCandidatesUseBlobIndex(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	// Fresh vaults have no ANALYZE statistics. The per-file lookup must seek
-	// by content rather than visit every live file in the destination folder.
-	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+resolveIngestCandidatesSQL,
-		fakeHash("a1"), s.RootID())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
-	}
-	require.NoError(t, rows.Err())
-	plan := strings.Join(details, "\n")
-	assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
-	assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+	ctx := t.Context()
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for copies := 0; copies <= ingestBlobProbeCap+1; copies++ {
+			if copies > 0 {
+				if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%d", copies), fakeHash("a1"), 1, "text/plain"); err != nil {
+					return err
+				}
+			}
+			if copies != 0 && copies != ingestBlobProbeCap && copies != ingestBlobProbeCap+1 {
+				continue
+			}
+			query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"))
+			require.NoError(t, err)
+			plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
+			if copies <= ingestBlobProbeCap {
+				assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
+				assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+			} else {
+				assert.Contains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+			}
+		}
+		return nil
+	}))
 }
 
 func TestIngestFileIdempotency(t *testing.T) {

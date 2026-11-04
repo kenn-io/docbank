@@ -210,9 +210,9 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	return inserted == 1, nil
 }
 
-// Unary + keeps SQLite from choosing a folder scan before the blob lookup
-// when ANALYZE statistics are absent. PostgreSQL also accepts it for bigint.
-const resolveIngestCandidatesSQL = `SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
+const ingestBlobProbeCap = 1024
+
+const resolveIngestCandidatesPrefix = `SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
 		 LEFT JOIN provenance AS p ON p.node_id = n.id
 		   AND NOT EXISTS (
 			 SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
@@ -222,9 +222,28 @@ const resolveIngestCandidatesSQL = `SELECT n.id, n.name, i.source_kind, p.origin
 			 SELECT candidate.id FROM content_versions AS cv
 			 JOIN nodes AS candidate ON candidate.id = cv.node_id
 			 WHERE cv.blob_hash = $1 AND candidate.current_version_id = cv.version_id
-			   AND +candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
+			   AND `
+const resolveIngestCandidatesSuffix = `candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
 		 )
 		 ORDER BY n.id`
+
+const resolveIngestCandidatesSQL = resolveIngestCandidatesPrefix + "+" + resolveIngestCandidatesSuffix
+const resolveIngestFolderCandidatesSQL = resolveIngestCandidatesPrefix + resolveIngestCandidatesSuffix
+
+func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash string) (string, error) {
+	var copies int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
+		SELECT 1 FROM content_versions WHERE blob_hash = $1 LIMIT $2
+	)`, blobHash, ingestBlobProbeCap+1).Scan(&copies); err != nil {
+		return "", fmt.Errorf("counting ingest content versions: %w", err)
+	}
+	// Unary + makes SQLite seek by blob without ANALYZE statistics. For widely
+	// shared content, walking the destination avoids scanning unrelated copies.
+	if copies > ingestBlobProbeCap {
+		return resolveIngestFolderCandidatesSQL, nil
+	}
+	return resolveIngestCandidatesSQL, nil
+}
 
 // resolveIngestNameTx applies the import idempotency rule: a live suffix
 // candidate of name under parentID that carries blobHash AND was originally
@@ -238,12 +257,13 @@ func resolveIngestNameTx(
 	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
-	// Select candidate IDs through the blob index before joining their active
-	// origins. SQLite can visit those IDs in order without sorting provenance,
-	// so an early match need not load every sibling's origins. The left join
-	// preserves the name fallback for unknown origins.
-	rows, err := tx.QueryContext(ctx,
-		resolveIngestCandidatesSQL, blobHash, parentID)
+	candidateQuery, err := resolveIngestCandidatesQueryTx(ctx, tx, blobHash)
+	if err != nil {
+		return "", 0, false, err
+	}
+	// Join active origins only after selecting matching content in this folder.
+	// The left join preserves the name fallback for unknown origins.
+	rows, err := tx.QueryContext(ctx, candidateQuery, blobHash, parentID)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}

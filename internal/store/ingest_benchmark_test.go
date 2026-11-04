@@ -1,67 +1,23 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// BenchmarkIngestFolderSize measures committed metadata writes, excluding blob
-// I/O and fixture creation, as the destination folder grows.
-func BenchmarkIngestFolderSize(b *testing.B) {
-	for _, kind := range []string{"cli", "photo-import"} {
-		for _, siblings := range []int{1000, 10000, 100000} {
-			b.Run(fmt.Sprintf("%s/siblings=%d", kind, siblings), func(b *testing.B) {
-				s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
-				require.NoError(b, err)
-				b.Cleanup(func() { require.NoError(b, s.Close()) })
-				require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-					for i := range siblings {
-						_, _, err := s.createFileTx(b.Context(), tx, s.RootID(), fmt.Sprintf("seed-%07d.bin", i),
-							fmt.Sprintf("%064x", i+1), 8192, "application/octet-stream")
-						if err != nil {
-							return err
-						}
-					}
-					return nil
-				}))
-				run, err := s.BeginIngest(b.Context(), kind, "Synthetic corpus")
-				require.NoError(b, err)
-				require.NoError(b, s.Checkpoint(b.Context()))
-				i := 0
-				for b.Loop() {
-					name := fmt.Sprintf("file-%07d.bin", i)
-					hash := fmt.Sprintf("%064x", siblings+i+1)
-					if kind == "cli" {
-						_, added, err := s.IngestFileWithMembership(b.Context(), run, s.RootID(), name,
-							hash, 8192, "application/octet-stream", "/synthetic/"+name, "")
-						require.NoError(b, err)
-						require.True(b, added)
-					} else {
-						name = fmt.Sprintf("file-%07d.jpg", i)
-						result, err := s.IngestPhotoGroup(b.Context(), run, PhotoImportGroup{
-							Members: []PhotoImportMember{{Name: name, Role: PhotoRoleImage, BlobHash: hash,
-								Size: 8192, MediaType: "image/jpeg", OriginalPath: "/synthetic/" + name}},
-						})
-						require.NoError(b, err)
-						require.True(b, result.Added)
-						require.Len(b, result.Nodes, 1)
-					}
-					i++
-				}
-			})
-		}
-	}
-}
-
 // BenchmarkResolveIngestName isolates the work performed for every local add
 // and HTTP upload as the destination directory grows. Setup uses real file
 // authority but is excluded from timing.
 func BenchmarkResolveIngestName(b *testing.B) {
-	for _, siblings := range []int{0, 100, 1000, 10000} {
+	sizes := []int{0, 100, 1000, 10000}
+	if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
+		sizes = append(sizes, 100000)
+	}
+	for _, siblings := range sizes {
 		b.Run(fmt.Sprintf("siblings=%d", siblings), func(b *testing.B) {
 			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
