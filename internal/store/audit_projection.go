@@ -32,7 +32,7 @@ const (
 
 // auditMoveAffectsTrashOriginTx walks historical children, including inherited
 // trash and roots outside the scope. Starting at children excludes the moved
-// node's own origin. UNION ends cycles, and EXISTS stops at the first match.
+// node's own origin. UNION ends cycles.
 // Carrying the origin flag avoids a final nodes join that SQLite can turn into
 // a table scan.
 func auditMoveAffectsTrashOriginTx(
