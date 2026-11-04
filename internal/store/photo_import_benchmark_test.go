@@ -23,7 +23,6 @@ func subscribeWarm(b *testing.B, s *Store) func() {
 // catalog each iteration. It includes committed metadata transactions, but no
 // blob I/O; fixture creation and checkpointing are outside the timer.
 func BenchmarkPhotoImportMetadata(b *testing.B) {
-	const batch = 32
 	type ingestCase struct {
 		existing int
 		shared   bool
@@ -34,6 +33,11 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 	}
 	for _, tc := range cases {
 		existing := tc.existing
+		batch := 32
+		if tc.shared {
+			// A later identical photo reuses the first asset and bypasses name resolution.
+			batch = 1
+		}
 		for _, mode := range []struct{ edit, subscribed bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 			edit, subscribed := mode.edit, mode.subscribed
 			if tc.shared && edit {
