@@ -2816,6 +2816,7 @@ func TestExtractRejectsDurationShapedRelativeOperandsBeforeValueValidation(t *te
 		"The deadline is 7 min. before half an hour.",
 		"The deadline is 7 min. before a half hour.",
 		"The deadline is 7 min. before 1,00 minutes.",
+		"The deadline is 7 min. before 1ʼ000 minutes.",
 		"The deadline is 7 min. before " + overlong + " minutes.",
 	} {
 		t.Run(text, func(t *testing.T) {
@@ -2823,6 +2824,16 @@ func TestExtractRejectsDurationShapedRelativeOperandsBeforeValueValidation(t *te
 				t.Fatalf("unsupported relative-duration operand retained a partial figure: %+v", got)
 			}
 		})
+	}
+}
+
+func TestRelativeDurationOperandPartsRecognizesGroupingSeparators(t *testing.T) {
+	for _, separator := range []string{"'", "‘", "’", "ʼ", "_", " ", ", "} {
+		operand := "1" + separator + "000 minutes"
+		amount, unit, _, ok := relativeDurationOperandParts(operand)
+		if !ok || operand[amount[0]:amount[1]] != "1"+separator+"000" || strings.TrimSpace(operand[unit[0]:unit[1]]) != "minutes" {
+			t.Errorf("duration operand %q was not recognized as a complete grouped amount: amount=%v unit=%v ok=%t", operand, amount, unit, ok)
+		}
 	}
 }
 
@@ -4202,6 +4213,8 @@ func TestExtractReviewAbbreviationDateBounds(t *testing.T) {
 		period    Period
 	}{
 		{"before", Period{To: "2026-06-30"}},
+		{"Before", Period{To: "2026-06-30"}},
+		{"BEFORE", Period{To: "2026-06-30"}},
 		{"until", Period{To: "2026-07-01"}},
 		{"through", Period{To: "2026-07-01"}},
 		{"from", Period{From: "2026-07-01"}},
@@ -4906,6 +4919,8 @@ func TestExtractReviewPercentageBaseAndIndependentSentences(t *testing.T) {
 		want        []string
 		firstClause string
 	}{
+		{"The fees are about $5 and $10 shipping charges.", []string{}, ""},
+		{"The fees are about 5% of $100 and $200 shipping charges.", []string{}, ""},
 		{"The fee is 5% (approximately) of $100. The deposit is $7.", []string{"$7"}, ""},
 		{"The fee is 5% of $100 and $200 is deposited.", []string{"5%", "$200"}, ""},
 		{"The fee is 5% of $100 and $200 covers insurance.", []string{"5%", "$200"}, ""},

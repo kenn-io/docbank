@@ -1179,11 +1179,13 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 	return ok && parsed.Kind == durationKind || unsupportedRelativeDurationOperand(operand, connector)
 }
 
+const numericGroupingSeparatorChars = `_'’‘ʼ`
+
 var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
-	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|['‘’_]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
-	regexp.MustCompile(`^[0-9][0-9,._'‘’]*`),
+	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
+	regexp.MustCompile(`^[0-9][0-9,.` + numericGroupingSeparatorChars + `]*`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
 	spokenDecimalNumberRE,
@@ -1464,7 +1466,7 @@ var nonPredicateFigurePrefixWords = map[string]struct{}{
 }
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
-var rateDateContinuationRE = regexp.MustCompile(`^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + dateRE.String() + `(?:\s+(?:until|till|through|to)\s+` + dateRE.String() + `)?\s*[.!?](?:\s|$)`)
+var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + dateRE.String() + `(?:\s+(?:until|till|through|to)\s+` + dateRE.String() + `)?\s*[.!?](?:\s|$)`)
 var durationArithmeticRE = regexp.MustCompile(`(?i)^\s*(?:[+−*/⁄×÷±∓^\p{Pd}⁓⁻₋<>=≤≥]|out\s+of\b|(?:multiplied\s+by|divided\s+by|times|plus|minus|x)\b|and\s+(?:a\s+few|few|some|several)\s+|and\s+(?:a|an)\s+(?:` + approximation + `\s+` + number + `\b|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*[.,;!?]|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*$)|and\s+(?:a\s+)?` + fractionWords + `s?\b|[(\[]\s*(?:[+−*/⁄×÷±∓^-]|(?:and|plus|minus|times|x|multiplied|divided)\b))`)
 var durationAlternativeRE = regexp.MustCompile(`(?i)^\s+(?:or|and|through|to|until|till)\s+[(\["'‘’“”«»]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:[$€£¥]|(?:` + currencyCodes + `)\s*)?(?:` + number + `)\b`)
 var listRowRE = regexp.MustCompile(`^\s*(?:[-*+]\s+|[0-9]+[.)]\s+)`)
@@ -1684,7 +1686,7 @@ func durationJoinTail(s string) string {
 // A grouping separator between digits is not a scalar boundary.
 func groupedNumberPrefix(prefix string) bool {
 	r, size := utf8.DecodeLastRuneInString(prefix)
-	if !strings.ContainsRune("_'’‘ʼ", r) {
+	if !strings.ContainsRune(numericGroupingSeparatorChars, r) {
 		return false
 	}
 	r, _ = utf8.DecodeLastRuneInString(prefix[:len(prefix)-size])
@@ -1693,7 +1695,7 @@ func groupedNumberPrefix(prefix string) bool {
 
 func groupedNumberSuffix(suffix string) bool {
 	r, size := utf8.DecodeRuneInString(suffix)
-	if !strings.ContainsRune("_'’‘ʼ", r) {
+	if !strings.ContainsRune(numericGroupingSeparatorChars, r) {
 		return false
 	}
 	r, _ = utf8.DecodeRuneInString(suffix[size:])
@@ -2180,9 +2182,16 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+[\p{L}]+ing\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)\b`)
 
 func quantitySubjectAssertion(s string) bool {
-	return quantitySubjectRE.MatchString(s) && !quantitySubjectContinuationRE.MatchString(s)
+	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {
+		return false
+	}
+	if nominal := quantitySubjectNominalContinuationRE.FindStringIndex(s); nominal != nil {
+		return quantitySubjectRE.MatchString(s[nominal[1]:])
+	}
+	return true
 }
 
 var proportionArticleRE = regexp.MustCompile(`(?i)^(?:every|a|an|the)\s+`)

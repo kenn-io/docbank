@@ -42,6 +42,8 @@ from becoming a date value, as in `Policy: AB/2026-07-01` or
 precede an independent typed figure in the same clause.
 An accepted date after `to` supplies an end bound, even when its day follows a
 money amount, unless its scope is uncertain.
+Period words after an abbreviated rate are matched without regard to case, so
+`The fee is $5/hr. BEFORE 1 July 2026.` retains the exclusive end bound.
 
 Each figure retains the extraction-accepted date spans as byte offsets in its
 normalized clause for same-package consumers. Consumers use these decisions
@@ -76,6 +78,7 @@ duration operands such as `7 days before thirty days` or
 durations such as `7 min. before 1 000 minutes`,
 `7 min. before 1 000.5 minutes`, `7 min. before 1/2 hour`,
 `7 min. before 1'000 minutes`, `7 min. before 1_000 minutes`,
+`7 min. before 1ʼ000 minutes`,
 `7 min. before 1, 000 minutes`, or `7 min. before 1  000 minutes`,
 `7 min. before .5 hours`, `7 min. before half an hour`,
 `7 min. before seven point five minutes`, or signed operands such as
@@ -113,6 +116,9 @@ after an approximate amount or percentage base remain separate too.
 of $100 and $200 covers insurance.` keeps `5%` and `$200`. A malformed operand
 does not discard a later independent assertion: `The wait is 7 min. After 1,00
 minutes customers pay $5.` keeps `7 min` and `$5`.
+Nominal phrases such as `shipping charges` stay inside an approximate group:
+`The fees are about $5 and $10 shipping charges.` and `The fees are about 5%
+of $100 and $200 shipping charges.` yield no figures.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
