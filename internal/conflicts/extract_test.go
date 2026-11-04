@@ -3109,6 +3109,11 @@ func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
 			want: []string{"5%"},
 		},
 		{
+			name: "cost predicate with typed amount ends approximate grouping",
+			text: "The plan includes about 30 devices and 2 devices cost $10.",
+			want: []string{"2 devices", "$10"},
+		},
+		{
 			name: "paid predicate exposes independent approximate amount",
 			text: "The fee was about $5 and $10 paid shipping costs.",
 			want: []string{"$10"},
@@ -3146,6 +3151,9 @@ func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
 			t.Errorf("nominal continuation %q was treated as an assertion", nominal)
 		}
 	}
+	if !quantitySubjectAssertion(" cost $10") {
+		t.Error("cost predicate followed by a typed amount was not recognized as an assertion")
+	}
 }
 
 func TestExtractReviewUnresolvedApproximateAndComparisonOperands(t *testing.T) {
@@ -3171,8 +3179,35 @@ func TestExtractReviewUnresolvedApproximateAndComparisonOperands(t *testing.T) {
 			text: "The wait is almost exactly thirty minutes and 2 hours.",
 		},
 		{
+			name: "bounded spoken duration remains attached",
+			text: "The wait is at least thirty minutes and 2 hours.",
+		},
+		{
+			name: "tilde approximation remains attached to spoken duration",
+			text: "The wait is ~thirty minutes and 2 hours.",
+		},
+		{
+			name: "approximately equal marker remains attached to spoken duration",
+			text: "The wait is ≈thirty minutes and 2 hours.",
+		},
+		{
 			name: "unsupported spoken percentage base remains attached",
 			text: "The fee is 5% of thirty dollars and $200.",
+			want: []string{"5%"},
+		},
+		{
+			name: "unsupported spoken count percentage base remains attached",
+			text: "The fee is 5% of thirty devices and 2 devices.",
+			want: []string{"5%"},
+		},
+		{
+			name: "bounded spoken money percentage base remains attached",
+			text: "The fee is 5% of at least thirty dollars and $200.",
+			want: []string{"5%"},
+		},
+		{
+			name: "bounded spoken duration percentage base remains attached",
+			text: "The fee is 5% of at least thirty minutes and 2 hours.",
 			want: []string{"5%"},
 		},
 		{
@@ -3185,6 +3220,16 @@ func TestExtractReviewUnresolvedApproximateAndComparisonOperands(t *testing.T) {
 			want: []string{"$5"},
 		},
 		{
+			name: "following sentence remains independent of bounded spoken duration",
+			text: "The wait is at least thirty minutes and 2 hours. The fee is $5.",
+			want: []string{"$5"},
+		},
+		{
+			name: "following sentence remains independent of symbolically approximate duration",
+			text: "The wait is ≈thirty minutes and 2 hours. The fee is $5.",
+			want: []string{"$5"},
+		},
+		{
 			name: "following count sentence remains independent",
 			text: "There are about thirty devices and 2 users. The fee is $5.",
 			want: []string{"$5"},
@@ -3192,6 +3237,11 @@ func TestExtractReviewUnresolvedApproximateAndComparisonOperands(t *testing.T) {
 		{
 			name: "following sentence remains independent of spoken percentage base",
 			text: "The fee is 5% of thirty dollars and $200. The deposit is $7.",
+			want: []string{"5%", "$7"},
+		},
+		{
+			name: "following sentence remains independent of bounded spoken percentage base",
+			text: "The fee is 5% of at least thirty minutes and 2 hours. The deposit is $7.",
 			want: []string{"5%", "$7"},
 		},
 		{

@@ -193,7 +193,9 @@ Ambiguous predicate/noun forms such as `charges` and `costs` do not end those
 groups: `The plans require about $5 and $10 charges.` yields no figures, while
 `The surcharge is 5% of the $100 and $200 costs.` keeps `5%` only. Clear
 predicates such as `covers shipping costs` still identify an independent
-assertion.
+assertion. `Cost` followed by a typed amount also identifies a predicate:
+`The plan includes about 30 devices and 2 devices cost $10.` keeps `2 devices`
+and `$10`, while a bare nominal `costs` remains part of the preceding group.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
@@ -219,10 +221,14 @@ omission, including markers before a bound or inside a range. The suffixes
 by `exactly`, as in `almost exactly`, or `a total of` also omits the figure. An approximate component omits a
 compound duration joined by `and` or a comma, while an independently stated exact figure can remain.
 Unsupported spoken operands remain attached too: `There are about thirty
-devices and 2 users.`, `The rate is about thirty percent and 5 percent.`, and
-`The wait is almost exactly thirty minutes and 2 hours.` yield no figures. An
-unsupported spoken amount in a percentage base also keeps following amounts in
-that base: `The fee is 5% of thirty dollars and $200.` keeps `5%` only.
+devices and 2 users.`, `The rate is about thirty percent and 5 percent.`,
+`The wait is almost exactly thirty minutes and 2 hours.`, `The wait is at least
+thirty minutes and 2 hours.`, and `The wait is ≈thirty minutes and 2 hours.`
+yield no figures. An unsupported spoken count, duration, or amount in a
+percentage base also keeps following operands in that base, including after a
+bound: `The fee is 5% of thirty devices and 2 devices.`, `The fee is 5% of at
+least thirty dollars and $200.`, and `The fee is 5% of at least thirty minutes
+and 2 hours.` keep `5%` only. A later sentence remains independent.
 An unsupported numeric or verbal duration alternative such as `7 or 10 days`,
 `7 min. or an hour`, `7 min. or .5 hours`, or `7 min. and thirty minutes`
 never becomes a partial exact value. Unsupported sign words such as `minus`

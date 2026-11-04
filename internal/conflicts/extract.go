@@ -114,7 +114,7 @@ clauses:
 			continue
 		}
 		var cs []candidate
-		checks := approximateUnsupportedWordOperandChecks(s)
+		checks := unresolvedSpokenWordOperandChecks(s)
 		identifierSpans := identifierRE.FindAllStringIndex(s, -1)
 		explicitTokens := identifierExplicitTokenRE.FindAllStringIndex(s, -1)
 		for _, span := range explicitTokens {
@@ -1505,47 +1505,79 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 }
 
 var (
-	approximateWordLeadRE      = regexp.MustCompile(`(?i)\b` + approximation + `\b(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?`)
-	spokenMoneyUnitLeadRE      = regexp.MustCompile(`(?i)^\s+(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
-	spokenCountUnitLeadRE      = regexp.MustCompile(`(?i)^\s+(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
-	spokenPercentUnitLeadRE    = regexp.MustCompile(`(?i)^(?:\s+(?:percentage\s+points?|percent|per\s+cent)\b|\s*%)`)
-	spokenPercentageBaseLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:of|on)\s+(?:(?:the|a|an)\s+)?[\s.()\[\]"'‘’“”«»]*`)
+	unsupportedWordOperandLeadRE        = regexp.MustCompile(`(?i)\b(?:` + approximation + `)\b|(?:` + rateBoundPrefix + `)|(?:<=|>=|≤|≥|<|>)|[~≈]`)
+	unsupportedWordOperandScaffoldingRE = regexp.MustCompile(`(?i)^(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the)\s+`)
+	spokenMoneyUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
+	spokenCountUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
+	spokenPercentUnitLeadRE             = regexp.MustCompile(`(?i)^(?:\s+(?:percentage\s+points?|percent|per\s+cent)\b|\s*%)`)
+	spokenPercentageBaseLeadRE          = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:of|on)\s+(?:(?:the|a|an)\s+)?[\s.()\[\]"'‘’“”«»]*`)
 )
 
-// Preserve approximate spoken operands that the exact-number recognizers do
-// not support, so later candidates remain attached during relationship checks.
-func approximateUnsupportedWordOperandChecks(s string) []candidate {
+// Preserve uncertain spoken operands that the exact-number recognizers do not
+// support, so later candidates remain attached during relationship checks.
+func unresolvedSpokenWordOperandChecks(s string) []candidate {
 	var checks []candidate
-	for _, lead := range approximateWordLeadRE.FindAllStringIndex(s, -1) {
+	for _, lead := range unsupportedWordOperandLeadRE.FindAllStringIndex(s, -1) {
 		raw := s[lead[1]:]
-		operand := trimRelativeDurationWrappers(raw)
-		start := lead[1] + len(raw) - len(operand)
-		if amount, unit, _, ok := relativeDurationOperandParts(operand); ok {
-			text := operand[amount[0]:amount[1]]
-			if !supportedWordAmount(text) {
-				checks = append(checks, candidate{start + amount[0], start + unit[1], Figure{Kind: durationKind}, 1})
-			}
-			continue
+		operand, consumed := consumeUnresolvedWordOperandQualifiers(raw)
+		if check, ok := unresolvedSpokenWordOperandCheck(operand, lead[1]+consumed); ok {
+			checks = appendUnresolvedWordOperandCheck(checks, check)
 		}
-		amount := numeralWordSequenceRE.FindStringIndex(operand)
-		if amount == nil || amount[0] != 0 || supportedWordAmount(operand[amount[0]:amount[1]]) {
-			continue
-		}
-		if unit := spokenCountUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
-			checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: "count"}, 1})
-			continue
-		}
-		if unit := spokenPercentUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
-			checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: percentKind, Unit: percentKind}, 1})
-			continue
-		}
-		unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:])
-		if unit == nil || unit[0] != 0 {
-			continue
-		}
-		checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: "money"}, 1})
 	}
-	return append(checks, unresolvedSpokenPercentageBaseChecks(s)...)
+	for _, check := range unresolvedSpokenPercentageBaseChecks(s) {
+		checks = appendUnresolvedWordOperandCheck(checks, check)
+	}
+	return checks
+}
+
+func consumeUnresolvedWordOperandQualifiers(s string) (operand string, consumed int) {
+	for {
+		trimmed := trimRelativeDurationWrappers(s)
+		consumed += len(s) - len(trimmed)
+		s = trimmed
+		var qualifierBytes int
+		operand, qualifierBytes, _ = consumeRelativeDurationOperandQualifiers(s)
+		consumed += qualifierBytes
+		s = operand
+		if scaffolding := unsupportedWordOperandScaffoldingRE.FindStringIndex(s); scaffolding != nil && scaffolding[0] == 0 && scaffolding[1] > 0 {
+			consumed += scaffolding[1]
+			s = s[scaffolding[1]:]
+			continue
+		}
+		return s, consumed
+	}
+}
+
+func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, bool) {
+	if amount, unit, _, ok := relativeDurationOperandParts(operand); ok {
+		if !supportedWordAmount(operand[amount[0]:amount[1]]) {
+			return candidate{start + amount[0], start + unit[1], Figure{Kind: durationKind}, 1}, true
+		}
+		return candidate{}, false
+	}
+	amount := numeralWordSequenceRE.FindStringIndex(operand)
+	if amount == nil || amount[0] != 0 || supportedWordAmount(operand[:amount[1]]) {
+		return candidate{}, false
+	}
+	if unit := spokenCountUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
+		return candidate{start, start + amount[1] + unit[1], Figure{Kind: "count"}, 1}, true
+	}
+	if unit := spokenPercentUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
+		return candidate{start, start + amount[1] + unit[1], Figure{Kind: percentKind, Unit: percentKind}, 1}, true
+	}
+	if unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
+		return candidate{start, start + amount[1] + unit[1], Figure{Kind: "money"}, 1}, true
+	}
+	return candidate{}, false
+}
+
+func appendUnresolvedWordOperandCheck(checks []candidate, check candidate) []candidate {
+	if slices.ContainsFunc(checks, func(existing candidate) bool {
+		return existing.start == check.start && existing.end == check.end && existing.f.Kind == check.f.Kind
+	}) {
+		return checks
+	}
+	return append(checks, check)
 }
 
 func unresolvedSpokenPercentageBaseChecks(s string) []candidate {
@@ -1566,16 +1598,13 @@ func unresolvedSpokenPercentageBaseChecks(s string) []candidate {
 			continue
 		}
 		start := rate[1] + baseLead[1]
-		operand := s[start:]
-		amount := numeralWordSequenceRE.FindStringIndex(operand)
-		if amount == nil || amount[0] != 0 || supportedWordAmount(operand[:amount[1]]) {
+		operand, consumed := consumeUnresolvedWordOperandQualifiers(s[start:])
+		start += consumed
+		check, ok := unresolvedSpokenWordOperandCheck(operand, start)
+		if !ok {
 			continue
 		}
-		unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:])
-		if unit == nil || unit[0] != 0 {
-			continue
-		}
-		checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: "money"}, 1})
+		checks = appendUnresolvedWordOperandCheck(checks, check)
 	}
 	return checks
 }
@@ -2535,6 +2564,9 @@ func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {
 		return false
 	}
+	if quantitySubjectCostPredicate(s) {
+		return true
+	}
 	if nominal := quantitySubjectNominalDurationRE.FindStringIndex(s); nominal != nil && !quantitySubjectPredicatedNominalLeadRE.MatchString(s) {
 		return quantitySubjectRE.MatchString(s[nominal[1]:])
 	}
@@ -2542,6 +2574,17 @@ func quantitySubjectAssertion(s string) bool {
 		return quantitySubjectRE.MatchString(s[nominal[1]:])
 	}
 	return true
+}
+
+var quantitySubjectCostPredicateLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+costs?\b\s+`)
+
+func quantitySubjectCostPredicate(s string) bool {
+	lead := quantitySubjectCostPredicateLeadRE.FindStringIndex(s)
+	if lead == nil {
+		return false
+	}
+	amount := moneyRE.FindStringIndex(s[lead[1]:])
+	return amount != nil && amount[0] == 0
 }
 
 var proportionArticleRE = regexp.MustCompile(`(?i)^(?:every|a|an|the)\s+`)
