@@ -93,8 +93,8 @@ Test answer.
 	require.NoError(t, err)
 	require.Equal(t, 1, strings.Count(table, "/answer-cards/card.md"))
 	require.Equal(t, 1, strings.Count(table, "/answer-cards/card.txt"))
-	require.Contains(t, table, "citation 0")
-	require.Contains(t, table, "new_version")
+	require.Equal(t, 2, strings.Count(table, "new_version"))
+	require.Contains(t, table, "citation 0: new_version")
 }
 
 func TestCardsCheckInvalidCardHasSingleRow(t *testing.T) {

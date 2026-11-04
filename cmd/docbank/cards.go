@@ -31,9 +31,18 @@ var cardsCheckCmd = &cobra.Command{
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w, "STATE\tREASON\tPATH")
 		for _, row := range report.Items {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", row.State, strings.Join(strings.Fields(row.Reason), " "), row.Path)
+			rowReason := strings.Join(strings.Fields(row.Reason), " ")
+			displayReason := rowReason
+			if row.Citation != nil && rowReason != "" {
+				displayReason = fmt.Sprintf("citation %d: %s", *row.Citation, rowReason)
+			}
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", row.State, displayReason, row.Path)
 			for _, issue := range row.CitationIssues {
-				_, _ = fmt.Fprintf(w, "  citation %d\t%s\n", issue.Citation, strings.Join(strings.Fields(issue.Reason), " "))
+				issueReason := strings.Join(strings.Fields(issue.Reason), " ")
+				if row.Citation != nil && issue.Citation == *row.Citation && issueReason == rowReason {
+					continue
+				}
+				_, _ = fmt.Fprintf(w, "  citation %d\t%s\n", issue.Citation, issueReason)
 			}
 		}
 		return w.Flush()
