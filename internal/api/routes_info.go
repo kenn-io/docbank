@@ -8,6 +8,14 @@ import (
 )
 
 func registerInfoRoute(api huma.API, d Deps) {
+	type identityOutput struct{ Body VaultIdentity }
+	huma.Register(api, huma.Operation{
+		OperationID: "vaultIdentity", Method: http.MethodGet, Path: "/api/v1/vault",
+		Summary: "Identify the selected vault",
+	}, func(ctx context.Context, _ *struct{}) (*identityOutput, error) {
+		return &identityOutput{Body: VaultIdentity{VaultID: d.Store.VaultID()}}, nil
+	})
+
 	type infoOutput struct{ Body VaultInfo }
 	huma.Register(api, huma.Operation{
 		OperationID: "vaultInfo", Method: http.MethodGet, Path: "/api/v1/info",

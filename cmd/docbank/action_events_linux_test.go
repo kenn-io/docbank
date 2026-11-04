@@ -80,8 +80,8 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			assert.NoError(t, json.MarshalWrite(w, api.IngestReport{Added: added, Failed: failedItems}))
 		case r.URL.Path == "/api/v1/processing/profiles":
 			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"semantic"}}}))
-		case r.URL.Path == "/api/v1/info":
-			assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: "22222222-2222-4222-8222-222222222222"}))
+		case r.URL.Path == "/api/v1/vault":
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: "22222222-2222-4222-8222-222222222222"}))
 		case r.URL.Path == "/api/v1/search/similar":
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSimilarReport{State: "ready", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: version}, BindingID: "semantic", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}))
 		case r.URL.Path == "/api/v1/search":

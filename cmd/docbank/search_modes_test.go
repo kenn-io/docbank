@@ -26,8 +26,8 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 				Name: "private", Fingerprint: profileFingerprint,
 				EmbeddingBindings: []string{"general", "multilingual"},
 			}}))
-		case "GET /api/v1/info":
-			assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: vaultID}))
+		case "GET /api/v1/vault":
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: vaultID}))
 		case "POST /api/v1/search":
 			searchRequests++
 			var body api.DocumentSearchRequest

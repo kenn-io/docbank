@@ -341,7 +341,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if err != nil {
 		return usageError(err)
 	}
-	info, err := c.API().VaultInfo(cmd.Context())
+	info, err := c.API().VaultIdentity(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -413,7 +413,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return usageError(err)
 	}
-	info, err := c.API().VaultInfo(cmd.Context())
+	info, err := c.API().VaultIdentity(cmd.Context())
 
 	if err != nil {
 		return err

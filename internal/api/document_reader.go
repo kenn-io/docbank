@@ -26,6 +26,10 @@ func (r *DocumentReader) VaultInfo(ctx context.Context) (VaultInfo, error) {
 	return readVaultInfo(ctx, Deps{Store: r.store, Blobs: r.blobs, VaultRoot: r.vaultRoot})
 }
 
+func (r *DocumentReader) VaultID(ctx context.Context) (string, error) {
+	return r.store.VaultID(), nil
+}
+
 func (r *DocumentReader) ResolveDocumentSourceFence(ctx context.Context, input DocumentSourceFenceResolveRequest) (DocumentSourceFenceResolution, error) {
 	return resolveDocumentSourceFence(ctx, r.processing, input)
 }

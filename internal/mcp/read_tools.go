@@ -354,8 +354,8 @@ func listDocuments(
 		return listDocumentsOutput{}, nil, err
 	}
 	type response struct {
-		page api.DocumentPage
-		info api.VaultInfo
+		page    api.DocumentPage
+		vaultID string
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PathPrefix: input.PathPrefix,
@@ -363,18 +363,18 @@ func listDocuments(
 		if callErr != nil {
 			return response{}, callErr
 		}
-		info, callErr := c.VaultInfo(ctx)
+		vaultID, callErr := c.VaultID(ctx)
 
 		if callErr != nil {
 			return response{}, callErr
 		}
-		return response{page: page, info: info}, nil
+		return response{page: page, vaultID: vaultID}, nil
 	})
 	if err != nil {
 		return listDocumentsOutput{}, nil, err
 	}
 	return listDocumentsOutput{DocumentPage: result.page, privateCache: newPrivateCache()},
-		documentResourceLinks(result.info.VaultID, result.page.Items), nil
+		documentResourceLinks(result.vaultID, result.page.Items), nil
 }
 
 type searchDocumentsInput struct {
@@ -626,7 +626,7 @@ func getDocument(
 			page.Items[0].ContentVersionID != input.ContentVersionID || page.Items[0].Path != node.Path {
 			return response{}, store.ErrProcessingSourceFenceStaleVersion
 		}
-		info, callErr := c.API().VaultInfo(ctx)
+		info, callErr := c.API().VaultIdentity(ctx)
 		if callErr != nil {
 			return response{}, callErr
 		}

@@ -171,6 +171,7 @@ type nativeExportFixture struct {
 	worker     *exporter.Worker
 	connection *daemonconn.Connection
 	lease      *daemonLease
+	handler    http.Handler
 }
 
 func newNativeExportFixture(t *testing.T) *nativeExportFixture {
@@ -192,11 +193,12 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 		Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: gate, Exports: worker,
 	})
 	t.Cleanup(daemon.Close)
-	httpServer := httptest.NewServer(daemon.Handler())
+	handler := daemon.Handler()
+	httpServer := httptest.NewServer(handler)
 	t.Cleanup(httpServer.Close)
 	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	return &nativeExportFixture{catalog, blobs, worker, connection, exportTestLease(t, httpServer.URL)}
+	return &nativeExportFixture{catalog, blobs, worker, connection, exportTestLease(t, httpServer.URL), handler}
 }
 
 func (f *nativeExportFixture) provenConnection(t *testing.T) *daemonconn.Connection {
