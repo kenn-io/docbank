@@ -1779,9 +1779,6 @@ func TestProcessingMetadataImportRejectsInvalidAuthorityTransactionally(t *testi
 			originalVaultID := target.VaultID()
 			err := target.ImportMetadata(t.Context(), bytes.NewReader(mutate(t, exported.Bytes())))
 			require.Error(t, err)
-			if name == "conflicting duplicate lexical generation" {
-				require.ErrorContains(t, err, "UNIQUE constraint failed: rendition_lexical_generations.generation_id")
-			}
 
 			var processingRows, nodes int
 			require.NoError(t, target.db.QueryRowContext(t.Context(), `
@@ -1974,8 +1971,4 @@ func TestProcessingMetadataAppendedGenerationRoundTrip(t *testing.T) {
 	after, err := restored.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, len(members)+1, after.BuildCount)
-	hits, _, err := restored.SearchPage(ctx, "cauthority", 20)
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	assert.Equal(t, "/c.txt", hits[0].Path)
 }

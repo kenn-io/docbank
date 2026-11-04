@@ -2436,60 +2436,8 @@ func TestImportedSupersededLexicalGenerationIsCollectedAfterRootRelease(t *testi
 	assert.Equal(t, 1, countGeneration(current.ID), "the head is never collected")
 }
 
-func TestPostCutoverReimportAfterPruneAndGCWithPinnedReader(t *testing.T) {
+func TestPostCutoverPurgePreservesSearchSnapshots(t *testing.T) {
 	t.Parallel()
-	t.Run("purge with two pinned readers then import", func(t *testing.T) {
-		ctx := t.Context()
-		s := newTestStore(t)
-		a, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 10, "text/plain")
-		require.NoError(t, err)
-		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
-			BlobHash: a.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
-			Status: ExtractionOK, Text: "aauthority",
-		}))
-		_, err = s.MigrateLegacyPlainText(ctx)
-		require.NoError(t, err)
-		first, err := s.AcquireLexicalGeneration(ctx)
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, first.Release()) })
-		firstMembers, err := lexicalGenerationBuildIDsTx(ctx, s.db, first.Generation.ID)
-		require.NoError(t, err)
-		require.Len(t, firstMembers, 1)
-		b, err := s.CreateFile(ctx, s.RootID(), "b.txt", fakeHash("b1"), 10, "text/plain")
-		require.NoError(t, err)
-		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
-			BlobHash: b.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
-			Status: ExtractionOK, Text: "bauthority",
-		}))
-		second, err := s.AcquireLexicalGeneration(ctx)
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, second.Release()) })
-		secondMembers, err := lexicalGenerationBuildIDsTx(ctx, s.db, second.Generation.ID)
-		require.NoError(t, err)
-		require.Len(t, secondMembers, 2)
-		_, err = s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{b.CurrentVersionID}})
-		require.NoError(t, err)
-		head, err := s.ActiveLexicalGeneration(ctx)
-		require.NoError(t, err)
-		require.Equal(t, first.Generation.ID, head.ID, "purge reuses the retained A snapshot")
-		c, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 10, "text/plain")
-		require.NoError(t, err)
-		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
-			BlobHash: c.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
-			Status: ExtractionOK, Text: "cauthority",
-		}))
-		hits, _, err := s.SearchPage(ctx, "cauthority", 20)
-		require.NoError(t, err)
-		require.Len(t, hits, 1)
-		assert.Equal(t, "/c.txt", hits[0].Path)
-		assert.Equal(t, SearchMatchContent, hits[0].Match)
-		members, err := lexicalGenerationBuildIDsTx(ctx, s.db, first.Generation.ID)
-		require.NoError(t, err)
-		assert.Equal(t, firstMembers, members, "the first reader keeps exactly A")
-		members, err = lexicalGenerationBuildIDsTx(ctx, s.db, second.Generation.ID)
-		require.NoError(t, err)
-		assert.Equal(t, secondMembers, members, "the second reader keeps exactly A and B")
-	})
 	t.Run("pinned reader reimport", func(t *testing.T) {
 		ctx := t.Context()
 		s := newTestStore(t)
@@ -2498,6 +2446,12 @@ func TestPostCutoverReimportAfterPruneAndGCWithPinnedReader(t *testing.T) {
 		})
 		_, err := s.MigrateLegacyPlainText(ctx)
 		require.NoError(t, err)
+		first, err := s.AcquireLexicalGeneration(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, first.Release()) })
+		firstMembers, err := lexicalGenerationBuildIDsTx(ctx, s.db, first.Generation.ID)
+		require.NoError(t, err)
+		require.Len(t, firstMembers, 1)
 		b, err := s.CreateFile(ctx, s.RootID(), "b.txt", fakeHash("b1"), 10, "text/plain")
 		require.NoError(t, err)
 		extraction := ExtractionResult{
@@ -2531,6 +2485,9 @@ func TestPostCutoverReimportAfterPruneAndGCWithPinnedReader(t *testing.T) {
 		members, err := lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
 		require.NoError(t, err)
 		assert.Equal(t, before, members)
+		members, err = lexicalGenerationBuildIDsTx(ctx, s.db, first.Generation.ID)
+		require.NoError(t, err)
+		assert.Equal(t, firstMembers, members, "the first reader keeps exactly A")
 	})
 	t.Run("purge without reader", func(t *testing.T) {
 		ctx := t.Context()

@@ -382,6 +382,8 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 	).Scan(&firstAttachmentID, &firstAttachedAt))
 	assert.Equal(t, legacyMigrationTimestamp, completedAt)
 	assert.Equal(t, legacyMigrationTimestamp, firstAttachedAt)
+	head, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
 
 	second, err := s.CreateFile(
 		t.Context(), s.RootID(), "second.txt", hash, int64(len(text)), "text/plain",
@@ -391,6 +393,10 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: text,
 	}))
+
+	unchanged, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, head, unchanged, "identical re-extraction preserves the head")
 
 	var builds, attachments, heads, queued, cached int
 	for query, destination := range map[string]*int{
@@ -995,11 +1001,6 @@ func TestPostCutoverExtractionAppendsSearchSnapshot(t *testing.T) {
 	members, err = lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
 	require.NoError(t, err)
 	assert.Equal(t, before, members, "the reader keeps exactly its original documents")
-
-	require.NoError(t, s.RecordExtraction(ctx, extraction))
-	unchanged, err := s.ActiveLexicalGeneration(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, head, unchanged, "identical re-extraction preserves the head")
 
 	require.NoError(t, lease.Release())
 	fresh, err = s.CreateFile(ctx, s.RootID(), "d.txt", fakeHash("d1"), 10, "text/plain")
