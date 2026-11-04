@@ -883,7 +883,7 @@ export class Photos {
           } else {
             this.selection = {
               ...this.selection,
-              selectedIDs: new SvelteSet([...selected, ...added.map((item) => item.asset_id)]),
+              selectedIDs: new SvelteSet(this.rows.map((item) => item.asset_id)),
             };
           }
         }

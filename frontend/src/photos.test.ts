@@ -3887,6 +3887,30 @@ it.each([0, 2])(
   },
 );
 
+it("selects newly refreshed photos when paging after Metadata closes", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  try {
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    await photos.selectAllResults();
+    photos.authored.targets = [preparedPhoto(1), preparedPhoto(2)];
+    stubPhotoFetch(async (_url, init) =>
+      JSON.parse(String(init.body)).cursor === "after-refresh"
+        ? response([photo(4)])
+        : response([photo(3), photo(1), photo(2)], "after-refresh"),
+    );
+
+    expect(await photos.refresh(undefined, true)).toBe(true);
+    photos.authored.reset();
+    await photos.loadMore();
+
+    expect(photos.selectsAll).toBe(true);
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-3", "photo-1", "photo-2", "photo-4"]);
+  } finally {
+    photos.dispose();
+  }
+});
+
 it.each([false, true])("grows backing select-all IDs while paging, targets=%s", async (targets) => {
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
