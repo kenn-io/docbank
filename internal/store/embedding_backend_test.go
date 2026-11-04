@@ -16,16 +16,9 @@ import (
 
 func checkImageEmbeddingPublicationPostgres(t *testing.T) {
 	t.Helper()
-	f := newImageEmbeddingCatalogFixture(t)
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
-	_, err := setup.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET vault_uid=$1`, f.s.vaultID)
-	require.NoError(t, err)
-	// Copy the prepared preview to exercise PostgreSQL publication.
-	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations")
-	copyStoreCatalogFixture(t, f.s, setup, tables)
-	s.rootID, s.vaultID, s.primaryStoreID = f.s.rootID, f.s.vaultID, f.s.primaryStoreID
-	f.s = s
+	t.Parallel()
+	s := newPostgresQueryStore(t)
+	f := seedImageEmbeddingCatalog(t, s)
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)
 	preview, err := s.VisualPreviewGenerationByRecipe(t.Context(), f.node.CurrentVersionID, fingerprints.GridRecipe)

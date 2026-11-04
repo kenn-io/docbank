@@ -22,6 +22,65 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "visual-evidence", postgres: "native operations", scope: "Preview publication, exact-version reads, image preparation and retained email PDF evidence; excludes renderer executables and photo/person workflows.", scenarios: []backendScenario{
+		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
+		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
+		{"PreviewBatchRecipes", func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newPostgresQueryStore) }},
+		{"MissingPhotoVisualPreviewTargetsAfter", func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newPostgresQueryStore) }},
+		{"VisualPreviewPublicationIsExactVersionAndIdempotent", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewPublicationIsExactVersionAndIdempotent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewPublicationIsExactVersionAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewHeadAppearsWhenMissingForRecordedGeneration", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewTerminalHeadsHoldOnRepublication", func(t *testing.T) { t.Helper(); checkVisualPreviewTerminalHeadsHoldOnRepublication(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewTerminalHeadsHoldOnRepublication(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewRecordsDeterministicFailureWithoutBlobAuthority", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewLifecycleFollowsExactContentVersion", func(t *testing.T) { t.Helper(); checkVisualPreviewLifecycleFollowsExactContentVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewLifecycleFollowsExactContentVersion(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewGenerationByRecipe", func(t *testing.T) { t.Helper(); checkVisualPreviewGenerationByRecipe(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkVisualPreviewGenerationByRecipe(t, newPostgresQueryStore) }},
+		{"VisualPreviewNonActiveRecipesKeepLargeHead", func(t *testing.T) { t.Helper(); checkVisualPreviewNonActiveRecipesKeepLargeHead(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewNonActiveRecipesKeepLargeHead(t, newPostgresQueryStore)
+		}},
+		{"EmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile", func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t, newPostgresQueryStore)
+		}},
+		{"EmbeddingReconciliationPreparesEachImageOnce", func(t *testing.T) { t.Helper(); checkEmbeddingReconciliationPreparesEachImageOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationPreparesEachImageOnce(t, newPostgresQueryStore)
+		}},
+		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
+	}},
 	{name: "pages", postgres: "native operations", scope: "Native page job replay, claims, cancellation, frames and image publication; excludes rendering processes and recovery.", scenarios: []backendScenario{
 		{"PagePublicationRollback", nil, checkPagePublicationRollbackPostgres},
 		{"EmailPageSnapshots", nil, checkEmailPageSnapshotsPostgres},
@@ -216,7 +275,7 @@ var backendSuites = []backendSuite{
 			checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; excludes image preparation and ranked search.", scenarios: []backendScenario{
+	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; includes native image preparation; excludes ranked search.", scenarios: []backendScenario{
 		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
 			t.Helper()
@@ -805,7 +864,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, image embedding preparation, email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
+	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},

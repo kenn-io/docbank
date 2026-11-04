@@ -350,11 +350,13 @@ publication and coverage reads. Email MIME inventories, body renditions,
 attachment child documents, and page-render job publication also use shared
 Store operations. Supplied media, remote recording references,
 original recordings and transcript/caption inputs retain their source, occurrence
-and replay receipts through shared native operations.
+and replay receipts through shared native operations. Visual previews, image
+embedding inputs and retained email PDFs also use shared native publication
+and read paths.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, extraction, image embedding preparation, email PDF
+photo-derived processing, extraction, email PDF
 rendering and other media workers, search,
 transfer, backup recovery, multi-store placement and storage-operation jobs
 remain unqualified.
@@ -540,6 +542,9 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
 GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
+GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, published_at)
+    ON documents.visual_preview_heads TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -881,9 +886,10 @@ previous complete generation remains available. These metadata counts do not
 establish that a vector search index is built or that its payloads are readable.
 
 The `embeddings` backend suite covers native document jobs, artifact publication,
-consent, leases, reconciliation, cleanup and coverage. Image preparation, vector
-index construction, ranked retrieval and public PostgreSQL vault opening remain
-unqualified.
+consent, leases, reconciliation, cleanup and coverage. The `visual-evidence`
+suite also qualifies native image-input preparation and its publication chain.
+Vector index construction, ranked retrieval and public PostgreSQL vault opening
+remain unqualified.
 
 #### Email and rendered-page publication
 
@@ -922,6 +928,35 @@ late-write rollback and concurrent publication. Plain-text extraction, email PDF
 rendering, rendering subprocesses and metadata recovery remain outside these
 suites. They do not enable a public PostgreSQL-backed vault or qualify ranked
 search.
+
+#### Visual previews and retained PDFs
+
+Visual preview publication records an exact source version, immutable recipe
+result and physical output together. Recording a new recipe can advance the
+active head; replaying an older recipe cannot move that head backwards. A failed
+head write leaves neither a partial generation nor its output blob. Generation
+rows are insert-only for the runtime role; cleanup may delete them.
+
+Preview target discovery pages through live photo display versions. It skips
+versions with any recorded result for the recipe, including failed or unsupported
+results. Eligibility is rechecked before work begins. Batch recipe reads keep a
+single query. Image reconciliation prepares each missing input once per page and
+can resume pending work in a profile that mixes text and image bindings.
+
+Exact-version preview reads and retained email-PDF receipt reads use one
+repeatable-read snapshot. Concurrent pruning or purge affects the next request.
+PDF discovery validates every retained attachment against the same source and
+email inventory, even if its renderer is no longer installed. These PDFs do not
+replace the email body's serving or search authority.
+
+The daemon's preview backfill uses target discovery and the eligibility recheck.
+HTTP routes use the PDF list and receipt reads to inspect and download retained
+PDFs. These production callers currently open SQLite; PostgreSQL qualification
+covers their Store operations, not a complete daemon workflow.
+
+The `visual-evidence` backend suite covers these native operations, rollback,
+and concurrent removal. Rendering executables, general photo/person workflows,
+vector indexes and public PostgreSQL vault opening remain unqualified.
 
 #### Media retention and input artifacts
 
