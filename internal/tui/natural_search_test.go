@@ -411,12 +411,13 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	assert.Equal(t, naturalNames, result.naturalMode)
 	require.NotNil(t, fallback)
 
-	loaded, _ := result.applySearch(searchLoadedMsg{
+	loaded, cmd := result.applySearch(searchLoadedMsg{
 		requestID: result.requestID, query: "old", report: api.SearchReport{Hits: []api.SearchHit{{Node: readme, Path: readme.Path}}},
 	})
 	loadedModel, ok := loaded.(Model)
 	require.True(t, ok)
 	assert.Empty(t, loadedModel.rows[0].naturalMode)
+	runModelCommand(t, loadedModel, cmd)
 	require.Empty(t, fake.misses, "a visible lexical fallback is not a miss")
 }
 

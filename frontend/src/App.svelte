@@ -2213,7 +2213,7 @@
       loading = false;
       searchPending = false;
       // The base results are accepted, so the search counts however reranking ends.
-      let outcome = {
+      let outcome: { type: string; empty: boolean; receipt: generated.MissLogRequest } = {
         type: baseReport.actual_mode,
         receipt: {
           query,
@@ -2281,16 +2281,19 @@
           true,
         );
         naturalSearchNote = rerankingNote("applied");
+        const rerankedReceipt: generated.MissLogRequest = {
+          ...outcome.receipt,
+          actual_mode: reranked.actual_mode as generated.MissLogRequestActualMode,
+          coverage: { ...reranked.coverage },
+          truncated: reranked.truncated,
+          degradations: reranked.degradations,
+          ...(reranked.reranking ? { reranking: { ...reranked.reranking } } : {}),
+        };
+        if (reranked.coverage.state === "unknown") delete rerankedReceipt.document_count;
+        else rerankedReceipt.document_count = reranked.coverage.scoped_documents;
         outcome = {
           type: reranked.actual_mode,
-          receipt: {
-            ...outcome.receipt,
-            actual_mode: reranked.actual_mode as generated.MissLogRequestActualMode,
-            coverage: { ...reranked.coverage },
-            truncated: reranked.truncated,
-            degradations: reranked.degradations,
-            ...(reranked.reranking ? { reranking: { ...reranked.reranking } } : {}),
-          },
+          receipt: rerankedReceipt,
           empty: rerankedRows.length === 0 && nameRows.length === 0,
         };
       } catch (cause) {

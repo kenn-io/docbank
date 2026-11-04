@@ -2070,6 +2070,63 @@ it.each(["plain", "rerank", "fallback", "filtered"])(
   },
 );
 
+it.each([
+  { state: "complete", scoped: 1, expectedCount: 1 },
+  { state: "unknown", scoped: 2, expectedCount: undefined },
+])(
+  "uses the accepted reranked scope for an empty result receipt ($state coverage)",
+  async ({ state, scoped, expectedCount }) => {
+    const baseCandidate = node(4, "stale-base.txt", baseVersion);
+    const rerankedCandidate = node(5, "stale-reranked.txt", rerankedVersion);
+    const baseReport = {
+      ...report("hybrid", [result(baseCandidate, 1, "stale base excerpt")]),
+      coverage: {
+        binding_required: true,
+        scoped_documents: 2,
+        complete_documents: 2,
+        state: "complete",
+      },
+    };
+    const rerankReport = {
+      ...report("hybrid", [result(rerankedCandidate, 1, "stale reranked excerpt")], {
+        outcome: "applied",
+        candidate_count: 1,
+      }),
+      coverage: {
+        binding_required: true,
+        scoped_documents: scoped,
+        complete_documents: state === "complete" ? scoped : 0,
+        state,
+      },
+    };
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [node(2, "existing.txt", baseVersion)],
+      baseReport,
+      rerankReport,
+    });
+    render(App);
+    await screen.findAllByText("existing.txt");
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+    await submitSearch("scope changed during reranking");
+    await waitFor(() => expect(harness.misses).toHaveLength(1));
+    expect(harness.misses[0]).toMatchObject({
+      query: "scope changed during reranking",
+      coverage: { scoped_documents: scoped, state },
+    });
+    if (expectedCount === undefined) expect(harness.misses[0]).not.toHaveProperty("document_count");
+    else expect(harness.misses[0]).toHaveProperty("document_count", expectedCount);
+  },
+);
+
 it("records failed reranking when base results cannot be hydrated", async () => {
   const stale = node(99, "stale.txt", baseVersion);
   const harness = installHarness({

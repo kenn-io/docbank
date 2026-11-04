@@ -137,3 +137,26 @@ func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 }
+
+func TestMissLogMCPEmptyFenceUsesResolvedModeForImageOnlyProfile(t *testing.T) {
+	client := &answerFakeClient{empty: true, report: api.DocumentSearchReport{
+		RequestedMode: "hybrid", ActualMode: "lexical",
+		Coverage:     api.DocumentSearchCoverage{State: "complete"},
+		Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
+	}}
+	session := documentReadSession(func(ctx context.Context, call func(context.Context, documentClient) error) error {
+		return call(ctx, client)
+	})
+
+	result, _, err := searchDocuments(t.Context(), session,
+		[]byte(`{"query":"synthetic image-only miss","mode":"hybrid","profile":"images-only"}`), false)
+	require.NoError(t, err)
+	assert.Equal(t, "hybrid", result.RequestedMode)
+	assert.Equal(t, "lexical", result.ActualMode)
+	require.Len(t, client.requests, 1)
+	assert.Equal(t, "images-only", client.requests[0].Profile)
+	assert.Equal(t, "hybrid", client.requests[0].Mode)
+	assert.NotEmpty(t, client.requests[0].Fence.VaultUID)
+	assert.Empty(t, client.requests[0].Fence.ContentVersionIDs)
+	assert.Zero(t, client.validations, "the search result owns the resolved mode")
+}
