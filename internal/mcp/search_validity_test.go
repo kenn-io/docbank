@@ -145,7 +145,7 @@ func TestSearchValidityPerResultOutputAndSchema(t *testing.T) {
 	successor, ok := successors[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "/new.txt", successor["path"])
-	assert.Equal(t, float64(8), successor["node_id"])
+	assert.InDelta(t, float64(8), successor["node_id"], 0)
 
 	client.report.Results[0].Validity = nil
 	output, err = runValiditySearch(t, client, arguments)

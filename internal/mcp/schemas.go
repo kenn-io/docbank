@@ -225,7 +225,7 @@ func findPeopleSchemas() (schema, schema) {
 func personSchemaProperties() schema {
 	return schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
-		"state": stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
+		schemaStateField: stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
 	}
 }
