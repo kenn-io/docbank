@@ -122,7 +122,8 @@ func TestCollectionCoverageStagedAndMismatchedGenerationAreUnprocessed(t *testin
 	require.NoError(t, err)
 	// Deliberately damage derivative membership; a read must neither repair it
 	// nor count a retained catalog head outside the generation that serves search.
-	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_lexical_generation_builds WHERE generation_id=?`, active.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_lexical_stream_builds
+		WHERE stream_id=(SELECT stream_id FROM rendition_lexical_generations WHERE generation_id=?)`, active.ID)
 	require.NoError(t, err)
 	mismatch, err := s.CollectionQuality(t.Context(), run.ID(), selection, nil)
 	require.NoError(t, err)

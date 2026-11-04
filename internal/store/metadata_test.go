@@ -1640,6 +1640,31 @@ func TestProcessingMetadataRoundTripsHeadedEmptyLexicalGeneration(t *testing.T) 
 	assert.Zero(t, restored.BuildCount)
 }
 
+func TestProcessingMetadataRejectsConflictingDuplicateLexicalGeneration(t *testing.T) {
+	t.Parallel()
+	source := newTestStore(t)
+	generation, err := source.StageLexicalGeneration(t.Context(), fakeHash("ce"))
+	require.NoError(t, err)
+	_, err = source.db.ExecContext(t.Context(),
+		`INSERT INTO rendition_lexical_heads(singleton,generation_id) VALUES(1,?)`, generation.ID)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	duplicate := mutateFirstProcessingMetadataRecord(t, exported.Bytes(), metadataLexicalGenerationType, func(fields map[string]jsontext.Value) {
+		fields["built_at"] = jsontext.Value(`"2026-08-23T12:00:00.000000000Z"`)
+		fields["headed"] = jsontext.Value(`false`)
+	})
+	line := firstProcessingMetadataRecord(t, duplicate, metadataLexicalGenerationType)
+	input := append(bytes.Clone(exported.Bytes()), line...)
+	input = append(input, '\n')
+	target := newTestStore(t)
+	err = target.ImportMetadata(t.Context(), bytes.NewReader(input))
+	require.Error(t, err)
+	var count int
+	require.NoError(t, target.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_lexical_generations`).Scan(&count))
+	assert.Zero(t, count, "a conflicting duplicate rolls back the import")
+}
+
 func TestProcessingMetadataClearsPublishedJobGenerationAfterCollection(t *testing.T) {
 	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)

@@ -1681,8 +1681,6 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_stream_builds (
     stream_id      TEXT NOT NULL,
     ordinal        INTEGER NOT NULL,
     build_id       TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    manifest_chain TEXT NOT NULL,
-    build_chain    TEXT NOT NULL,
     PRIMARY KEY (stream_id, ordinal),
     UNIQUE (stream_id, build_id)
 );

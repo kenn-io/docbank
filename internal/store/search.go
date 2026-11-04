@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"go.kenn.io/docbank/document"
 	querypkg "go.kenn.io/docbank/internal/query"
@@ -1372,8 +1373,7 @@ func insertLexicalStreamBuildTx(ctx context.Context, tx *sql.Tx, streamID string
 	manifestChain = lexicalChain(manifestChain, buildID, segments)
 	buildChain = lexicalChain(buildChain, buildID, nil)
 	_, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_stream_builds
-		(stream_id,ordinal,build_id,manifest_chain,build_chain) VALUES($1,$2,$3,$4,$5)`,
-		streamID, ordinal, buildID, manifestChain, buildChain)
+		(stream_id,ordinal,build_id) VALUES($1,$2,$3)`, streamID, ordinal, buildID)
 	if err != nil {
 		return "", "", fmt.Errorf("recording lexical stream %s build %s: %w", streamID, buildID, err)
 	}
@@ -1382,13 +1382,11 @@ func insertLexicalStreamBuildTx(ctx context.Context, tx *sql.Tx, streamID string
 
 func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation LexicalGeneration, streamID, builtAt string) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generations
-		(generation_id,stream_id,segment_count,build_count,built_at) VALUES($1,$2,$3,$4,$5)
-		ON CONFLICT(generation_id) DO NOTHING`, generation.ID, streamID, generation.SegmentCount, generation.BuildCount, builtAt); err != nil {
+		(generation_id,stream_id,segment_count,build_count,built_at) VALUES($1,$2,$3,$4,$5)`, generation.ID, streamID, generation.SegmentCount, generation.BuildCount, builtAt); err != nil {
 		return fmt.Errorf("recording lexical generation %s: %w", generation.ID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_manifests
-		(generation_id,manifest_digest,build_digest) VALUES($1,$2,$3)
-		ON CONFLICT(generation_id) DO NOTHING`, generation.ID, generation.ManifestDigest, generation.BuildDigest); err != nil {
+		(generation_id,manifest_digest,build_digest) VALUES($1,$2,$3)`, generation.ID, generation.ManifestDigest, generation.BuildDigest); err != nil {
 		return fmt.Errorf("recording lexical generation %s manifest: %w", generation.ID, err)
 	}
 	return nil
@@ -1396,14 +1394,15 @@ func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation Lexic
 
 func writeLexicalStreamTx(ctx context.Context, tx *sql.Tx, generationID string, segments []lexicalManifestRow, buildIDs []string, builtAt string) (LexicalGeneration, error) {
 	generation := LexicalGeneration{ID: generationID, SegmentCount: len(segments), BuildCount: len(buildIDs)}
+	streamID := uuid.New().String()
 	byBuild := make(map[string][]lexicalManifestRow)
 	for _, row := range segments {
 		byBuild[row.buildID] = append(byBuild[row.buildID], row)
 	}
-	for ordinal, buildID := range slices.Sorted(slices.Values(buildIDs)) {
+	for ordinal, buildID := range buildIDs {
 		var err error
 		generation.ManifestDigest, generation.BuildDigest, err = insertLexicalStreamBuildTx(ctx, tx,
-			generationID, ordinal+1, buildID, byBuild[buildID], generation.ManifestDigest, generation.BuildDigest)
+			streamID, ordinal+1, buildID, byBuild[buildID], generation.ManifestDigest, generation.BuildDigest)
 		if err != nil {
 			return LexicalGeneration{}, err
 		}
@@ -1411,7 +1410,7 @@ func writeLexicalStreamTx(ctx context.Context, tx *sql.Tx, generationID string, 
 	if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
 		return LexicalGeneration{}, err
 	}
-	if err := insertLexicalGenerationTx(ctx, tx, generation, generationID, builtAt); err != nil {
+	if err := insertLexicalGenerationTx(ctx, tx, generation, streamID, builtAt); err != nil {
 		return LexicalGeneration{}, err
 	}
 	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
@@ -1428,7 +1427,7 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 		return LexicalGeneration{}, fmt.Errorf("reading lexical head stream: %w", err)
 	}
 	var added []string
-	for _, buildID := range slices.Sorted(slices.Values(buildIDs)) {
+	for _, buildID := range buildIDs {
 		var exists bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rendition_lexical_stream_builds
 			WHERE stream_id=$1 AND build_id=$2 AND ordinal<=$3)`, streamID, buildID, head.BuildCount).Scan(&exists); err != nil {
@@ -1847,7 +1846,7 @@ func loadAndValidateLexicalGenerationTx(
 	for _, row := range segments {
 		byBuild[row.buildID] = append(byBuild[row.buildID], row)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT b.ordinal,b.build_id,b.manifest_chain,b.build_chain
+	rows, err := tx.QueryContext(ctx, `SELECT b.ordinal,b.build_id
 		FROM rendition_lexical_generations g JOIN rendition_lexical_stream_builds b
 		ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count
 		WHERE g.generation_id=$1 ORDER BY b.ordinal`, generationID)
@@ -1859,14 +1858,14 @@ func loadAndValidateLexicalGenerationTx(
 	manifestChain, buildChain := "", ""
 	for rows.Next() {
 		var ordinal int
-		var buildID, storedManifest, storedBuild string
-		if err := rows.Scan(&ordinal, &buildID, &storedManifest, &storedBuild); err != nil {
+		var buildID string
+		if err := rows.Scan(&ordinal, &buildID); err != nil {
 			return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest row: %w", err)
 		}
 		count++
 		manifestChain = lexicalChain(manifestChain, buildID, byBuild[buildID])
 		buildChain = lexicalChain(buildChain, buildID, nil)
-		if ordinal != count || storedManifest != manifestChain || storedBuild != buildChain {
+		if ordinal != count {
 			return LexicalGeneration{}, fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
 		}
 	}

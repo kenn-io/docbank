@@ -1206,8 +1206,6 @@ CREATE TABLE {{schema}}.rendition_lexical_stream_builds (
     stream_id      TEXT COLLATE "C" NOT NULL,
     ordinal        BIGINT NOT NULL,
     build_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.rendition_builds(build_id),
-    manifest_chain TEXT COLLATE "C" NOT NULL,
-    build_chain    TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (stream_id, ordinal),
     UNIQUE (stream_id, build_id)
 );

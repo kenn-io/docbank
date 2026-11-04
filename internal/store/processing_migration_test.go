@@ -1009,6 +1009,41 @@ func TestPostCutoverExtractionAppendsSearchSnapshot(t *testing.T) {
 	}
 }
 
+func TestPostCutoverExtractionPurgePreservesSearch(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s := newTestStore(t)
+	for _, name := range []string{"a", "b"} {
+		seedLegacyMigrationRow(t, s, name+".txt", name+"1", ExtractionResult{
+			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: name + "authority",
+		})
+	}
+	_, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	fresh, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "cauthority",
+	}))
+	hits, _, err := s.SearchPage(ctx, "cauthority", 20)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, "/c.txt", hits[0].Path)
+	_, err = s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{fresh.CurrentVersionID}})
+	require.NoError(t, err)
+	hits, _, err = s.SearchPage(ctx, "cauthority", 20)
+	require.NoError(t, err)
+	require.Empty(t, hits)
+	for _, name := range []string{"a", "b"} {
+		hits, _, err := s.SearchPage(ctx, name+"authority", 20)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, "/"+name+".txt", hits[0].Path)
+		assert.Equal(t, SearchMatchContent, hits[0].Match)
+	}
+}
+
 func TestPostCutoverExtractionFromEarlierStreamCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
