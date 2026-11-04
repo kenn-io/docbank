@@ -527,6 +527,8 @@ docbank changes --follow --json
 docbank changes --after CURSOR --follow --json
 ```
 
+MCP agents use the default read-only `list_changes` tool. It accepts an optional `cursor` and returns up to 500 `events`, `next_cursor`, and `has_more`. Handle each page, save `next_cursor`, and pass it as `cursor` on the next call. Keep calling while `has_more` is true. Save the checkpoint even on an empty page. An omitted or empty MCP cursor returns an empty page and the current checkpoint. Save it before scanning documents, then resume from it to include changes made during the scan. See the [MCP call example](../usage/mcp.md#tool-catalog).
+
 Each line carries `cursor`, `kind`, `node_id`, and `revision`. Save the cursor after handling the event. A reconnect with `--after` replays subsequent retained events in commit order. Without `--follow`, the command drains the retained history and prints `cursor: CURSOR` on stderr before exiting, even for an empty drain. An empty cursor starts at the oldest retained event. For initial synchronization, save the completion cursor, scan the vault, and replay after that cursor. Continuity starts with a saved cursor; an initial drain covers only the retained window.
 
 | Kind | Meaning |
@@ -548,9 +550,9 @@ Cursors belong to one database incarnation. Restoring a vault creates a new inca
 
 1. Save that cursor before starting a fresh vault scan.
 2. Rescan the vault to rebuild your local view.
-3. Resume with `--after` and the saved cursor to include changes made during the scan.
+3. Resume with `--after` and the saved cursor to include changes made during the scan. For MCP, first call `list_changes` without a cursor to obtain a new checkpoint, save it before rescanning, and resume from it.
 
-The CLI exits with an error and prints the resume cursor on expiry, including when retention overtakes an active stream. It also reports interrupted drains and later read failures. HTTP streams wrap changes in typed records and end finite drains with a result record carrying the checkpoint cursor. CLI stdout contains only changes. Handle events idempotently, since a scan and replay can overlap. A later node lookup can return 404 if that node has since been removed. See the [HTTP route](../architecture/http-api.md#vault-change-feed) for direct clients.
+The CLI exits with an error and prints the resume cursor on expiry, including when retention overtakes an active stream. It also reports interrupted drains and later read failures. HTTP streams wrap changes in typed records and end finite drains with a result record carrying the checkpoint cursor. Direct HTTP clients can request `limit=0` for a checkpoint or a finite page of up to 500 events with `limit=500`. CLI stdout contains only changes. Handle events idempotently, since a scan and replay can overlap. A later node lookup can return 404 if that node has since been removed. See the [HTTP route](../architecture/http-api.md#vault-change-feed) for direct clients.
 
 ## Follow backup progress without scraping a CLI
 
