@@ -29,6 +29,7 @@ const (
 )
 
 var ErrCardLimit = errors.New("card_limit")
+var errDocumentListingStalled = errors.New("Document listing stalled.") //nolint:revive,staticcheck // Printed verbatim to CLI users.
 
 type CardIdentity struct {
 	NodeID           int64  `json:"node_id"`
@@ -164,7 +165,7 @@ func (m *Matcher) Match(ctx context.Context, c *daemonconn.Connection, question,
 			return MatchResult{}, err
 		}
 		if len(page.Items) == 0 && page.NextCursor != "" {
-			return MatchResult{}, errors.New("empty document page with continuation")
+			return MatchResult{}, errDocumentListingStalled
 		}
 		for _, item := range page.Items {
 			count++
@@ -258,7 +259,7 @@ func (m *Matcher) Match(ctx context.Context, c *daemonconn.Connection, question,
 			break
 		}
 		if cursors[page.NextCursor] {
-			return MatchResult{}, errors.New("repeated document cursor")
+			return MatchResult{}, errDocumentListingStalled
 		}
 		cursors[page.NextCursor] = true
 		query.Cursor = page.NextCursor

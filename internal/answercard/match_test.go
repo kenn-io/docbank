@@ -307,13 +307,15 @@ func TestMatchDiscoveryLimits(t *testing.T) {
 			if err == nil || len(got.Matches) != 0 {
 				t.Fatal("discovery did not fail closed", got, err)
 			}
+			if mode == "empty" || mode == "cursor" {
+				if err.Error() != "Document listing stalled." {
+					t.Fatalf("want stalled-listing message, got %v", err)
+				}
+			}
 			if mode == "empty" && requests != 1 {
 				t.Fatalf("continued through empty pages: %d", requests)
 			}
 			if mode == "cursor" {
-				if err.Error() != "repeated document cursor" {
-					t.Fatalf("want repeated-cursor error, got %v", err)
-				}
 				if requests != 2 {
 					t.Fatalf("repeated cursor stopped after %d document-page requests, want 2", requests)
 				}
