@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { createPhotoChunks, groupPhotos, ROW_HEIGHTS } from "./photoGrid.js";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import HiddenSetupModal from "./HiddenSetupModal.svelte";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
@@ -3158,7 +3157,7 @@ it.each(["resolution", "background import"])(
       await tick();
       await photos.authored.onXMPChanged!(receipt);
       await waitFor(() => expect(photos.items[0]?.rotation).toBe(90));
-      expect([...photos.items]).toEqual([{ ...photo(1), rating: 4, rotation: 90 }]);
+      expect(photos.items).toEqual([{ ...photo(1), rating: 4, rotation: 90 }]);
       expect(photos.total).toBe(1);
       expect(photos.facets).toEqual([]);
     } else {
@@ -3449,7 +3448,7 @@ it("reads the open photo again on a live change and conceals its cached image on
   await screen.findByText("This photo is no longer in this view.");
   expect(screen.queryByText("Fit preview")).toBeNull();
   expect(screen.getByText("No preview")).toBeTruthy();
-  expect([...photos.items]).toEqual([]);
+  expect(photos.items).toEqual([]);
   photos.dispose();
 });
 
@@ -3669,7 +3668,8 @@ it("keeps newer Library values across an older live read", async () => {
 });
 
 // A Library of three months, 60 photos each; only the newest is loaded, and each later page
-// holds the next older month.
+// holds the next older month. Each month has 15 rows of four 3:2 photos, 14 four-pixel gaps,
+// and a 56px header, totaling 2582px. The third month starts at 5164px.
 function railLibrary(
   sort: QuerySort = { field: "capture_time", direction: "desc" },
   filters: Query["filters"] = {},
@@ -3712,17 +3712,6 @@ function railLibrary(
   return { photos, cache, pages, bodies };
 }
 
-function sectionTop(photos: Photos, month: string) {
-  const { chunks } = createPhotoChunks()(
-    groupPhotos(photos.items, photos.grouping),
-    1000,
-    ROW_HEIGHTS[photos.density],
-  );
-  const chunk = chunks.find((chunk) => chunk.group.key === month);
-  if (!chunk) throw new Error(`no chunk for ${month}`);
-  return chunk.offset;
-}
-
 it("pages a chosen year in until it arrives, with the query, count, and selection unchanged", async () => {
   const { photos, cache, bodies } = railLibrary();
   render(PhotosWorkspace, { photos, cache });
@@ -3732,7 +3721,7 @@ it("pages a chosen year in until it arrives, with the query, count, and selectio
   await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
   const scroll = screen.getByTestId("photo-scroll");
   await waitFor(() => expect(photos.seek).toBe(""));
-  expect(scroll.scrollTop).toBe(Math.ceil(sectionTop(photos, "2023-06")));
+  expect(scroll.scrollTop).toBe(5164);
   expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
   expect(bodies.every((body) => JSON.stringify(body.query) === query)).toBe(true);
   expect(screen.getByText("180 photos")).toBeTruthy();
@@ -3805,9 +3794,7 @@ it("keeps a jump pending through a paging failure and finishes it on Retry", asy
   pages.p2 = page;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(photos.seek).toBe(""));
-  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(
-    Math.ceil(sectionTop(photos, "2023-06")),
-  );
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(5164);
   photos.dispose();
   await cache.dispose();
 });
@@ -3836,9 +3823,7 @@ it("resumes a date jump after cancelling Hidden setup when its page finished dur
   modal.unmount();
   await waitFor(() => expect(photos.seek).toBe(""));
   expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
-  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(
-    Math.ceil(sectionTop(photos, "2023-06")),
-  );
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(5164);
   photos.dispose();
   await cache.dispose();
 });

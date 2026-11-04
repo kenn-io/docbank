@@ -2104,59 +2104,54 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])(
   },
 );
 
-it("publishes appended rows without changing the previous page and clears append origin on replacement", async () => {
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
-  const previous = [mapPhoto(1)];
-  photos.items = previous;
-  photos.started = true;
-  photos.cursor = "next";
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([mapPhoto(2)])));
-  await photos.loadMore();
-  expect(photos.appendedFrom).toBe(previous);
-  expect(previous).toEqual([mapPhoto(1)]);
-  expect(photos.items).not.toBe(previous);
-  expect(photos.items).toHaveLength(2);
-  photos.items = photos.items.map((row) => ({ ...row, latitude: 3 }));
-  expect(photos.appendedFrom).toBeUndefined();
-  photos.dispose();
-});
-
-it("deduplicates pages without rereading retained IDs and resets on replacement", async () => {
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
-  const previous = [mapPhoto(1)];
-  photos.items = previous;
-  photos.started = true;
-  photos.cursor = "next";
-  const scans = vi.fn(() => "photo-1");
-  Object.defineProperty(previous[0], "asset_id", { get: scans });
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response([mapPhoto(1), mapPhoto(2)], "last"))
-    .mockResolvedValueOnce(response([mapPhoto(2), mapPhoto(3), mapPhoto(3)]));
-  vi.stubGlobal("fetch", fetcher);
-  await photos.loadMore();
-  expect(scans).not.toHaveBeenCalled();
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
-  const rows = [mapPhoto(2), mapPhoto(4)];
-  photos.items = rows;
-  const replacementScans = vi.fn(() => "photo-2");
-  Object.defineProperty(rows[0], "asset_id", { get: replacementScans });
-  photos.cursor = "replacement-tail";
-  fetcher.mockResolvedValueOnce(
-    response([mapPhoto(1), mapPhoto(2), mapPhoto(3), mapPhoto(4), mapPhoto(5), mapPhoto(5)]),
-  );
-  await photos.loadMore();
-  expect(replacementScans).not.toHaveBeenCalled();
-  expect(photos.rowByID("photo-4")).toBe(rows[1]);
-  expect(photos.rowByID("photo-1")?.asset_id).toBe("photo-1");
-  expect(photos.items.map((row) => row.asset_id)).toEqual([
-    "photo-2",
-    "photo-4",
-    "photo-1",
-    "photo-3",
-    "photo-5",
-  ]);
-  photos.dispose();
+it("publishes immutable append pages and deduplicates IDs across replacements", async () => {
+  for (const scenario of ["append origin", "deduplication"]) {
+    const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+    const previous = [mapPhoto(1)];
+    photos.items = previous;
+    photos.started = true;
+    photos.cursor = "next";
+    if (scenario === "append origin") {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([mapPhoto(2)])));
+      await photos.loadMore();
+      expect(photos.appendedFrom).toBe(previous);
+      expect(previous).toEqual([mapPhoto(1)]);
+      expect(photos.items).toHaveLength(2);
+      photos.items = photos.items.map((row) => ({ ...row, latitude: 3 }));
+      expect(photos.appendedFrom).toBeUndefined();
+    } else {
+      const scans = vi.fn(() => "photo-1");
+      Object.defineProperty(previous[0], "asset_id", { get: scans });
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(response([mapPhoto(1), mapPhoto(2)], "last"))
+        .mockResolvedValueOnce(response([mapPhoto(2), mapPhoto(3), mapPhoto(3)]));
+      vi.stubGlobal("fetch", fetcher);
+      await photos.loadMore();
+      expect(scans).not.toHaveBeenCalled();
+      expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
+      const rows = [mapPhoto(2), mapPhoto(4)];
+      photos.items = rows;
+      const replacementScans = vi.fn(() => "photo-2");
+      Object.defineProperty(rows[0], "asset_id", { get: replacementScans });
+      photos.cursor = "replacement-tail";
+      fetcher.mockResolvedValueOnce(
+        response([mapPhoto(1), mapPhoto(2), mapPhoto(3), mapPhoto(4), mapPhoto(5), mapPhoto(5)]),
+      );
+      await photos.loadMore();
+      expect(replacementScans).not.toHaveBeenCalled();
+      expect(photos.rowByID("photo-4")).toBe(rows[1]);
+      expect(photos.rowByID("photo-1")?.asset_id).toBe("photo-1");
+      expect(photos.items.map((row) => row.asset_id)).toEqual([
+        "photo-2",
+        "photo-4",
+        "photo-1",
+        "photo-3",
+        "photo-5",
+      ]);
+    }
+    photos.dispose();
+  }
 });
 
 it("routes Map Reload authentication failures through the store handler", async () => {

@@ -146,14 +146,16 @@ it.each(["months", "sessions", "flat", "relevance"] as const)(
       sizes = 0,
       finishedRows = 0;
     for (const row of rows) {
-      const capture = row.capture_time,
-        width = row.width_px;
-      Object.defineProperty(row, "capture_time", {
-        get: () => {
-          dates++;
-          return capture;
-        },
-      });
+      const width = row.width_px;
+      if (grouping === "months") {
+        const capture = row.capture_time;
+        Object.defineProperty(row, "capture_time", {
+          get: () => {
+            dates++;
+            return capture;
+          },
+        });
+      }
       Object.defineProperty(row, "width_px", {
         get: () => {
           sizes++;
@@ -620,71 +622,77 @@ it("places a row with only a file modified time in its month and keeps rows with
   expect(groups.at(-1)!.items).toEqual([items[2]]);
 });
 
-it("resumes a pending timeline seek without reading unchanged chunks or photos", () => {
-  for (const mode of ["months", "sessions"] as const) {
-    const source = Array.from({ length: 20_000 }, (_, id) =>
-      photo(
-        id,
-        mode === "months"
-          ? "2025-06-01T12:00:00Z"
-          : new Date(Date.UTC(2025, 0, 1) - id * 5 * 3600_000).toISOString(),
-      ),
-    );
+it("resumes timeline seeks without rescanning and stops at the first loaded month match", () => {
+  for (const scenario of ["months", "sessions", "first match"] as const) {
+    const mode = scenario === "sessions" ? "sessions" : "months";
+    const source =
+      scenario === "first match"
+        ? [photo(0, "2025-07-01")]
+        : Array.from({ length: 20_000 }, (_, id) =>
+            photo(
+              id,
+              mode === "months"
+                ? "2025-06-01T12:00:00Z"
+                : new Date(Date.UTC(2025, 0, 1) - id * 5 * 3600_000).toISOString(),
+            ),
+          );
     const grouper = createPhotoGrouper(),
       build = createPhotoChunks(),
       seek = createPhotoSeek(),
       expanded = new Set<string>();
+    const target = scenario === "first match" ? "2025-06" : "2000-01";
     const first = build(grouper.sync(source, mode, expanded).groups, 1000, 200).chunks;
-    expect(seek(first, "2000-01", false, source)).toBeUndefined();
+    expect(seek(first, target, false, source)).toBeUndefined();
     let reads = 0;
-    for (const row of source) {
-      const capture = row.capture_time;
-      Object.defineProperty(row, "capture_time", { get: () => (reads++, capture) });
+    if (scenario !== "first match") {
+      for (const row of source) {
+        const capture = row.capture_time;
+        Object.defineProperty(row, "capture_time", { get: () => (reads++, capture) });
+      }
     }
     const appended = [
       ...source,
-      ...Array.from({ length: mode === "months" ? 250 : 1 }, (_, i) =>
-        photo(20_000 + i, mode === "months" ? "2025-05-01T12:00:00Z" : "2000-01-01T00:00:00Z"),
+      ...Array.from(
+        { length: scenario === "first match" ? 20_000 : mode === "months" ? 250 : 1 },
+        (_, i) =>
+          photo(
+            source.length + i,
+            scenario === "first match"
+              ? "2025-06-01"
+              : mode === "months"
+                ? "2025-05-01T12:00:00Z"
+                : "2000-01-01T00:00:00Z",
+          ),
       ),
     ];
     const grouped = grouper.sync(appended, mode, expanded, source);
     const next = build(grouped.groups, 1000, 200, grouped.changedFrom);
-    const expected = mode === "months" ? undefined : next.chunks[20_000].offset;
-    for (let i = 0; i < next.chunks.length; i++) {
-      const chunk = next.chunks[i];
-      Object.defineProperty(next.chunks, i, { get: () => (reads++, chunk) });
+    const expected =
+      scenario === "first match"
+        ? next.chunks[1].offset
+        : mode === "months"
+          ? undefined
+          : next.chunks[20_000].offset;
+    if (scenario === "first match") {
+      for (const item of appended) {
+        const capture = item.capture_time,
+          id = item.asset_id;
+        Object.defineProperty(item, "capture_time", { get: () => (reads++, capture) });
+        Object.defineProperty(item, "asset_id", { get: () => (reads++, id) });
+      }
+      reads = 0;
+      expect(seekOffset(next.chunks, target, false, appended)).toBe(expected);
+      expect(reads).toBeLessThan(20);
+    } else {
+      for (let i = 0; i < next.chunks.length; i++) {
+        const chunk = next.chunks[i];
+        Object.defineProperty(next.chunks, i, { get: () => (reads++, chunk) });
+      }
     }
     reads = 0;
-    expect(seek(next.chunks, "2000-01", false, appended, source, next.changedFrom)).toBe(expected);
-    expect(reads).toBeLessThan(100);
+    expect(seek(next.chunks, target, false, appended, source, next.changedFrom)).toBe(expected);
+    expect(reads).toBeLessThan(scenario === "first match" ? 20 : 100);
   }
-});
-
-it("stops a loaded month seek at its first visible match, including after paging", () => {
-  const source = [photo(0, "2025-07-01")];
-  const items = source.concat(Array.from({ length: 20_000 }, (_, i) => photo(i + 1, "2025-06-01")));
-  const grouper = createPhotoGrouper(),
-    build = createPhotoChunks(),
-    seek = createPhotoSeek(),
-    expanded = new Set<string>();
-  const first = build(grouper.sync(source, "months", expanded).groups, 1000, 200).chunks;
-  expect(seek(first, "2025-06", false, source)).toBeUndefined();
-  const grouped = grouper.sync(items, "months", expanded, source);
-  const next = build(grouped.groups, 1000, 200, grouped.changedFrom);
-  let reads = 0;
-  for (const item of items) {
-    const capture = item.capture_time,
-      id = item.asset_id;
-    Object.defineProperty(item, "capture_time", { get: () => (reads++, capture) });
-    Object.defineProperty(item, "asset_id", { get: () => (reads++, id) });
-  }
-  expect(seekOffset(next.chunks, "2025-06", false, items)).toBe(next.chunks[1].offset);
-  expect(reads).toBeLessThan(20);
-  reads = 0;
-  expect(seek(next.chunks, "2025-06", false, items, source, next.changedFrom)).toBe(
-    next.chunks[1].offset,
-  );
-  expect(reads).toBeLessThan(20);
 });
 
 it("keeps pending date jumps equal to a fresh scan after regrouping and stack arrivals", () => {

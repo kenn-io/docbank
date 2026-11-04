@@ -101,7 +101,7 @@ it("keeps mounted sections bounded while appending to 50,000 capture sessions", 
   await cache.dispose();
 });
 
-it("restores an anchor moved into another group while its original group survives", async () => {
+it("ignores a stale anchor index after its photo moves to another group", async () => {
   let laidOut: ReturnType<ReturnType<typeof createPhotoChunks>>["chunks"] = [];
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
