@@ -3057,6 +3057,74 @@ func TestExtractRejectsQualifiedComparisonsAfterRates(t *testing.T) {
 	}
 }
 
+func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "named standard-rate comparison is omitted",
+			text: "The fee is $5/month higher than the standard rate.",
+		},
+		{
+			name: "named previous-rate comparison is omitted",
+			text: "The fee is $5/month higher than the previous rate.",
+		},
+		{
+			name: "independent assertion follows nominal comparison",
+			text: "The fee is $5/month higher than the standard rate. The deposit is $7.",
+			want: []string{"$7"},
+		},
+		{
+			name: "approximation remains attached to nominal deposit",
+			text: "The plans require about $5 and $10 deposits.",
+		},
+		{
+			name: "percentage base remains attached to nominal deposit",
+			text: "The surcharge is 5% of $100 and $200 deposits.",
+			want: []string{"5%"},
+		},
+		{
+			name: "paid predicate exposes independent approximate amount",
+			text: "The fee was about $5 and $10 paid shipping costs.",
+			want: []string{"$10"},
+		},
+		{
+			name: "offset predicate exposes independent approximate amount",
+			text: "The fee was about $5 and $10 offset shipping costs.",
+			want: []string{"$10"},
+		},
+		{
+			name: "paid predicate ends percentage-base grouping",
+			text: "The surcharge is 5% of $100 and $10 paid shipping costs.",
+			want: []string{"5%", "$10"},
+		},
+		{
+			name: "offset predicate ends percentage-base grouping",
+			text: "The surcharge is 5% of $100 and $10 offset shipping costs.",
+			want: []string{"5%", "$10"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("Extract(%q) = %+v, want figures %v", tt.text, got, tt.want)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want {
+					t.Errorf("figure %d = %q, want %q", i, got[i].Text, want)
+				}
+			}
+		})
+	}
+	for _, nominal := range []string{"deposits", "payments"} {
+		if quantitySubjectAssertion(" " + nominal + ".") {
+			t.Errorf("nominal continuation %q was treated as an assertion", nominal)
+		}
+	}
+}
+
 func TestExtractRejectsVerbalComparisonsWithWordOperands(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5/month greater than thirty dollars.",
@@ -5593,6 +5661,8 @@ func TestExtractApproximateRateDoesNotExposeDenominator(t *testing.T) {
 		{"The fee is $5 approximately per 2 devices, and the deposit is $7.", []string{"$7"}},
 		{`The service fee is "$5" a month (approximately).`, nil},
 		{`The service fee is "$5" a month (approximately), and the deposit is $7.`, []string{"$7"}},
+		{`The service fee is "$5 " a month (approximately).`, nil},
+		{`The service fee is "$5 " a month (approximately), and the deposit is $7.`, []string{"$7"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)

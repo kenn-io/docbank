@@ -1657,7 +1657,7 @@ func independentTypedFigureAssertion(s string) bool {
 var directTypedFigureAssertionPrefixRE = regexp.MustCompile(`^\s*[,;:]?\s*(?:[\(\[\{\"'‘’“”«]\s*)*$`)
 var assertionPrefixWordRE = regexp.MustCompile(`(?i)[\p{L}\p{Nd}]+`)
 
-const assertionPredicatePattern = `(?:[\p{L}]+(?:s|ed|ing)|pay|cost|put|set|cut|hit|run)`
+const assertionPredicatePattern = `(?:[\p{L}]+(?:s|ed|ing)|pay|paid|offsets?|cost|put|set|cut|hit|run)`
 
 var assertionPredicateRE = regexp.MustCompile(`(?i)^` + assertionPredicatePattern + `$`)
 var nonPredicateFigurePrefixWords = map[string]struct{}{
@@ -2149,10 +2149,12 @@ func verbalComparisonWithNumericOrWordOperand(s string) bool {
 	}
 	number := numeralWordSequenceRE.FindStringIndex(operand)
 	if number == nil || number[0] != 0 {
-		return false
+		return nominalComparisonOperandRE.MatchString(operand)
 	}
 	return true
 }
+
+var nominalComparisonOperandRE = regexp.MustCompile(`(?i)^(?:(?:standard|previous|prior|current|base|normal|usual|regular|existing)\s+)?(?:rate|price|fee|cost|charge|amount|total|baseline)\b|^(?:normal|usual|regular)\b`)
 
 var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)?)[\s(["'‘’“”«»]*$`)
 
@@ -2329,14 +2331,26 @@ func rateEnd(s string) int {
 }
 
 func rateNumeratorQuotePrefix(s string) int {
-	for i := 0; i < len(s); {
+	i := 0
+	for i < len(s) {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if !strings.ContainsRune(`"'’”»`, r) {
-			return i
+		if !unicode.IsSpace(r) {
+			break
 		}
 		i += size
 	}
-	return len(s)
+	start := i
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !strings.ContainsRune(`"'’”»`, r) {
+			break
+		}
+		i += size
+	}
+	if i == start {
+		return 0
+	}
+	return i
 }
 
 // A stated end date is not an unsupported numeric range endpoint.
@@ -2423,7 +2437,7 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
-var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|deposits?|fees?|payments?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
 var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d)?|cover(?:s|ed)?|represent(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|offsets?|pay(?:s|ing)?|paid)\b`)
 
