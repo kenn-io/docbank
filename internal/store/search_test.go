@@ -2112,8 +2112,19 @@ func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T)
 		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 
-	_, err = s.StageLexicalGeneration(ctx, generationID)
-	require.ErrorContains(t, err, "immutable manifest")
+	t.Run("reuse existing generation", func(t *testing.T) {
+		_, err := s.StageLexicalGeneration(ctx, generationID)
+		require.ErrorContains(t, err, "immutable manifest")
+	})
+	t.Run("stage fresh generation", func(t *testing.T) {
+		freshID := fakeHash("99")
+		_, err := s.StageLexicalGeneration(ctx, freshID)
+		require.ErrorContains(t, err, "has a different immutable manifest")
+		var count int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_generations
+			WHERE generation_id=?`, freshID).Scan(&count))
+		assert.Zero(t, count, "failed staging rolls back the new generation")
+	})
 }
 
 func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *testing.T) {

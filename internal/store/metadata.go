@@ -1080,7 +1080,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	}{
 		{"rendition_lexical_generations", `SELECT COUNT(*) FROM rendition_lexical_generations`},
 		{"rendition_lexical_generation_manifests", `SELECT COUNT(*) FROM rendition_lexical_generation_manifests`},
-		{"rendition_lexical_generation_builds", `SELECT COUNT(*) FROM rendition_lexical_generation_builds`},
+		{"rendition_lexical_stream_builds", `SELECT COUNT(*) FROM rendition_lexical_stream_builds`},
 		{"rendition_lexical_index", `SELECT COUNT(*) FROM rendition_lexical_index`},
 		{"rendition_lexical_heads", `SELECT COUNT(*) FROM rendition_lexical_heads`},
 	} {

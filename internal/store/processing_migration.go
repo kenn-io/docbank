@@ -224,7 +224,20 @@ func (s *Store) migrateLegacyPlainTextTx(
 		report.MigratedAttachments++
 	}
 
-	generation, err := stageLegacyLexicalGenerationTx(ctx, tx)
+	var generation LexicalGeneration
+	if blobHash == "" {
+		generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+	} else {
+		var buildIDs []string
+		buildIDs, err = lexicalBuildIDsTx(ctx, tx,
+			`SELECT build_id FROM rendition_builds WHERE source_sha256=$1 ORDER BY build_id`, []any{blobHash})
+		if err == nil {
+			generation, err = appendLexicalGenerationTx(ctx, tx, buildIDs)
+			if errors.Is(err, ErrNotFound) {
+				generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+			}
+		}
+	}
 	if err != nil {
 		return LegacyMigrationReport{}, err
 	}
@@ -503,7 +516,7 @@ func readLegacySelectedVersions(
 		SELECT v.version_id,v.blob_hash,n.name,n.trashed_at IS NOT NULL
 		FROM text_searchable_versions sv
 		JOIN content_versions v ON v.version_id=sv.version_id
-		JOIN nodes n ON n.current_version_id=v.version_id`
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id`
 	var args []any
 	if blobHash != "" {
 		query += ` WHERE v.blob_hash=$1`
@@ -805,7 +818,7 @@ func stageLegacyLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), rows, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs, rows)
 }
 
 func compareLegacyServingCompatibilityTx(
@@ -839,7 +852,7 @@ func compareLegacyServingCompatibilityTx(
 		JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
 		JOIN rendition_lexical_index f ON f.build_id=a.build_id
 		JOIN content_versions v ON v.version_id=h.content_version_id
-		JOIN nodes n ON n.current_version_id=v.version_id
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
 		WHERE h.profile_fingerprint=$1 AND gb.generation_id=$2 AND n.trashed_at IS NULL`
 	args := []any{profileFingerprint, generationID}
 	if blobHash != "" {

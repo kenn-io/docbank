@@ -43,7 +43,7 @@ func BenchmarkSettledLegacyMigration(b *testing.B) {
 }
 
 func BenchmarkPostCutoverTextExtraction(b *testing.B) {
-	for _, files := range []int{100, 1000} {
+	for _, files := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
 			ctx := b.Context()
 			s, err := Open(ctx, filepath.Join(b.TempDir(), "docbank.db"))
