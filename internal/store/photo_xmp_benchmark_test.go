@@ -79,11 +79,7 @@ func BenchmarkPhotoXMPBulkNodeUpdate(b *testing.B) {
 	s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
-	require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(b.Context(), `WITH RECURSIVE i(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM i WHERE n<100000)
- INSERT INTO nodes(parent_id,name,kind,created_at,modified_at) SELECT ?,printf('doc-%06d.pdf',n),'dir','2024-01-01T00:00:00Z','2024-01-01T00:00:00Z' FROM i`, s.RootID())
-		return err
-	}))
+	seedBenchmarkDirectories(b, s, 100000)
 	b.ReportAllocs()
 	for b.Loop() {
 		require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
@@ -91,6 +87,16 @@ func BenchmarkPhotoXMPBulkNodeUpdate(b *testing.B) {
 			return err
 		}))
 	}
+}
+
+func seedBenchmarkDirectories(tb testing.TB, s *Store, count int) {
+	tb.Helper()
+	ctx := tb.Context()
+	require.NoError(tb, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `WITH RECURSIVE i(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM i WHERE n<?)
+ INSERT INTO nodes(parent_id,name,kind,created_at,modified_at) SELECT ?,printf('unrelated-%06d',n),'dir','2024-01-01T00:00:00.000000000Z','2024-01-01T00:00:00.000000000Z' FROM i`, count, s.RootID())
+		return err
+	}))
 }
 
 // BenchmarkPhotoXMPIdlePollUnextracted times one idle worker poll while every queued photo still waits on extraction.

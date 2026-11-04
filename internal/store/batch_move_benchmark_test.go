@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -51,11 +50,7 @@ func BenchmarkBatchMove(b *testing.B) {
 								}
 							}
 							if vault > 0 {
-								require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-									_, err := tx.ExecContext(ctx, `WITH RECURSIVE i(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM i WHERE n<?)
- INSERT INTO nodes(parent_id,name,kind,created_at,modified_at) SELECT ?,printf('unrelated-%06d',n),'dir','2024-01-01T00:00:00.000000000Z','2024-01-01T00:00:00.000000000Z' FROM i`, vault, s.RootID())
-									return err
-								}))
+								seedBenchmarkDirectories(b, s, vault)
 							}
 							if audited {
 								plan, err := s.PreviewInitialAudit(ctx, parentID, "cli", nil)

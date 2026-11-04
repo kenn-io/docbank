@@ -109,7 +109,6 @@ func (s *Store) planBatchMove(
 	sources := make(map[int64]Node, len(requests))
 	destinations := make(map[string]Node, len(requests))
 	var byID []int64
-	seen := make(map[int64]bool, len(requests))
 	for index, request := range requests {
 		source, priorPath, err := resolveBatchMoveSource(ctx, tx, request, preState)
 		if err != nil {
@@ -118,12 +117,11 @@ func (s *Store) planBatchMove(
 		if source.ID == s.rootID {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, ErrIsRoot)
 		}
-		if seen[source.ID] {
+		if _, ok := sources[source.ID]; ok {
 			return batchMovePlan{}, fmt.Errorf(
 				"batch move item %d repeats node %d: %w", index, source.ID, ErrInvalidBatchMove,
 			)
 		}
-		seen[source.ID] = true
 		destinationPath, err := canonicalBatchMoveDestination(request.DestinationPath)
 		if err != nil {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, err)
@@ -161,7 +159,7 @@ func (s *Store) planBatchMove(
 		move := &plan.moves[index]
 		segments := splitPath(move.destinationPath)
 		parentPath := "/" + strings.Join(segments[:len(segments)-1], "/")
-		parent, err := resolveBatchMovePath(ctx, tx, parentPath, finalState, destinations, seen)
+		parent, err := resolveBatchMovePath(ctx, tx, parentPath, finalState, destinations, sources)
 		if err == nil && parent.Kind != nodeKindDir {
 			err = ErrNotDir
 		}
@@ -185,7 +183,7 @@ func (s *Store) planBatchMove(
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return batchMovePlan{}, err
 		}
-		if err == nil && !seen[existing.ID] {
+		if _, moving := sources[existing.ID]; err == nil && !moving {
 			return batchMovePlan{}, fmt.Errorf("batch move nodes %d and %d collide at %q: %w",
 				existing.ID, move.nodeID, move.destinationPath, ErrExists)
 		}
@@ -210,7 +208,7 @@ func (s *Store) planBatchMove(
 // resolveBatchMovePath resolves final coordinates through requested destinations
 // or live children. Every requested destination has its parent checked separately.
 func resolveBatchMovePath(
-	ctx context.Context, tx *sql.Tx, path string, memo, destinations map[string]Node, sources map[int64]bool,
+	ctx context.Context, tx *sql.Tx, path string, memo, destinations map[string]Node, sources map[int64]Node,
 ) (Node, error) {
 	if node, ok := memo[path]; ok {
 		return node, nil
@@ -235,7 +233,7 @@ func resolveBatchMovePath(
 	if err != nil {
 		return Node{}, err
 	}
-	if sources[node.ID] {
+	if _, moving := sources[node.ID]; moving {
 		return Node{}, ErrNotFound
 	}
 	memo[path] = node

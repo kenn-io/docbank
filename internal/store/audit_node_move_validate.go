@@ -118,7 +118,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	}
 	postTopology := slices.Clone(replay.topology)
 	changedIDs := make([]uint64, 0, len(changes))
-	var movedIDs []uint64
+	movedIDs := make(map[uint64]bool)
 	requiredParents := make(map[uint64]bool)
 	for _, change := range changes {
 		nodeID, err := auditUnsignedField(change, metadataNodeIDField)
@@ -144,7 +144,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 			return replayedTopologyMutation{}, err
 		}
 		if pathChanged {
-			movedIDs = append(movedIDs, nodeID)
+			movedIDs[nodeID] = true
 			requiredParents[priorParent], requiredParents[resultingParent] = true, true
 		}
 		postTopology[index] = *post
@@ -159,7 +159,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 		return replayedTopologyMutation{}, errors.New("node move topology changes no path directly")
 	}
 	expectedChanges := make(map[uint64]bool, len(movedIDs)+len(requiredParents))
-	for _, nodeID := range movedIDs {
+	for nodeID := range movedIDs {
 		expectedChanges[nodeID] = true
 	}
 	for parentID := range requiredParents {
@@ -174,18 +174,16 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	if len(changes) != len(expectedChanges) {
 		return replayedTopologyMutation{}, errors.New("node move topology has an unexpected changed-node set")
 	}
-	for _, movedID := range movedIDs {
-		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-			replay.topology, replay.memberSet, map[uint64]bool{movedID: true},
+	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+		replay.topology, replay.memberSet, movedIDs,
+	)
+	if err != nil {
+		return replayedTopologyMutation{}, err
+	}
+	if affectsTrashOrigin != 0 {
+		return replayedTopologyMutation{}, errors.New(
+			"node move changes a retained trash-origin path without recording trash effects",
 		)
-		if err != nil {
-			return replayedTopologyMutation{}, err
-		}
-		if affectsTrashOrigin != 0 {
-			return replayedTopologyMutation{}, errors.New(
-				"node move changes a retained trash-origin path without recording trash effects",
-			)
-		}
 	}
 	if err := validateReplayedAuditTopology(postTopology); err != nil {
 		return replayedTopologyMutation{}, fmt.Errorf("validating node move topology: %w", err)
