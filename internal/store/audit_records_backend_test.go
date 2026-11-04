@@ -31,7 +31,10 @@ func checkAuditRecordsPostgres(t *testing.T) {
 		tx, err := destination.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
-		for _, group := range records {
+		for kind, group := range records {
+			if kind == auditEventField {
+				continue
+			}
 			for _, record := range group {
 				require.NoError(t, insertAuditRecord(ctx, tx, record.record))
 			}
@@ -92,4 +95,17 @@ func TestAuditRecordValidationSQLite(t *testing.T) {
 			require.Zero(t, count)
 		})
 	}
+}
+
+func TestAuditRecordRejectsStandaloneEvent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	event := auditRecordFixture(t)[auditEventField][0].record
+	tx, err := s.writeDB.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	require.ErrorContains(t, insertAuditRecord(t.Context(), tx, event), "must be inserted with their canonical mutation")
+	var count int
+	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&count))
+	require.Zero(t, count)
 }

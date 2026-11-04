@@ -174,36 +174,10 @@ func auditScopeHistoryPageTx(
 	).Scan(&page.Total); err != nil {
 		return AuditScopeEventPage{}, fmt.Errorf("counting audit scope %s history: %w", scopeID, err)
 	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT e.record_json,m.operation_sequence
-		FROM audit_records AS e
-		JOIN audit_records AS m
-		  ON m.kind='canonical_mutation' AND m.operation_id=e.operation_id
-		WHERE e.kind='event' AND e.scope_id=$1 AND
-		  (CAST($2 AS BIGINT)=0 OR m.operation_sequence<$2 OR
-		   (m.operation_sequence=$2 AND e.event_ordinal<$3) OR
-		   (m.operation_sequence=$2 AND e.event_ordinal=$3 AND e.event_id<$4))
-		ORDER BY m.operation_sequence DESC,e.event_ordinal DESC,e.event_id DESC
-		LIMIT $5`, scopeID, cursor.sequence, cursor.ordinal, cursor.eventID, limit+1,
-	)
+	page.Items, err = auditHistoryEventsTx(ctx, tx, auditScopeHistoryPageSQL,
+		auditScopeHistoryCursorPageSQL, scopeID, limit, cursor.sequence, cursor.ordinal, cursor.eventID)
 	if err != nil {
-		return AuditScopeEventPage{}, fmt.Errorf("listing audit scope %s history: %w", scopeID, err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var raw string
-		var sequence int64
-		if err := rows.Scan(&raw, &sequence); err != nil {
-			return AuditScopeEventPage{}, fmt.Errorf("scanning audit scope history: %w", err)
-		}
-		event, err := projectAuditEvent([]byte(raw), sequence)
-		if err != nil {
-			return AuditScopeEventPage{}, err
-		}
-		page.Items = append(page.Items, event)
-	}
-	if err := rows.Err(); err != nil {
-		return AuditScopeEventPage{}, fmt.Errorf("listing audit scope %s history: %w", scopeID, err)
+		return AuditScopeEventPage{}, err
 	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
@@ -305,45 +279,21 @@ func auditHistoryPageTx(
 	if err != nil {
 		return AuditEventPage{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT e.record_json,m.operation_sequence
-		FROM audit_records AS e
-		JOIN audit_records AS m
-		  ON m.kind='canonical_mutation' AND m.operation_id=e.operation_id
-		WHERE e.kind='event' AND e.node_id=$1
-		ORDER BY m.operation_sequence DESC,e.event_ordinal DESC,e.event_id DESC`, node.ID)
-	if err != nil {
-		return AuditEventPage{}, fmt.Errorf("listing audit history for node %d: %w", node.ID, err)
-	}
-	defer func() { _ = rows.Close() }()
 	page := AuditEventPage{
 		Node: node, Items: make([]AuditEvent, 0, limit), Limit: limit, Cursor: rawCursor,
 	}
-	more := false
-	for rows.Next() {
-		var raw string
-		var sequence int64
-		if err := rows.Scan(&raw, &sequence); err != nil {
-			return AuditEventPage{}, fmt.Errorf("scanning audit history: %w", err)
-		}
-		event, err := projectAuditEvent([]byte(raw), sequence)
-		if err != nil {
-			return AuditEventPage{}, err
-		}
-		page.Total++
-		if !auditEventIsAfterCursor(event, cursor) {
-			continue
-		}
-		if len(page.Items) == limit {
-			more = true
-			continue
-		}
-		page.Items = append(page.Items, event)
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_records WHERE kind='event' AND node_id=$1`, node.ID,
+	).Scan(&page.Total); err != nil {
+		return AuditEventPage{}, fmt.Errorf("counting audit history for node %d: %w", node.ID, err)
 	}
-	if err := rows.Err(); err != nil {
-		return AuditEventPage{}, fmt.Errorf("listing audit history for node %d: %w", node.ID, err)
+	page.Items, err = auditHistoryEventsTx(ctx, tx, auditNodeHistoryPageSQL,
+		auditNodeHistoryCursorPageSQL, node.ID, limit, cursor.sequence, cursor.ordinal, cursor.eventID)
+	if err != nil {
+		return AuditEventPage{}, err
 	}
-	if more {
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
 		last := page.Items[len(page.Items)-1]
 		page.NextCursor = encodeAuditHistoryCursor(auditHistoryCursor{
 			nodeID: node.ID, sequence: last.OperationSequence,
@@ -784,16 +734,6 @@ func encodeAuditHistoryCursor(cursor auditHistoryCursor) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-func auditEventIsAfterCursor(event AuditEvent, cursor auditHistoryCursor) bool {
-	if cursor.nodeID == 0 {
-		return true
-	}
-	return event.OperationSequence < cursor.sequence ||
-		(event.OperationSequence == cursor.sequence && event.Ordinal < cursor.ordinal) ||
-		(event.OperationSequence == cursor.sequence && event.Ordinal == cursor.ordinal &&
-			event.ID < cursor.eventID)
-}
-
 // ValidateAuditScopeHistoryCursor checks that an opaque cursor belongs to scopeID.
 func ValidateAuditScopeHistoryCursor(raw, scopeID string) error {
 	_, err := decodeAuditScopeHistoryCursor(raw, scopeID)
@@ -830,4 +770,49 @@ func encodeAuditScopeHistoryCursor(cursor auditScopeHistoryCursor) string {
 	raw := fmt.Sprintf("%s:%d:%d:%s",
 		cursor.scopeID, cursor.sequence, cursor.ordinal, cursor.eventID)
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+const auditScopeHistoryPageSQL = `SELECT record_json,operation_sequence FROM audit_records
+	WHERE kind='event' AND scope_id=$1
+	ORDER BY operation_sequence DESC,event_ordinal DESC,event_id DESC LIMIT $2`
+const auditScopeHistoryCursorPageSQL = `SELECT record_json,operation_sequence FROM audit_records
+	WHERE kind='event' AND scope_id=$1 AND (operation_sequence,event_ordinal,event_id)<($2,$3,$4)
+	ORDER BY operation_sequence DESC,event_ordinal DESC,event_id DESC LIMIT $5`
+const auditNodeHistoryPageSQL = `SELECT record_json,operation_sequence FROM audit_records
+	WHERE kind='event' AND node_id=$1
+	ORDER BY operation_sequence DESC,event_ordinal DESC,event_id DESC LIMIT $2`
+const auditNodeHistoryCursorPageSQL = `SELECT record_json,operation_sequence FROM audit_records
+	WHERE kind='event' AND node_id=$1 AND (operation_sequence,event_ordinal,event_id)<($2,$3,$4)
+	ORDER BY operation_sequence DESC,event_ordinal DESC,event_id DESC LIMIT $5`
+
+func auditHistoryEventsTx(
+	ctx context.Context, tx *sql.Tx, firstQuery, cursorQuery string,
+	id any, limit int, sequence, ordinal int64, eventID string,
+) ([]AuditEvent, error) {
+	query, args := firstQuery, []any{id, limit + 1}
+	if sequence != 0 {
+		query, args = cursorQuery, []any{id, sequence, ordinal, eventID, limit + 1}
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing audit history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]AuditEvent, 0, limit+1)
+	for rows.Next() {
+		var raw string
+		var sequence int64
+		if err := rows.Scan(&raw, &sequence); err != nil {
+			return nil, fmt.Errorf("scanning audit history: %w", err)
+		}
+		event, err := projectAuditEvent([]byte(raw), sequence)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing audit history: %w", err)
+	}
+	return items, nil
 }

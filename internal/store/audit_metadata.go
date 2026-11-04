@@ -512,3 +512,14 @@ func sortAuditRecordsByCanonicalIdentity(
 	}
 	return nil
 }
+
+func stampImportedAuditEventSequencesTx(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `UPDATE audit_records SET operation_sequence=(
+		SELECT m.operation_sequence FROM audit_records m
+		WHERE m.kind='canonical_mutation' AND m.operation_id=audit_records.operation_id)
+		WHERE kind='event'`)
+	if err != nil {
+		return fmt.Errorf("stamping imported audit event sequences: %w", err)
+	}
+	return nil
+}

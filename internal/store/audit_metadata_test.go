@@ -50,6 +50,12 @@ func TestInitialAuditAuthorityMetadataRoundTrip(t *testing.T) {
 	require.NoError(t, restored.ExportMetadata(ctx, &roundTrip))
 	assert.Equal(t, first.Bytes(), roundTrip.Bytes())
 
+	want, err := source.AuditScopeHistory(ctx, testAuditScopeID, 500, "")
+	require.NoError(t, err)
+	got, err := restored.AuditScopeHistory(ctx, testAuditScopeID, 500, "")
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
 	var scopes, memberships, records int64
 	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM audit_scopes),
@@ -597,4 +603,16 @@ func moveFirstMetadataRecordAfterHeader(t *testing.T, input []byte, kind string)
 	}
 	require.FailNow(t, "metadata record not found", kind)
 	return nil
+}
+
+func TestAuditValidationRejectsEventSequenceDivergence(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedInitialAuditAuthority(t, s, s.RootID())
+	for _, sequence := range []any{nil, int64(99)} {
+		_, err := s.db.ExecContext(t.Context(), `UPDATE audit_records SET operation_sequence=$1 WHERE kind='event'`, sequence)
+		require.NoError(t, err)
+		require.ErrorContains(t, s.ValidateMetadata(t.Context()), "operation sequence does not match canonical mutation")
+		require.ErrorContains(t, s.ExportMetadata(t.Context(), &bytes.Buffer{}), "operation sequence does not match canonical mutation")
+	}
 }

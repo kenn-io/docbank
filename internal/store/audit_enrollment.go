@@ -188,9 +188,6 @@ func (s *Store) buildInitialAuditEnrollment(
 	if err != nil {
 		return initialAuditEnrollmentSet{}, err
 	}
-	eventWrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
-		{Name: auditEventField, Value: audit.Nested(event)},
-	}}
 	mutation := makeAuditEnrollmentMutation(values, 1, auditTargetNodeID, baselineDigest, event)
 	mutationDigest, err := hashAuditRecord(mutation)
 	if err != nil {
@@ -220,7 +217,7 @@ func (s *Store) buildInitialAuditEnrollment(
 		members:      members,
 		records: []audit.Record{
 			topologyGenesis, attachmentGenesis, allocationGenesis, baseline,
-			eventWrapper, mutation, scopeEntry, allocationEntry,
+			mutation, scopeEntry, allocationEntry,
 		},
 		allocationGenesisDigest: allocationGenesisDigest.text,
 		baselineDigest:          baselineDigest.text,
@@ -290,9 +287,6 @@ func (s *Store) buildAdditionalAuditEnrollment(
 	if err != nil {
 		return additionalAuditEnrollmentSet{}, err
 	}
-	eventWrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
-		{Name: auditEventField, Value: audit.Nested(event)},
-	}}
 	operationSequence, err := nextAuditInteger("operation sequence", authority.sequence)
 	if err != nil {
 		return additionalAuditEnrollmentSet{}, err
@@ -337,7 +331,7 @@ func (s *Store) buildAdditionalAuditEnrollment(
 	}
 	return additionalAuditEnrollmentSet{
 		input: input, authority: authority, nodeSequence: nodeSequence, members: members,
-		records:        []audit.Record{baseline, eventWrapper, mutation, scopeEntry, allocation},
+		records:        []audit.Record{baseline, mutation, scopeEntry, allocation},
 		baselineDigest: baselineDigest.text, scopeHead: scopeHead.text,
 		allocationHead: allocationHead.text,
 	}, nil
@@ -646,6 +640,39 @@ func (s *Store) persistAdditionalAuditEnrollment(
 }
 
 func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) error {
+	index, err := indexAuditRecord(record)
+	if err != nil {
+		return err
+	}
+	if record.Kind == auditEventField {
+		return errors.New("audit events must be inserted with their canonical mutation")
+	}
+	if err := insertIndexedAuditRecord(ctx, tx, record, index); err != nil {
+		return err
+	}
+	if record.Kind == "canonical_mutation" {
+		events, err := auditRecordListField(record, "events")
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			wrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
+				{Name: auditEventField, Value: audit.Nested(event)},
+			}}
+			eventIndex, err := indexAuditRecord(wrapper)
+			if err != nil {
+				return err
+			}
+			eventIndex.operationSequence = index.operationSequence
+			if err := insertIndexedAuditRecord(ctx, tx, wrapper, eventIndex); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func insertIndexedAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record, index auditRecordIndex) error {
 	digest, err := hashAuditRecord(record)
 	if err != nil {
 		return err
@@ -653,10 +680,6 @@ func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) err
 	recordJSON, err := audit.MarshalJSONRecord(record)
 	if err != nil {
 		return fmt.Errorf("encoding %s audit record: %w", record.Kind, err)
-	}
-	index, err := indexAuditRecord(record)
-	if err != nil {
-		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_records(
 		digest,kind,operation_id,operation_sequence,scope_id,entry_count,

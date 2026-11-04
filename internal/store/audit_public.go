@@ -370,7 +370,7 @@ func requireDormantAuditAuthority(ctx context.Context, tx metadataQuerier) error
 func summarizeInitialAuditEnrollment(
 	vaultID string, set initialAuditEnrollmentSet, targetPath string,
 ) (AuditEnrollmentPreview, error) {
-	if len(set.records) != 8 {
+	if len(set.records) != 7 {
 		return AuditEnrollmentPreview{}, errors.New("initial audit enrollment has an invalid record set")
 	}
 	topology, err := auditRecordListField(set.records[0], "nodes")
@@ -394,7 +394,7 @@ func summarizeInitialAuditEnrollment(
 func summarizeAdditionalAuditEnrollment(
 	vaultID string, set additionalAuditEnrollmentSet, targetPath string,
 ) (AuditEnrollmentPreview, error) {
-	if len(set.records) != 5 {
+	if len(set.records) != 4 {
 		return AuditEnrollmentPreview{}, errors.New("additional audit enrollment has an invalid record set")
 	}
 	jsonBytes, err := additionalAuditMetadataJSONBytes(set)
@@ -540,17 +540,7 @@ func initialAuditMetadataJSONBytes(set initialAuditEnrollmentSet) (int64, error)
 		}
 	}
 	for _, record := range set.records {
-		digest, err := hashAuditRecord(record)
-		if err != nil {
-			return 0, err
-		}
-		recordJSON, err := audit.MarshalJSONRecord(record)
-		if err != nil {
-			return 0, fmt.Errorf("encoding projected %s audit record: %w", record.Kind, err)
-		}
-		if err := write(metadataAuditRecord{
-			Type: metadataAuditRecordType, Digest: digest.text, Record: recordJSON,
-		}); err != nil {
+		if err := writeProjectedAuditRecord(write, record); err != nil {
 			return 0, err
 		}
 	}
@@ -618,17 +608,7 @@ func additionalAuditMetadataJSONBytes(set additionalAuditEnrollmentSet) (int64, 
 		}
 	}
 	for _, record := range set.records {
-		digest, err := hashAuditRecord(record)
-		if err != nil {
-			return 0, err
-		}
-		recordJSON, err := audit.MarshalJSONRecord(record)
-		if err != nil {
-			return 0, fmt.Errorf("encoding projected %s audit record: %w", record.Kind, err)
-		}
-		if err := write(metadataAuditRecord{
-			Type: metadataAuditRecordType, Digest: digest.text, Record: recordJSON,
-		}); err != nil {
+		if err := writeProjectedAuditRecord(write, record); err != nil {
 			return 0, err
 		}
 	}
@@ -758,4 +738,34 @@ func auditMembershipStatusTx(
 		return AuditMembershipStatus{}, errors.New("audit membership scopes are not ordered")
 	}
 	return status, nil
+}
+
+func writeProjectedAuditRecord(write metadataWrite, record audit.Record) error {
+	digest, err := hashAuditRecord(record)
+	if err != nil {
+		return err
+	}
+	recordJSON, err := audit.MarshalJSONRecord(record)
+	if err != nil {
+		return fmt.Errorf("encoding projected %s audit record: %w", record.Kind, err)
+	}
+	if err := write(metadataAuditRecord{
+		Type: metadataAuditRecordType, Digest: digest.text, Record: recordJSON,
+	}); err != nil {
+		return err
+	}
+	if record.Kind == "canonical_mutation" {
+		events, err := auditRecordListField(record, "events")
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			if err := writeProjectedAuditRecord(write, audit.Record{Kind: auditEventField, Fields: []audit.Field{
+				{Name: auditEventField, Value: audit.Nested(event)},
+			}}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

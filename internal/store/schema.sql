@@ -2031,9 +2031,9 @@ CREATE TABLE IF NOT EXISTS audit_records (
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_event
     ON audit_records(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS audit_record_event_node
-    ON audit_records(node_id) WHERE kind = 'event';
+    ON audit_records(node_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE INDEX IF NOT EXISTS audit_record_event_scope
-    ON audit_records(scope_id) WHERE kind = 'event';
+    ON audit_records(scope_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_operation
     ON audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_sequence

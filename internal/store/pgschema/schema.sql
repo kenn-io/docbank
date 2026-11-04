@@ -90,9 +90,9 @@ CREATE TABLE {{schema}}.audit_records (
 CREATE UNIQUE INDEX audit_record_event
     ON {{schema}}.audit_records(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX audit_record_event_node
-    ON {{schema}}.audit_records(node_id) WHERE kind = 'event';
+    ON {{schema}}.audit_records(node_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE INDEX audit_record_event_scope
-    ON {{schema}}.audit_records(scope_id) WHERE kind = 'event';
+    ON {{schema}}.audit_records(scope_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX audit_record_mutation_operation
     ON {{schema}}.audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX audit_record_mutation_sequence

@@ -1264,7 +1264,8 @@ the PostgreSQL insertion test checks the same projections. It uses a caller-owne
 transaction and rolls it back: inserting records alone does not publish complete
 authority or membership projections. Canonical records remain append-only:
 PostgreSQL runtime has `SELECT` and `INSERT` on `audit_records`, with no `UPDATE`
-or `DELETE` on that table.
+or `DELETE` on that table. Event rows are inserted with their canonical mutation
+and carry its operation sequence.
 
 Existing audit authority and scope heads also advance through shared Go writers.
 They reject nonpositive counters and require the allocation entry count to equal

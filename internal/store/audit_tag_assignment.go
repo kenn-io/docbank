@@ -114,14 +114,6 @@ func persistAuditedAttachmentChange(ctx context.Context, tx *sql.Tx, vaultID, op
 	if err := insertAuditRecord(ctx, tx, delta); err != nil {
 		return err
 	}
-	for _, event := range events {
-		if err := insertAuditRecord(ctx, tx, audit.Record{
-			Kind:   auditEventField,
-			Fields: []audit.Field{{Name: auditEventField, Value: audit.Nested(event)}},
-		}); err != nil {
-			return err
-		}
-	}
 	if err := insertAuditRecord(ctx, tx, mutation); err != nil {
 		return err
 	}
