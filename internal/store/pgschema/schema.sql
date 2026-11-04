@@ -30,6 +30,9 @@ CREATE UNIQUE INDEX live_sibling_names ON {{schema}}.nodes(parent_id, name)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_parent ON {{schema}}.nodes(parent_id);
 CREATE INDEX nodes_parent_name_id ON {{schema}}.nodes(parent_id, name, id);
+-- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
+CREATE INDEX nodes_live_children ON {{schema}}.nodes(parent_id, kind, name, trashed_at, id)
+    WHERE trashed_at IS NULL;
 CREATE INDEX nodes_live_modified ON {{schema}}.nodes(modified_at DESC, name, id)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_trashed ON {{schema}}.nodes(trashed_at) WHERE trashed_at IS NOT NULL;
@@ -2261,6 +2264,9 @@ CREATE INDEX export_members_version ON {{schema}}.export_members(version_id);
 CREATE INDEX package_labels_version ON {{schema}}.package_labels(content_version_id);
 CREATE INDEX package_import_receipts_version ON {{schema}}.package_import_receipts(content_version_id);
 CREATE INDEX media_versions_content ON {{schema}}.media_source_versions(content_version_id, source_id);
+CREATE INDEX media_occurrences_principal ON {{schema}}.media_occurrences(caller_principal, visible, source_id, occurrence_id);
+CREATE INDEX media_occurrences_source ON {{schema}}.media_occurrences(source_id, visible, caller_principal, occurrence_id);
+CREATE INDEX media_operations_source_admission ON {{schema}}.media_operations(principal, source_id, created_at);
 CREATE INDEX media_input_artifacts_version ON {{schema}}.media_input_artifacts(content_version_id);
 CREATE INDEX mailbox_transfer_receipts_version ON {{schema}}.mailbox_transfer_receipts(target_version_id);
 CREATE INDEX page_render_jobs_node ON {{schema}}.page_render_jobs(node_id);

@@ -3,6 +3,7 @@ package store
 // These exact exceptions describe the current boundary, not permission to omit
 // future objects. The comparison fails when an exception is stale or resolved.
 var sqliteOnlyBackendTables = map[string]string{
+	"vector_membership_epochs":           "vector index lifecycle is unqualified",
 	"photo_description_explicit_waiters": "description worker publication is unqualified",
 	"photo_face_scans":                   "face detection publication is unqualified",
 	"photo_timeline_pending":             "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
@@ -32,9 +33,6 @@ var deferredBackendIndexes = map[string]string{
 	"mailbox_containers_owner":                    "mailbox_containers",
 	"mailbox_transfer_receipts_source":            "mailbox_transfer_receipts",
 	"mailbox_transfer_versions":                   "mailbox_transfer_receipts",
-	"media_occurrences_principal":                 "media_occurrences",
-	"media_occurrences_source":                    "media_occurrences",
-	"media_operations_source_admission":           "media_operations",
 	"nodes_photo_import":                          "nodes",
 	"nodes_photo_name":                            "nodes",
 	"package_import_jobs_pending":                 "package_import_jobs",

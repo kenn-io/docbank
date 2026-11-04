@@ -11,9 +11,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestVisualPreviewGenerationByRecipe(t *testing.T) {
+func checkVisualPreviewGenerationByRecipe(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("41"), 12, "image/jpeg")
 	require.NoError(t, err)
 	for _, edge := range []int{512, 2560} {
@@ -32,9 +33,10 @@ func TestVisualPreviewGenerationByRecipe(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestVisualPreviewNonActiveRecipesKeepLargeHead(t *testing.T) {
+func checkVisualPreviewNonActiveRecipesKeepLargeHead(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("51"), 12, "image/jpeg")
 	require.NoError(t, err)
 	recipe := visualPreviewRecipe()
@@ -83,9 +85,10 @@ func TestVisualPreviewRecipeStates(t *testing.T) {
 	}
 }
 
-func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
+func checkMissingPhotoVisualPreviewTargetsAfter(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	recipe := visualPreviewRecipe()
 	recipe.MaxEdgePixels = 512
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
@@ -99,14 +102,14 @@ func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
 		}
 		node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("%02d", 90+index)), 12, mediaType)
 		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
+		var assetID, kind string
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT a.asset_id,a.kind FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id WHERE f.node_id=$1`, node.ID).Scan(&assetID, &kind))
 		if state == "video" {
-			require.Equal(t, PhotoKindVideo, asset.Kind)
+			require.Equal(t, string(PhotoKindVideo), kind)
 			continue
 		}
 		if state == "excluded" {
-			_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, asset.ID)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=$1`, assetID)
 			require.NoError(t, err)
 			continue
 		}
@@ -138,6 +141,14 @@ func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	require.Equal(t, versions[0], targets[0].VersionID)
+	eligible, err := s.PhotoVisualPreviewTargetEligible(t.Context(), targets[0], fingerprint)
+	require.NoError(t, err)
+	require.True(t, eligible)
+	stale := targets[0]
+	stale.SourceSHA256 = fakeHash("ab")
+	eligible, err = s.PhotoVisualPreviewTargetEligible(t.Context(), stale, fingerprint)
+	require.NoError(t, err)
+	require.False(t, eligible)
 	targets, err = s.MissingPhotoVisualPreviewTargetsAfter(t.Context(), fingerprint, versions[0], 100)
 	require.NoError(t, err)
 	require.Empty(t, targets)

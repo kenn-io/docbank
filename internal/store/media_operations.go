@@ -40,7 +40,7 @@ func (s *Store) MediaOperationReceipt(
 	}
 	var principal, verb, digest, receipt string
 	err := s.db.QueryRowContext(ctx, `SELECT principal,verb,request_sha256,receipt_json
-		FROM media_operations WHERE operation_id=?`, op.ID).Scan(&principal, &verb, &digest, &receipt)
+		FROM media_operations WHERE operation_id=$1`, op.ID).Scan(&principal, &verb, &digest, &receipt)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && principal != op.Principal) {
 		return "", ErrNotFound
 	}
@@ -62,7 +62,7 @@ func (s *Store) RemoteRecordingReceipt(ctx context.Context, principal, operation
 	}
 	var receipt string
 	err := s.db.QueryRowContext(ctx, `SELECT receipt_json FROM media_operations
-		WHERE operation_id=? AND principal=? AND verb='submit_remote_recording'`,
+		WHERE operation_id=$1 AND principal=$2 AND verb='submit_remote_recording'`,
 		operationID, principal).Scan(&receipt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
@@ -86,7 +86,7 @@ func (s *Store) withMediaOperation(
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var principal, verb, digest, storedReceipt string
 		err := tx.QueryRowContext(ctx, `SELECT principal,verb,request_sha256,receipt_json
-			FROM media_operations WHERE operation_id=?`, op.ID).Scan(
+			FROM media_operations WHERE operation_id=$1`, op.ID).Scan(
 			&principal, &verb, &digest, &storedReceipt)
 		same := principal == op.Principal && verb == op.Verb && digest == op.RequestSHA256
 		stored, found, err := replayReceipt(storedReceipt, err, same, ErrMediaOperationConflict)
@@ -104,9 +104,16 @@ func (s *Store) withMediaOperation(
 		stamp := nowRFC3339()
 		// Preserve admission order even when successive calls share a clock tick.
 		// The timestamp survives metadata export and restore; row IDs do not.
+		// Keep both forms indexable by principal and source on either backend.
+		sourcePredicate := "source_id IS NULL"
+		args := []any{op.Principal}
+		if op.SourceID != "" {
+			sourcePredicate = "source_id=$2"
+			args = append(args, op.SourceID)
+		}
 		var previous string
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(created_at),'') FROM media_operations
-			WHERE principal=? AND source_id IS ?`, op.Principal, nullableMediaID(op.SourceID)).Scan(&previous); err != nil {
+			WHERE principal=$1 AND `+sourcePredicate, args...).Scan(&previous); err != nil {
 			return err
 		}
 		if stamp <= previous {
@@ -118,9 +125,9 @@ func (s *Store) withMediaOperation(
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_operations(
 			operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?)`, op.ID, op.Principal, op.Verb, op.RequestSHA256,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, op.ID, op.Principal, op.Verb, op.RequestSHA256,
 			nullableMediaID(op.SourceID), receipt, stamp, stamp); err != nil {
-			if s.driver.IsUniqueViolation(err) {
+			if s.isUniqueViolation(err) {
 				return ErrMediaOperationConflict
 			}
 			return fmt.Errorf("recording media operation: %w", err)

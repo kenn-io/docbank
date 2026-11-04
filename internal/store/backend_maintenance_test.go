@@ -65,13 +65,22 @@ var backendMaintenanceEffects = []backendMaintenance{
  source_metadata_generations_immutable_update document_event_generations_immutable_update
  document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
 	{"retained processing records", "no runtime UPDATE grant; producers unported", "enrollment validates retained rows; derivatives/retention may delete them, never rewrite them", `
- document_people_generations_immutable_update
+ document_people_generations_immutable_update`},
+	{"visual preview records", "visual_preview.go; INSERT-only generation grants", "visual-evidence contracts; active heads may change without rewriting retained generations", `
+ visual_preview_generations_immutable_update`},
+	{"media source and input authority", "media_sources.go, media_runtime.go and media_artifacts.go; INSERT-only grants", "media contracts; first binding and revocation update occurrences without rewriting source or input records", `
  media_sources_immutable_update media_source_versions_immutable_update
- media_input_artifacts_immutable_update visual_preview_generations_immutable_update`},
+ media_input_artifacts_immutable_update`},
 	{"embedding records", "embedding_catalog.go; runtime has no UPDATE grant", "embeddings contracts; immutable records may be collected after roots expire", `
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
+	{"vector source membership epochs", "unported: vector_index.go", "SQLite-only derived state; PostgreSQL ranked search remains unqualified", `
+ vector_source_embedding_heads_insert vector_source_embedding_heads_update vector_source_embedding_heads_delete
+ vector_source_rendition_heads_insert vector_source_rendition_heads_update vector_source_rendition_heads_delete
+ vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete
+ vector_source_photo_files_insert vector_source_photo_files_update vector_source_photo_files_delete
+ vector_source_photo_assets_update vector_source_nodes_update`},
 	{"rendition records", "processing_catalog.go and search.go; runtime has no UPDATE grant", "renditions contracts; cleanup may delete immutable records", `
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update

@@ -14,6 +14,20 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
+func checkImageEmbeddingPublicationPostgres(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	s := newPostgresQueryStore(t)
+	f := seedImageEmbeddingCatalog(t, s)
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	preview, err := s.VisualPreviewGenerationByRecipe(t.Context(), f.node.CurrentVersionID, fingerprints.GridRecipe)
+	require.NoError(t, err)
+	require.Equal(t, f.request.InputGeneration.EvidenceFingerprint, preview.Checksum)
+	record, _ := f.publish(t)
+	require.Equal(t, record.ID, embeddingHeadSetIDForTest(t, f.s, f.node.CurrentVersionID, f.request.Profile.Fingerprint, f.request.BindingID, document.EmbeddingInputImage))
+}
+
 func checkEmbeddingPublicationPostgres(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"optional", "chunk"} {

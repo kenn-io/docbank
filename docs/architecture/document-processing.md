@@ -236,11 +236,16 @@ and [vector-index catalog](https://github.com/kenn-io/docbank/blob/main/internal
 
 The internal searcher treats omitted and `auto` modes as lexical. Explicit
 semantic and hybrid modes require compatible active vector authority and a
-query encoder. The source-version fence selects eligible vectors from current,
-live attachments before scoring. Missing vector-row authority stops the search.
+query encoder. A source-version fence selects eligible vectors from current,
+live attachments before scoring. Unscoped searches score the whole leased
+generation and recheck each inspected neighbor against current vault authority.
+Missing vector-row authority stops the search.
 Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
+
+SQLite maintains a derived membership revision for each vector space as embedding heads, rendition heads, content versions, previews, and photo eligibility change.
+Search checkpoints reuse an in-process checksum memo while the snapshot's revision matches; the first checkpoint after a membership change or restart captures the source again without writing bookkeeping.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact

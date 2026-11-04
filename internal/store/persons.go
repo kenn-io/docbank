@@ -350,7 +350,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 	}
 	people := []PersonSearchResult{}
 	var scope *PhotoHiddenState
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) (err error) {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) (err error) {
 		if visibleOnly || options.PhotoSummary || options.RecentFirst {
 			if scope, err = s.photoHiddenStateTx(ctx, tx); err != nil {
 				return err

@@ -1,6 +1,6 @@
 import { render, fireEvent, screen, cleanup } from "@testing-library/svelte";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import RedactionDrawer from "./RedactionDrawer.svelte";
+import RedactionReview from "./RedactionReview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
 
 afterEach(() => {
@@ -25,12 +25,15 @@ it("Escape dismisses only the inner discard dialog, then closing aborts preparat
   vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
     if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
     return new Promise((_resolve, reject) => {
-      signal = init?.signal as AbortSignal;
-      signal.addEventListener("abort", () => reject(signal?.reason), { once: true });
+      const requestSignal = init?.signal as AbortSignal;
+      if (String(_url).includes("/nodes/")) signal = requestSignal;
+      requestSignal.addEventListener("abort", () => reject(signal?.reason), { once: true });
     });
   });
   const onclose = vi.fn();
-  render(RedactionDrawer, {
+  render(RedactionReview, {
+    active: true,
+    onworkspaceclose: vi.fn(),
     session: "synthetic-tab",
     source,
     authorizationRevision: 1,
@@ -38,11 +41,11 @@ it("Escape dismisses only the inner discard dialog, then closing aborts preparat
     onauthfailure: vi.fn(),
   });
   await screen.findByText("Preparing PDF…");
-  await fireEvent.click(screen.getByRole("button", { name: "Close redaction" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Back to reading" }));
   const inner = await screen.findByRole("dialog", { name: "Discard redaction?" });
   await fireEvent.keyDown(inner, { key: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Discard redaction?" })).toBeNull();
-  expect(screen.getByRole("dialog", { name: "Redact synthetic.pdf" })).toBeTruthy();
+  expect(screen.getByText("Preparing PDF…")).toBeTruthy();
   expect(onclose).not.toHaveBeenCalled();
   expect(signal?.aborted).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Cancel preparation" }));
@@ -58,7 +61,9 @@ it("routes an expired session to the app and never presents an empty successful 
     }),
   );
   const onauthfailure = vi.fn();
-  render(RedactionDrawer, {
+  render(RedactionReview, {
+    active: true,
+    onworkspaceclose: vi.fn(),
     session: "synthetic-tab",
     source,
     authorizationRevision: 1,
@@ -83,12 +88,15 @@ it("pagehide releases only the preview and closes the cached editor", async () =
       return Promise.resolve(new Response(null, { status: 204 }));
     }
     return new Promise((_resolve, reject) => {
-      preparation = init?.signal as AbortSignal;
-      preparation.addEventListener("abort", () => reject(preparation?.reason), { once: true });
+      const requestSignal = init?.signal as AbortSignal;
+      if (String(url).includes("/nodes/")) preparation = requestSignal;
+      requestSignal.addEventListener("abort", () => reject(preparation?.reason), { once: true });
     });
   });
   const onclose = vi.fn();
-  render(RedactionDrawer, {
+  render(RedactionReview, {
+    active: true,
+    onworkspaceclose: onclose,
     session: "synthetic-tab",
     source,
     authorizationRevision: 1,

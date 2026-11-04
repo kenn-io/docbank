@@ -209,7 +209,7 @@ func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.Pl
 		return nil, bundle.ErrConflict
 	}
 	var inputs []PhotoExportInput
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		request, err := photoExportSourceRequest(ctx, tx, source)
 		if err != nil {
 			return err

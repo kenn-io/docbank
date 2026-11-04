@@ -535,7 +535,7 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + retainedNodes + `)`
-	runTx := s.photoReadTx
+	runTx := s.withReadTx
 	if run {
 		runTx = s.withLogicalTx
 	}

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import type { ReaderReview, ReaderReviewStatus, PDFReviewBridge } from "./pdfReview.js";
+  import { onDestroy, untrack } from "svelte";
   import { Spinner } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
@@ -19,29 +20,43 @@
     authorizationRevision,
     onauthfailure,
     expanded = false,
+    review,
+    onstatus,
+    onbridge,
   }: {
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
     onauthfailure: (cause: unknown) => void;
     expanded?: boolean;
+    review?: ReaderReview;
+    onstatus?: (status: ReaderReviewStatus) => void;
+    onbridge?: (bridge: PDFReviewBridge) => void;
   } = $props();
   let preview = $state<Preview | null>(null);
   let progress = $state<DownloadProgress | null>(null);
   let loading = $state(false);
   let error = $state("");
   let publishedURL = "";
+  let verifiedKey = "";
 
   function revokePublishedURL(): void {
     if (!publishedURL) return;
     URL.revokeObjectURL(publishedURL);
     publishedURL = "";
   }
+  onDestroy(revokePublishedURL);
 
-  const previewKey = $derived(`${session}:${source.key}:${authorizationRevision}`);
+  const previewKey = $derived(`${session}:${source.key}`);
   $effect(() => {
-    void previewKey;
+    const key = previewKey,
+      revision = authorizationRevision;
     return untrack(() => {
+      if (preview && verifiedKey === key) {
+        loading = false;
+        progress = null;
+        return;
+      }
       const controller = new AbortController();
       let current = true;
       revokePublishedURL();
@@ -49,20 +64,15 @@
       progress = { received: 0, total: source.size };
       loading = true;
       error = "";
-      void readVerifiedPreview(
-        session,
-        source,
-        authorizationRevision,
-        controller.signal,
-        (next) => {
-          if (current) progress = next;
-        },
-      )
+      void readVerifiedPreview(session, source, revision, controller.signal, (next) => {
+        if (current) progress = next;
+      })
         .then((next) => {
           if (!current) {
             if (next.kind !== "text") URL.revokeObjectURL(next.url);
             return;
           }
+          verifiedKey = key;
           preview = next;
           if (next.kind !== "text") publishedURL = next.url;
         })
@@ -80,10 +90,6 @@
       return () => {
         current = false;
         controller.abort();
-        revokePublishedURL();
-        preview = null;
-        progress = null;
-        error = "";
       };
     });
   });
@@ -113,7 +119,7 @@
     {#await import("./PDFReader.svelte")}
       {@render loadingReader()}
     {:then module}
-      <module.default url={preview.url} name={source.name} />
+      <module.default url={preview.url} name={source.name} {review} {onstatus} {onbridge} />
     {:catch}
       {@render readerUnavailable()}
     {/await}

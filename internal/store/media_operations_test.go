@@ -46,9 +46,10 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 	})
 }
 
-func TestMediaOperationReplaysWithoutRepeatingMutation(t *testing.T) {
+func checkMediaOperationReplaysWithoutRepeatingMutation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	calls := 0
 	op := MediaOperation{
 		ID: "00000000-0000-4000-8000-000000000001", Principal: "operator",
@@ -81,7 +82,7 @@ func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
 		Verb: "submit_supplied_media", RequestSHA256: strings.Repeat("b", 64),
 	}
 	_, err := s.withMediaOperation(t.Context(), op, func(tx *sql.Tx) (string, error) {
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',$1,$2)`,
 			strings.Repeat("c", 64), nowRFC3339())
 		require.NoError(t, err)
 		return `{`, nil
@@ -92,7 +93,7 @@ func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
 	require.Zero(t, count)
 
 	receipt, err := s.withMediaOperation(t.Context(), op, func(tx *sql.Tx) (string, error) {
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO media_sources VALUES('source','supplied_media','','',$1,$2)`,
 			strings.Repeat("c", 64), nowRFC3339())
 		return `{"source_id":"source"}`, err
 	})
@@ -102,9 +103,10 @@ func TestMediaOperationRollsBackMutationBeforeInvalidReceipt(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-func TestMediaOperationConcurrentReplayRunsMutationOnce(t *testing.T) {
+func checkMediaOperationConcurrentReplayRunsMutationOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	op := MediaOperation{
 		ID: "00000000-0000-4000-8000-000000000003", Principal: "operator",
 		Verb: "retry_media", RequestSHA256: strings.Repeat("d", 64),
@@ -144,9 +146,10 @@ func TestMediaOperationRespectsAuditedVaultGuard(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
 
-func TestRemoteRecordingReceiptScopesPrincipalAndVerb(t *testing.T) {
+func checkRemoteRecordingReceiptScopesPrincipalAndVerb(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	_, operation := remoteStoreReference(t, s, testSHA256([]byte("receipt-source")),
 		"00000000-0000-4000-8000-000000000901", "receipt-occurrence")

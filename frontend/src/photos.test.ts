@@ -1,3 +1,5 @@
+import { tick } from "svelte";
+import { observeSelectionSize } from "./test/selection-observer.svelte.js";
 import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
@@ -2102,7 +2104,7 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])(
   },
 );
 
-it("marks appended pages and clears the marker on other item assignments", async () => {
+it("marks the append origin until items are replaced", async () => {
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   const previous = [mapPhoto(1)];
   photos.items = previous;
@@ -2111,13 +2113,14 @@ it("marks appended pages and clears the marker on other item assignments", async
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([mapPhoto(2)])));
   await photos.loadMore();
   expect(photos.appendedFrom).toBe(previous);
+  expect(previous).toEqual([mapPhoto(1)]);
   expect(photos.items).toHaveLength(2);
   photos.items = photos.items.map((row) => ({ ...row, latitude: 3 }));
   expect(photos.appendedFrom).toBeUndefined();
   photos.dispose();
 });
 
-it("reuses seen IDs across pages and resets them when items are replaced", async () => {
+it("deduplicates appended IDs without rescanning retained or replaced items", async () => {
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   const previous = [mapPhoto(1)];
   photos.items = previous;
@@ -2131,14 +2134,20 @@ it("reuses seen IDs across pages and resets them when items are replaced", async
     .mockResolvedValueOnce(response([mapPhoto(2), mapPhoto(3), mapPhoto(3)]));
   vi.stubGlobal("fetch", fetcher);
   await photos.loadMore();
-  expect(scans).toHaveBeenCalledTimes(1);
+  expect(scans).not.toHaveBeenCalled();
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
-  photos.items = [mapPhoto(2), mapPhoto(4)];
+  const rows = [mapPhoto(2), mapPhoto(4)];
+  photos.items = rows;
+  const replacementScans = vi.fn(() => "photo-2");
+  Object.defineProperty(rows[0], "asset_id", { get: replacementScans });
   photos.cursor = "replacement-tail";
   fetcher.mockResolvedValueOnce(
     response([mapPhoto(1), mapPhoto(2), mapPhoto(3), mapPhoto(4), mapPhoto(5), mapPhoto(5)]),
   );
   await photos.loadMore();
+  expect(replacementScans).not.toHaveBeenCalled();
+  expect(photos.rowByID("photo-4")).toBe(rows[1]);
+  expect(photos.rowByID("photo-1")?.asset_id).toBe("photo-1");
   expect(photos.items.map((row) => row.asset_id)).toEqual([
     "photo-2",
     "photo-4",
@@ -3876,3 +3885,52 @@ it.each([0, 2])(
     photos.dispose();
   },
 );
+
+it("selects newly refreshed photos when paging after Metadata closes", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  try {
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    await photos.selectAllResults();
+    photos.authored.targets = [preparedPhoto(1), preparedPhoto(2)];
+    stubPhotoFetch(async (_url, init) =>
+      JSON.parse(String(init.body)).cursor === "after-refresh"
+        ? response([photo(4)])
+        : response([photo(3), photo(1), photo(2)], "after-refresh"),
+    );
+
+    expect(await photos.refresh(undefined, true)).toBe(true);
+    photos.authored.reset();
+    await photos.loadMore();
+
+    expect(photos.selectsAll).toBe(true);
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-3", "photo-1", "photo-2", "photo-4"]);
+  } finally {
+    photos.dispose();
+  }
+});
+
+it.each([false, true])("grows backing select-all IDs while paging, targets=%s", async (targets) => {
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  photos.cursor = "next";
+  await photos.selectAllResults();
+  const selected = photos.selectedIDs;
+  if (targets) photos.authored.targets = [preparedPhoto(1)];
+  const fetcher = vi.fn().mockResolvedValue(response([photo(2)], "last"));
+  stubPhotoFetch(fetcher);
+  const sizes: number[] = [];
+  const stop = targets ? undefined : observeSelectionSize(photos, (size) => sizes.push(size));
+  await tick();
+  await photos.loadMore();
+  expect(photos.allResults).toBe(true);
+  expect(photos.selectsAll).toBe(!targets);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  if (!targets) expect(photos.selectedIDs).toBe(selected);
+  expect(photos.items).toHaveLength(2);
+  await tick();
+  if (!targets) expect(sizes.at(-1)).toBe(2);
+  stop?.();
+  photos.dispose();
+});

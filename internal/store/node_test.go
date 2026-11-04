@@ -11,6 +11,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDirectoryChildrenPageUsesLiveChildIndex(t *testing.T) {
+	t.Parallel()
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			plan := explainQueryPlan(t, s, directoryChildrenPageIDsSQL, s.RootID(), 1000, 0)
+			assert.Contains(t, plan, "USING COVERING INDEX nodes_live_children")
+			assert.NotContains(t, plan, "TEMP B-TREE")
+
+			plan = explainQueryPlan(t, s, directoryChildrenCountSQL, s.RootID())
+			assert.Contains(t, plan, "USING COVERING INDEX nodes_live_children")
+		})
+	}
+}
+
 func TestNodeViewPinsNodeAndPathAcrossConcurrentTrash(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -231,12 +246,15 @@ func TestChildrenSortedDirsFirst(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.Mkdir(ctx, s.RootID(), "adir")
 	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "alpha.txt", strings.Repeat("a", 64), 1, "text/plain")
+	require.NoError(t, err)
 
 	kids, err := s.Children(ctx, s.RootID())
 	require.NoError(t, err)
-	require.Len(t, kids, 2)
+	require.Len(t, kids, 3)
 	assert.Equal(t, "adir", kids[0].Name)
 	assert.Equal(t, "zdir", kids[1].Name)
+	assert.Equal(t, "alpha.txt", kids[2].Name)
 
 	_, err = s.Children(ctx, kids[0].ID)
 	require.NoError(t, err)

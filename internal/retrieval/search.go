@@ -418,7 +418,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	}()
 	// Search reports coverage from final candidate revalidation.
 	coverage = Coverage{BindingRequired: authority.BindingRequired, State: CoverageUnknown}
-	if authority.ANNRows == nil {
+	if authority.ANNRows == nil && !authority.WholeSpace {
 		return nil, coverage, false, errors.New("semantic search authority lacks source-fenced ANN rows")
 	}
 	provider, err := searcher.encoders.ResolveQueryEncoder(ctx, authority.VectorSpace.Descriptor)
@@ -456,7 +456,12 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		metadata.Manifest.Checksum != stored.IndexManifestChecksum || metadata.RowCount != stored.RowCount {
 		return nil, coverage, false, errors.New("leased vector generation is incompatible with active query authority")
 	}
-	neighbors, err := generation.SearchRows(embedded.Vectors[0].Values, authority.ANNRows)
+	var neighbors []vectorindex.Neighbor
+	if authority.WholeSpace {
+		neighbors, err = generation.Search(embedded.Vectors[0].Values, metadata.RowCount)
+	} else {
+		neighbors, err = generation.SearchRows(embedded.Vectors[0].Values, authority.ANNRows)
+	}
 	if err != nil {
 		return nil, coverage, false, err
 	}

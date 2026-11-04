@@ -3653,7 +3653,8 @@ it("keeps newer Library values across an older live read", async () => {
 });
 
 // A Library of three months, 60 photos each; only the newest is loaded, and each later page
-// holds the next older month.
+// holds the next older month. Each month has 15 rows of four 3:2 photos, 14 four-pixel gaps,
+// and a 56px header, totaling 2582px. The third month starts at 5164px.
 function railLibrary(
   sort: QuerySort = { field: "capture_time", direction: "desc" },
   filters: Query["filters"] = {},
@@ -3696,16 +3697,6 @@ function railLibrary(
   return { photos, cache, pages, bodies };
 }
 
-// Sections stack in the grid, so a month starts below the sections before it.
-function sectionTop(month: string) {
-  let top = 0;
-  for (const section of document.querySelectorAll<HTMLElement>("[data-month]")) {
-    if (section.dataset.month === month) return top;
-    top += Number.parseFloat(section.style.height);
-  }
-  throw new Error(`no section for ${month}`);
-}
-
 it("pages a chosen year in until it arrives, with the query, count, and selection unchanged", async () => {
   const { photos, cache, bodies } = railLibrary();
   render(PhotosWorkspace, { photos, cache });
@@ -3715,7 +3706,7 @@ it("pages a chosen year in until it arrives, with the query, count, and selectio
   await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
   const scroll = screen.getByTestId("photo-scroll");
   await waitFor(() => expect(photos.seek).toBe(""));
-  expect(scroll.scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(scroll.scrollTop).toBe(5164);
   expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
   expect(bodies.every((body) => JSON.stringify(body.query) === query)).toBe(true);
   expect(screen.getByText("180 photos")).toBeTruthy();
@@ -3788,7 +3779,7 @@ it("keeps a jump pending through a paging failure and finishes it on Retry", asy
   pages.p2 = page;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(photos.seek).toBe(""));
-  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(5164);
   photos.dispose();
   await cache.dispose();
 });
@@ -3817,7 +3808,7 @@ it("resumes a date jump after cancelling Hidden setup when its page finished dur
   modal.unmount();
   await waitFor(() => expect(photos.seek).toBe(""));
   expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
-  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(5164);
   photos.dispose();
   await cache.dispose();
 });
@@ -4562,4 +4553,53 @@ it("submits the KEEP/CUT choices displayed in Library when preparation has newer
     proposals.map((p) => ({ asset_id: p.asset_id, flag: p.flag, response: "accepted" })),
   );
   photos.dispose();
+});
+
+it("keeps Metadata selection work bounded when a page appends", async () => {
+  const selectedID = "photo-19999";
+  localStorage.setItem("docbank.photoMetadata", "open");
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const photos = new Photos("scoped", vi.fn());
+  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id));
+  photos.items = rows;
+  photos.started = true;
+  photos.total = 20_250;
+  photos.cursor = "next";
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  photos.select(selectedID, new MouseEvent("click"), [selectedID]);
+  await tick();
+  stubPhotoFetch(
+    vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ items: [photo(20_000)], total: 20_250, next_cursor: "last" }),
+      ),
+  );
+  await photos.loadMore();
+  let reads = 0;
+  for (const row of rows.slice(0, 20_000)) {
+    const id = row.asset_id;
+    Object.defineProperty(row, "asset_id", {
+      get: () => {
+        reads++;
+        return id;
+      },
+    });
+  }
+  stubPhotoFetch(
+    vi.fn().mockResolvedValue(Response.json({ items: [photo(20_001)], total: 20_250 })),
+  );
+  await photos.loadMore();
+  await tick();
+  expect(reads).toBeLessThan(1000);
+  expect(screen.getByText("1 selected photo")).toBeTruthy();
+  expect(
+    within(screen.getByRole("complementary", { name: "Photo details" })).getByRole("heading", {
+      name: `Photo ${selectedID.slice(6)}.jpg`,
+    }),
+  ).toBeTruthy();
+  photos.dispose();
+  await cache.dispose();
 });

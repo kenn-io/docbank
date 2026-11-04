@@ -88,7 +88,7 @@ func (s *Store) publishVisualPreview(
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		version, readErr := scanContentVersion(tx.QueryRowContext(ctx,
-			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+			`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 		if readErr != nil {
 			return fmt.Errorf("reading visual preview source version: %w", readErr)
 		}
@@ -104,7 +104,7 @@ func (s *Store) publishVisualPreview(
 			generation_id,vault_uid,content_version_id,source_sha256,contract_version,
 			recipe_fingerprint,canonical_result,checksum,state,output_blob_hash,output_size,
 			output_media_type,output_width,output_height,failure_code,failure_detail,created_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT(content_version_id,recipe_fingerprint) DO NOTHING`,
 			generation.GenerationID, generation.VaultID, versionID, preview.SourceSHA256,
 			preview.ContractVersion, recipeFingerprint, canonical, checksum, preview.State,
@@ -132,10 +132,10 @@ func (s *Store) publishVisualPreview(
 		}
 		_, execErr = tx.ExecContext(ctx, `INSERT INTO visual_preview_heads(
 			content_version_id,generation_id,published_at
-		) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET
+		) VALUES($1,$2,$3) ON CONFLICT(content_version_id) DO UPDATE SET
 			generation_id=excluded.generation_id,
 			published_at=excluded.published_at
-			WHERE ? != 0 OR visual_preview_heads.generation_id=excluded.generation_id`,
+			WHERE $4 != 0 OR visual_preview_heads.generation_id=excluded.generation_id`,
 			versionID, generation.GenerationID, nowRFC3339(), inserted)
 		return execErr
 	})
@@ -150,13 +150,13 @@ func (s *Store) ContentVersionVisualPreview(
 	if err := validateUUIDv4(versionID); err != nil {
 		return VisualPreviewView{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return VisualPreviewView{}, fmt.Errorf("starting visual preview snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 	if err != nil {
 		return VisualPreviewView{}, fmt.Errorf("content version %q: %w", versionID, err)
 	}
@@ -164,7 +164,7 @@ func (s *Store) ContentVersionVisualPreview(
 	var recipeFingerprint string
 	err = tx.QueryRowContext(ctx, `SELECT g.recipe_fingerprint,h.published_at
 		FROM visual_preview_heads h JOIN visual_preview_generations g
-		ON g.generation_id=h.generation_id WHERE h.content_version_id=?`, versionID).
+		ON g.generation_id=h.generation_id WHERE h.content_version_id=$1`, versionID).
 		Scan(&recipeFingerprint, &publishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return VisualPreviewView{}, ErrNotFound
@@ -202,7 +202,7 @@ func (s *Store) VisualPreviewGenerationByRecipe(
 func visualPreviewGenerationByRecipeTx(
 	ctx context.Context, q metadataQuerier, versionID, recipeFingerprint string,
 ) (VisualPreviewGeneration, error) {
-	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=? AND recipe_fingerprint=?`, versionID, recipeFingerprint))
+	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=$1 AND recipe_fingerprint=$2`, versionID, recipeFingerprint))
 }
 
 const visualPreviewGenerationColumns = `generation_id,vault_uid,content_version_id,
@@ -328,13 +328,13 @@ func (s *Store) ContentVersionVisualPreviewByRecipe(
 	if err := validateUUIDv4(versionID); err != nil {
 		return VisualPreviewView{}, ErrNotFound
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	version, err := scanContentVersion(tx.QueryRowContext(ctx,
-		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
@@ -379,10 +379,10 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
 		return nil, errors.New("visual preview target limit must be positive")
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
- FROM content_versions v WHERE v.version_id>? AND NOT EXISTS (
- SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
+ FROM content_versions v WHERE v.version_id>$1 AND NOT EXISTS (
+ SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=$2)
  AND `+liveIncludedPhotoDisplayPredicate("v")+`
- ORDER BY v.version_id LIMIT ?`, afterVersionID, recipeFingerprint, limit)
+ ORDER BY v.version_id LIMIT $3`, afterVersionID, recipeFingerprint, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -405,9 +405,9 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
 ) (bool, error) {
 	var eligible bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
- SELECT 1 FROM content_versions v WHERE v.version_id=? AND v.blob_hash=?
- AND v.size=? AND COALESCE(v.mime_type,'')=? AND NOT EXISTS (
- SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
+ SELECT 1 FROM content_versions v WHERE v.version_id=$1 AND v.blob_hash=$2
+ AND v.size=$3 AND COALESCE(v.mime_type,'')=$4 AND NOT EXISTS (
+ SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=$5)
  AND `+liveIncludedPhotoDisplayPredicate("v")+`)`,
 		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
 	if err != nil {
@@ -418,7 +418,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
 
 // PersonPhotoPreviewSource authorizes an assigned source version through its live photo.
 func (s *Store) PersonPhotoPreviewSource(ctx context.Context, assetID, versionID, personID string) error {
-	return s.photoReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
+	return s.withReadTx(ctx, func(tx *sql.Tx) error { return s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID) })
 }
 
 func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, assetID, versionID, personID string) error {
@@ -515,8 +515,9 @@ func photoPreviewGenerations(ctx context.Context, q metadataQuerier, versions []
 	for _, recipe := range recipes {
 		args = append(args, recipe)
 	}
-	versionSlots := strings.TrimSuffix(strings.Repeat("?,", len(versions)), ",")
-	recipeSlots := strings.TrimSuffix(strings.Repeat("?,", len(recipes)), ",")
+	slots := strings.Split(numberedPlaceholders(len(args)), ",")
+	versionSlots := strings.Join(slots[:len(versions)], ",")
+	recipeSlots := strings.Join(slots[len(versions):], ",")
 	rows, err := q.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id IN (`+versionSlots+`) AND recipe_fingerprint IN (`+recipeSlots+`)`, args...)
 	if err != nil {
 		return nil, err

@@ -50,14 +50,17 @@ with their independent contracts in `document/bridge/` and
 ### PDF reader dependency corrections
 
 `npm ci` runs `frontend/scripts/patch-embedpdf.mjs` against EmbedPDF 2.15.1.
-It confines keyboard shortcuts to the viewer element and destroys an
-engine that finishes initializing after the viewer unmounts. Without these
-corrections, a hidden preview can replace copied text with an empty string,
-and switching documents during initialization can leave three workers running.
-The patch rejects an unexpected package version or bundle. Remove it when an
-upstream release supplies both fixes, and rerun the document-reader browser
-proof before changing the pin. The container frontend stage includes the patch
-script and the bundled fallback font.
+It confines shortcuts to the viewer, destroys engines initialized after unmount,
+and installs the readable page hooks in `embedpdf-page-hooks.mjs`. The hooks
+expose actual image decoding and an inert overlay mount for shared PDF review.
+They neither modify the PDF nor apply redactions. The Vite build checks that the
+pinned bundle and exact payload are patched, including installs using
+`--ignore-scripts`; run `npm --prefix frontend run postinstall` to apply them.
+
+Remove each correction when upstream supplies its equivalent, and rerun the
+combined reader/redaction browser qualification before changing the pin. Both
+patch files and the bundled fallback font are included in the container's
+frontend stage.
 
 The PDF rendering CI lane runs `frontend/screenshots/redaction-review.run.mjs`
 against both SQLite builds. It executes the document-reader and redaction-review
@@ -345,11 +348,15 @@ and atomic head publication through the same Store. Document embedding jobs
 include reconciliation, consent-bound claims, immutable vector staging, atomic
 publication and coverage reads. Email MIME inventories, body renditions,
 attachment child documents, and page-render job publication also use shared
-Store operations.
+Store operations. Supplied media, remote recording references,
+original recordings and transcript/caption inputs retain their source, occurrence
+and replay receipts through shared native operations. Visual previews, image
+embedding inputs and retained email PDFs also use shared native publication
+and read paths.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, extraction, image embedding preparation, email PDF
+photo-derived processing, extraction, email PDF
 rendering and other media workers, search,
 transfer, backup recovery, multi-store placement and storage-operation jobs
 remain unqualified.
@@ -529,6 +536,15 @@ GRANT INSERT, UPDATE(state, results_json, failure_code, epoch, token, updated_at
 GRANT INSERT, UPDATE(attachment_id, published_at)
     ON documents.email_heads TO docbank_runtime;
 GRANT DELETE ON documents.email_document_publications TO docbank_runtime;
+GRANT INSERT ON documents.media_sources, documents.media_source_versions,
+    documents.media_input_artifacts, documents.media_occurrences,
+    documents.media_operations TO docbank_runtime;
+GRANT UPDATE(source_version_id, visible, revoked_at)
+    ON documents.media_occurrences TO docbank_runtime;
+GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
+GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, published_at)
+    ON documents.visual_preview_heads TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -870,9 +886,10 @@ previous complete generation remains available. These metadata counts do not
 establish that a vector search index is built or that its payloads are readable.
 
 The `embeddings` backend suite covers native document jobs, artifact publication,
-consent, leases, reconciliation, cleanup and coverage. Image preparation, vector
-index construction, ranked retrieval and public PostgreSQL vault opening remain
-unqualified.
+consent, leases, reconciliation, cleanup and coverage. The `visual-evidence`
+suite also qualifies native image-input preparation and its publication chain.
+Vector index construction, ranked retrieval and public PostgreSQL vault opening
+remain unqualified.
 
 #### Email and rendered-page publication
 
@@ -911,6 +928,68 @@ late-write rollback and concurrent publication. Plain-text extraction, email PDF
 rendering, rendering subprocesses and metadata recovery remain outside these
 suites. They do not enable a public PostgreSQL-backed vault or qualify ranked
 search.
+
+#### Visual previews and retained PDFs
+
+Visual preview publication records an exact source version, immutable recipe
+result and physical output together. Recording a new recipe can advance the
+active head; replaying an older recipe cannot move that head backwards. A failed
+head write leaves neither a partial generation nor its output blob. Generation
+rows are insert-only for the runtime role; cleanup may delete them.
+
+Preview target discovery pages through live photo display versions. It skips
+versions with any recorded result for the recipe, including failed or unsupported
+results. Eligibility is rechecked before work begins. Batch recipe reads keep a
+single query. Image reconciliation prepares each missing input once per page and
+can resume pending work in a profile that mixes text and image bindings.
+
+Exact-version preview reads and retained email-PDF receipt reads use one
+repeatable-read snapshot. Concurrent pruning or purge affects the next request.
+PDF discovery validates every retained attachment against the same source and
+email inventory, even if its renderer is no longer installed. These PDFs do not
+replace the email body's serving or search authority.
+
+The daemon's preview backfill uses target discovery and the eligibility recheck.
+HTTP routes use the PDF list and receipt reads to inspect and download retained
+PDFs. These production callers currently open SQLite; PostgreSQL qualification
+covers their Store operations, not a complete daemon workflow.
+
+The `visual-evidence` backend suite covers these native operations, rollback,
+and concurrent removal. Rendering executables, general photo/person workflows,
+vector indexes and public PostgreSQL vault opening remain unqualified.
+
+#### Media retention and input artifacts
+
+Supplied-media retention, remote-reference retention, recording acquisition and
+transcript/caption import use the same Store operations on both backends. Core
+content, source revisions, occurrence bindings, input artifacts and the operation
+receipt commit together. Replaying an operation returns its stored receipt;
+changed request identities conflict. Equal remote bytes reuse an existing source
+revision without merging separate source identities or caller occurrences.
+
+Reads select only the caller's visible occurrences. Revocation hides that
+occurrence and its inputs, removes its input-bound rendition heads, and preserves
+other callers' occurrences. Source pages, occurrence pages and exact-revision
+views use one repeatable-read snapshot for their totals, selection and receipts.
+A concurrent revocation or receipt update becomes visible on the next request.
+SQLite retains its page-first join order; PostgreSQL uses ordinary joins. Both
+schemas index occurrence visibility and principal/source operation history.
+
+Media acquisition consent uses the existing consent grants and revocation
+fences. Its operation receipt commits with the grant or revocation, so an exact
+replay does not issue another grant or advance the fence again. Processing
+receipts retain their exact source and consent selection while recording queued,
+failed and completed outcomes. Continuation pages expose only the requesting
+principal's queued operations. Revoking acquisition consent does not remove
+already retained content.
+
+The runtime role has insert-only access to media sources, source versions and
+input artifacts. Occurrence updates are limited to first-version binding and
+revocation; operation updates are limited to the receipt and update timestamp.
+The `media` backend suite exercises native retention, immutable-identity
+conflicts, replay, visibility, consent, continuations, late-write rollback and
+concurrent reads. It does not qualify remote network acquisition, media provider
+execution, metadata recovery or public PostgreSQL vault opening.
 
 #### Recoverable deletion
 

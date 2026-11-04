@@ -136,7 +136,7 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (time.Time
 
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
 	var state *PhotoHiddenState
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) (err error) {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) (err error) {
 		state, err = s.photoHiddenStateTx(ctx, tx)
 		return err
 	})

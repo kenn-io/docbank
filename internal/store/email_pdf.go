@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 
 	"go.kenn.io/docbank/document"
 )
@@ -14,10 +15,19 @@ type EmailPDFReceipt = document.EmailPDFReceiptV1
 // EmailPDFReceipts discovers retained PDFs even when their renderer is absent
 // or has changed. Every entry is revalidated against its exact source.
 func (s *Store) EmailPDFReceipts(ctx context.Context, versionID string) ([]EmailPDFReceipt, error) {
-	if _, err := s.ContentVersionByID(ctx, versionID); err != nil {
+	if err := validateUUIDv4(versionID); err != nil {
+		return nil, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT a.profile_fingerprint FROM rendition_attachments a JOIN rendition_artifacts r ON r.build_id=a.build_id WHERE a.content_version_id=? AND r.role=? ORDER BY a.profile_fingerprint`, versionID, string(document.EvidenceArtifactPDF))
+	defer func() { _ = tx.Rollback() }()
+	if _, err := scanContentVersion(tx.QueryRowContext(ctx,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID)); err != nil {
+		return nil, fmt.Errorf("content version %q: %w", versionID, err)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.profile_fingerprint FROM rendition_attachments a JOIN rendition_artifacts r ON r.build_id=a.build_id WHERE a.content_version_id=$1 AND r.role=$2 ORDER BY a.profile_fingerprint`, versionID, string(document.EvidenceArtifactPDF))
 	if err != nil {
 		return nil, err
 	}
@@ -36,11 +46,14 @@ func (s *Store) EmailPDFReceipts(ctx context.Context, versionID string) ([]Email
 	}
 	out := make([]EmailPDFReceipt, 0, len(profiles))
 	for _, profile := range profiles {
-		r, err := s.EmailPDFReceipt(ctx, versionID, profile)
+		r, err := emailPDFReceipt(ctx, tx, versionID, profile)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -122,7 +135,7 @@ func validateEmailPDFPublication(ctx context.Context, q metadataQuerier, a Rendi
 // EmailPDFReceipt resolves only an exact retained attachment. A PDF has no
 // rendition serving head: it cannot replace body/FTS authority.
 func (s *Store) EmailPDFReceipt(ctx context.Context, versionID, profileFingerprint string) (EmailPDFReceipt, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return EmailPDFReceipt{}, err
 	}
@@ -133,7 +146,7 @@ func (s *Store) EmailPDFReceipt(ctx context.Context, versionID, profileFingerpri
 // emailPDFReceipt also serves export sealing inside its existing transaction.
 func emailPDFReceipt(ctx context.Context, q metadataQuerier, versionID, profileFingerprint string) (EmailPDFReceipt, error) {
 	var id string
-	err := q.QueryRowContext(ctx, `SELECT attachment_id FROM rendition_attachments WHERE content_version_id=? AND profile_fingerprint=? ORDER BY attached_at,attachment_id LIMIT 1`, versionID, profileFingerprint).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT attachment_id FROM rendition_attachments WHERE content_version_id=$1 AND profile_fingerprint=$2 ORDER BY attached_at,attachment_id LIMIT 1`, versionID, profileFingerprint).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EmailPDFReceipt{}, ErrNotFound
 	}
