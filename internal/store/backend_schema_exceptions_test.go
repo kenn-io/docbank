@@ -72,7 +72,6 @@ var postgresOnlyBackendIndexes = map[string]struct{ table, column string }{
 	"document_people_node":                {"document_people", "node_id"},
 	"mailbox_transfer_receipts_version":   {"mailbox_transfer_receipts", "target_version_id"},
 	"media_input_artifacts_version":       {"media_input_artifacts", "content_version_id"},
-	"nodes_trash_parent":                  {"nodes", "trash_parent"},
 	"package_import_receipts_version":     {"package_import_receipts", "content_version_id"},
 	"package_labels_version":              {"package_labels", "content_version_id"},
 	"page_render_jobs_node":               {"page_render_jobs", "node_id"},
