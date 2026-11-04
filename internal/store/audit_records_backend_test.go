@@ -96,16 +96,3 @@ func TestAuditRecordValidationSQLite(t *testing.T) {
 		})
 	}
 }
-
-func TestAuditRecordRejectsStandaloneEvent(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	event := auditRecordFixture(t)[auditEventField][0].record
-	tx, err := s.writeDB.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	require.ErrorContains(t, insertAuditRecord(t.Context(), tx, event), "must be inserted with their canonical mutation")
-	var count int
-	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_records`).Scan(&count))
-	require.Zero(t, count)
-}

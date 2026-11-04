@@ -1217,9 +1217,10 @@ content writes; a public PostgreSQL vault remains unavailable.
 Node and scope audit history also use shared SQL and read-only `REPEATABLE READ`
 transactions. Membership, node revision, path, scope head, event count and page
 come from one snapshot, even when another operation commits between their
-reads. Canonical event projection and cursor ordering remain in the existing
-Go implementation. The runtime role needs only `SELECT` on the audit catalogs
-for these reads. Enrollment additionally needs the narrow write grants above.
+reads. SQL orders and pages events through the scope and node indexes; Go
+projects the returned canonical events. The runtime role needs only `SELECT`
+on the audit catalogs for these reads. Enrollment additionally needs the narrow
+write grants above.
 
 Audit-history qualification creates directories, enables audit and renames nodes
 through normal SQLite operations, then validates that history before copying

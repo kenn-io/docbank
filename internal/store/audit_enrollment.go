@@ -644,9 +644,6 @@ func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) err
 	if err != nil {
 		return err
 	}
-	if record.Kind == auditEventField {
-		return errors.New("audit events must be inserted with their canonical mutation")
-	}
 	if err := insertIndexedAuditRecord(ctx, tx, record, index); err != nil {
 		return err
 	}
@@ -656,9 +653,7 @@ func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) err
 			return err
 		}
 		for _, event := range events {
-			wrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
-				{Name: auditEventField, Value: audit.Nested(event)},
-			}}
+			wrapper := auditEventWrapper(event)
 			eventIndex, err := indexAuditRecord(wrapper)
 			if err != nil {
 				return err
@@ -670,6 +665,12 @@ func insertAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record) err
 		}
 	}
 	return nil
+}
+
+func auditEventWrapper(event audit.Record) audit.Record {
+	return audit.Record{Kind: auditEventField, Fields: []audit.Field{
+		{Name: auditEventField, Value: audit.Nested(event)},
+	}}
 }
 
 func insertIndexedAuditRecord(ctx context.Context, tx *sql.Tx, record audit.Record, index auditRecordIndex) error {

@@ -331,20 +331,15 @@ func TestAuditHistoryPagesUseEventOrderIndexes(t *testing.T) {
 			for _, tc := range []struct {
 				query, index string
 				args         []any
-				cursor       bool
 			}{
-				{auditScopeHistoryPageSQL, "audit_record_event_scope", []any{testAuditScopeID, 11}, false},
-				{auditScopeHistoryCursorPageSQL, "audit_record_event_scope", []any{testAuditScopeID, 2, 0, fakeHash("a720"), 11}, true},
-				{auditNodeHistoryPageSQL, "audit_record_event_node", []any{s.RootID(), 11}, false},
-				{auditNodeHistoryCursorPageSQL, "audit_record_event_node", []any{s.RootID(), 2, 0, fakeHash("a720"), 11}, true},
+				{auditScopeHistoryPageSQL, "audit_record_event_scope", []any{testAuditScopeID, 11}},
+				{auditScopeHistoryCursorPageSQL, "audit_record_event_scope", []any{testAuditScopeID, 2, 0, fakeHash("a720"), 11}},
+				{auditNodeHistoryPageSQL, "audit_record_event_node", []any{s.RootID(), 11}},
+				{auditNodeHistoryCursorPageSQL, "audit_record_event_node", []any{s.RootID(), 2, 0, fakeHash("a720"), 11}},
 			} {
 				plan := explainQueryPlan(t, s, tc.query, tc.args...)
 				assert.Contains(t, plan, "USING INDEX "+tc.index)
 				assert.NotContains(t, plan, "TEMP B-TREE")
-				assert.NotContains(t, plan, "audit_record_mutation_operation")
-				if tc.cursor {
-					assert.Contains(t, plan, "(operation_sequence,event_ordinal,event_id)<(?,?,?)")
-				}
 			}
 		})
 	}

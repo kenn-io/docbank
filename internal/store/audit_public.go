@@ -760,9 +760,7 @@ func writeProjectedAuditRecord(write metadataWrite, record audit.Record) error {
 			return err
 		}
 		for _, event := range events {
-			if err := writeProjectedAuditRecord(write, audit.Record{Kind: auditEventField, Fields: []audit.Field{
-				{Name: auditEventField, Value: audit.Nested(event)},
-			}}); err != nil {
+			if err := writeProjectedAuditRecord(write, auditEventWrapper(event)); err != nil {
 				return err
 			}
 		}
