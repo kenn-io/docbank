@@ -7,7 +7,7 @@
     monthAt,
     type PhotoGridRow,
     rowTop,
-    seekOffset,
+    createPhotoSeek,
     type PhotoChunk,
     type PhotoGroup,
   } from "./photoGrid.js";
@@ -81,6 +81,7 @@
   let initialized = $state(false);
   let viewport = $state(960);
   const buildChunks = createPhotoChunks();
+  const seekOffset = createPhotoSeek();
   const chunks: PhotoChunk[] = $derived(buildChunks(groups, width, targetRowHeight));
   const totalHeight = $derived(
     chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.layout.intrinsicHeight : 0,
@@ -186,8 +187,11 @@
           chunks[chunkIndex]?.group.key === key
             ? chunks[chunkIndex]
             : chunks.find((chunk) => chunk.group.key === key);
-        const candidates = own ? [own] : chunks;
-        for (const chunk of candidates) {
+        function* candidates() {
+          if (own) yield own;
+          for (const chunk of chunks) if (chunk !== own) yield chunk;
+        }
+        for (const chunk of candidates()) {
           const index =
             chunk.group.items[itemIndex]?.asset_id === id
               ? itemIndex

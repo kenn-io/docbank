@@ -349,6 +349,7 @@ export class Photos {
   filtersOpen = $state(false);
   private rows = $state.raw<PhotoRow[]>([]);
   private seenIDs: Set<string> | undefined;
+  private rowsByID = new Map<string, PhotoRow>();
   private rowBuffer: PhotoRow[] = [];
   get items() {
     return this.rows;
@@ -356,7 +357,13 @@ export class Photos {
   set items(value: PhotoRow[]) {
     this.rowBuffer = value;
     this.seenIDs = undefined;
+    this.rowsByID = new Map(value.map((row) => [row.asset_id, row]));
     this.rows = arrayView(value);
+  }
+  rowByID(id: string) {
+    // Track replacements and appends through the published row view.
+    void this.rows;
+    return this.rowsByID.get(id);
   }
   burstGapSeconds = $state(2);
   groupingIncomplete = $state(false);
@@ -866,6 +873,7 @@ export class Photos {
             break;
           }
           seen.add(item.asset_id);
+          this.rowsByID.set(item.asset_id, item);
           added.push(item);
         }
         const restore = preserve?.();

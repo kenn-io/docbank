@@ -302,11 +302,20 @@ export function createPhotoGrouper() {
             const start = boundary(endOfDated, (i) => clockOf(groups[i].items.at(-1)!) > hi + gap);
             const end = boundary(endOfDated, (i) => clockOf(groups[i].items[0]) >= lo - gap);
             const retained = groups.slice(start, end).flatMap((group) => group.items);
-            groups.splice(
-              start,
-              end - start,
-              ...groupPhotos([...retained, ...part.items], "sessions"),
-            );
+            const regrouped = groupPhotos([...retained, ...part.items], "sessions");
+            for (let i = 0; i < regrouped.length; i++) {
+              const next = regrouped[i],
+                old = groups[start + i];
+              if (
+                old &&
+                old.items.length <= next.items.length &&
+                old.items.every((item, index) => item === next.items[index])
+              ) {
+                old.items.push(...next.items.slice(old.items.length));
+                next.items = old.items;
+              }
+            }
+            groups.splice(start, end - start, ...regrouped);
             changed = Math.min(changed, start);
           }
         }
@@ -337,15 +346,10 @@ export function computeMonthLayout(
 }
 
 function rowBoundary(rows: Row[], top: number, after = false): number {
-  let start = 0;
-  let end = rows.length;
-  while (start < end) {
-    const mid = (start + end) >>> 1;
-    const bottom = rows[mid].y + rows[mid].height;
-    if (after ? bottom <= top : bottom < top) start = mid + 1;
-    else end = mid;
-  }
-  return start;
+  return boundary(rows.length, (i) => {
+    const bottom = rows[i].y + rows[i].height;
+    return after ? bottom <= top : bottom < top;
+  });
 }
 
 export function visibleRows(rows: Row[], top: number, bottom: number): Row[] {
@@ -378,7 +382,7 @@ export function createPhotoChunks() {
     const reset = width !== containerWidth || height !== targetRowHeight;
     if (reset) cache = new WeakMap();
     const start = !reset && source === arraySource(groups) ? (groups.changedFrom ?? 0) : 0;
-    if (start === 0) chunks = [];
+    if (start === 0 && source !== arraySource(groups)) chunks = [];
     let offset = start ? chunks[start - 1].offset + chunks[start - 1].layout.intrinsicHeight : 0;
     chunks.length = start;
     for (let i = start; i < groups.length; i++) {
@@ -386,14 +390,14 @@ export function createPhotoChunks() {
       const previous = cache.get(group.items);
       const contentOffset = group.key === "relevance" ? 12 : HEADER_HEIGHT;
       const layout =
-        previous?.count === group.items.length && previous.layout.contentOffset === contentOffset
+        previous?.count === group.items.length
           ? previous.layout
           : computeMonthLayout(
               group.items,
               containerWidth,
               targetRowHeight,
               contentOffset,
-              previous?.layout.contentOffset === contentOffset ? previous : undefined,
+              previous,
             );
       cache.set(group.items, { count: group.items.length, layout });
       chunks.push({ group, layout, offset });
@@ -424,38 +428,102 @@ export function rowTop(chunk: PhotoChunk, row: Row): number {
   return chunk.offset + chunk.layout.contentOffset + row.y;
 }
 
-// firstRow locates the first matching visible photo. A section's first row starts at its heading.
-function firstRow(chunks: PhotoChunk[], matches: (item: PhotoGridRow) => boolean) {
-  for (const chunk of chunks.filter((chunk) => chunk.group.year)) {
-    const row = layoutRow(chunk, chunk.group.items.findIndex(matches));
+// Keep a pending jump's scan position across appended pages. Replacements start a new scan.
+export function createPhotoSeek() {
+  let source: PhotoChunk[] | undefined, loadedSource: PhotoGridRow[] | undefined;
+  let target = "",
+    consumed = 0;
+  type Scan = { chunk: PhotoChunk; count: number };
+  let scanned = new WeakMap<PhotoGridRow[], Scan>();
+  type Location = { scan: Scan; index: number };
+  let locations = new Map<string, Location>();
+  let members = new Set<string>();
+  let stacks = new Map<string, Set<string>>();
+  let own: string | undefined, stack: string | undefined, older: string | undefined;
+  let olderMonth = "";
+  return (chunks: PhotoChunk[], month: string, ended = false, loadedItems: PhotoGridRow[] = []) => {
+    // Chunk and row buffers survive appends; a regroup or replacement changes their identity.
+    const buffer = arraySource(chunks);
+    const loadedBuffer = arraySource(loadedItems);
+    const reset =
+      source !== buffer ||
+      loadedSource !== loadedBuffer ||
+      consumed > loadedItems.length ||
+      target !== month;
+    if (reset) {
+      scanned = new WeakMap();
+      locations = new Map();
+      members = new Set();
+      stacks = new Map();
+      own = stack = older = undefined;
+      olderMonth = "";
+      consumed = 0;
+    }
+    source = buffer;
+    loadedSource = loadedBuffer;
+    target = month;
+    const earlier = (a: string | undefined, b: string): string => {
+      if (!a) return b;
+      const left = locations.get(a)!,
+        right = locations.get(b)!;
+      return right.scan.chunk.offset < left.scan.chunk.offset ||
+        (right.scan.chunk.offset === left.scan.chunk.offset && right.index < left.index)
+        ? b
+        : a;
+    };
+    const start = reset ? 0 : ((chunks as ArrayView<PhotoChunk>).changedFrom ?? 0);
+    for (let c = start; c < chunks.length; c++) {
+      const chunk = chunks[c],
+        items = chunk.group.items;
+      if (!chunk.group.year) continue;
+      let scan = scanned.get(items);
+      if (!scan) scanned.set(items, (scan = { chunk, count: 0 }));
+      scan.chunk = chunk;
+      // Regrouping can move an earlier candidate. Update positions before comparing them.
+      for (let i = scan.count; i < items.length; i++)
+        locations.set(items[i].asset_id, { scan, index: i });
+    }
+    for (let i = consumed; i < loadedItems.length; i++) {
+      const row = loadedItems[i];
+      if (!row.stack || photoMonth(row) !== month) continue;
+      members.add(row.asset_id);
+      for (const id of stacks.get(row.asset_id) ?? []) stack = earlier(stack, id);
+    }
+    consumed = loadedItems.length;
+    for (let c = start; c < chunks.length; c++) {
+      const chunk = chunks[c],
+        items = chunk.group.items;
+      if (!chunk.group.year) continue;
+      const scan = scanned.get(items)!;
+      const count = scan.count;
+      for (let i = count; i < items.length; i++) {
+        const row = items[i],
+          found = photoMonth(row),
+          id = row.asset_id;
+        if (found === month) own = earlier(own, id);
+        if (found && found <= month && found >= olderMonth) {
+          older = found > olderMonth ? id : earlier(older, id);
+          olderMonth = found;
+        }
+        for (const member of row.stack?.asset_ids ?? []) {
+          let representatives = stacks.get(member);
+          if (!representatives) stacks.set(member, (representatives = new Set()));
+          representatives.add(id);
+          if (members.has(member)) stack = earlier(stack, id);
+        }
+      }
+      scan.count = items.length;
+    }
+    const id = own ?? stack ?? (ended ? older : undefined);
+    if (!id) return;
+    const { scan, index } = locations.get(id)!;
+    const chunk = scan.chunk;
+    const row = layoutRow(chunk, index);
     if (row)
       return row === chunk.layout.rows[0]
         ? chunk.offset
         : rowTop(chunk, row) - STICKY_HEADER_HEIGHT;
-  }
-}
-
-// seekOffset returns where the month's first photo or its collapsed stack sits. Photos page in UTC
-// order but are filed by recorded date, so only a finished list can say it has none;
-// then the first row of the nearest older calendar month stands in. Undefined means the
-// caller should keep paging, or scroll to the end once the list has ended.
-export function seekOffset(
-  chunks: PhotoChunk[],
-  month: string,
-  ended = false,
-  loadedItems: PhotoGridRow[] = [],
-) {
-  const own = firstRow(chunks, (item) => photoMonth(item) === month);
-  if (own !== undefined) return own;
-  const members = new Set(
-    loadedItems.flatMap((row) => (row.stack && photoMonth(row) === month ? [row.asset_id] : [])),
-  );
-  const stack = firstRow(chunks, (item) => !!item.stack?.asset_ids.some((id) => members.has(id)));
-  if (stack !== undefined) return stack;
-  if (!ended) return;
-  const months = chunks.flatMap(({ group }) => (group.year ? group.items.map(photoMonth) : []));
-  const target = months.sort().findLast((found) => found <= month);
-  return firstRow(chunks, (item) => photoMonth(item) === target);
+  };
 }
 
 // topPhoto is the first photo in the chunk's top visible row.

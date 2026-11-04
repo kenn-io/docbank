@@ -4560,3 +4560,45 @@ it("submits the KEEP/CUT choices displayed in Library when preparation has newer
   );
   photos.dispose();
 });
+
+it("keeps manual stack selection work bounded when a page appends", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const photos = new Photos("scoped", vi.fn());
+  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id));
+  photos.items = rows;
+  photos.started = true;
+  photos.total = 20_250;
+  photos.cursor = "next";
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
+  photos.select("photo-0", new MouseEvent("click"), ["photo-0"]);
+  await tick();
+  stubPhotoFetch(
+    vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ items: [photo(20_000)], total: 20_250, next_cursor: "last" }),
+      ),
+  );
+  await photos.loadMore();
+  let reads = 0;
+  for (const row of rows.slice(0, 20_000)) {
+    const id = row.asset_id;
+    Object.defineProperty(row, "asset_id", {
+      get: () => {
+        reads++;
+        return id;
+      },
+    });
+  }
+  stubPhotoFetch(
+    vi.fn().mockResolvedValue(Response.json({ items: [photo(20_001)], total: 20_250 })),
+  );
+  await photos.loadMore();
+  await tick();
+  expect(reads).toBeLessThan(1000);
+  expect(screen.getByText("1 selected photo")).toBeTruthy();
+  photos.dispose();
+  await cache.dispose();
+});

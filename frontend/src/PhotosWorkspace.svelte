@@ -828,18 +828,11 @@
   }
   const selectedStack = $derived.by(() => {
     if (photos.allResults || !photos.selectedIDs.size) return;
-    const selected = shown.filter((row) => photos.selectedIDs.has(row.asset_id));
+    const selected = [...photos.selectedIDs].map((id) => photos.rowByID(id));
     const row = selected[0];
-    if (
-      selected.length !== photos.selectedIDs.size ||
-      !row ||
-      !("stack" in row) ||
-      !row.stack ||
-      row.stack.asset_ids.length < 2
-    )
-      return;
+    if (!row || !("stack" in row) || !row.stack || row.stack.asset_ids.length < 2) return;
     const ids = new Set(row.stack.asset_ids);
-    return selected.every((item) => ids.has(item.asset_id)) ? row.stack : undefined;
+    return selected.every((item) => item && ids.has(item.asset_id)) ? row.stack : undefined;
   });
   // Hold every member's revisions once a stack is selected, so its decision checks what was shown.
   $effect(() => {

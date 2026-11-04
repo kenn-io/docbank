@@ -3,16 +3,18 @@ import {
   computeJustified,
   createPhotoGrouper,
   createPhotoChunks,
+  createPhotoSeek,
   computeMonthLayout,
   groupPhotos,
   monthAt,
   photoAspect,
-  seekOffset,
   visibleRows,
   type PhotoGridRow,
 } from "./photoGrid.js";
 import { arrayView } from "./photoRows.js";
 import { photo } from "./photo-test-fixtures.js";
+
+const seekOffset = createPhotoSeek();
 
 it("keeps bridge and long-burst representatives in capture order", () => {
   for (const [times, expected] of [
@@ -561,4 +563,78 @@ it("publishes bounded array views with normal iteration, slicing, and concatenat
   expect(JSON.stringify(first)).toBe("[1,2]");
   expect([...second]).toEqual([1, 2, 3]);
   expect(() => first.push(4)).toThrow();
+});
+
+it("resumes a dense session layout when an older page extends its item prefix", () => {
+  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id, "2025-06-01T12:00:00Z"));
+  const grouper = createPhotoGrouper(),
+    build = createPhotoChunks(),
+    expanded = new Set<string>();
+  build(grouper.sync(arrayView(rows), "sessions", expanded), 1000, 200);
+  let sizes = 0;
+  for (const row of rows) {
+    const width = row.width_px;
+    Object.defineProperty(row, "width_px", {
+      get: () => {
+        sizes++;
+        return width;
+      },
+    });
+  }
+  rows.push(...Array.from({ length: 250 }, (_, i) => photo(20_000 + i, "2025-06-01T11:59:59Z")));
+  const result = build(grouper.sync(arrayView(rows), "sessions", expanded), 1000, 200);
+  expect(sizes).toBeLessThanOrEqual(4);
+  expect(result[0].layout).toEqual(computeMonthLayout(rows, 1000, 200));
+});
+
+it("keeps pending date jumps equal to a fresh scan after regrouping and stack arrivals", () => {
+  for (const mode of ["months", "sessions"] as const) {
+    const rows: PhotoGridRow[] = [];
+    const grouper = createPhotoGrouper(),
+      build = createPhotoChunks(),
+      expanded = new Set<string>();
+    const seeks = Array.from({ length: 4 }, () => createPhotoSeek());
+    const dates = [
+      "2025-02-01T01:00:00Z",
+      "2025-01-31T23:00:00Z",
+      "2024-12-31T22:00:00Z",
+      "2025-02-01T02:00:00Z",
+    ];
+    for (let page = 0; page < 12; page++) {
+      const row = photo(page, dates[page % dates.length]);
+      if (page < 2) row.stack = { asset_ids: ["photo-0", "photo-1"], representative_id: "photo-0" };
+      rows.push(row);
+      const chunks = build(grouper.sync(arrayView(rows), mode, expanded), 1000, 200);
+      for (const [i, month] of ["2025-02", "2025-01", "2024-12", "2025-03"].entries()) {
+        expect(seeks[i](chunks, month, page === 11, arrayView(rows))).toBe(
+          createPhotoSeek()(chunks, month, page === 11, arrayView(rows)),
+        );
+      }
+    }
+  }
+});
+
+it("keeps the first matching seek row when a later page reorders a session", () => {
+  const rows = Array.from({ length: 20 }, (_, id) => photo(id, "2025-01-01T00:00:00Z"));
+  const grouper = createPhotoGrouper(),
+    build = createPhotoChunks(),
+    seek = createPhotoSeek(),
+    expanded = new Set<string>();
+  expect(
+    seek(
+      build(grouper.sync(arrayView(rows), "sessions", expanded), 1000, 200),
+      "2025-01",
+      false,
+      arrayView(rows),
+    ),
+  ).toBe(0);
+  rows.push(...Array.from({ length: 20 }, (_, i) => photo(20 + i, "2025-01-01T01:00:00Z")));
+  expect(
+    seek(
+      build(grouper.sync(arrayView(rows), "sessions", expanded), 1000, 200),
+      "2025-01",
+      false,
+      arrayView(rows),
+    ),
+  ).toBe(0);
 });

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, render } from "@testing-library/svelte";
+import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import PhotoGrid from "./PhotoGrid.svelte";
-import { createPhotoGrouper } from "./photoGrid.js";
+import { createPhotoGrouper, groupPhotos } from "./photoGrid.js";
 import { arrayView } from "./photoRows.js";
 import { photo } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -63,9 +63,97 @@ it("keeps mounted sections bounded while appending to 50,000 capture sessions", 
   });
   expect(reads).toBeLessThan(100);
   expect(document.querySelectorAll("[data-month]").length).toBeLessThan(12);
-  expect(document.querySelector('[data-asset="photo-0"]')).toBeTruthy();
+  await waitFor(() => expect(document.querySelector('[data-asset="photo-0"]')).toBeTruthy());
   await view.rerender({ scrollTop: 12_800_000 });
   expect(document.querySelectorAll("[data-month]").length).toBeLessThan(12);
   expect(document.querySelector('[data-asset="photo-100000"]')).toBeTruthy();
+  await cache.dispose();
+});
+
+it("searches only the new page while a date jump is pending", async () => {
+  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id, "2025-06-01T12:00:00Z"));
+  const grouper = createPhotoGrouper(),
+    expanded = new Set<string>();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const load = vi.fn();
+  const view = render(PhotoGrid, {
+    groups: grouper.sync(arrayView(rows), "months", expanded),
+    loadedItems: arrayView(rows),
+    cache,
+    selectedIDs: new Set<string>(),
+    targetRowHeight: 200,
+    loading: false,
+    more: true,
+    seek: "2024-01",
+    onselect: vi.fn(),
+    oncheck: vi.fn(),
+    onopen: vi.fn(),
+    onloadmore: load,
+  });
+  await tick();
+  await waitFor(() => expect(load).toHaveBeenCalled());
+  let dates = 0;
+  for (const row of rows) {
+    const capture = row.capture_time;
+    Object.defineProperty(row, "capture_time", {
+      get: () => {
+        dates++;
+        return capture;
+      },
+    });
+  }
+  rows.push(...Array.from({ length: 250 }, (_, i) => photo(20_000 + i, "2025-05-01T12:00:00Z")));
+  await view.rerender({
+    groups: grouper.sync(arrayView(rows), "months", expanded),
+    loadedItems: arrayView(rows),
+  });
+  expect(dates).toBeLessThan(100);
+  await cache.dispose();
+});
+
+it("restores an anchor moved into another group while its original group survives", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const cell = this.closest<HTMLElement>(".cell"),
+      section = this.closest<HTMLElement>("[data-chunk-offset]");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll
+      ? new DOMRect(
+          0,
+          Number(section?.dataset.chunkOffset ?? 0) +
+            Number.parseFloat(cell.style.top) +
+            56 -
+            scroll.scrollTop,
+          100,
+          Number.parseFloat(cell.style.height),
+        )
+      : new DOMRect(0, 0, 1000, 400);
+  });
+  const rows = Array.from({ length: 30 }, (_, id) => photo(id, "2025-06-01T12:00:00Z"));
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const view = render(PhotoGrid, {
+    groups: groupPhotos(rows, "months"),
+    loadedItems: rows,
+    cache,
+    selectedIDs: new Set<string>(),
+    targetRowHeight: 200,
+    loading: false,
+    onselect: vi.fn(),
+    oncheck: vi.fn(),
+    onopen: vi.fn(),
+    onloadmore: vi.fn(),
+  });
+  await tick();
+  await waitFor(() => expect(document.querySelector('[data-asset="photo-0"]')).toBeTruthy());
+  const restore = view.component.preservePosition();
+  const changed = rows.map((row, i) =>
+    i === 0 ? { ...row, capture_time: "2025-05-01T12:00:00Z" } : row,
+  );
+  await view.rerender({ groups: groupPhotos(changed, "months"), loadedItems: changed });
+  await restore();
+  expect(view.getByTestId("photo-scroll").scrollTop).toBeGreaterThan(0);
+  const anchor = document.querySelector<HTMLElement>('[data-asset="photo-0"]')!;
+  expect(anchor.getBoundingClientRect().top).toBe(56);
   await cache.dispose();
 });
