@@ -539,6 +539,9 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
 GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
+GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
+GRANT INSERT, UPDATE(generation_id, published_at)
+    ON documents.visual_preview_heads TO docbank_runtime;
 GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
     documents.embedding_vector_spaces, documents.embedding_failures,
     documents.email_heads, documents.email_part_artifacts, documents.email_generations,
@@ -943,14 +946,10 @@ PDF discovery validates every retained attachment against the same source and
 email inventory, even if its renderer is no longer installed. These PDFs do not
 replace the email body's serving or search authority.
 
-In addition to the rendition, embedding and retention grants above, publication
-needs:
-
-```sql
-GRANT INSERT ON documents.visual_preview_generations TO runtime_role;
-GRANT INSERT, UPDATE(generation_id, published_at)
-  ON documents.visual_preview_heads TO runtime_role;
-```
+The daemon's preview backfill uses target discovery and the eligibility recheck.
+HTTP routes use the PDF list and receipt reads to inspect and download retained
+PDFs. These production callers currently open SQLite; PostgreSQL qualification
+covers their Store operations, not a complete daemon workflow.
 
 The `visual-evidence` backend suite covers these native operations, rollback,
 and concurrent removal. Rendering executables, general photo/person workflows,
