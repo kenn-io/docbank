@@ -19,10 +19,11 @@ next-page command; get prints a whole verified rendition by attachment ID
 PDF text is indexed locally by the built-in docbank-pdf-text profile.
 Office text and OCR need a configured processing profile.
 List available profiles with "docbank processing profiles".`,
-	GroupID: groupSearch,
-	Use:     "rendition",
-	Short:   "Read retained document renditions",
-	Args:    cobra.NoArgs,
+	GroupID:     groupSearch,
+	Use:         "rendition",
+	Short:       "Read retained document renditions",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},

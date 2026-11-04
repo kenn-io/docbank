@@ -21,8 +21,9 @@ var backupScheduleCmd = &cobra.Command{
 and apply without a daemon restart. Keys: interval, a duration such as 24h where
 0 disables scheduling, and keep_last. Reset a key to inherit config.toml again.
 The repository path stays in config.toml. Output: JSON.`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var backupScheduleShowCmd = &cobra.Command{
