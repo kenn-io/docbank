@@ -891,6 +891,9 @@ func searchDocuments(ctx context.Context, service *processing.Service, st *store
 		return DocumentSearchReport{}, processingUnavailable()
 	}
 	if input.Scope == nil && len(input.Fence.ContentVersionIDs) == 0 {
+		if input.Fence.VaultUID == "" {
+			return DocumentSearchReport{}, NewError(http.StatusUnprocessableEntity, "validation", "document search requires a source fence or an all-live scope")
+		}
 		if st == nil || input.Fence.VaultUID != st.VaultID() {
 			return DocumentSearchReport{}, fromProcessingError(processing.ErrForeignVault)
 		}
