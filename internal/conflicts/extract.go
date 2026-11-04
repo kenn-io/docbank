@@ -1197,7 +1197,7 @@ var independentApproxLeadRE = regexp.MustCompile(`(?i)^\s*(?:About|Approximately
 func independentApproxAssertion(s string) bool {
 	s = sentenceLookahead(s)
 	loc := figureAssertionRE.FindStringIndex(s)
-	return independentApproxLeadRE.MatchString(s) && loc != nil && quantitySubjectAssertion(s[loc[1]:])
+	return independentApproxLeadRE.MatchString(s) && loc != nil && (quantitySubjectAssertion(s[loc[1]:]) || estimatedSubjectRE.MatchString(s[:loc[0]]))
 }
 
 var figureAssertionRE = regexp.MustCompile(moneyRE.String() + `|` + unitRE.String() + `|` + countRE.String())
@@ -1310,7 +1310,7 @@ var relativeDurationArithmeticNonDashOperator = `(?:[+*×÷±∓^]|multiplied\s+
 var relativeDurationArithmeticDashOperator = `[\p{Pd}−]`
 var relativeDurationArithmeticOperator = `(?:` + relativeDurationArithmeticNonDashOperator + `|[/⁄]|` + relativeDurationArithmeticDashOperator + `)`
 var relativeDurationArithmeticGroupedNumber = `(?:[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?|[0-9]+(?:(?:[,.][[:space:]]*|[[:space:]]+)[0-9]+)+)`
-var relativeDurationArithmeticNumber = `(?:` + relativeDurationArithmeticGroupedNumber + `|` + number + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
+var relativeDurationArithmeticNumber = `(?:[-+−]\s*)?(?:` + relativeDurationArithmeticGroupedNumber + `|` + number + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
 var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` +
 	`(?:` + relativeDurationArithmeticNumber + `)\s*` + relativeDurationArithmeticNonDashOperator + `\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))*` +
 	`|(?:` + relativeDurationArithmeticNumber + `)\s*[/⁄]\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))+` +
@@ -2078,7 +2078,7 @@ func comparisonContinuationAfterRate(s string) bool {
 var symbolicComparisonContinuationRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥)\s*[^\p{L}\p{N}]*[\p{L}\p{N}]`)
 var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:[+\-−]\s*)?(?:` + number + `)\b`)
 
-var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
+var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:a|an|the)\s+)?(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
 var verbalComparisonCurrencyPrefixRE = regexp.MustCompile(`(?i)^(?:[$€£¥]|` + currencyCodes + `\s+)`)
 var verbalComparisonSignPrefixRE = regexp.MustCompile(`(?i)^(?:(?:minus|negative|plus|positive)\s+|[+−-]\s*)`)
 var leadingDecimalComparisonOperandRE = regexp.MustCompile(`^\.[0-9]+`)
@@ -2125,12 +2125,13 @@ var commaMoneyGroupRE = regexp.MustCompile(`^[0-9]{3}(?:,[0-9]{3})*(?:\.[0-9]+)?
 
 // A rate requires a letter-bearing noun, not a bare numeric divisor.
 func unsupportedOriginalRate(original string, offsets map[int]int, s string, end int) bool {
-	loc := rateRE.FindStringSubmatchIndex(s[end:])
+	rateStart := end + rateNumeratorQuotePrefix(s[end:])
+	loc := rateRE.FindStringSubmatchIndex(s[rateStart:])
 	if loc == nil || loc[2] < 0 {
 		return false
 	}
-	start, okStart := offsets[end+loc[2]]
-	finish, okEnd := offsets[end+loc[3]]
+	start, okStart := offsets[rateStart+loc[2]]
+	finish, okEnd := offsets[rateStart+loc[3]]
 	return okStart && okEnd && strings.ContainsAny(original[start:finish], unsupportedNumericDigits)
 }
 

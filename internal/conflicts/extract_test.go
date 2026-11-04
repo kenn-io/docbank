@@ -493,6 +493,7 @@ func TestExtractOmitsRateComparisonsWithCurrencyOperands(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5/month < $10/month.",
 		"The fee is $5/month < EUR 10/month.",
+		"The fee is $5/month higher than the $10/month base rate.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("unsupported comparison produced exact figures: %q: %+v", text, got)
@@ -3139,6 +3140,7 @@ func TestExtractOmitsCompleteArithmeticRelativeDurationChains(t *testing.T) {
 		"The deadline is 7 min. before 10 + 5 - 2 min. The deposit is $7.",
 		"The deadline is 7 min. before ten + five − two min. The deposit is $7.",
 		"The deadline is 7 min. before 10 + 1 000 min. The deposit is $7.",
+		"The deadline is 7 min. before 10 + -5 min. The deposit is $7.",
 	} {
 		got := Extract(text)
 		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
@@ -3803,6 +3805,7 @@ func TestExtractReviewLatestScopeCases(t *testing.T) {
 		unknownPeriod bool
 	}{
 		{"Estimated fee: $5. The deposit is $7.", []string{"$7"}, false},
+		{"The wait is 7 min. Estimated fee is $5.", []string{"7 min"}, false},
 		{"The fee is $5 from 1 July 2026, the deposit was $8, and from 1 July 2026 the charge is $7.", []string{"$5", "$8", "$7"}, true},
 		{"The deadline is 1 July 2026 or 1 August 2026.", nil, false},
 		{"New customers before 1 July 2026 pay $5.", []string{"$5"}, true},
@@ -5251,6 +5254,8 @@ func TestExtractReviewApproximationAbbreviationsAndRateNotation(t *testing.T) {
 		{"The wait is 7 min. per day.", []string{"7 min"}, "The wait is 7 min. per day."},
 		{"The fee is $5 per 10⁶ pages. The deposit is $7.", []string{"$7"}, ""},
 		{"The fee is $5 per 10₆ pages. The deposit is $7.", []string{"$7"}, ""},
+		{`The fee is "$5" per 10⁶ pages. The deposit is $7.`, []string{"$7"}, ""},
+		{`The fee is "$5" per 10₆ pages. The deposit is $7.`, []string{"$7"}, ""},
 		{"The fee is $5 per １０６ pages. The deposit is $7.", []string{"$5", "$7"}, ""},
 		{"Account number: 1234 / A5678. The fee is $7.", []string{"$7"}, ""},
 		{"Account number: 1234. The fee is $7.", []string{"Account number: 1234", "$7"}, ""},
