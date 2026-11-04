@@ -21,6 +21,7 @@ func TestResolveIngestNameDrivesFromSmallerSide(t *testing.T) {
 	}{
 		{0, 32, true},
 		{32, 0, false},
+		{3, 2048, true},
 	} {
 		t.Run(fmt.Sprintf("copies=%d/files=%d", tc.copies, tc.files), func(t *testing.T) {
 			s := newTestStore(t)
