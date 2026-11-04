@@ -163,4 +163,23 @@ func checkPhotoImportAcceptedSidecarPostgres(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
+	t.Run("restored null outside list", func(t *testing.T) {
+		// Metadata accepts an explicit JSON null for this optional list and
+		// retains the receipt bytes. Exercise the real restore before import.
+		_, err := source.db.ExecContext(ctx, `UPDATE photo_change_receipts
+			SET after_json=json_set(after_json,'$.sync.outside',json('null'))
+			WHERE operation='xmp_sync'`)
+		require.NoError(t, err)
+		restored := restoredXMPStore(t, source)
+		postgres, _ := copyRetentionStore(t, restored)
+		group.Members[1].BlobHash = fakeHash("83")
+		group.Members[1].Size = 8
+		for _, s := range []*Store{restored, postgres} {
+			result, err := s.IngestPhotoGroup(t.Context(), run, group)
+			require.NoError(t, err)
+			require.True(t, result.Skipped)
+			require.Equal(t, first.Nodes[1].ID, result.Nodes[1].ID)
+			require.Equal(t, fakeHash("83"), result.Nodes[1].BlobHash)
+		}
+	})
 }

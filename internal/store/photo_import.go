@@ -170,13 +170,14 @@ func photoImportRoleFilter(role string) (string, []any) {
 // photoImportAcceptedSQL recognizes outside bytes accepted before the latest
 // completed sidecar publication. Bind hash, normalized path, then original path
 // in first-use order so both drivers bind the same values.
+// Restored receipts may encode the optional outside list as JSON null.
 const photoImportAcceptedPostgres = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr
  WHERE (xr.after_json::jsonb ->> 'file_id')=pf.sidecar_of_file_id AND xr.operation='xmp_sync'
  AND (xr.after_json::jsonb #>> '{sync,sidecar,node_id}')::bigint=n.id
  AND xr.after_json::jsonb #>> '{sync,sidecar,file_id}'=pf.file_id
  AND xr.after_json::jsonb #>> '{sync,written_version}'=n.current_version_id
- AND EXISTS(SELECT 1 FROM jsonb_array_elements(xr.after_json::jsonb #> '{sync,outside}') o WHERE o.value->>'digest'=$1
- AND (o.value->>'path'=$2 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(xr.after_json::jsonb #> '{sync,outside}') own WHERE own.value->>'path'=$2)))
+ AND EXISTS(SELECT 1 FROM jsonb_array_elements(NULLIF(xr.after_json::jsonb #> '{sync,outside}','null'::jsonb)) o WHERE o.value->>'digest'=$1
+ AND (o.value->>'path'=$2 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(NULLIF(xr.after_json::jsonb #> '{sync,outside}','null'::jsonb)) own WHERE own.value->>'path'=$2)))
 ) THEN $1 ELSE '' END`
 
 const photoImportAcceptedSQLite = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_file

@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -995,14 +996,14 @@ func checkPreparePhotoImportDestination(t *testing.T, open func(*testing.T) *Sto
 	ctx := t.Context()
 	_, err := s.PreparePhotoImportDestination(ctx, "/")
 	require.NoError(t, err)
-	writer, err := s.writeDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = writer.Rollback() }()
-	readCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	_, err = s.PreparePhotoImportDestination(readCtx, "/missing/nested")
-	require.NoError(t, err)
-	require.NoError(t, writer.Rollback())
+	// Enter the real writer path so both engines hold their writer lock.
+	require.NoError(t, s.withStorageTx(ctx, func(*sql.Tx) error {
+		// A hang guard: preparation must finish while the writer remains held.
+		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_, err := s.PreparePhotoImportDestination(readCtx, "/missing/nested")
+		return err
+	}))
 	_, err = s.NodeByPath(ctx, "/missing")
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.EnsurePhotoImportDestination(ctx, "/photos/existing")
