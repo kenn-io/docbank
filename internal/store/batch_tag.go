@@ -331,7 +331,7 @@ func (s *Store) applyBatchTagsTx(
 		return nil, fmt.Errorf("advancing batch tag: %w", err)
 	}
 	if s.postgresSchema != "" {
-		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (`+numberedPlaceholders(len(changedIDs))+`)`, anyArgs(changedIDs)...); err != nil {
+		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (`+numberedPlaceholders(len(changedIDs), 0)+`)`, anyArgs(changedIDs)...); err != nil {
 			return nil, err
 		}
 	}
