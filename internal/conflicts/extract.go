@@ -487,7 +487,7 @@ func unclassifiedLeadingPeriod(s string) bool {
 
 var assertionJoinRE = regexp.MustCompile(`(?i)^(?:[\s,]*(?:and|while|but)\b|\s*,)`)
 var subordinatePeriodRE = regexp.MustCompile(`(?i)(?:\bbecause\b|\bsince\b|\()\s*[\p{L}\p{N}.,:'’‘()-]+(?:\s+[\p{L}\p{N}.,:'’‘()-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
-var eligibleSubjectPeriodRE = regexp.MustCompile(`(?i)\bappl(?:y|ies)\s+to\s+[\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
+var eligibleSubjectPeriodRE = regexp.MustCompile(`(?i)\bappl(?:y|ies)\s+(?:only\s+)?to\s+[\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
 
 const coordinatedEndConnectorPattern = `[)\]"'‘’“”»]*\s+and\s+ending\s+[(\["'‘’“”«]*`
 
@@ -1507,6 +1507,8 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 var (
 	unsupportedWordOperandLeadRE        = regexp.MustCompile(`(?i)\b(?:` + approximation + `)\b|(?:` + rateBoundPrefix + `)|(?:<=|>=|≤|≥|<|>)|[~≈]`)
 	unsupportedWordOperandScaffoldingRE = regexp.MustCompile(`(?i)^(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the)\s+`)
+	unsupportedCurrencyCodePrefixRE     = regexp.MustCompile(`(?i)^(?:` + currencyCodes + `)\s+`)
+	unsupportedCurrencySymbolPrefixRE   = regexp.MustCompile(`^[$€£¥]\s*`)
 	spokenMoneyUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
 	spokenCountUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
 	spokenPercentUnitLeadRE             = regexp.MustCompile(`(?i)^(?:\s+(?:percentage\s+points?|percent|per\s+cent)\b|\s*%)`)
@@ -1555,6 +1557,9 @@ func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, boo
 		}
 		return candidate{}, false
 	}
+	if check, ok := unresolvedCurrencyPrefixedOperandCheck(operand, start); ok {
+		return check, true
+	}
 	amount := numeralWordSequenceRE.FindStringIndex(operand)
 	if amount == nil || amount[0] != 0 || supportedWordAmount(operand[:amount[1]]) {
 		return candidate{}, false
@@ -1567,6 +1572,30 @@ func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, boo
 	}
 	if unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
 		return candidate{start, start + amount[1] + unit[1], Figure{Kind: "money"}, 1}, true
+	}
+	return candidate{}, false
+}
+
+func unresolvedCurrencyPrefixedOperandCheck(operand string, start int) (candidate, bool) {
+	prefix := unsupportedCurrencySymbolPrefixRE.FindStringIndex(operand)
+	if prefix == nil {
+		prefix = unsupportedCurrencyCodePrefixRE.FindStringIndex(operand)
+	}
+	if prefix == nil {
+		return candidate{}, false
+	}
+	amount := numeralWordSequenceRE.FindStringIndex(operand[prefix[1]:])
+	if amount != nil && amount[0] == 0 && !supportedWordAmount(operand[prefix[1]:prefix[1]+amount[1]]) {
+		end := prefix[1] + amount[1]
+		if rateEnd(operand[end:]) > 0 {
+			return candidate{start, start + end, Figure{Kind: "money"}, 1}, true
+		}
+	}
+	if amount := leadingDecimalOperandRE.FindStringIndex(operand[prefix[1]:]); amount != nil && amount[0] == 0 {
+		end := prefix[1] + amount[1]
+		if rateEnd(operand[end:]) > 0 {
+			return candidate{start, start + end, Figure{Kind: "money"}, 1}, true
+		}
 	}
 	return candidate{}, false
 }
@@ -1783,10 +1812,20 @@ var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
 var rateDateOperandPattern = `(?:\(\s*` + dateRE.String() + `\s*\)|\[\s*` + dateRE.String() + `\s*\]|["'‘’“”«]\s*` + dateRE.String() + `\s*["'”’»]|` + dateRE.String() + `)`
 var rateDateClosingPunctuationPattern = `[` + regexp.QuoteMeta(closingPunctuation) + `]*`
 var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+` + dateIntervalConnectorPattern + `\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?\s*(?:[.!?;:]` + rateDateClosingPunctuationPattern + `(?:\s|$)|$)`)
+var rateDateCoordinatedPeriodRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+` + dateIntervalConnectorPattern + `\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?`)
 
 func rateDateContinuation(s string) bool {
 	if rateDateContinuationRE.MatchString(s) {
 		return true
+	}
+	if loc := rateDateCoordinatedPeriodRE.FindStringIndex(s); loc != nil {
+		assertion := strings.TrimSpace(s[loc[1]:])
+		if lead := independentFigureAssertionRE.FindStringIndex(assertion); lead != nil && lead[0] == 0 {
+			figure := figureAssertionRE.FindStringIndex(strings.TrimSpace(assertion[lead[1]:]))
+			if figure != nil && figure[0] == 0 {
+				return true
+			}
+		}
 	}
 	trimmed := strings.TrimRightFunc(s, unicode.IsSpace)
 	end := len(trimmed)
@@ -2564,7 +2603,7 @@ func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {
 		return false
 	}
-	if quantitySubjectCostPredicate(s) {
+	if quantitySubjectTypedAmountPredicate(s) {
 		return true
 	}
 	if nominal := quantitySubjectNominalDurationRE.FindStringIndex(s); nominal != nil && !quantitySubjectPredicatedNominalLeadRE.MatchString(s) {
@@ -2576,10 +2615,10 @@ func quantitySubjectAssertion(s string) bool {
 	return true
 }
 
-var quantitySubjectCostPredicateLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+costs?\b\s+`)
+var quantitySubjectTypedAmountPredicateLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:costs?|charges?)\b\s+`)
 
-func quantitySubjectCostPredicate(s string) bool {
-	lead := quantitySubjectCostPredicateLeadRE.FindStringIndex(s)
+func quantitySubjectTypedAmountPredicate(s string) bool {
+	lead := quantitySubjectTypedAmountPredicateLeadRE.FindStringIndex(s)
 	if lead == nil {
 		return false
 	}

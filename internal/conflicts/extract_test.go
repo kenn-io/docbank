@@ -3114,6 +3114,11 @@ func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
 			want: []string{"2 devices", "$10"},
 		},
 		{
+			name: "charge predicate with typed amount ends approximate grouping",
+			text: "The plan includes about 30 users and 2 users charge $10.",
+			want: []string{"2 users", "$10"},
+		},
+		{
 			name: "paid predicate exposes independent approximate amount",
 			text: "The fee was about $5 and $10 paid shipping costs.",
 			want: []string{"$10"},
@@ -3213,6 +3218,24 @@ func TestExtractReviewUnresolvedApproximateAndComparisonOperands(t *testing.T) {
 		{
 			name: "approximate leading rate operand remains attached",
 			text: "The fee is about thirty dollars per 2 devices.",
+		},
+		{
+			name: "currency-code unsupported rate numerator remains attached",
+			text: "The fee is about USD thirty per 2 devices.",
+		},
+		{
+			name: "leading-decimal currency rate numerator remains attached",
+			text: "The fee is about $.50 per 2 devices.",
+		},
+		{
+			name: "following amount remains independent of currency-code rate numerator",
+			text: "The fee is about USD thirty per 2 devices. The deposit is $7.",
+			want: []string{"$7"},
+		},
+		{
+			name: "following amount remains independent of leading-decimal rate numerator",
+			text: "The fee is about $.50 per 2 devices. The deposit is $7.",
+			want: []string{"$7"},
 		},
 		{
 			name: "following duration sentence remains independent",
@@ -3718,6 +3741,7 @@ func TestExtractReviewRatesEligibilitySeparators(t *testing.T) {
 		{"Customers registered on or before 1 July 2026 pay $5.", []string{"$5"}, true},
 		{"Customers joining before 1 July 2026 pay $5.", []string{"$5"}, true},
 		{"Orders made before 1 July 2026 cost $5.", []string{"$5"}, true},
+		{"The fee of $5 applies only to orders before 1 July 2026.", []string{"$5"}, true},
 		{"The fee is $1,,000. The deposit is $7.", []string{"$7"}, false},
 		{"The fee is $1, and the deposit is $7.", []string{"$1", "$7"}, false},
 	} {
@@ -4834,6 +4858,23 @@ func TestExtractReviewAbbreviatedRateDateContinuationAtClauseBoundaries(t *testi
 				t.Fatalf("got %+v", got)
 			}
 		})
+	}
+}
+
+func TestExtractReviewAbbreviatedRateDateDoesNotScopeCoordinatedAssertion(t *testing.T) {
+	text := "The fee is $5/hr. before 1 July 2026 and the deposit is $7."
+	got := Extract(text)
+	want := []string{"$5", "$7"}
+	if len(got) != len(want) {
+		t.Fatalf("Extract(%q) = %+v, want figures %v", text, got, want)
+	}
+	for i, figure := range got {
+		if figure.Text != want[i] || figure.Period != (Period{}) {
+			t.Errorf("figure %d = %+v, want %q with unknown period", i, figure, want[i])
+		}
+		if string([]rune(text)[figure.Start:figure.End]) != want[i] {
+			t.Errorf("figure %d has invalid span: %+v", i, figure)
+		}
 	}
 }
 
