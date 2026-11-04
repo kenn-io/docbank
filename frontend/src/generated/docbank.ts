@@ -8929,6 +8929,12 @@ export interface UploadReceipt {
   status: UploadReceiptStatus;
 }
 
+export interface VaultIdentity {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  vault_id: string;
+}
+
 export interface VaultInfo {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -21603,6 +21609,30 @@ return sessionJSON<UploadReceipt>(getUploadFileUrl(params),
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) },
     body: formData
+  }
+);}
+
+
+
+export const getVaultIdentityUrl = () => {
+
+
+
+
+  return `/api/v1/vault`
+}
+
+/**
+ * @summary Identify the selected vault
+ */
+export const vaultIdentity = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<VaultIdentity> => {
+
+  return sessionJSON<VaultIdentity>(getVaultIdentityUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

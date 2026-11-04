@@ -6,11 +6,53 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"io"
 	"maps"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 )
+
+func TestMCPOriginalContentSkipsVaultInventory(t *testing.T) {
+	f := newNativeExportFixture(t)
+	selected := f.addFile(t, "selected.bin", "abcdefgh")
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, VaultRoot: os.Getenv("DOCBANK_HOME"), Cfg: cfg})
+	t.Cleanup(daemon.Close)
+	handler := daemon.Handler()
+	wrapped := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/info" {
+			http.Error(w, "unreadable unrelated blob shard", http.StatusInternalServerError)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(wrapped.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, wrapped.URL))
+	var received []byte
+	for _, offset := range []int{0, 4} {
+		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
+			"name": "read_document_content", "arguments": map[string]any{
+				"vault_id": f.catalog.VaultID(), "node_id": selected.NodeID,
+				"content_version_id": selected.VersionID, "blob_hash": selected.SHA256,
+				"size": selected.Size, "offset": offset, "max_bytes": 4,
+			},
+		}))
+		out := objectField(t, result, "structuredContent")
+		require.Equal(t, f.catalog.VaultID(), out["vault_id"])
+		encoded, ok := out["data_base64"].(string)
+		require.True(t, ok)
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		received = append(received, data...)
+	}
+	require.Equal(t, []byte("abcdefgh"), received)
+}
 
 func TestMCPOriginalContent(t *testing.T) {
 	f := newNativeExportFixture(t)

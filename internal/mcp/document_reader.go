@@ -14,6 +14,7 @@ import (
 
 type documentClient interface {
 	VaultInfo(ctx context.Context) (api.VaultInfo, error)
+	VaultID(ctx context.Context) (string, error)
 	ListDocuments(ctx context.Context, request api.DocumentQuery) (api.DocumentPage, error)
 	ResolveDocumentSummaries(ctx context.Context, request api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error)
 	ResolveDocumentSourceFence(ctx context.Context, request api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error)
@@ -37,6 +38,14 @@ func (c daemonDocumentClient) VaultInfo(ctx context.Context) (api.VaultInfo, err
 		return api.VaultInfo{}, err
 	}
 	return *info, nil
+}
+
+func (c daemonDocumentClient) VaultID(ctx context.Context) (string, error) {
+	identity, err := c.API().VaultIdentity(ctx)
+	if err != nil {
+		return "", err
+	}
+	return identity.VaultID, nil
 }
 
 // One session wraps the complete multi-read tool operation. The daemon retains

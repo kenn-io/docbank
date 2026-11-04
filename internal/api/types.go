@@ -1179,6 +1179,11 @@ type StorageOperation struct {
 	FinishedAt       string `json:"finished_at,omitzero"`
 }
 
+// VaultIdentity identifies the selected vault without enumerating its contents.
+type VaultIdentity struct {
+	VaultID string `json:"vault_id" format:"uuid"`
+}
+
 // VaultInfo identifies the selected vault and summarizes its logical and
 // physical contents. VaultPath is machine-local placement, not vault identity.
 type VaultInfo struct {

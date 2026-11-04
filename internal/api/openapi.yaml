@@ -21431,6 +21431,26 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    VaultIdentity:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VaultIdentity.json
+          format: uri
+          readOnly: true
+          type: string
+        vault_id:
+          format: uuid
+          type: string
+      required:
+        - vault_id
+      type: object
+      x-go-type: api.VaultIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VaultInfo:
       additionalProperties: false
       properties:
@@ -32757,6 +32777,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Upload one digest-checked file
+  /api/v1/vault:
+    get:
+      operationId: vaultIdentity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultIdentity"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Identify the selected vault
   /api/v1/verify:
     post:
       operationId: verify

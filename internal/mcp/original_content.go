@@ -85,7 +85,7 @@ func readDocumentContent(ctx context.Context, lease *daemonLease, raw []byte) (o
 }
 
 func (in originalContentInput) checkSelection(ctx context.Context, c *daemonconn.Connection) error {
-	info, err := c.API().VaultInfo(ctx)
+	info, err := c.API().VaultIdentity(ctx)
 	if err != nil {
 		return err
 	}

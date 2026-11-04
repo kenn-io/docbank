@@ -643,6 +643,8 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		case "/api/v1/info":
 			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID, VaultPath: "/synthetic/private/vault",
 				LiveFiles: 1, LiveDirectories: 1, ContentVersions: 1, TrackedBlobs: 1})
+		case "/api/v1/vault":
+			writeDaemonJSON(t, response, api.VaultIdentity{VaultID: testVaultID})
 		case "/api/v1/documents":
 			if request.URL.Query().Has("cursor") {
 				assert.Equal(t, "opaque.token", request.URL.Query().Get("cursor"))
@@ -795,11 +797,39 @@ func invokeReadTool(
 	return result, err
 }
 
-func TestGetDocumentReturnsVaultInfoFailure(t *testing.T) {
+func TestListDocumentsAndGetDocumentSkipVaultInventory(t *testing.T) {
 	fixture := newReadToolDaemon(t)
 	t.Cleanup(fixture.Close)
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/info" {
+			http.Error(w, "unreadable unrelated blob shard", http.StatusInternalServerError)
+			return
+		}
+		fixture.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	for _, tool := range []string{"list_documents", "get_document"} {
+		t.Run(tool, func(t *testing.T) {
+			args := map[string]any{"page_size": 1}
+			if tool == "get_document" {
+				args = map[string]any{"node_id": 7, "content_version_id": testVersionID}
+			}
+			result, err := invokeReadTool(t.Context(), lease, tool, args)
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+			require.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
+		})
+	}
+}
+
+func TestGetDocumentReturnsVaultIdentityFailure(t *testing.T) {
+	fixture := newReadToolDaemon(t)
+	t.Cleanup(fixture.Close)
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/vault" {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
