@@ -23,16 +23,7 @@ func subscribeWarm(b *testing.B, s *Store) func() {
 // catalog each iteration. It includes committed metadata transactions, but no
 // blob I/O; fixture creation and checkpointing are outside the timer.
 func BenchmarkPhotoImportMetadata(b *testing.B) {
-	type ingestCase struct {
-		existing    int
-		shared      bool
-		destination int
-	}
-	cases := []ingestCase{{100, false, 0}, {1000, false, 0}, {10000, false, 0}, {1000, true, 0}, {10000, true, 0}}
-	if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
-		cases = append(cases, ingestCase{100000, false, 0}, ingestCase{100000, true, 0}, ingestCase{1025, true, 100000})
-	}
-	for _, tc := range cases {
+	for _, tc := range ingestBenchmarkCases(100) {
 		existing := tc.existing
 		batch := 32
 		if tc.shared {

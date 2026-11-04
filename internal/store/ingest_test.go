@@ -27,19 +27,8 @@ func TestIngestCandidatesUseSmallerPopulation(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				elsewhere, err := s.mkdirTx(ctx, tx, s.RootID(), "elsewhere", nowRFC3339())
-				if err != nil {
+				if err := seedSharedIngestBenchmark(ctx, s, tx, tc.copies, tc.files, 1, "text/plain"); err != nil {
 					return err
-				}
-				for i := range tc.copies {
-					if _, _, err := s.createFileTx(ctx, tx, elsewhere.ID, fmt.Sprintf("copy-%d", i), fakeHash("a1"), 1, "text/plain"); err != nil {
-						return err
-					}
-				}
-				for i := range tc.files {
-					if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%d", i), fakeHash("b2"), 1, "text/plain"); err != nil {
-						return err
-					}
 				}
 				prior, _, err := s.createFileTx(ctx, tx, s.RootID(), "report (2).txt", fakeHash("a1"), 1, "text/plain")
 				if err != nil {
@@ -48,7 +37,15 @@ func TestIngestCandidatesUseSmallerPopulation(t *testing.T) {
 				if _, _, err := s.createFileTx(ctx, tx, s.RootID(), "other.txt", fakeHash("b2"), 1, "text/plain"); err != nil {
 					return err
 				}
-				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
+				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("c3"), s.RootID())
+				require.NoError(t, err)
+				assert.Empty(t, query, "new content needs no candidate query")
+				name, id, skipped, err := resolveIngestNameTx(ctx, tx, s.RootID(), "other.txt", fakeHash("c3"), "cli", "other.txt")
+				require.NoError(t, err)
+				assert.False(t, skipped)
+				assert.Zero(t, id)
+				assert.Equal(t, "other (2).txt", name)
+				query, err = resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
 				require.NoError(t, err)
 				plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
 				if tc.blobFirst {
@@ -57,7 +54,7 @@ func TestIngestCandidatesUseSmallerPopulation(t *testing.T) {
 				} else {
 					assert.Contains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
 				}
-				name, id, skipped, err := resolveIngestNameTx(ctx, tx, s.RootID(), "report.txt", fakeHash("a1"), "cli", "report.txt")
+				name, id, skipped, err = resolveIngestNameTx(ctx, tx, s.RootID(), "report.txt", fakeHash("a1"), "cli", "report.txt")
 				require.NoError(t, err)
 				assert.True(t, skipped)
 				assert.Equal(t, prior.ID, id)

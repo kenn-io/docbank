@@ -228,6 +228,7 @@ const resolveIngestCandidatesSuffix = `candidate.parent_id = $2 AND candidate.tr
 const resolveIngestCandidatesSQL = resolveIngestCandidatesPrefix + "+" + resolveIngestCandidatesSuffix
 const resolveIngestFolderCandidatesSQL = resolveIngestCandidatesPrefix + resolveIngestCandidatesSuffix
 
+// resolveIngestCandidatesQueryTx returns an empty query when the blob has no versions.
 func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash string, parentID int64) (string, error) {
 	// Grow both indexed probes together until one population is exhausted.
 	// Their total work is bounded by the smaller population, even when both
@@ -243,6 +244,9 @@ func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash st
 				AND trashed_at IS NULL LIMIT $2
 			) AS children)`, blobHash, limit, parentID).Scan(&copies, &files); err != nil {
 			return "", fmt.Errorf("probing ingest candidate populations: %w", err)
+		}
+		if copies == 0 {
+			return "", nil
 		}
 		if copies < limit || files < limit {
 			if copies <= files {
@@ -270,40 +274,42 @@ func resolveIngestNameTx(
 	if err != nil {
 		return "", 0, false, err
 	}
-	// Join active origins only after selecting matching content in this folder.
-	// The left join preserves the name fallback for unknown origins.
-	rows, err := tx.QueryContext(ctx, candidateQuery, blobHash, parentID)
-	if err != nil {
-		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
-	}
-	defer func() { _ = rows.Close() }()
+	if candidateQuery != "" {
+		// Join active origins only after selecting matching content in this folder.
+		// The left join preserves the name fallback for unknown origins.
+		rows, err := tx.QueryContext(ctx, candidateQuery, blobHash, parentID)
+		if err != nil {
+			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+		}
+		defer func() { _ = rows.Close() }()
 
-	for rows.Next() {
-		var sibID int64
-		var sibName string
-		var storedSourceKind, originalPath sql.NullString
-		if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
-			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
+		for rows.Next() {
+			var sibID int64
+			var sibName string
+			var storedSourceKind, originalPath sql.NullString
+			if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
+				return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
+			}
+			match := false
+			if sourceKind == "url" {
+				match = storedSourceKind.String == "url" && originalPath.String == sourceRef
+			} else if !originalPath.Valid {
+				// Without provenance, only a name in the incoming suffix family
+				// identifies a prior import of this content.
+				_, match = parseSuffix(sibName, base, ext)
+			} else if storedSourceKind.String == sourceKind && !query.IsEmbeddedSourceKind(storedSourceKind.String) {
+				// Operational origins use normalized local basenames. Embedded
+				// references are opaque and must never be treated as paths.
+				originName, err := NormalizeName(filepath.Base(originalPath.String))
+				match = err == nil && originName == name
+			}
+			if match {
+				return "", sibID, true, nil // already imported (possibly renamed)
+			}
 		}
-		match := false
-		if sourceKind == "url" {
-			match = storedSourceKind.String == "url" && originalPath.String == sourceRef
-		} else if !originalPath.Valid {
-			// Without provenance, only a name in the incoming suffix family
-			// identifies a prior import of this content.
-			_, match = parseSuffix(sibName, base, ext)
-		} else if storedSourceKind.String == sourceKind && !query.IsEmbeddedSourceKind(storedSourceKind.String) {
-			// Operational origins use normalized local basenames. Embedded
-			// references are opaque and must never be treated as paths.
-			originName, err := NormalizeName(filepath.Base(originalPath.String))
-			match = err == nil && originName == name
+		if err := rows.Err(); err != nil {
+			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 		}
-		if match {
-			return "", sibID, true, nil // already imported (possibly renamed)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	// Two disjoint index ranges cover the original name and every possible
 	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary

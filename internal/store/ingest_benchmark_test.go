@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,15 +11,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type ingestBenchmarkCase struct {
+	existing    int
+	shared      bool
+	destination int
+}
+
+func ingestBenchmarkCases(baselines ...int) []ingestBenchmarkCase {
+	var cases []ingestBenchmarkCase
+	for _, baseline := range baselines {
+		cases = append(cases, ingestBenchmarkCase{existing: baseline})
+	}
+	cases = append(cases,
+		ingestBenchmarkCase{existing: 1000},
+		ingestBenchmarkCase{existing: 10000},
+		ingestBenchmarkCase{existing: 1000, shared: true},
+		ingestBenchmarkCase{existing: 10000, shared: true},
+	)
+	if os.Getenv("DOCBANK_INGEST_SCALE") == "1" {
+		cases = append(cases,
+			ingestBenchmarkCase{existing: 100000},
+			ingestBenchmarkCase{existing: 100000, shared: true},
+			ingestBenchmarkCase{existing: 1025, shared: true, destination: 100000},
+		)
+	}
+	return cases
+}
+
 // BenchmarkResolveIngestName isolates the work performed for every local add
 // and HTTP upload as the destination directory grows. Setup uses real file
 // authority but is excluded from timing.
 func BenchmarkResolveIngestName(b *testing.B) {
-	sizes := []int{0, 100, 1000, 10000}
-	if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
-		sizes = append(sizes, 100000)
-	}
-	for _, siblings := range sizes {
+	for _, tc := range ingestBenchmarkCases(0, 100) {
+		if tc.shared {
+			continue
+		}
+		siblings := tc.existing
 		b.Run(fmt.Sprintf("siblings=%d", siblings), func(b *testing.B) {
 			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
@@ -87,4 +116,24 @@ func BenchmarkResolveIngestNameSharedContent(b *testing.B) {
 			}
 		})
 	}
+}
+
+// seedSharedIngestBenchmark puts repeated content outside the destination and
+// unrelated files inside it. Both document and photo imports use this shape.
+func seedSharedIngestBenchmark(ctx context.Context, s *Store, tx *sql.Tx, copies, destination int, size int64, mediaType string) error {
+	parent, err := s.mkdirTx(ctx, tx, s.RootID(), "elsewhere", nowRFC3339())
+	if err != nil {
+		return err
+	}
+	for i := range copies {
+		if _, _, err := s.createFileTx(ctx, tx, parent.ID, fmt.Sprintf("copy-%05d.bin", i), fakeHash("a1"), size, mediaType); err != nil {
+			return err
+		}
+	}
+	for i := range destination {
+		if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1000000), size, mediaType); err != nil {
+			return err
+		}
+	}
+	return nil
 }

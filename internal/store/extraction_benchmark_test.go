@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -17,16 +16,7 @@ import (
 func BenchmarkIngestMetadata(b *testing.B) {
 	const batch = 128
 	for _, mimeType := range []string{"application/octet-stream", "text/plain"} {
-		type ingestCase struct {
-			existing    int
-			shared      bool
-			destination int
-		}
-		cases := []ingestCase{{0, false, 0}, {1000, false, 0}, {10000, false, 0}, {1000, true, 0}, {10000, true, 0}}
-		if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
-			cases = append(cases, ingestCase{100000, false, 0}, ingestCase{100000, true, 0}, ingestCase{1025, true, 100000})
-		}
-		for _, tc := range cases {
+		for _, tc := range ingestBenchmarkCases(0) {
 			existing := tc.existing
 			b.Run(fmt.Sprintf("%s/existing=%d/shared=%t/destination=%d", mimeType, existing, tc.shared, tc.destination), func(b *testing.B) {
 				b.ReportAllocs()
@@ -134,24 +124,4 @@ func BenchmarkSeedTextExtractionQueue(b *testing.B) {
 			})
 		}
 	}
-}
-
-// seedSharedIngestBenchmark puts repeated content outside the destination and
-// unrelated files inside it. Both document and photo imports use this shape.
-func seedSharedIngestBenchmark(ctx context.Context, s *Store, tx *sql.Tx, copies, destination int, size int64, mediaType string) error {
-	parent, err := s.mkdirTx(ctx, tx, s.RootID(), "elsewhere", nowRFC3339())
-	if err != nil {
-		return err
-	}
-	for i := range copies {
-		if _, _, err := s.createFileTx(ctx, tx, parent.ID, fmt.Sprintf("copy-%05d.bin", i), fakeHash("a1"), size, mediaType); err != nil {
-			return err
-		}
-	}
-	for i := range destination {
-		if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1000000), size, mediaType); err != nil {
-			return err
-		}
-	}
-	return nil
 }
