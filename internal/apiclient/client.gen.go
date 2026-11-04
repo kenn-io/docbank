@@ -15652,6 +15652,51 @@ func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptio
 	return responseParser(ctx, resp)
 }
 
+// VaultIdentity Identify the selected vault
+func (c *Client) VaultIdentity(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VaultIdentityResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/vault",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VaultIdentityResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VaultIdentityResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VaultIdentityResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[VaultIdentityErrorResponse](resp, "VaultIdentityErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/vault")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // Verify Validate metadata and re-hash every stored blob
 func (c *Client) Verify(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResponse, error) {
 	var err error
@@ -28006,6 +28051,9 @@ type ListBatesNamespacesQuery struct {
 type VaultChangesQuery struct {
 	After  *string `json:"after,omitempty"`
 	Follow *bool   `json:"follow,omitempty"`
+
+	// Limit Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.
+	Limit *int64 `json:"limit,omitempty"`
 }
 
 type ListCollectionsQuery struct {
@@ -29877,6 +29925,10 @@ type UploadFileResponseJSON = api.UploadReceipt
 
 type UploadFileErrorResponse = Error
 
+type VaultIdentityResponse = api.VaultIdentity
+
+type VaultIdentityErrorResponse = Error
+
 type VerifyResponse = api.VerifyReport
 
 type VerifyErrorResponse = Error
@@ -31581,6 +31633,8 @@ type UpdatePhotoAlbumRequest = api.UpdatePhotoAlbumRequest
 type UpdateSavedQueryRequest = api.SavedQueryPatch
 
 type UploadReceipt = api.UploadReceipt
+
+type VaultIdentity = api.VaultIdentity
 
 type VaultInfo = api.VaultInfo
 

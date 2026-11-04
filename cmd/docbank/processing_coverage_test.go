@@ -45,9 +45,9 @@ func TestProcessingCoverageCLI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
-		case "GET /api/v1/audit/status":
+		case "GET /api/v1/vault":
 			assert.Empty(t, r.URL.RawQuery)
-			assert.NoError(t, json.MarshalWrite(w, api.AuditStatus{VaultID: inspectionTestVaultID}))
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
 		case "GET /api/v1/coverage":
 			assert.Equal(t, "archive", r.URL.Query().Get("profile"))
 			assert.Equal(t, inspectionTestVaultID, r.URL.Query().Get("vault_uid"))
@@ -82,18 +82,18 @@ func TestProcessingCoverageCLI(t *testing.T) {
 }
 
 func TestProcessingCoverageRefusesInvalidResponses(t *testing.T) {
-	for _, scenario := range []string{"vault", "nil audit", "bad audit", "profile"} {
+	for _, scenario := range []string{"vault", "nil identity", "bad identity", "profile"} {
 		t.Run(scenario, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/api/v1/audit/status" {
+				if r.URL.Path == "/api/v1/vault" {
 					switch scenario {
-					case "nil audit":
+					case "nil identity":
 						_, _ = w.Write([]byte("null"))
-					case "bad audit":
-						assert.NoError(t, json.MarshalWrite(w, api.AuditStatus{VaultID: "bad"}))
+					case "bad identity":
+						assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: "bad"}))
 					default:
-						assert.NoError(t, json.MarshalWrite(w, api.AuditStatus{VaultID: inspectionTestVaultID}))
+						assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
 					}
 					return
 				}

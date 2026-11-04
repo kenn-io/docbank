@@ -118,7 +118,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	}
 	postTopology := slices.Clone(replay.topology)
 	changedIDs := make([]uint64, 0, len(changes))
-	var movedIDs []uint64
+	movedIDs := make(map[uint64]bool)
 	requiredParents := make(map[uint64]bool)
 	for _, change := range changes {
 		nodeID, err := auditUnsignedField(change, metadataNodeIDField)
@@ -144,7 +144,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 			return replayedTopologyMutation{}, err
 		}
 		if pathChanged {
-			movedIDs = append(movedIDs, nodeID)
+			movedIDs[nodeID] = true
 			requiredParents[priorParent], requiredParents[resultingParent] = true, true
 		}
 		postTopology[index] = *post
@@ -159,7 +159,7 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 		return replayedTopologyMutation{}, errors.New("node move topology changes no path directly")
 	}
 	expectedChanges := make(map[uint64]bool, len(movedIDs)+len(requiredParents))
-	for _, nodeID := range movedIDs {
+	for nodeID := range movedIDs {
 		expectedChanges[nodeID] = true
 	}
 	for parentID := range requiredParents {
@@ -174,18 +174,16 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	if len(changes) != len(expectedChanges) {
 		return replayedTopologyMutation{}, errors.New("node move topology has an unexpected changed-node set")
 	}
-	for _, movedID := range movedIDs {
-		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-			replay.topology, replay.memberSet, movedID,
+	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
+		replay.topology, replay.memberSet, movedIDs,
+	)
+	if err != nil {
+		return replayedTopologyMutation{}, err
+	}
+	if affectsTrashOrigin != 0 {
+		return replayedTopologyMutation{}, errors.New(
+			"node move changes a retained trash-origin path without recording trash effects",
 		)
-		if err != nil {
-			return replayedTopologyMutation{}, err
-		}
-		if affectsTrashOrigin {
-			return replayedTopologyMutation{}, errors.New(
-				"node move changes a retained trash-origin path without recording trash effects",
-			)
-		}
 	}
 	if err := validateReplayedAuditTopology(postTopology); err != nil {
 		return replayedTopologyMutation{}, fmt.Errorf("validating node move topology: %w", err)
@@ -197,12 +195,13 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 }
 
 func auditMoveAffectsTrashOrigin(
-	topology []audit.Record, memberSet map[uint64]bool, movedID uint64,
-) (bool, error) {
+	topology []audit.Record, memberSet map[uint64]bool, movedIDs map[uint64]bool,
+) (uint64, error) {
 	nodes, err := replayAuditTopology(topology)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
+	var affected uint64
 	for nodeID, node := range nodes {
 		if !memberSet[nodeID] || node.originParent == nil {
 			continue
@@ -210,20 +209,20 @@ func auditMoveAffectsTrashOrigin(
 		current := *node.originParent
 		seen := make(map[uint64]bool)
 		for {
-			if current == movedID {
-				return true, nil
+			if movedIDs[current] && (affected == 0 || current < affected) {
+				affected = current
 			}
 			if seen[current] {
-				return false, errors.New("audit trash-origin topology contains a cycle")
+				return 0, errors.New("audit trash-origin topology contains a cycle")
 			}
 			seen[current] = true
 			parent, ok := nodes[current]
 			if !ok {
-				return false, fmt.Errorf("audit trash origin references missing node %d", current)
+				return 0, fmt.Errorf("audit trash origin references missing node %d", current)
 			}
 			next, err := auditHistoricalParent(parent)
 			if err != nil {
-				return false, err
+				return 0, err
 			}
 			if next == nil {
 				break
@@ -231,9 +230,10 @@ func auditMoveAffectsTrashOrigin(
 			current = *next
 		}
 	}
-	return false, nil
+	return affected, nil
 }
 
+// auditHistoricalParent's live SQL counterpart is auditMoveAffectsTrashOriginTx.
 func auditHistoricalParent(node replayAuditTopologyNode) (*uint64, error) {
 	originValue, err := auditField(node.record, auditOriginField)
 	if err != nil {

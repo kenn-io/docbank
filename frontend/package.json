@@ -21,8 +21,8 @@
   "dependencies": {
     "@embedpdf/pdfium": "2.15.1",
     "@embedpdf/svelte-pdf-viewer": "2.15.1",
-    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#c57963cfeed5fc4ebb94ae985f52d41bff43fbc7",
-    "@lucide/svelte": "1.61.0",
+    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#5b99e44d9e9cfbaca05868f146b674cb6eea39a0",
+    "@lucide/svelte": "1.63.0",
     "@noble/hashes": "^2.2.0",
     "leaflet": "1.9.4",
     "leaflet.markercluster": "1.5.3",
@@ -39,7 +39,7 @@
     "@types/node": "26.6.5",
     "fake-indexeddb": "6.2.6",
     "ignore": "7.0.14",
-    "jsdom": "29.1.1",
+    "jsdom": "30.1.3",
     "orval": "8.45.0",
     "svelte-check": "4.7.7",
     "typescript": "6.0.3",
@@ -52,5 +52,5 @@
   "engines": {
     "node": ">=24.22.1"
   },
-  "packageManager": "npm@11.21.1"
+  "packageManager": "npm@12.2.1"
 }

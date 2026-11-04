@@ -1452,7 +1452,7 @@ invalid for stdio. The bearer is resolved once at startup and must differ from
 the daemon's effective API key. There is no token flag or remote-daemon option.
 See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
 
-The catalog contains 20 read tools by default, including `get_photo_asset`.
+The default catalog contains read-only tools, including `get_photo_asset`.
 `--allow-processing` adds only the guarded `start_processing` tool. The agent
 must first retrieve the plan from the same process, and the operator must
 already have consented to that unchanged disclosure. The flag does not let MCP

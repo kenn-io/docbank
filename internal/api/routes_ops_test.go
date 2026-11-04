@@ -463,6 +463,16 @@ reading:
 	assert.Zero(t, stats.LooseBlobs)
 }
 
+func TestVaultIdentityReportsSelectedVault(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	resp, body := get(t, ts, "/api/v1/vault", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var identity api.VaultIdentity
+	require.NoError(t, json.Unmarshal([]byte(body), &identity))
+	assert.Equal(t, s.VaultID(), identity.VaultID)
+}
+
 func TestVaultInfoIdentifiesRootAndSummarizesContents(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

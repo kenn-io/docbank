@@ -41,28 +41,10 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 			// Each version belongs to its own revision-1 file node.
 			// Bulk inserts keep setup bounded without disabling foreign keys.
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if err := bulkBenchmarkFileVersionsTx(ctx, tx, retained, pending.ID, sets-1); err != nil {
+					return err
+				}
 				_, err := tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
-					INSERT INTO nodes (id,parent_id,name,kind,current_version_id,revision,created_at,modified_at)
-					SELECT $2+i,parent_id,printf('retained-%d.txt',i),kind,
-					printf('00000000-0000-4000-8000-%012x',i),1,created_at,modified_at
-					FROM seq CROSS JOIN nodes WHERE id=$3`, sets-1, pending.ID, retained.ID)
-				if err != nil {
-					return err
-				}
-				_, err = tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
-					INSERT INTO content_versions (version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
-					introduced_operation_id,transition_kind,source_version_id)
-					SELECT printf('00000000-0000-4000-8000-%012x',i),$2+i,blob_hash,size,mime_type,recorded_at,1,
-					printf('00000000-0000-4000-9000-%012x',i),'content_create',NULL
-					FROM seq CROSS JOIN content_versions WHERE version_id=$3`, sets-1, pending.ID, retained.CurrentVersionID)
-				if err != nil {
-					return err
-				}
-				_, err = tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+$1 WHERE id=$2`, sets-1, s.RootID())
-				if err != nil {
-					return err
-				}
-				_, err = tx.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<$1)
 					INSERT INTO embedding_input_generations (generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,
 					source_version_id,profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
 					chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,attachment_id,input_count,created_at)

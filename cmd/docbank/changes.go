@@ -30,7 +30,7 @@ var changesCmd = &cobra.Command{
 			return err
 		}
 		err = printChanges(cmd.OutOrStdout(), cmd.ErrOrStderr(), changesJSON, func(receive func(store.VaultChange) error) (string, error) {
-			return c.WatchChanges(ctx, changesAfter, changesFollow, receive)
+			return c.WatchChanges(ctx, changesAfter, changesFollow, nil, receive)
 		})
 		if changesFollow && ctx.Err() != nil && cmd.Context().Err() == nil && errors.Is(err, context.Canceled) {
 			return nil

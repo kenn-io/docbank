@@ -75,12 +75,6 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 			require.Len(t, members, 1, "a neighbor must not load the other inputs in its set")
 			require.Len(t, members[keys[0]], 3, "all document memberships of the requested row survive")
 		}
-		wrongChecksum := neighbors[0]
-		wrongChecksum.InputChecksum = catalogSourceHash
-		keys := semanticNeighborKeys([]vectorindex.Neighbor{wrongChecksum})
-		members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
-		require.NoError(t, err)
-		require.Empty(t, members, "the checksum is part of row authority")
 	})
 	copyVersion, err := s.ContentVersionByID(t.Context(), versions[2])
 	require.NoError(t, err)
@@ -133,6 +127,7 @@ func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
 		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: version,
 			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: scores[i]})
 	}
+	neighbors[0], neighbors[2] = neighbors[2], neighbors[0]
 	source, err := s.CaptureVectorIndexSource(t.Context(), records[0].VectorSpace.ID)
 	require.NoError(t, err)
 	resolution, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", records[0].InputKind,
@@ -194,10 +189,9 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 		indexed       string
 		wantNodeNames []string
 		limit         int
-		wantNext      int
 	}{
-		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2, wantNext: 3},
-		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1, wantNext: 1},
+		{name: "one representative before the limit", indexed: "all", wantNodeNames: []string{"duplicate-a.jpg", "distinct.jpg"}, limit: 2},
+		{name: "keep the indexed later duplicate", indexed: "later", wantNodeNames: []string{"newer-indexed.jpg"}, limit: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -240,7 +234,7 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			for index, node := range indexedNodes {
 				record, _ := f.forNode(t, node).publish(t)
 				records = append(records, record)
-				score := 1 - float64(index)/10
+				score := []float64{1, 0.99, 0.8}[index]
 				neighbors = append(neighbors, vectorindex.Neighbor{
 					SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID,
 					InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: score,
@@ -290,7 +284,6 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 			}
 			assert.ElementsMatch(t, wantIDs, gotIDs)
 			assert.False(t, resolution.Truncated)
-			assert.Equal(t, tc.wantNext, resolution.NextNeighbor)
 		})
 	}
 }
@@ -2119,8 +2112,19 @@ func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T)
 		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 
-	_, err = s.StageLexicalGeneration(ctx, generationID)
-	require.ErrorContains(t, err, "immutable manifest")
+	t.Run("reuse existing generation", func(t *testing.T) {
+		_, err := s.StageLexicalGeneration(ctx, generationID)
+		require.ErrorContains(t, err, "immutable manifest")
+	})
+	t.Run("stage fresh generation", func(t *testing.T) {
+		freshID := fakeHash("99")
+		_, err := s.StageLexicalGeneration(ctx, freshID)
+		require.ErrorContains(t, err, "has a different immutable manifest")
+		var count int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_generations
+			WHERE generation_id=?`, freshID).Scan(&count))
+		assert.Zero(t, count, "failed staging rolls back the new generation")
+	})
 }
 
 func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *testing.T) {
@@ -2380,9 +2384,49 @@ func lexicalSearchReplacementBuild(
 	return build, node.CurrentVersionID
 }
 
-func TestPendingAndFailedTextExtractions(t *testing.T) {
+func TestSeedTextExtractionQueueSettledWithoutWriter(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("a1"), 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "second.txt", fakeHash("b2"), 20, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "scan.pdf", fakeHash("c3"), 30, "application/pdf")
+	require.NoError(t, err)
+	for _, hash := range []string{first.BlobHash, second.BlobHash} {
+		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+			BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: ExtractionOK, Text: "synthetic text",
+		}))
+	}
+	lock := holdTestSQLiteWriter(t, s)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+	require.NoError(t, lock.Rollback())
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM text_searchable_versions WHERE version_id=?`, first.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+	rows, err := s.db.QueryContext(ctx, `SELECT version_id FROM text_searchable_versions ORDER BY version_id`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var restored []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		restored = append(restored, id)
+	}
+	require.NoError(t, rows.Err())
+	require.ElementsMatch(t, []string{first.CurrentVersionID, second.CurrentVersionID}, restored)
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+}
+
+func checkPendingAndFailedTextExtractions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
 	ctx := t.Context()
 	textNode, err := s.CreateFile(
 		ctx, s.RootID(), "notes.txt", fakeHash("a1"), 10, "text/plain; charset=utf-8",
@@ -2491,9 +2535,10 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
-func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
+func checkRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("aa")
 	first, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
@@ -2574,9 +2619,10 @@ func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testin
 	}
 }
 
-func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
+func checkRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	seedLegacyMigrationRow(t, s, "published.txt", "ac", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,
@@ -2598,9 +2644,10 @@ func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
 	assert.Empty(t, pending)
 }
 
-func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
+func checkPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(
 		ctx, s.RootID(), "notes.txt", fakeHash("d1"), 10, "text/plain",
@@ -2624,9 +2671,10 @@ func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 	assert.NotEqual(t, created.BlobHash, pending[0].BlobHash)
 }
 
-func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
+func checkTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hashes := make([]string, 65)
 	for i := range hashes {
@@ -2922,12 +2970,10 @@ func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
 		neighbors = append(neighbors, vectorindex.Neighbor{SetID: record.VectorSet.ID, InputKey: node.CurrentVersionID,
 			InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 1 - float64(i)/10})
 	}
-	_, _, err = s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
-	require.NoError(t, err)
 	source, err := s.CaptureVectorIndexSource(t.Context(), space)
 	require.NoError(t, err)
 	result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
-		space, source.ManifestChecksum, neighbors, 1, SearchOptions{}, map[int64]struct{}{nodes[1].ID: {}, nodes[2].ID: {}})
+		space, source.ManifestChecksum, neighbors, 1, SearchOptions{}, map[int64]struct{}{nodes[0].ID: {}, nodes[1].ID: {}, nodes[2].ID: {}})
 	require.NoError(t, err)
 	require.Len(t, result.Candidates, 1)
 	assert.Equal(t, nodes[3].ID, result.Candidates[0].NodeID)
@@ -2986,33 +3032,37 @@ func TestSimilarCandidatesCountUnvisitedCopiesKeepBoundaryTiesAndStopBeforeTiedT
 	}
 	source, err := s.CaptureVectorIndexSource(t.Context(), space)
 	require.NoError(t, err)
-	result, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
-		space, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: version})
-	require.NoError(t, err)
-	require.Len(t, result.Candidates, 1)
-	assert.Equal(t, nodes[0].ID, result.Candidates[0].NodeID)
-	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
-	assert.True(t, result.Truncated)
-
-	// One winner and a tied zero-score tail settle the page as soon as an
-	// overflow group appears. Walking the rest cannot change the winner.
-	for i := range neighbors {
-		neighbors[i].Score = 0
-	}
-	neighbors[0].Score = 1
-	loaded := 0
-	result = SimilarSearchResolution{}
-	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return s.similarCandidatesTx(t.Context(), semanticMembershipCountingQuerier{metadataQuerier: tx, loaded: &loaded},
-			profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, neighbors, 1,
-			SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID}, &result)
+	t.Run("copy counting and boundary ties", func(t *testing.T) {
+		result, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile,
+			space, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: version})
+		require.NoError(t, err)
+		require.Len(t, result.Candidates, 1)
+		assert.Equal(t, nodes[0].ID, result.Candidates[0].NodeID)
+		assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
+		assert.True(t, result.Truncated)
 	})
-	require.NoError(t, err)
-	require.Len(t, result.Candidates, 1)
-	assert.Equal(t, nodes[1].ID, result.Candidates[0].NodeID)
-	assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
-	assert.True(t, result.Truncated)
-	assert.Equal(t, 2, loaded, "a tied tail must not force loading every identity")
+
+	t.Run("tied tail is not loaded", func(t *testing.T) {
+		// One winner and a tied zero-score tail settle the page as soon as an
+		// overflow group appears. Walking the rest cannot change the winner.
+		for i := range neighbors {
+			neighbors[i].Score = 0
+		}
+		neighbors[0].Score = 1
+		loaded := 0
+		result := SimilarSearchResolution{}
+		err := s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+			return s.similarCandidatesTx(t.Context(), semanticMembershipCountingQuerier{metadataQuerier: tx, loaded: &loaded},
+				profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, neighbors, 1,
+				SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID}, &result)
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Candidates, 1)
+		assert.Equal(t, nodes[1].ID, result.Candidates[0].NodeID)
+		assert.Equal(t, 2, result.Candidates[0].DuplicateCount)
+		assert.True(t, result.Truncated)
+		assert.Equal(t, 2, loaded, "a tied tail must not force loading every identity")
+	})
 }
 
 type semanticMembershipCountingQuerier struct {

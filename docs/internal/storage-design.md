@@ -786,6 +786,8 @@ A merge retargets faces from the absorbed person's duplicate assertions to the s
 
 Older development schema-43 layouts require recreation. Schema 43 adds nullable roll, facing, eyes-open, and smile measurements and detector provenance to faces. `photo_face_scans` records completed versions by detector request fingerprint, including empty scans; version deletion cascades its markers. Faces and measurements round-trip through JSONL, while markers stay out of backup. A restore permits another scan after fresh consent, with one provider call per photo. Audited vaults refuse detection before provider egress. Publication checks that authority again and classifies capacity and audit refusal as terminal job outcomes.
 
+Older development layouts below schema 46 require recreation; schema 46 stores each event's operation sequence on its row for indexed history pages.
+
 A changed detector reconciles by descending box intersection over union, with a 0.14 floor and stable tie-breaking. Matched untouched automatic faces keep their IDs and refresh measurements; unmatched untouched faces are removed. Manual faces, assignments, candidate references, key faces, and indexed decision history retain their saved rows and undo receipts.
 
 Schema 36 adds the person's key-face reference and the derived `person_candidate_faces` membership index. Candidate insert/update triggers maintain membership and rebuild it during JSONL restore; membership stays out of exports. Key-face references round-trip in person records. Released readers retain their original person and assertion layouts. Import treats legacy asserted `depicted` assertions without `photo_mark` as whole-photo marks.

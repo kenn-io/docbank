@@ -103,7 +103,10 @@ func TestProviderFreeLexicalRebuildReplacesZeroSegmentMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, initial.ID, rebuilt.ID)
 	assert.Equal(t, 2, rebuilt.BuildCount)
-	assert.Equal(t, lexicalBuildDigest([]string{first.ID, second.ID}), rebuilt.BuildDigest)
+	assert.NotEqual(t, initial.ManifestDigest, rebuilt.ManifestDigest)
+	members, err := lexicalGenerationBuildIDsTx(ctx, s.db, rebuilt.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{first.ID, second.ID}, members)
 }
 
 // Mutation caught: hashing normalized text, omitting one legacy identity
@@ -379,6 +382,8 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 	).Scan(&firstAttachmentID, &firstAttachedAt))
 	assert.Equal(t, legacyMigrationTimestamp, completedAt)
 	assert.Equal(t, legacyMigrationTimestamp, firstAttachedAt)
+	head, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
 
 	second, err := s.CreateFile(
 		t.Context(), s.RootID(), "second.txt", hash, int64(len(text)), "text/plain",
@@ -388,6 +393,10 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: text,
 	}))
+
+	unchanged, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, head, unchanged, "identical re-extraction preserves the head")
 
 	var builds, attachments, heads, queued, cached int
 	for query, destination := range map[string]*int{
@@ -749,9 +758,10 @@ func TestOpenMigratesLegacyPlainTextInCurrentSchema(t *testing.T) {
 
 // Mutation caught: reusing the ordinary enqueue upsert on migration retry
 // postpones already-scheduled repair work and makes convergence non-idempotent.
-func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
+func checkMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	seedLegacyMigrationRow(t, s, "stable.txt", "76", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: "stable immutable legacy build",
@@ -763,7 +773,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 	first, err := s.MigrateLegacyPlainText(t.Context())
 	require.NoError(t, err)
 	const scheduled = "2030-01-02T03:04:05.000000000Z"
-	_, err = s.db.ExecContext(t.Context(), `UPDATE text_extraction_queue SET next_attempt_at=? WHERE blob_hash=?`, scheduled, hash)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE text_extraction_queue SET next_attempt_at=$1 WHERE blob_hash=$2`, scheduled, hash)
 	require.NoError(t, err)
 
 	second, err := s.MigrateLegacyPlainText(t.Context())
@@ -774,7 +784,7 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 	assert.Zero(t, second.QueuedBlobs)
 	var stored string
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
-		`SELECT next_attempt_at FROM text_extraction_queue WHERE blob_hash=?`, hash,
+		`SELECT next_attempt_at FROM text_extraction_queue WHERE blob_hash=$1`, hash,
 	).Scan(&stored))
 	assert.Equal(t, scheduled, stored)
 	for _, table := range []string{
@@ -896,4 +906,115 @@ func queuedLegacyHashes(t *testing.T, s *Store) []string {
 	require.NoError(t, rows.Err())
 	sort.Strings(hashes)
 	return hashes
+}
+
+func TestPostCutoverExtractionLeavesOtherDocumentsToOpen(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(ctx, dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if s != nil {
+			require.NoError(t, s.Close())
+		}
+	})
+	seedLegacyMigrationRow(t, s, "a.txt", "a1", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "firstauthority",
+	})
+	seedLegacyMigrationRow(t, s, "b.txt", "b1", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "preservedauthority",
+	})
+	first, err := s.NodeByPath(ctx, "/a.txt")
+	require.NoError(t, err)
+	report, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, fakeHash("a2"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	fresh, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 14, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "freshauthority",
+	}))
+	for query, path := range map[string]string{"preservedauthority": "/b.txt"} {
+		hits, _, err := s.SearchPage(ctx, query, 20)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, path, hits[0].Path)
+		assert.Equal(t, SearchMatchContent, hits[0].Match)
+	}
+	_, err = s.ActiveRendition(ctx, first.CurrentVersionID, report.ProfileFingerprint)
+	require.NoError(t, err, "publishing another blob leaves this historical head for open to settle")
+	require.NoError(t, s.Close())
+	s = nil
+	s, err = Open(ctx, dbPath)
+	require.NoError(t, err)
+	_, err = s.ActiveRendition(ctx, first.CurrentVersionID, report.ProfileFingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPostCutoverExtractionAppendsSearchSnapshot(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s := newTestStore(t)
+	for _, name := range []string{"a", "b"} {
+		seedLegacyMigrationRow(t, s, name+".txt", name+"1", ExtractionResult{
+			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: name + "authority",
+		})
+	}
+	_, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	lease, err := s.AcquireLexicalGeneration(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lease.Release()) })
+	before, err := lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
+	require.NoError(t, err)
+	require.Len(t, before, 2)
+
+	fresh, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 10, "text/plain")
+	require.NoError(t, err)
+	extraction := ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "cauthority",
+	}
+	require.NoError(t, s.RecordExtraction(ctx, extraction))
+	hits, _, err := s.SearchPage(ctx, "cauthority", 20)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "/c.txt", hits[0].Path)
+	assert.Equal(t, SearchMatchContent, hits[0].Match)
+	buildIDs, err := lexicalBuildIDsTx(ctx, s.db,
+		`SELECT build_id FROM rendition_builds WHERE source_sha256=$1`, []any{fresh.BlobHash})
+	require.NoError(t, err)
+	require.Len(t, buildIDs, 1)
+	want := append(append([]string(nil), before...), buildIDs[0])
+	sort.Strings(want)
+	head, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	members, err := lexicalGenerationBuildIDsTx(ctx, s.db, head.ID)
+	require.NoError(t, err)
+	assert.Equal(t, want, members)
+	var count int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_stream_builds`).Scan(&count))
+	assert.Equal(t, len(want), count, "generations share one membership row per build")
+	members, err = lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, members, "the reader keeps exactly its original documents")
+
+	require.NoError(t, lease.Release())
+	fresh, err = s.CreateFile(ctx, s.RootID(), "d.txt", fakeHash("d1"), 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "dauthority",
+	}))
+	head, err = s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 4, head.BuildCount)
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_stream_builds`).Scan(&count))
+	assert.Equal(t, 4, count, "later appends keep sharing the stream")
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_generations
+		WHERE generation_id=?`, lease.Generation.ID).Scan(&count))
+	assert.Zero(t, count, "the released snapshot is collected on the next publication")
 }

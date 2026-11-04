@@ -438,6 +438,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS live_sibling_names
     ON nodes(parent_id, name) WHERE trashed_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS nodes_trash_parent ON nodes(trash_parent);
 CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
 -- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
 CREATE INDEX IF NOT EXISTS nodes_live_children ON nodes(parent_id, kind, name, trashed_at, id)
@@ -1630,6 +1631,7 @@ END;
 -- the FTS table is an external-content index over it. A generation names one
 -- exact set of builds, and the head selects the generation that search reads,
 -- so publishing a new generation never copies text an earlier one indexed.
+-- Membership shares an append-only stream with a fixed cutoff per generation.
 CREATE TABLE IF NOT EXISTS rendition_lexical_index (
     row_id     INTEGER PRIMARY KEY,
     build_id   TEXT NOT NULL REFERENCES rendition_builds(build_id),
@@ -1660,6 +1662,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
     generation_id TEXT PRIMARY KEY,
+    stream_id     TEXT NOT NULL,
     segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
     build_count   INTEGER NOT NULL CHECK (build_count >= 0),
     built_at      TEXT NOT NULL
@@ -1667,19 +1670,28 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_generation_manifests (
     generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
-    manifest_digest TEXT NOT NULL,
-    build_digest    TEXT NOT NULL
+    manifest_digest TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS rendition_lexical_generation_builds (
-    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE,
-    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    PRIMARY KEY (generation_id, build_id)
+CREATE INDEX IF NOT EXISTS rendition_lexical_generations_stream
+    ON rendition_lexical_generations(stream_id);
+
+CREATE TABLE IF NOT EXISTS rendition_lexical_stream_builds (
+    stream_id      TEXT NOT NULL,
+    ordinal        INTEGER NOT NULL,
+    build_id       TEXT NOT NULL REFERENCES rendition_builds(build_id),
+    PRIMARY KEY (stream_id, ordinal),
+    UNIQUE (stream_id, build_id)
 );
 
-CREATE INDEX IF NOT EXISTS rendition_lexical_generation_builds_build
-    ON rendition_lexical_generation_builds(build_id);
+CREATE INDEX IF NOT EXISTS rendition_lexical_stream_builds_build
+    ON rendition_lexical_stream_builds(build_id);
+
+CREATE VIEW IF NOT EXISTS rendition_lexical_generation_builds(generation_id, build_id) AS
+    SELECT g.generation_id, b.build_id
+    FROM rendition_lexical_generations g
+    JOIN rendition_lexical_stream_builds b
+      ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count;
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_heads (
     singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -2031,9 +2043,9 @@ CREATE TABLE IF NOT EXISTS audit_records (
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_event
     ON audit_records(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS audit_record_event_node
-    ON audit_records(node_id) WHERE kind = 'event';
+    ON audit_records(node_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE INDEX IF NOT EXISTS audit_record_event_scope
-    ON audit_records(scope_id) WHERE kind = 'event';
+    ON audit_records(scope_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_operation
     ON audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_sequence

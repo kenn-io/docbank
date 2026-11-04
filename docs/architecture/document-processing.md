@@ -144,7 +144,12 @@ origin and allowed network ranges when establishing the actual connection.
 PDF format detection requires a versioned `%PDF-` header at byte zero and a
 `startxref` within the final 64 KiB. Its offset must point backward to a
 recognized cross-reference table or stream. Each cross-reference read is capped
-at 4 KiB. Linearized (Fast Web View) streams may need a second read to validate
+at 4 KiB. A cross-reference table is governed by its own trailer when that
+trailer fits in the read, otherwise by the final trailer. Either way, a complete
+trailer must immediately precede the last `startxref`. This accepts linearized
+(Fast Web View) tables, whose final trailer may omit `/Root`, and
+hybrid-reference updates, whose empty table links to another section through
+`/Prev` or `/XRefStm`. Linearized streams may need a second read to validate
 the forward link to the final cross-reference section. A final `%%EOF` marker
 may be followed by whitespace, NULs, or short text or binary residue within
 the tail window. Appended ZIP signatures, `<` or `>` bytes, repeated end

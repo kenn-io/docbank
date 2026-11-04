@@ -352,13 +352,15 @@ Store operations. Supplied media, remote recording references,
 original recordings and transcript/caption inputs retain their source, occurrence
 and replay receipts through shared native operations. Visual previews, image
 embedding inputs and retained email PDFs also use shared native publication
-and read paths.
+and read paths. Plain-text extraction covers queue discovery, retry scheduling,
+terminal results and publication of retained text under rendition authority.
+Grouped photo imports include pairing, source replay, browser folder
+continuation and import progress.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, extraction, email PDF
+operations still open SQLite. XMP sidecar writing, photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer, backup recovery, multi-store placement and storage-operation jobs
+transfer, backup recovery, multi-store placement and their storage-operation jobs
 remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
@@ -447,6 +449,8 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
     max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
+GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at)
+    ON documents.extracted_text TO docbank_runtime;
 GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
     display_override_file_id, revision, updated_at)
     ON documents.photo_assets TO docbank_runtime;
@@ -542,6 +546,11 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
 GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
+GRANT INSERT ON documents.photo_hidden_credentials TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
+    copied_objects, copied_bytes, cancel_requested, error, receipt_json,
+    updated_at, finished_at, retention_until)
+    ON documents.storage_operations TO docbank_runtime;
 GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
 GRANT INSERT, UPDATE(generation_id, published_at)
     ON documents.visual_preview_heads TO docbank_runtime;
@@ -552,10 +561,11 @@ GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vecto
     documents.rendition_units, documents.rendition_lexical_segments,
     documents.rendition_lexical_index, documents.rendition_lexical_heads,
     documents.rendition_lexical_generations, documents.rendition_lexical_generation_manifests,
+    documents.rendition_lexical_stream_builds,
     documents.text_searchable_versions, documents.extracted_text,
     documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.derivative_blob_purge_pending,
-    documents.rendition_lexical_generations, documents.rendition_lexical_generation_builds,
+    documents.rendition_lexical_generations, documents.rendition_lexical_stream_builds,
     documents.rendition_lexical_generation_manifests, documents.rendition_lexical_index
     TO docbank_runtime;
 GRANT UPDATE(generation_id) ON documents.rendition_lexical_heads TO docbank_runtime;
@@ -603,7 +613,7 @@ record per genesis kind, matching SQLite; it does not reject other kinds.
 Go still owns which record kinds are valid. Conditional unique indexes also
 preserve alias, current external identity and active custodian relationships.
 These predicates enforce uniqueness; they do not reject unknown kind or state
-values. Go validators own those values. Physical storage operations are read-only
+values. Go validators own those values. Multi-store operations are read-only
 inputs to validation here; their active-evacuation uniqueness rule remains part
 of the future write port rather than a closed state list in the new schema.
 
@@ -847,6 +857,12 @@ A failed replacement leaves the old heads and waiting job intact. Successful
 replacement removes stale chunk-embedding heads and failures, and collects
 superseded lexical generations only when no root or reader still needs them.
 
+Lexical generations share an append-only stream of build membership. Each
+generation names the ordinals up to its fixed cutoff. Collection trims only the
+stream tail above every remaining generation's cutoff. The stored chain digest
+is vault-local; metadata export computes portable digests from the generation's
+members.
+
 Build reads, active rendition views and exact text resolution use repeatable-read
 snapshots. A purge committed during a read affects the next request. PostgreSQL
 stores the relational lexical projection and manifests; SQLite additionally
@@ -858,6 +874,39 @@ resume, revocation, lease theft, staged-build reuse, failed publication and
 concurrent purge. It does not qualify photo-description or face-detection jobs,
 media producers, extraction workers, or public PostgreSQL vault opening.
 The email and page suites below qualify their own native producers.
+
+#### Plain-text extraction and publication
+
+The shared Store discovers selected text versions, deduplicates queued blobs,
+returns bounded ready batches, and defers retryable work behind ready items.
+Terminal failures retire their queue entry. Startup seeding queues missing or
+older results without reviving completed failures or purge-suppressed versions.
+
+`RecordExtraction` keeps the extractor version, exact UTF-8 text, attempt count
+and outcome together. It rejects version downgrades and same-version failures
+that would overwrite a success. The existing `MigrateLegacyPlainText` operation
+publishes retained plain-text results as immutable rendition builds and version
+attachments, with a complete lexical generation in the same transaction. Once a
+lexical head exists, `RecordExtraction` publishes only the affected blob's results
+inside its writer transaction. The result cache and publication commit together;
+a failure rolls both back and leaves the existing work queued for retry.
+Identical results reuse existing immutable records. Changed same-version text
+replaces the serving head and retires the queue entry. Processing changes identify
+newly served live versions and changed results.
+
+Purge suppression applies both to late worker results and subsequent startup
+seeding. A shared blob can still serve an unsuppressed version. PostgreSQL uses
+an identity column for the extraction cache's local row ID; it is not a document
+or audit identity. Document IDs continue to use the transactional counter.
+
+The `text-extraction` backend suite exercises these operations through native
+writes, including terminal outcomes, scheduling, exact Unicode and empty text,
+replay, same-version replacements, purge scopes and atomic rollback. PostgreSQL
+indexes lexical generation membership by build ID for publication cleanup,
+matching SQLite. SQLite alone
+maintains its legacy FTS5 cache. PostgreSQL retains the text and rendition lexical
+catalogs; ranked search, complete metadata transfer and public vault opening remain
+unqualified.
 
 #### Document embedding jobs and publication
 
@@ -990,6 +1039,36 @@ The `media` backend suite exercises native retention, immutable-identity
 conflicts, replay, visibility, consent, continuations, late-write rollback and
 concurrent reads. It does not qualify remote network acquisition, media provider
 execution, metadata recovery or public PostgreSQL vault opening.
+
+#### Grouped photo import
+
+Native photo import groups RAW files, JPEGs and sidecars in one writer
+transaction. Repeated imports preserve node and member identities; changed
+source bytes create a new version unless create-only import was requested.
+Separate source owners keep their own bytes. Ambiguous groups remain unpaired
+and return the same explanation on both backends. Operator pairing, hidden and
+excluded state survive later imports. Audited vaults continue to refuse grouped
+import through the existing mutation boundary.
+
+A retained XMP sync receipt lets import recognize accepted outside bytes without
+replacing the newer published sidecar. SQLite keeps its indexed source-path
+lookup and exact receipt-index expression. PostgreSQL uses its JSON expressions
+and receipt indexes. Size matching keeps SQLite's released expression index;
+PostgreSQL indexes the integer size directly. Browser folder continuation uses
+current eligible members; hidden, excluded, trashed and sidecar files cannot
+supply another folder's identity.
+
+PostgreSQL refreshes source claims, timeline rows and export work when membership
+changes, inside the same transaction. SQLite retains its released triggers. A
+failed receipt write rolls back the documents, memberships, derived rows and node
+allocation together. Photo import's progress, cancellation and finalization use
+the shared operation records under writer admission. Expired receipts stay until
+pending physical cleanup is gone; this does not qualify multi-store operations.
+
+The `photo-import` suite covers these native Store workflows. Retained XMP
+receipts used by import are produced by SQLite's publisher; XMP publication,
+authored editing, people/review workflows and public PostgreSQL vault opening
+remain separate qualification boundaries.
 
 #### Recoverable deletion
 
@@ -1160,7 +1239,7 @@ Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
 They force a late invalidation failure to verify rollback, and commit concurrent
 writes during history reads to verify snapshot consistency. These capabilities
-do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
+do not expose a public PostgreSQL vault or qualify XMP
 sidecar writing, portable metadata import, collection snapshots, reporting,
 backup or restore.
 
@@ -1252,9 +1331,10 @@ content writes; a public PostgreSQL vault remains unavailable.
 Node and scope audit history also use shared SQL and read-only `REPEATABLE READ`
 transactions. Membership, node revision, path, scope head, event count and page
 come from one snapshot, even when another operation commits between their
-reads. Canonical event projection and cursor ordering remain in the existing
-Go implementation. The runtime role needs only `SELECT` on the audit catalogs
-for these reads. Enrollment additionally needs the narrow write grants above.
+reads. SQL orders and pages events through the scope and node indexes; Go
+projects the returned canonical events. The runtime role needs only `SELECT`
+on the audit catalogs for these reads. Enrollment additionally needs the narrow
+write grants above.
 
 Audit-history qualification creates directories, enables audit and renames nodes
 through normal SQLite operations, then validates that history before copying
@@ -1299,7 +1379,8 @@ the PostgreSQL insertion test checks the same projections. It uses a caller-owne
 transaction and rolls it back: inserting records alone does not publish complete
 authority or membership projections. Canonical records remain append-only:
 PostgreSQL runtime has `SELECT` and `INSERT` on `audit_records`, with no `UPDATE`
-or `DELETE` on that table.
+or `DELETE` on that table. Event rows are inserted with their canonical mutation
+and carry its operation sequence.
 
 Existing audit authority and scope heads also advance through shared Go writers.
 They reject nonpositive counters and require the allocation entry count to equal

@@ -224,3 +224,62 @@ func TestBatchMoveRejectsDuplicateSourceAndMissingFinalParent(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestBatchMoveRejectsCollisionThroughMovedParent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	a, err := s.Mkdir(ctx, s.RootID(), "a")
+	require.NoError(t, err)
+	child, err := s.CreateFile(ctx, a.ID, "c", fakeHash("child"), 5, "text/plain")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, s.RootID(), "file", fakeHash("file"), 4, "text/plain")
+	require.NoError(t, err)
+
+	for _, destination := range []string{"/b", "/missing/b"} {
+		_, err = s.BatchMove(ctx, []BatchMoveRequest{
+			{SourcePath: "/a", DestinationPath: destination},
+			{SourcePath: "/file", DestinationPath: destination + "/c"},
+		})
+		require.ErrorIs(t, err, ErrExists, "collisions precede missing-parent errors")
+	}
+	unchanged, err := s.NodeByPath(ctx, "/a/c")
+	require.NoError(t, err)
+	assert.Equal(t, child, unchanged)
+	unchanged, err = s.NodeByPath(ctx, "/file")
+	require.NoError(t, err)
+	assert.Equal(t, file, unchanged)
+}
+
+func TestBatchMoveRejectsInvalidNodes(t *testing.T) {
+	t.Parallel()
+	t.Run("file parent", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		_, err := s.CreateFile(ctx, s.RootID(), "file", fakeHash("file"), 4, "text/plain")
+		require.NoError(t, err)
+		other, err := s.CreateFile(ctx, s.RootID(), "other", fakeHash("other"), 5, "text/plain")
+		require.NoError(t, err)
+		_, err = s.BatchMove(ctx, []BatchMoveRequest{{SourcePath: "/other", DestinationPath: "/file/other"}})
+		require.ErrorIs(t, err, ErrNotDir)
+		unchanged, err := s.NodeByPath(ctx, "/other")
+		require.NoError(t, err)
+		assert.Equal(t, other, unchanged)
+	})
+
+	t.Run("trashed source", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		file, err := s.CreateFile(ctx, s.RootID(), "file", fakeHash("file"), 4, "text/plain")
+		require.NoError(t, err)
+		_, _, err = s.Trash(ctx, file.ID, file.Revision)
+		require.NoError(t, err)
+		file, err = s.NodeByID(ctx, file.ID)
+		require.NoError(t, err)
+		_, err = s.BatchMove(ctx, []BatchMoveRequest{{NodeID: file.ID, IfRevision: file.Revision, DestinationPath: "/restored"}})
+		require.ErrorIs(t, err, ErrNotFound)
+		unchanged, err := s.NodeByID(ctx, file.ID)
+		require.NoError(t, err)
+		assert.Equal(t, file, unchanged)
+	})
+}
