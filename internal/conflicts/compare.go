@@ -67,7 +67,8 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 // Rate conversion is deliberately unsupported; the full denominator remains
 // part of the comparison signature.
 var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:["'’”»]+\s*)?(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
-var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
+var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s*(?:(?:\(|\[|\{|["'‘“«])\s*)*([\p{L}\p{Nd}]+)\b`)
+var rateNumeratorClosingRE = regexp.MustCompile(`^\s*[)\]}”’»]+\s*`)
 var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:and\s+)?(?:[(\["'‘’“”«»]\s*)*(?:a|an)\b\s*(?:[(\["'‘’“”«»]\s*)*[\p{L}\p{Nd}]+\b`)
 var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s*(?:["'’”»]+\s*)?(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
 var rateDenominatorExtensionRE = regexp.MustCompile(`(?i)^\s+(?:[\(\[\{\"'‘’“”«»]\s*)?(?:of|for|in|to|from|by|with|on|at|and|or)\s+(?:(?:a|an|the)\s+)?[\p{L}\p{Nd}]+\b`)
@@ -166,11 +167,15 @@ func makeSubject(f Figure, figures []Figure) subject {
 				if other.Kind == durationKind && strings.HasPrefix(text[suffixStart:], ".") && durationAbbrevRE.MatchString(text[:suffixStart+1]) {
 					suffixStart++
 				}
-				if start == ownStart && end == ownEnd && wrappedArticleRateRE.MatchString(text[suffixStart:]) {
+				rateStart := suffixStart
+				if closing := rateNumeratorClosingRE.FindStringIndex(text[rateStart:]); closing != nil && closing[0] == 0 {
+					rateStart += closing[1]
+				}
+				if start == ownStart && end == ownEnd && wrappedArticleRateRE.MatchString(text[rateStart:]) {
 					invalidRate = true
 				}
-				if match := rateDenominatorRE.FindStringSubmatchIndex(text[suffixStart:]); match != nil {
-					a, b := suffixStart+match[2], suffixStart+match[3]
+				if match := rateDenominatorRE.FindStringSubmatchIndex(text[rateStart:]); match != nil {
+					a, b := rateStart+match[2], rateStart+match[3]
 					parts := strings.Fields(text[a:b])
 					noun := parts[len(parts)-1]
 					first := utfFirst(noun)
@@ -180,10 +185,10 @@ func makeSubject(f Figure, figures []Figure) subject {
 						invalidRate = true
 						continue
 					}
-					rates = append(rates, [2]int{suffixStart + match[0], suffixStart + match[1]})
+					rates = append(rates, [2]int{rateStart + match[0], rateStart + match[1]})
 					if start == ownStart && end == ownEnd {
 						if match[4] >= 0 {
-							numberStart, numberEnd := suffixStart+match[4], suffixStart+match[5]
+							numberStart, numberEnd := rateStart+match[4], rateStart+match[5]
 							first, last, ok := numbers(text[numberStart:numberEnd], 1)
 							if !ok {
 								invalidRate = true
@@ -205,14 +210,14 @@ func makeSubject(f Figure, figures []Figure) subject {
 					if ownStart >= a && ownEnd <= b {
 						s.isDenominator = true
 					}
-					continuation := text[suffixStart+match[1]:]
+					continuation := text[rateStart+match[1]:]
 					if strings.HasPrefix(continuation, ".") && durationAbbrevRE.MatchString(text[a:b]+".") {
 						fields := strings.Fields(continuation[1:])
 						if len(fields) > 1 && (fields[0] == "a" || fields[0] == "an") {
 							continuation = continuation[1:]
 						}
 					}
-					acceptedDateBound := acceptedRateDateBound(text, suffixStart+match[1], f)
+					acceptedDateBound := acceptedRateDateBound(text, rateStart+match[1], f)
 					unsupportedExtension := rateDenominatorExtensionRE.MatchString(continuation) && !acceptedDateBound
 					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) || unsupportedExtension {
 						invalidRate = true
