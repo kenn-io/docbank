@@ -1,12 +1,26 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAuditHistoryListingErrorsIdentifyTarget(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedInitialAuditAuthority(t, s, s.RootID())
+	_, err := s.db.ExecContext(t.Context(), `UPDATE audit_records SET record_json='invalid' WHERE kind='event'`)
+	require.NoError(t, err)
+
+	_, err = s.AuditHistory(t.Context(), s.RootID(), 1, "")
+	require.ErrorContains(t, err, fmt.Sprintf("listing audit history for node %d", s.RootID()))
+	_, err = s.AuditScopeHistory(t.Context(), testAuditScopeID, 1, "")
+	require.ErrorContains(t, err, "listing audit scope "+testAuditScopeID+" history")
+}
 
 func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 	t.Parallel()
@@ -62,6 +76,27 @@ func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 	assert.Equal(t, "content_create", second.Items[0].Kind)
 	assert.Equal(t, "audit_inherit", second.Items[1].Kind)
 	assert.Empty(t, second.NextCursor)
+
+	all, err := s.AuditHistory(t.Context(), file.ID, 500, "")
+	require.NoError(t, err)
+	var paged []AuditEvent
+	cursor := ""
+	for i, event := range all.Items {
+		page, err := s.AuditHistory(t.Context(), file.ID, 1, cursor)
+		require.NoError(t, err)
+		require.Equal(t, all.Total, page.Total)
+		require.Len(t, page.Items, 1)
+		paged = append(paged, page.Items...)
+		wantCursor := ""
+		if i+1 < len(all.Items) {
+			wantCursor = encodeAuditHistoryCursor(auditHistoryCursor{
+				nodeID: file.ID, sequence: event.OperationSequence, ordinal: event.Ordinal, eventID: event.ID,
+			})
+		}
+		require.Equal(t, wantCursor, page.NextCursor)
+		cursor = page.NextCursor
+	}
+	require.Equal(t, all.Items, paged)
 
 	byPath, err := s.AuditHistoryPath(
 		t.Context(), "/Taxes/2027/return.txt", 10, "",
@@ -168,6 +203,27 @@ func TestAuditScopeHistoryPagesEveryMemberEvent(t *testing.T) {
 					event.ID < boundary.ID),
 		)
 	}
+
+	all, err := s.AuditScopeHistory(t.Context(), scopeID, 500, "")
+	require.NoError(t, err)
+	var paged []AuditEvent
+	cursor := ""
+	for i, event := range all.Items {
+		page, err := s.AuditScopeHistory(t.Context(), scopeID, 1, cursor)
+		require.NoError(t, err)
+		require.Equal(t, all.Total, page.Total)
+		require.Len(t, page.Items, 1)
+		paged = append(paged, page.Items...)
+		wantCursor := ""
+		if i+1 < len(all.Items) {
+			wantCursor = encodeAuditScopeHistoryCursor(auditScopeHistoryCursor{
+				scopeID: scopeID, sequence: event.OperationSequence, ordinal: event.Ordinal, eventID: event.ID,
+			})
+		}
+		require.Equal(t, wantCursor, page.NextCursor)
+		cursor = page.NextCursor
+	}
+	require.Equal(t, all.Items, paged)
 
 	otherScope := "11111111-1111-4111-8111-111111111111"
 	_, err = s.AuditScopeHistory(t.Context(), otherScope, 10, "")
@@ -279,4 +335,26 @@ func findAuditHistoryEvent(t *testing.T, events []AuditEvent, kind string) Audit
 	}
 	require.FailNow(t, "audit event not found", "kind=%s", kind)
 	return AuditEvent{}
+}
+
+func TestAuditHistoryPagesUseEventOrderIndexes(t *testing.T) {
+	t.Parallel()
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			for _, tc := range []struct {
+				query, index string
+				args         []any
+			}{
+				{auditScopeHistoryPageSQL, "audit_record_event_scope", []any{testAuditScopeID, 11}},
+				{auditScopeHistoryCursorPageSQL, "audit_record_event_scope", []any{testAuditScopeID, 2, 0, fakeHash("a720"), 11}},
+				{auditNodeHistoryPageSQL, "audit_record_event_node", []any{s.RootID(), 11}},
+				{auditNodeHistoryCursorPageSQL, "audit_record_event_node", []any{s.RootID(), 2, 0, fakeHash("a720"), 11}},
+			} {
+				plan := explainQueryPlan(t, s, tc.query, tc.args...)
+				assert.Contains(t, plan, "USING INDEX "+tc.index)
+				assert.NotContains(t, plan, "TEMP B-TREE")
+			}
+		})
+	}
 }

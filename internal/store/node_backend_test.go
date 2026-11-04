@@ -60,6 +60,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len) ON "+schema+".blob_packs TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(next_attempt_at) ON "+schema+".text_extraction_queue TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".text_searchable_versions TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(extractor_version,status,error,attempts,text,extracted_at) ON "+schema+".extracted_text TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(hidden_at,excluded_at,display_file_id,display_override_file_id,revision,updated_at) ON "+schema+".photo_assets TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_change_receipts TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(asset_id,role,sidecar_of_file_id,source_provenance_identity) ON "+schema+".photo_files TO "+quotedRole+
@@ -84,7 +85,8 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(binding_epoch) ON "+schema+".document_people_state TO "+quotedRole)
 	require.NoError(t, err)
 	_, err = setup.ExecContext(ctx, "GRANT DELETE ON "+schema+".embedding_input_generations,"+schema+".embedding_vector_sets,"+schema+".embedding_vector_spaces,"+schema+".embedding_failures,"+schema+".email_heads,"+schema+".email_part_artifacts,"+schema+".email_generations,"+schema+".email_body_results,"+schema+".rendition_builds,"+schema+".rendition_artifacts,"+schema+".rendition_units,"+schema+".rendition_lexical_segments,"+schema+".rendition_lexical_index,"+schema+".rendition_lexical_heads,"+schema+".rendition_lexical_generations,"+schema+".rendition_lexical_generation_manifests,"+schema+".text_searchable_versions,"+schema+".extracted_text,"+schema+".text_extraction_queue TO "+quotedRole+
-		"; GRANT INSERT ON "+schema+".derivative_blob_purge_pending,"+schema+".rendition_lexical_generations,"+schema+".rendition_lexical_generation_builds,"+schema+".rendition_lexical_generation_manifests,"+schema+".rendition_lexical_index TO "+quotedRole+
+		"; GRANT DELETE ON "+schema+".rendition_lexical_stream_builds TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".derivative_blob_purge_pending,"+schema+".rendition_lexical_generations,"+schema+".rendition_lexical_stream_builds,"+schema+".rendition_lexical_generation_manifests,"+schema+".rendition_lexical_index TO "+quotedRole+
 		"; GRANT UPDATE(generation_id) ON "+schema+".rendition_lexical_heads TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(purged_at,active,superseded_at,superseding_build_id) ON "+schema+".derivative_purge_suppressions TO "+quotedRole)
 	require.NoError(t, err)
@@ -122,6 +124,15 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(state,results_json,failure_code,epoch,token,updated_at) ON "+schema+".page_render_jobs TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(attachment_id,published_at) ON "+schema+".email_heads TO "+quotedRole+
 		"; GRANT DELETE ON "+schema+".email_document_publications TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".media_sources,"+schema+".media_source_versions,"+schema+".media_input_artifacts,"+schema+".media_occurrences,"+schema+".media_operations TO "+quotedRole+
+		"; GRANT UPDATE(source_version_id,visible,revoked_at) ON "+schema+".media_occurrences TO "+quotedRole+
+		"; GRANT UPDATE(receipt_json,updated_at) ON "+schema+".media_operations TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".visual_preview_generations TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(generation_id,published_at) ON "+schema+".visual_preview_heads TO "+quotedRole)
 	require.NoError(t, err)
 
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))

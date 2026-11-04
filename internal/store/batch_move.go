@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 )
@@ -29,14 +28,6 @@ type BatchMoveResult struct {
 	Path     string
 }
 
-type batchMoveNode struct {
-	id       int64
-	parentID *int64
-	name     string
-	kind     string
-	revision int64
-}
-
 type plannedBatchMove struct {
 	requestIndex    int
 	nodeID          int64
@@ -48,7 +39,6 @@ type plannedBatchMove struct {
 }
 
 type batchMovePlan struct {
-	nodes      map[int64]batchMoveNode
 	priorPaths map[int64]string
 	finalPaths map[int64]string
 	moves      []plannedBatchMove
@@ -107,86 +97,99 @@ func (s *Store) BatchMove(ctx context.Context, requests []BatchMoveRequest) ([]B
 func (s *Store) planBatchMove(
 	ctx context.Context, tx *sql.Tx, requests []BatchMoveRequest,
 ) (batchMovePlan, error) {
-	nodes, err := loadBatchMoveTopology(ctx, tx)
+	root, err := nodeByIDTx(ctx, tx, s.rootID)
 	if err != nil {
 		return batchMovePlan{}, err
 	}
-	priorPaths, err := batchMovePaths(nodes)
-	if err != nil {
-		return batchMovePlan{}, err
+	preState := map[string]Node{"/": root}
+	plan := batchMovePlan{
+		priorPaths: make(map[int64]string, len(requests)),
+		finalPaths: make(map[int64]string, len(requests)), recordedAt: nowRFC3339(),
 	}
-	pathIDs := make(map[string]int64, len(priorPaths))
-	for id, path := range priorPaths {
-		pathIDs[path] = id
-	}
-	initialNodes := make(map[int64]batchMoveNode, len(nodes))
-	maps.Copy(initialNodes, nodes)
-	plan := batchMovePlan{nodes: nodes, priorPaths: priorPaths, recordedAt: nowRFC3339()}
-	seen := make(map[int64]bool, len(requests))
+	sources := make(map[int64]Node, len(requests))
+	destinations := make(map[string]Node, len(requests))
+	var byID []int64
 	for index, request := range requests {
-		source, err := resolveBatchMoveSource(request, initialNodes, pathIDs)
+		source, priorPath, err := resolveBatchMoveSource(ctx, tx, request, preState)
 		if err != nil {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, err)
 		}
-		if source.id == s.rootID {
+		if source.ID == s.rootID {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, ErrIsRoot)
 		}
-		if seen[source.id] {
+		if _, ok := sources[source.ID]; ok {
 			return batchMovePlan{}, fmt.Errorf(
-				"batch move item %d repeats node %d: %w", index, source.id, ErrInvalidBatchMove,
+				"batch move item %d repeats node %d: %w", index, source.ID, ErrInvalidBatchMove,
 			)
 		}
-		seen[source.id] = true
 		destinationPath, err := canonicalBatchMoveDestination(request.DestinationPath)
 		if err != nil {
 			return batchMovePlan{}, fmt.Errorf("batch move item %d: %w", index, err)
 		}
-		move := plannedBatchMove{
-			requestIndex: index, nodeID: source.id, oldParentID: *source.parentID,
-			destinationPath: destinationPath,
+		sources[source.ID] = source
+		plan.priorPaths[source.ID] = priorPath
+		plan.finalPaths[source.ID] = destinationPath
+		if priorPath == "" {
+			byID = append(byID, source.ID)
 		}
-		plan.moves = append(plan.moves, move)
+		plan.moves = append(plan.moves, plannedBatchMove{
+			requestIndex: index, nodeID: source.ID, oldParentID: *source.ParentID,
+			destinationPath: destinationPath,
+		})
 	}
-	plannedPaths, finalPathIDs, err := plannedBatchMovePaths(initialNodes, plan.moves)
+	paths, err := s.pathsOf(ctx, tx, byID)
 	if err != nil {
 		return batchMovePlan{}, err
 	}
+	for index, id := range byID {
+		plan.priorPaths[id] = paths[index]
+	}
+	for _, move := range plan.moves {
+		if prior, ok := destinations[move.destinationPath]; ok {
+			return batchMovePlan{}, fmt.Errorf(
+				"batch move nodes %d and %d collide at %q: %w",
+				prior.ID, move.nodeID, move.destinationPath, ErrExists,
+			)
+		}
+		destinations[move.destinationPath] = sources[move.nodeID]
+	}
+	finalState := map[string]Node{"/": root}
+	var parentError error
 	for index := range plan.moves {
 		move := &plan.moves[index]
 		segments := splitPath(move.destinationPath)
 		parentPath := "/" + strings.Join(segments[:len(segments)-1], "/")
-		parentID := finalPathIDs[parentPath]
-		parent, ok := initialNodes[parentID]
-		if !ok {
-			return batchMovePlan{}, fmt.Errorf(
-				"batch move item %d destination parent %q: %w",
-				move.requestIndex, parentPath, ErrNotFound,
-			)
+		parent, err := resolveBatchMovePath(ctx, tx, parentPath, finalState, destinations, sources)
+		if err == nil && parent.Kind != nodeKindDir {
+			err = ErrNotDir
 		}
-		if parent.kind != nodeKindDir {
-			return batchMovePlan{}, fmt.Errorf(
-				"batch move item %d destination parent %q: %w",
-				move.requestIndex, parentPath, ErrNotDir,
-			)
+		if err != nil {
+			if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
+				return batchMovePlan{}, err
+			}
+			if parentError == nil {
+				parentError = fmt.Errorf("batch move item %d destination parent %q: %w",
+					move.requestIndex, parentPath, err)
+			}
+			continue
 		}
-		move.newParentID, move.newName = parentID, segments[len(segments)-1]
-		source := initialNodes[move.nodeID]
-		move.changed = move.oldParentID != move.newParentID || source.name != move.newName
-		if move.changed {
-			updated := nodes[move.nodeID]
-			updated.parentID, updated.name = new(move.newParentID), move.newName
-			nodes[move.nodeID] = updated
+		move.newParentID, move.newName = parent.ID, segments[len(segments)-1]
+		move.changed = move.oldParentID != move.newParentID || sources[move.nodeID].Name != move.newName
+		if !move.changed {
+			// The source already occupies this coordinate, so it cannot collide.
+			continue
+		}
+		existing, err := childByName(ctx, tx, parent.ID, move.newName)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return batchMovePlan{}, err
+		}
+		if _, moving := sources[existing.ID]; err == nil && !moving {
+			return batchMovePlan{}, fmt.Errorf("batch move nodes %d and %d collide at %q: %w",
+				existing.ID, move.nodeID, move.destinationPath, ErrExists)
 		}
 	}
-	if err := validateBatchMoveTopology(nodes); err != nil {
-		return batchMovePlan{}, err
-	}
-	plan.finalPaths, err = batchMovePaths(nodes)
-	if err != nil {
-		return batchMovePlan{}, err
-	}
-	if !maps.Equal(plan.finalPaths, plannedPaths) {
-		return batchMovePlan{}, errors.New("batch move final topology disagrees with exact destinations")
+	if parentError != nil {
+		return batchMovePlan{}, parentError
 	}
 	changed, moved, parents := map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
 	for _, move := range plan.moves {
@@ -202,71 +205,80 @@ func (s *Store) planBatchMove(
 	return plan, nil
 }
 
-func loadBatchMoveTopology(ctx context.Context, tx *sql.Tx) (map[int64]batchMoveNode, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id,parent_id,name,kind,revision FROM nodes WHERE trashed_at IS NULL ORDER BY id`)
+// resolveBatchMovePath resolves final coordinates through requested destinations
+// or live children. Every requested destination has its parent checked separately.
+func resolveBatchMovePath(
+	ctx context.Context, tx *sql.Tx, path string, memo, destinations map[string]Node, sources map[int64]Node,
+) (Node, error) {
+	if node, ok := memo[path]; ok {
+		return node, nil
+	}
+	if node, ok := destinations[path]; ok {
+		memo[path] = node
+		return node, nil
+	}
+	separator := strings.LastIndex(path, "/")
+	parentPath := path[:separator]
+	if parentPath == "" {
+		parentPath = "/"
+	}
+	parent, err := resolveBatchMovePath(ctx, tx, parentPath, memo, destinations, sources)
 	if err != nil {
-		return nil, fmt.Errorf("loading batch move topology: %w", err)
+		return Node{}, err
 	}
-	defer func() { _ = rows.Close() }()
-	nodes := make(map[int64]batchMoveNode)
-	for rows.Next() {
-		var node batchMoveNode
-		var parent sql.NullInt64
-		if err := rows.Scan(&node.id, &parent, &node.name, &node.kind, &node.revision); err != nil {
-			return nil, fmt.Errorf("scanning batch move topology: %w", err)
-		}
-		if parent.Valid {
-			node.parentID = new(parent.Int64)
-		}
-		nodes[node.id] = node
+	if parent.Kind != nodeKindDir {
+		return Node{}, ErrNotFound
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("loading batch move topology: %w", err)
+	node, err := childByName(ctx, tx, parent.ID, path[separator+1:])
+	if err != nil {
+		return Node{}, err
 	}
-	return nodes, nil
+	if _, moving := sources[node.ID]; moving {
+		return Node{}, ErrNotFound
+	}
+	memo[path] = node
+	return node, nil
 }
 
 func resolveBatchMoveSource(
-	request BatchMoveRequest, nodes map[int64]batchMoveNode, pathIDs map[string]int64,
-) (batchMoveNode, error) {
+	ctx context.Context, tx *sql.Tx, request BatchMoveRequest, memo map[string]Node,
+) (Node, string, error) {
 	byPath, byID := request.SourcePath != "", request.NodeID != 0
 	if byPath == byID {
-		return batchMoveNode{}, fmt.Errorf("source must use exactly one of path or node ID: %w", ErrInvalidBatchMove)
+		return Node{}, "", fmt.Errorf("source must use exactly one of path or node ID: %w", ErrInvalidBatchMove)
 	}
-	var id int64
 	if byPath {
 		if !strings.HasPrefix(request.SourcePath, "/") {
-			return batchMoveNode{}, fmt.Errorf("source path must be absolute: %w", ErrInvalidBatchMove)
+			return Node{}, "", fmt.Errorf("source path must be absolute: %w", ErrInvalidBatchMove)
 		}
 		canonical, err := canonicalBatchMovePath(request.SourcePath)
 		if err != nil {
-			return batchMoveNode{}, err
+			return Node{}, "", err
 		}
-		id = pathIDs[canonical]
-		if id == 0 {
-			return batchMoveNode{}, fmt.Errorf("source path %q: %w", request.SourcePath, ErrNotFound)
+		node, err := resolveBatchMovePath(ctx, tx, canonical, memo, nil, nil)
+		if err != nil {
+			return Node{}, "", fmt.Errorf("source path %q: %w", request.SourcePath, err)
 		}
 		if request.IfRevision != 0 {
-			return batchMoveNode{}, fmt.Errorf("path source cannot carry a revision: %w", ErrInvalidBatchMove)
+			return Node{}, "", fmt.Errorf("path source cannot carry a revision: %w", ErrInvalidBatchMove)
 		}
-	} else {
-		if request.NodeID < 1 || request.IfRevision < 1 {
-			return batchMoveNode{}, fmt.Errorf("node source requires positive ID and revision: %w", ErrInvalidBatchMove)
-		}
-		id = request.NodeID
+		return node, canonical, nil
 	}
-	node, ok := nodes[id]
-	if !ok {
-		return batchMoveNode{}, fmt.Errorf("node %d: %w", id, ErrNotFound)
+	if request.NodeID < 1 || request.IfRevision < 1 {
+		return Node{}, "", fmt.Errorf("node source requires positive ID and revision: %w", ErrInvalidBatchMove)
 	}
-	if byID && node.revision != request.IfRevision {
-		return batchMoveNode{}, fmt.Errorf(
-			"node %d at revision %d, expected %d: %w",
-			id, node.revision, request.IfRevision, ErrStaleRevision,
-		)
+	node, err := nodeByIDTx(ctx, tx, request.NodeID)
+	if err != nil {
+		return Node{}, "", err
 	}
-	return node, nil
+	if node.TrashedAt != nil {
+		return Node{}, "", fmt.Errorf("node %d: %w", node.ID, ErrNotFound)
+	}
+	if node.Revision != request.IfRevision {
+		return Node{}, "", fmt.Errorf("node %d at revision %d, expected %d: %w",
+			node.ID, node.Revision, request.IfRevision, ErrStaleRevision)
+	}
+	return node, "", nil
 }
 
 func canonicalBatchMoveDestination(destination string) (string, error) {
@@ -283,59 +295,6 @@ func canonicalBatchMoveDestination(destination string) (string, error) {
 	return canonical, nil
 }
 
-func plannedBatchMovePaths(
-	nodes map[int64]batchMoveNode, moves []plannedBatchMove,
-) (map[int64]string, map[string]int64, error) {
-	destinations := make(map[int64]string, len(moves))
-	for _, move := range moves {
-		destinations[move.nodeID] = move.destinationPath
-	}
-	paths := make(map[int64]string, len(nodes))
-	var pathFor func(int64, map[int64]bool) (string, error)
-	pathFor = func(id int64, visiting map[int64]bool) (string, error) {
-		if path, ok := paths[id]; ok {
-			return path, nil
-		}
-		if destination, ok := destinations[id]; ok {
-			paths[id] = destination
-			return destination, nil
-		}
-		node, ok := nodes[id]
-		if !ok {
-			return "", fmt.Errorf("batch move path node %d: %w", id, ErrNotFound)
-		}
-		if visiting[id] {
-			return "", ErrCycle
-		}
-		visiting[id] = true
-		defer delete(visiting, id)
-		if node.parentID == nil {
-			paths[id] = "/"
-			return "/", nil
-		}
-		parent, err := pathFor(*node.parentID, visiting)
-		if err != nil {
-			return "", err
-		}
-		paths[id] = strings.TrimSuffix(parent, "/") + "/" + node.name
-		return paths[id], nil
-	}
-	pathIDs := make(map[string]int64, len(nodes))
-	for id := range nodes {
-		path, err := pathFor(id, make(map[int64]bool))
-		if err != nil {
-			return nil, nil, err
-		}
-		if prior := pathIDs[path]; prior != 0 && prior != id {
-			return nil, nil, fmt.Errorf(
-				"batch move nodes %d and %d collide at %q: %w", prior, id, path, ErrExists,
-			)
-		}
-		pathIDs[path] = id
-	}
-	return paths, pathIDs, nil
-}
-
 func canonicalBatchMovePath(value string) (string, error) {
 	segments := splitPath(value)
 	for index, segment := range segments {
@@ -348,84 +307,37 @@ func canonicalBatchMovePath(value string) (string, error) {
 	return "/" + strings.Join(segments, "/"), nil
 }
 
-func validateBatchMoveTopology(nodes map[int64]batchMoveNode) error {
-	siblings := make(map[string]int64, len(nodes))
-	for id, node := range nodes {
-		if node.parentID == nil {
-			continue
-		}
-		parent, ok := nodes[*node.parentID]
-		if !ok {
-			return fmt.Errorf("batch move parent %d: %w", *node.parentID, ErrNotFound)
-		}
-		if parent.kind != nodeKindDir {
-			return fmt.Errorf("batch move parent %d: %w", *node.parentID, ErrNotDir)
-		}
-		key := fmt.Sprintf("%d\x00%s", *node.parentID, node.name)
-		if prior := siblings[key]; prior != 0 && prior != id {
-			return fmt.Errorf("batch move nodes %d and %d collide at %q: %w", prior, id, node.name, ErrExists)
-		}
-		siblings[key] = id
-	}
-	states := make(map[int64]uint8, len(nodes))
-	var visit func(int64) error
-	visit = func(id int64) error {
-		switch states[id] {
-		case 1:
-			return fmt.Errorf("batch move at node %d: %w", id, ErrCycle)
-		case 2:
-			return nil
-		}
-		states[id] = 1
-		if parent := nodes[id].parentID; parent != nil {
-			if err := visit(*parent); err != nil {
-				return err
-			}
-		}
-		states[id] = 2
-		return nil
-	}
-	for id := range nodes {
-		if err := visit(id); err != nil {
+func (s *Store) addBatchMoveSubtreePaths(ctx context.Context, tx *sql.Tx, plan *batchMovePlan) error {
+	ids := make(map[int64]bool)
+	for _, id := range plan.movedIDs {
+		subtree, err := liveSubtreeIDsTx(ctx, tx, id)
+		if err != nil {
 			return err
+		}
+		for _, child := range subtree {
+			ids[child] = true
+		}
+	}
+	subtreeIDs := sortedBatchMoveIDs(ids)
+	paths, err := s.pathsOf(ctx, tx, subtreeIDs)
+	if err != nil {
+		return err
+	}
+	destinations := make(map[string]string, len(plan.moves))
+	for _, move := range plan.moves {
+		destinations[plan.priorPaths[move.nodeID]] = move.destinationPath
+	}
+	for index, id := range subtreeIDs {
+		priorPath := paths[index]
+		for ancestor := priorPath; ancestor != ""; ancestor = ancestor[:strings.LastIndex(ancestor, "/")] {
+			if destination, ok := destinations[ancestor]; ok {
+				plan.priorPaths[id] = priorPath
+				plan.finalPaths[id] = destination + strings.TrimPrefix(priorPath, ancestor)
+				break
+			}
 		}
 	}
 	return nil
-}
-
-func batchMovePaths(nodes map[int64]batchMoveNode) (map[int64]string, error) {
-	paths := make(map[int64]string, len(nodes))
-	var pathFor func(int64, map[int64]bool) (string, error)
-	pathFor = func(id int64, visiting map[int64]bool) (string, error) {
-		if path, ok := paths[id]; ok {
-			return path, nil
-		}
-		node, ok := nodes[id]
-		if !ok {
-			return "", fmt.Errorf("batch move path node %d: %w", id, ErrNotFound)
-		}
-		if visiting[id] {
-			return "", ErrCycle
-		}
-		visiting[id] = true
-		defer delete(visiting, id)
-		if node.parentID == nil {
-			paths[id] = "/"
-			return "/", nil
-		}
-		parent, err := pathFor(*node.parentID, visiting)
-		if err != nil {
-			return "", err
-		}
-		paths[id] = strings.TrimSuffix(parent, "/") + "/" + node.name
-		return paths[id], nil
-	}
-	for id := range nodes {
-		if _, err := pathFor(id, make(map[int64]bool)); err != nil {
-			return nil, err
-		}
-	}
-	return paths, nil
 }
 
 func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePlan) error {

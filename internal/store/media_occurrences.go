@@ -46,7 +46,7 @@ func (s *Store) RecordMediaOccurrenceRevocation(
 	// The source binding is immutable. Resolve it for the operation receipt,
 	// then check the caller's revision inside the revocation transaction.
 	err := s.db.QueryRowContext(ctx, `SELECT source_id FROM media_occurrences
-		WHERE occurrence_id=? AND caller_principal=?`, occurrenceID, op.Principal).Scan(&op.SourceID)
+		WHERE occurrence_id=$1 AND caller_principal=$2`, occurrenceID, op.Principal).Scan(&op.SourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaPublicationReceipt{}, ErrNotFound
 	}
@@ -56,7 +56,7 @@ func (s *Store) RecordMediaOccurrenceRevocation(
 	receiptRaw, err := s.withMediaOperation(ctx, op, func(tx *sql.Tx) (string, error) {
 		var revision string
 		err := tx.QueryRowContext(ctx, `SELECT caller_revision FROM media_occurrences
-			WHERE occurrence_id=? AND caller_principal=?`, occurrenceID, op.Principal).Scan(&revision)
+			WHERE occurrence_id=$1 AND caller_principal=$2`, occurrenceID, op.Principal).Scan(&revision)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
 		}
@@ -102,10 +102,10 @@ func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in Med
 			occurrence_id,source_id,source_version_id,caller_principal,caller_occurrence_ref,
 			caller_revision,caller_filename,caller_person_ref,speaker_label,message_json,
 			visible,first_seen_at,revoked_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,NULL)`, in.ID, in.SourceID, nullableMediaID(in.SourceVersionID),
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,NULL)`, in.ID, in.SourceID, nullableMediaID(in.SourceVersionID),
 		in.Principal, in.Ref, in.Revision, in.Filename, in.PersonRef, in.SpeakerLabel,
 		in.MessageJSON, nowRFC3339()); err != nil {
-		if s.driver.IsUniqueViolation(err) {
+		if s.isUniqueViolation(err) {
 			return ErrMediaOccurrenceConflict
 		}
 		return fmt.Errorf("declaring media occurrence: %w", err)
@@ -116,21 +116,21 @@ func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in Med
 func revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, principal, id string) error {
 	var visible int
 	if err := tx.QueryRowContext(ctx, `SELECT visible FROM media_occurrences
-			WHERE occurrence_id=? AND caller_principal=?`, id, principal).Scan(&visible); err != nil {
+			WHERE occurrence_id=$1 AND caller_principal=$2`, id, principal).Scan(&visible); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
 	if visible != 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET visible=0,revoked_at=?
-				WHERE occurrence_id=? AND caller_principal=?`, nowRFC3339(), id, principal); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET visible=0,revoked_at=$1
+				WHERE occurrence_id=$2 AND caller_principal=$3`, nowRFC3339(), id, principal); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads WHERE attachment_id IN (
 			SELECT a.attachment_id FROM rendition_attachments a
 			JOIN rendition_jobs j ON j.job_id=a.build_id
-			JOIN media_input_artifacts i ON i.occurrence_id=?
+			JOIN media_input_artifacts i ON i.occurrence_id=$1
 			WHERE j.execution_identity_json LIKE '%"input_binding":"' || i.input_id || '"%'
 		)`, id); err != nil {
 			return fmt.Errorf("revoking input-bound rendition heads: %w", err)
@@ -179,7 +179,7 @@ func validateBoundedMediaText(name, value string, maxBytes int, allowEmpty bool)
 func validateMediaOccurrenceSourceTx(ctx context.Context, tx *sql.Tx, sourceID, sourceVersionID string) error {
 	var found string
 	if sourceVersionID == "" {
-		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=?`, sourceID).Scan(&found); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=$1`, sourceID).Scan(&found); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -188,7 +188,7 @@ func validateMediaOccurrenceSourceTx(ctx context.Context, tx *sql.Tx, sourceID, 
 		return nil
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_source_versions
-		WHERE source_version_id=?`, sourceVersionID).Scan(&found); err != nil {
+		WHERE source_version_id=$1`, sourceVersionID).Scan(&found); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -208,7 +208,7 @@ func mediaOccurrenceByRevisionTx(
 	err := tx.QueryRowContext(ctx, `SELECT occurrence_id,source_id,source_version_id,
 		caller_principal,caller_occurrence_ref,caller_revision,caller_filename,
 		caller_person_ref,speaker_label,message_json FROM media_occurrences
-		WHERE caller_principal=? AND caller_occurrence_ref=? AND caller_revision=?`,
+		WHERE caller_principal=$1 AND caller_occurrence_ref=$2 AND caller_revision=$3`,
 		principal, reference, revision).Scan(&found.ID, &found.SourceID, &sourceVersion,
 		&found.Principal, &found.Ref, &found.Revision, &found.Filename, &found.PersonRef,
 		&found.SpeakerLabel, &found.MessageJSON)

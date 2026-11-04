@@ -10,6 +10,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// BenchmarkTrashEmptyVaultSize grows the vault with 10% of its folders trashed.
+// Synthetic catalog creation is excluded from the timer.
+func BenchmarkTrashEmptyVaultSize(b *testing.B) {
+	for _, nodes := range []int{1000, 4000, 16000} {
+		b.Run(fmt.Sprintf("nodes=%d", nodes), func(b *testing.B) {
+			ctx := b.Context()
+			s := newTestStore(b)
+			const stamp = "2026-01-01T00:00:00Z"
+			trashed := nodes / 10
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				for i := range nodes - trashed {
+					if _, err := s.mkdirTx(ctx, tx, s.RootID(), fmt.Sprintf("live-%05d", i), stamp); err != nil {
+						return err
+					}
+				}
+				return nil
+			}))
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					for i := range trashed {
+						node, err := s.mkdirTx(ctx, tx, s.RootID(), fmt.Sprintf("trash-%05d", i), stamp)
+						if err != nil {
+							return err
+						}
+						if err := s.trashNodeTx(ctx, tx, node, stamp); err != nil {
+							return err
+						}
+					}
+					return nil
+				}))
+				b.StartTimer()
+				result, err := s.TrashEmpty(ctx, 0, true)
+				if err != nil || result.Candidates != int64(trashed) || result.Deleted != int64(trashed) {
+					b.Fatalf("candidates=%d deleted=%d, want %d, err=%v", result.Candidates, result.Deleted, trashed, err)
+				}
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*trashed), "ns/node")
+		})
+	}
+}
+
 // BenchmarkTrashedRootsPage includes the count, page, and read transaction.
 // Synthetic files and photo groups are created outside the timer.
 func BenchmarkTrashedRootsPage(b *testing.B) {

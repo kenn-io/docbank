@@ -311,7 +311,7 @@ var postgresEnrollmentCatalogs = []string{
 	"rendition_artifacts",
 	"rendition_attachments",
 	"rendition_job_waiters",
-	"rendition_lexical_generation_builds",
+	"rendition_lexical_stream_builds",
 	"rendition_lexical_index",
 	"rendition_units",
 	"source_metadata_heads",

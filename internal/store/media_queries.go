@@ -31,24 +31,34 @@ func (s *Store) MediaSources(
 	if limit < 1 || limit > 250 {
 		return nil, 0, false, errors.New("invalid media source page")
 	}
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_id) FROM media_occurrences
-		WHERE caller_principal=? AND visible=1`, principal).Scan(&total); err != nil {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
 		return nil, 0, false, err
 	}
-	rows, err := s.db.QueryContext(ctx, `WITH page AS MATERIALIZED (
+	defer func() { _ = tx.Rollback() }()
+	// SQLite's CROSS JOIN keeps the materialized source page as the outer loop.
+	join := "CROSS JOIN"
+	if s.postgresSchema != "" {
+		join = "JOIN"
+	}
+	var total int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_id) FROM media_occurrences
+		WHERE caller_principal=$1 AND visible=1`, principal).Scan(&total); err != nil {
+		return nil, 0, false, err
+	}
+	rows, err := tx.QueryContext(ctx, `WITH page AS MATERIALIZED (
 		SELECT DISTINCT source_id FROM media_occurrences
-		WHERE caller_principal=? AND visible=1 AND source_id>?
-		ORDER BY source_id LIMIT ?
+		WHERE caller_principal=$1 AND visible=1 AND source_id>$2
+		ORDER BY source_id LIMIT $3
 	) SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
 		COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json
-		FROM page CROSS JOIN media_occurrences o ON o.occurrence_id=(
+		FROM page `+join+` media_occurrences o ON o.occurrence_id=(
 			SELECT x.occurrence_id FROM media_occurrences x
-			WHERE x.caller_principal=? AND x.visible=1 AND x.source_id=page.source_id
+			WHERE x.caller_principal=$1 AND x.visible=1 AND x.source_id=page.source_id
 			ORDER BY x.first_seen_at DESC,x.occurrence_id DESC LIMIT 1)
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		ORDER BY o.source_id`, principal, after, limit+1, principal)
+		ORDER BY o.source_id`, principal, after, limit+1)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -69,7 +79,7 @@ func (s *Store) MediaSources(
 	for _, item := range result {
 		items[MediaSourceVersionKey{item.SourceID, item.SourceVersionID}] = item
 	}
-	if err := s.mediaSourceReceipts(ctx, s.db, principal, items, false); err != nil {
+	if err := s.mediaSourceReceipts(ctx, tx, principal, items, false); err != nil {
 		return nil, 0, false, err
 	}
 	for i, item := range result {
@@ -79,7 +89,7 @@ func (s *Store) MediaSources(
 			return nil, 0, false, ErrNotFound
 		}
 	}
-	return result[:min(len(result), limit)], total, len(result) > limit, nil
+	return result[:min(len(result), limit)], total, len(result) > limit, tx.Commit()
 }
 
 func (s *Store) MediaSource(
@@ -131,11 +141,12 @@ func (s *Store) MediaSourceVersions(
 	if err != nil {
 		return nil, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	rows, err := tx.QueryContext(ctx, `WITH visible AS (
 		SELECT o.source_id,s.kind,o.source_version_id,COALESCE(v.content_version_id,''),
 		o.occurrence_id,o.caller_filename,o.message_json,
@@ -143,9 +154,9 @@ func (s *Store) MediaSourceVersions(
 			ORDER BY o.first_seen_at DESC,o.occurrence_id DESC) position
 		FROM media_occurrences o JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		WHERE o.caller_principal=? AND o.visible=1 AND (o.source_id,o.source_version_id) IN
-		(SELECT json_extract(value,'$.source_id'),json_extract(value,'$.source_version_id')
-			FROM json_each(?)))
+		WHERE o.caller_principal=$1 AND o.visible=1 AND (o.source_id,o.source_version_id) IN
+		(SELECT `+d.text("value", "source_id")+`,`+d.text("value", "source_version_id")+`
+			FROM `+d.arrayValues("$2")+`))
 		SELECT * FROM visible WHERE position=1`, principal, string(encoded))
 	if err != nil {
 		return nil, err
@@ -187,32 +198,37 @@ func (s *Store) mediaSourceReceipts(
 		return err
 	}
 	// Start from the requested revisions so history lookups use both index keys.
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	join := "CROSS JOIN"
+	if d.postgres {
+		join = "JOIN"
+	}
 	rows, err := query.QueryContext(ctx, `WITH requested AS MATERIALIZED (
-  SELECT json_extract(value,'$.source_id') source_id,
-   json_extract(value,'$.source_version_id') source_version_id FROM json_each(?)
+  SELECT `+d.text("value", "source_id")+` source_id,
+   `+d.text("value", "source_version_id")+` source_version_id FROM `+d.arrayValues("$1")+`
  ), retention AS (
   SELECT r.source_id,r.source_version_id,o.receipt_json,
    ROW_NUMBER() OVER (PARTITION BY r.source_id,r.source_version_id ORDER BY
-    CASE WHEN ? AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
+    CASE WHEN $2 AND `+d.text("o.receipt_json", "source_version_id")+`=r.source_version_id
      THEN 0 ELSE 1 END,
     o.updated_at DESC,o.operation_id DESC) selection_rank
-  FROM requested r CROSS JOIN media_operations o ON o.source_id=r.source_id
-  WHERE o.principal=? AND o.verb IN ('submit_supplied_media','submit_remote_recording')
-   AND (?=0 OR json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
-    OR COALESCE(json_extract(o.receipt_json,'$.source_version_id'),'')='')
+  FROM requested r `+join+` media_operations o ON o.source_id=r.source_id
+  WHERE o.principal=$3 AND o.verb IN ('submit_supplied_media','submit_remote_recording')
+   AND (NOT $2 OR `+d.text("o.receipt_json", "source_version_id")+`=r.source_version_id
+    OR COALESCE(`+d.text("o.receipt_json", "source_version_id")+`,'')='')
  ), receipts AS (
   SELECT source_id,source_version_id,receipt_json,0 processing,'' created_at,'' operation_id
   FROM retention WHERE selection_rank=1
   UNION ALL
   SELECT r.source_id,r.source_version_id,o.receipt_json,1,o.created_at,o.operation_id
-  FROM requested r CROSS JOIN media_operations o ON o.source_id=r.source_id
-  WHERE o.principal=? AND r.source_version_id<>''
+  FROM requested r `+join+` media_operations o ON o.source_id=r.source_id
+  WHERE o.principal=$3 AND r.source_version_id<>''
    AND o.verb IN ('submit_supplied_media','retry_media')
    AND o.receipt_json LIKE '%"processing_profile"%'
-   AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
+   AND `+d.text("o.receipt_json", "source_version_id")+`=r.source_version_id
  ) SELECT source_id,source_version_id,receipt_json,processing FROM receipts
  ORDER BY processing,created_at DESC,operation_id DESC`,
-		string(encoded), exactVersion, principal, exactVersion, principal)
+		string(encoded), exactVersion, principal)
 	if err != nil {
 		return err
 	}
@@ -252,16 +268,21 @@ func (s *Store) mediaSourceReceipts(
 func (s *Store) mediaSourceProjection(
 	ctx context.Context, principal, sourceID string,
 ) (MediaSourceProjection, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return MediaSourceProjection{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var item MediaSourceProjection
 	query := `SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
 		COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json
 		FROM media_occurrences o
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		WHERE o.caller_principal=? AND o.visible=1 AND o.source_id=?`
+		WHERE o.caller_principal=$1 AND o.visible=1 AND o.source_id=$2`
 	args := []any{principal, sourceID}
 	query += ` ORDER BY o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+	err = tx.QueryRowContext(ctx, query, args...).Scan(
 		&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID,
 		&item.Filename, &item.CaptureJSON)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -272,14 +293,14 @@ func (s *Store) mediaSourceProjection(
 	}
 	key := MediaSourceVersionKey{item.SourceID, item.SourceVersionID}
 	items := map[MediaSourceVersionKey]MediaSourceProjection{key: item}
-	if err := s.mediaSourceReceipts(ctx, s.db, principal, items, false); err != nil {
+	if err := s.mediaSourceReceipts(ctx, tx, principal, items, false); err != nil {
 		return MediaSourceProjection{}, err
 	}
 	item, ok := items[key]
 	if !ok {
 		return MediaSourceProjection{}, ErrNotFound
 	}
-	return item, nil
+	return item, tx.Commit()
 }
 
 func (s *Store) MediaOccurrence(
@@ -289,7 +310,7 @@ func (s *Store) MediaOccurrence(
 	err := s.db.QueryRowContext(ctx, `SELECT o.occurrence_id,o.source_id,s.kind,COALESCE(o.source_version_id,''),
 		o.caller_occurrence_ref,o.caller_revision,o.caller_filename,o.caller_person_ref,o.speaker_label,o.message_json
 		FROM media_occurrences o JOIN media_sources s ON s.source_id=o.source_id
-		WHERE o.caller_principal=? AND o.visible=1 AND o.occurrence_id=?`,
+		WHERE o.caller_principal=$1 AND o.visible=1 AND o.occurrence_id=$2`,
 		principal, occurrenceID).Scan(&item.OccurrenceID, &item.SourceID, &item.Kind,
 		&item.SourceVersionID, &item.Ref, &item.Revision, &item.Filename, &item.PersonRef,
 		&item.SpeakerLabel, &item.MessageJSON)
@@ -315,7 +336,7 @@ func (s *Store) MediaSourceBindingForContentVersion(
 	err := s.db.QueryRowContext(ctx, `SELECT o.source_id,o.source_version_id
 		FROM media_occurrences o
 		JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		WHERE o.caller_principal=? AND v.content_version_id=?
+		WHERE o.caller_principal=$1 AND v.content_version_id=$2
 		ORDER BY o.visible DESC,o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`, principal, contentVersionID).Scan(
 		&sourceID, &sourceVersionID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -332,20 +353,26 @@ func (s *Store) MediaOccurrences(
 	if limit < 1 || limit > 250 {
 		return nil, 0, false, errors.New("invalid media occurrence page")
 	}
-	where := `caller_principal=? AND visible=1`
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	where := `caller_principal=$1 AND visible=1`
 	args := []any{principal}
 	if sourceID != "" {
-		where += ` AND source_id=?`
+		where += ` AND source_id=$2`
 		args = append(args, sourceID)
 	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_occurrences WHERE `+where, args...).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_occurrences WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, false, err
 	}
+	page := fmt.Sprintf(" AND occurrence_id>$%d ORDER BY occurrence_id LIMIT $%d", len(args)+1, len(args)+2)
 	args = append(args, after, limit+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_id,source_id,COALESCE(source_version_id,''),
+	rows, err := tx.QueryContext(ctx, `SELECT occurrence_id,source_id,COALESCE(source_version_id,''),
 		caller_occurrence_ref,caller_revision,caller_filename,caller_person_ref,speaker_label,message_json
-		FROM media_occurrences WHERE `+where+` AND occurrence_id>? ORDER BY occurrence_id LIMIT ?`, args...)
+		FROM media_occurrences WHERE `+where+page, args...)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -360,5 +387,8 @@ func (s *Store) MediaOccurrences(
 		}
 		result = append(result, item)
 	}
-	return result[:min(len(result), limit)], total, len(result) > limit, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	return result[:min(len(result), limit)], total, len(result) > limit, tx.Commit()
 }

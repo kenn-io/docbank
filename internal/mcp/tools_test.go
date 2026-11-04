@@ -29,7 +29,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
-		"get_vault_info", "list_documents", "answer_question", "search_documents", "get_document",
+		"get_vault_info", "list_changes", "list_documents", "answer_question", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
@@ -197,6 +197,11 @@ func TestRegisteredToolsEnforceDaemonByteBounds(t *testing.T) {
 	require.Greater(t, len(tooManyCursorBytes), maxCursorBytes)
 	cursorErr := decodeWireError(t, callToolWire(t, "list_documents", map[string]any{"cursor": tooManyCursorBytes}))
 	assert.Equal(t, int64(jsonrpc.CodeInvalidParams), cursorErr.Code)
+
+	changeCursorErr := decodeWireError(t, callToolWire(t, "list_changes", map[string]any{
+		"cursor": strings.Repeat("é", 65),
+	}))
+	assert.Equal(t, int64(jsonrpc.CodeInvalidParams), changeCursorErr.Code)
 
 	validCursorResult := decodeResult(t, callToolWire(t, "list_documents", map[string]any{
 		"cursor": strings.Repeat("a", maxCursorBytes-2) + ".a",

@@ -31,7 +31,10 @@ func checkAuditRecordsPostgres(t *testing.T) {
 		tx, err := destination.writeDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
-		for _, group := range records {
+		for kind, group := range records {
+			if kind == auditEventField {
+				continue
+			}
 			for _, record := range group {
 				require.NoError(t, insertAuditRecord(ctx, tx, record.record))
 			}

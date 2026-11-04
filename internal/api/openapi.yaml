@@ -23465,6 +23465,14 @@ paths:
           name: follow
           schema:
             type: boolean
+        - description: Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 500
+            minimum: 0
+            type: integer
       responses:
         "200":
           content:

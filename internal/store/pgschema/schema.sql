@@ -30,6 +30,9 @@ CREATE UNIQUE INDEX live_sibling_names ON {{schema}}.nodes(parent_id, name)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_parent ON {{schema}}.nodes(parent_id);
 CREATE INDEX nodes_parent_name_id ON {{schema}}.nodes(parent_id, name, id);
+-- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
+CREATE INDEX nodes_live_children ON {{schema}}.nodes(parent_id, kind, name, trashed_at, id)
+    WHERE trashed_at IS NULL;
 CREATE INDEX nodes_live_modified ON {{schema}}.nodes(modified_at DESC, name, id)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_trashed ON {{schema}}.nodes(trashed_at) WHERE trashed_at IS NOT NULL;
@@ -87,9 +90,9 @@ CREATE TABLE {{schema}}.audit_records (
 CREATE UNIQUE INDEX audit_record_event
     ON {{schema}}.audit_records(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX audit_record_event_node
-    ON {{schema}}.audit_records(node_id) WHERE kind = 'event';
+    ON {{schema}}.audit_records(node_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE INDEX audit_record_event_scope
-    ON {{schema}}.audit_records(scope_id) WHERE kind = 'event';
+    ON {{schema}}.audit_records(scope_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX audit_record_mutation_operation
     ON {{schema}}.audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX audit_record_mutation_sequence
@@ -1184,6 +1187,7 @@ CREATE TABLE {{schema}}.rendition_lexical_index (
 
 CREATE TABLE {{schema}}.rendition_lexical_generations (
     generation_id TEXT COLLATE "C" PRIMARY KEY,
+    stream_id     TEXT COLLATE "C" NOT NULL,
     segment_count BIGINT NOT NULL,
     build_count   BIGINT NOT NULL,
     built_at      TEXT COLLATE "C" NOT NULL
@@ -1191,15 +1195,28 @@ CREATE TABLE {{schema}}.rendition_lexical_generations (
 
 CREATE TABLE {{schema}}.rendition_lexical_generation_manifests (
     generation_id  TEXT COLLATE "C" PRIMARY KEY,
-    manifest_digest TEXT COLLATE "C" NOT NULL,
-    build_digest    TEXT COLLATE "C" NOT NULL
+    manifest_digest TEXT COLLATE "C" NOT NULL
 );
 
-CREATE TABLE {{schema}}.rendition_lexical_generation_builds (
-    generation_id TEXT COLLATE "C" NOT NULL,
-    build_id      TEXT COLLATE "C" NOT NULL,
-    PRIMARY KEY (generation_id, build_id)
+CREATE INDEX rendition_lexical_generations_stream
+    ON {{schema}}.rendition_lexical_generations(stream_id);
+
+CREATE TABLE {{schema}}.rendition_lexical_stream_builds (
+    stream_id      TEXT COLLATE "C" NOT NULL,
+    ordinal        BIGINT NOT NULL,
+    build_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.rendition_builds(build_id),
+    PRIMARY KEY (stream_id, ordinal),
+    UNIQUE (stream_id, build_id)
 );
+
+CREATE INDEX rendition_lexical_stream_builds_build
+    ON {{schema}}.rendition_lexical_stream_builds(build_id);
+
+CREATE VIEW {{schema}}.rendition_lexical_generation_builds(generation_id, build_id) AS
+    SELECT g.generation_id, b.build_id
+    FROM {{schema}}.rendition_lexical_generations g
+    JOIN {{schema}}.rendition_lexical_stream_builds b
+      ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count;
 
 CREATE TABLE {{schema}}.rendition_lexical_heads (
     singleton     BIGINT PRIMARY KEY,
@@ -1319,7 +1336,7 @@ CREATE TABLE {{schema}}.term_report_history (
 );
 
 CREATE TABLE {{schema}}.extracted_text (
-    id                BIGINT PRIMARY KEY,
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     blob_hash         TEXT COLLATE "C" NOT NULL,
     extractor         TEXT COLLATE "C" NOT NULL,
     extractor_version BIGINT NOT NULL,
@@ -1959,11 +1976,6 @@ ALTER TABLE {{schema}}.rendition_lexical_index ADD FOREIGN KEY (build_id) REFERE
 
 ALTER TABLE {{schema}}.rendition_lexical_generation_manifests ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
 
-ALTER TABLE {{schema}}.rendition_lexical_generation_builds ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE;
-
-ALTER TABLE {{schema}}.rendition_lexical_generation_builds ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
-
 ALTER TABLE {{schema}}.rendition_lexical_heads ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
 
 ALTER TABLE {{schema}}.rendition_lexical_superseded ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id) ON DELETE CASCADE;
@@ -2261,6 +2273,9 @@ CREATE INDEX export_members_version ON {{schema}}.export_members(version_id);
 CREATE INDEX package_labels_version ON {{schema}}.package_labels(content_version_id);
 CREATE INDEX package_import_receipts_version ON {{schema}}.package_import_receipts(content_version_id);
 CREATE INDEX media_versions_content ON {{schema}}.media_source_versions(content_version_id, source_id);
+CREATE INDEX media_occurrences_principal ON {{schema}}.media_occurrences(caller_principal, visible, source_id, occurrence_id);
+CREATE INDEX media_occurrences_source ON {{schema}}.media_occurrences(source_id, visible, caller_principal, occurrence_id);
+CREATE INDEX media_operations_source_admission ON {{schema}}.media_operations(principal, source_id, created_at);
 CREATE INDEX media_input_artifacts_version ON {{schema}}.media_input_artifacts(content_version_id);
 CREATE INDEX mailbox_transfer_receipts_version ON {{schema}}.mailbox_transfer_receipts(target_version_id);
 CREATE INDEX page_render_jobs_node ON {{schema}}.page_render_jobs(node_id);

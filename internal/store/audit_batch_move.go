@@ -42,16 +42,8 @@ func (s *Store) prepareAuditedBatchMove(
 			return nil, unsupportedAuditedNodeMutation(nodeID)
 		}
 	}
-	topology, err := currentAuditTopology(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
 	for _, nodeID := range plan.movedIDs {
-		auditNodeID, err := positiveAuditNodeID(nodeID)
-		if err != nil {
-			return nil, err
-		}
-		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(topology, members, auditNodeID)
+		affectsTrashOrigin, err := auditMoveAffectsTrashOriginTx(ctx, tx, scopes[0].scopeID, nodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -77,6 +69,9 @@ func (s *Store) prepareAuditedBatchMove(
 			return nil, err
 		}
 		snapshot.priorNodes[nodeID] = node
+	}
+	if err := s.addBatchMoveSubtreePaths(ctx, tx, plan); err != nil {
+		return nil, err
 	}
 	snapshot.eventNodeIDs, err = batchMoveChangedPathIDs(*plan, members)
 	if err != nil {

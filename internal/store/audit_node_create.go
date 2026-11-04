@@ -91,7 +91,7 @@ func (s *Store) persistAuditedNodeCreation(
 		return err
 	}
 	if err := s.persistAuditedCreationRecords(
-		ctx, tx, baseline, topologyDelta, events, mutation, metadata,
+		ctx, tx, baseline, topologyDelta, mutation, metadata,
 	); err != nil {
 		return err
 	}
@@ -467,7 +467,7 @@ func makeAuditedCreationMutation(
 
 func (s *Store) persistAuditedCreationRecords(
 	ctx context.Context, tx *sql.Tx, baseline auditedCreationBaseline,
-	topologyDelta audit.Record, events []audit.Record, mutation audit.Record,
+	topologyDelta audit.Record, mutation audit.Record,
 	metadata *auditedCreationMetadata,
 ) error {
 	operationID, err := auditUUIDField(mutation, auditOperationIDField)
@@ -491,14 +491,6 @@ func (s *Store) persistAuditedCreationRecords(
 	}
 	if metadata != nil {
 		if err := insertAuditRecord(ctx, tx, metadata.delta); err != nil {
-			return err
-		}
-	}
-	for _, event := range events {
-		wrapper := audit.Record{Kind: auditEventField, Fields: []audit.Field{
-			{Name: auditEventField, Value: audit.Nested(event)},
-		}}
-		if err := insertAuditRecord(ctx, tx, wrapper); err != nil {
 			return err
 		}
 	}

@@ -60,6 +60,8 @@ func executeReadTool(
 		output, err = checkAnswer(ctx, lease, raw)
 	case "get_vault_info":
 		output, err = getVaultInfo(ctx, daemonDocumentSession(lease), raw)
+	case "list_changes":
+		output, err = listChanges(ctx, lease, raw)
 	case "list_documents":
 		output, links, err = listDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "answer_question":

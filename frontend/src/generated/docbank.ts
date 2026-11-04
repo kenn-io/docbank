@@ -9299,6 +9299,12 @@ limit?: number;
 export type VaultChangesParams = {
 after?: string;
 follow?: boolean;
+/**
+ * Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.
+ * @minimum 0
+ * @maximum 500
+ */
+limit?: number;
 };
 
 export type ListCollectionsParams = {

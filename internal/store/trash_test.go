@@ -2,12 +2,42 @@ package store
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTrashDeleteUsesParentIndexSQLite(t *testing.T) {
+	t.Parallel()
+	for _, existing := range []bool{false, true} {
+		name := "new"
+		if existing {
+			name = "existing"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			if existing {
+				s, err := Open(t.Context(), path)
+				require.NoError(t, err)
+				// Simulate a vault created before the trash-parent index existed.
+				_, err = s.db.ExecContext(t.Context(), "DROP INDEX IF EXISTS nodes_trash_parent")
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+			}
+			s, err := Open(t.Context(), path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			// Deleting a node must find trash-parent references through an index.
+			plan := explainQueryPlan(t, s, "DELETE FROM nodes WHERE id = ?", s.RootID())
+			require.Contains(t, plan, "SEARCH nodes USING COVERING INDEX nodes_trash_parent (trash_parent=?)")
+		})
+	}
+}
 
 func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	t.Parallel()

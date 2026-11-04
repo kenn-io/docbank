@@ -67,21 +67,21 @@ func (s *Store) publishMediaSourceVersionTx(ctx context.Context, tx *sql.Tx, in 
 		return err
 	}
 	var exists int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM content_versions WHERE version_id=?`, in.ContentVersionID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM content_versions WHERE version_id=$1`, in.ContentVersionID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
 	var sourceID string
-	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=?`, in.SourceID).Scan(&sourceID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=$1`, in.SourceID).Scan(&sourceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
 	var currentRevision int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=?`, in.SourceID).Scan(&currentRevision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=$1`, in.SourceID).Scan(&currentRevision); err != nil {
 		return err
 	}
 	if currentRevision != in.ExpectedHeadRevision || in.Revision != currentRevision+1 {
@@ -91,7 +91,7 @@ func (s *Store) publishMediaSourceVersionTx(ctx context.Context, tx *sql.Tx, in 
 		var occurrenceSource string
 		var bound sql.NullString
 		if err := tx.QueryRowContext(ctx, `SELECT source_id,source_version_id FROM media_occurrences
-				WHERE occurrence_id=?`, occurrenceID).Scan(&occurrenceSource, &bound); err != nil {
+				WHERE occurrence_id=$1`, occurrenceID).Scan(&occurrenceSource, &bound); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -103,15 +103,15 @@ func (s *Store) publishMediaSourceVersionTx(ctx context.Context, tx *sql.Tx, in 
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO media_source_versions(
 			source_version_id,source_id,revision,content_version_id,capture_json,created_at
-		) VALUES(?,?,?,?,?,?)`, in.ID, in.SourceID, in.Revision, in.ContentVersionID, in.CaptureJSON, nowRFC3339()); err != nil {
-		if s.driver.IsUniqueViolation(err) {
+		) VALUES($1,$2,$3,$4,$5,$6)`, in.ID, in.SourceID, in.Revision, in.ContentVersionID, in.CaptureJSON, nowRFC3339()); err != nil {
+		if s.isUniqueViolation(err) {
 			return ErrMediaSourceConflict
 		}
 		return fmt.Errorf("publishing media source version: %w", err)
 	}
 	for _, occurrenceID := range in.BindOccurrenceIDs {
-		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET source_version_id=?
-				WHERE occurrence_id=? AND source_id=? AND source_version_id IS NULL`,
+		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET source_version_id=$1
+				WHERE occurrence_id=$2 AND source_id=$3 AND source_version_id IS NULL`,
 			in.ID, occurrenceID, in.SourceID); err != nil {
 			return err
 		}
