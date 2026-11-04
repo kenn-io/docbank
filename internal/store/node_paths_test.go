@@ -10,6 +10,7 @@ import (
 
 type pathPlanQuerier struct {
 	*sql.DB
+
 	query string
 	args  []any
 }
