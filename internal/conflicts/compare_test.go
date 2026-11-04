@@ -232,6 +232,16 @@ func TestFindDifferentRateDenominators(t *testing.T) {
 	}
 }
 
+func TestFindDifferentRateDenominatorsWithQuotedNumerators(t *testing.T) {
+	got := Find(Input{Query: "service fee", Passages: []Passage{
+		{Document: "a", Text: `The service fee is "$5" a month.`},
+		{Document: "b", Text: `The service fee is "$6" a year.`},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("quoted numerators hid different rate denominators: %+v", got)
+	}
+}
+
 func TestFindRejectsUnsupportedRateDenominatorMeanings(t *testing.T) {
 	for _, tt := range []struct{ name, a, b string }{
 		{"second symbol versus flat amount", "The service fee is $5/s.", "The service fee is $6."},
@@ -415,6 +425,21 @@ func TestFindAllowsAcceptedTrailingDateBoundsOnRates(t *testing.T) {
 	}})
 	if got.Status != Conflicting || len(got.Conflicts) != 1 || got.Conflicts[0].PeriodsOverlap != "unknown" {
 		t.Fatalf("accepted trailing date bound prevented rate comparison: %+v", got)
+	}
+	for _, tt := range []struct{ name, connector string }{
+		{"prior to", "prior to"},
+		{"repeated spaces", "on  or before"},
+		{"tabs", "on\tor\tbefore"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Find(Input{Query: "service fee", Passages: []Passage{
+				{Document: "a", Text: "The service fee is $5 per month " + tt.connector + " 1 July 2026."},
+				{Document: "b", Text: "The service fee is $6 per month."},
+			}})
+			if got.Status != Conflicting || len(got.Conflicts) != 1 || got.Conflicts[0].PeriodsOverlap != "unknown" {
+				t.Fatalf("accepted %q date bound prevented rate comparison: %+v", tt.connector, got)
+			}
+		})
 	}
 
 	got = Find(Input{Query: "service fee", Passages: []Passage{
