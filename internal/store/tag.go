@@ -219,7 +219,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 	}
 	var renamed Tag
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(ctx, tx, id)
+		current, err := tagByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -281,7 +281,7 @@ func (s *Store) renameTagDefinitionTx(ctx context.Context, tx *sql.Tx, current T
 func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(ctx, tx, id)
+		current, err := tagByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -436,7 +436,7 @@ func (s *Store) changeTagAssignmentTx(
 	assign bool,
 	recordedAt string,
 ) (TagAssignmentChange, error) {
-	tag, err := tagByIDTx(ctx, tx, tagID)
+	tag, err := tagByIDQuery(ctx, tx, tagID)
 	if err != nil {
 		return TagAssignmentChange{}, err
 	}
@@ -658,10 +658,6 @@ func (s *Store) taggedNodes(
 		return nodes, liveTotal, assignmentTotal - liveTotal, nil
 	}
 	return nodes, assignmentTotal, 0, nil
-}
-
-func tagByIDTx(ctx context.Context, tx *sql.Tx, id string) (Tag, error) {
-	return tagByIDQuery(ctx, tx, id)
 }
 
 func checkTagRevision(tag Tag, expected int64) error {
