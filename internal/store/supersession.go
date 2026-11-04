@@ -241,7 +241,7 @@ func validateSupersessionComponent(ctx context.Context, q metadataQuerier, start
 				outdegree[a]++
 				indegree[b]++
 				if outdegree[a] > 16 || indegree[b] > 16 {
-					return fmt.Errorf("Too many direct links: %w", ErrInvalidSupersession)
+					return fmt.Errorf("too many direct links: %w", ErrInvalidSupersession)
 				}
 				next[a] = append(next[a], b)
 				for _, n := range []int64{a, b} {
@@ -249,7 +249,7 @@ func validateSupersessionComponent(ctx context.Context, q metadataQuerier, start
 						seen[n] = true
 						queue = append(queue, n)
 						if len(seen) > 4096 {
-							return fmt.Errorf("Too many linked files: %w", ErrInvalidSupersession)
+							return fmt.Errorf("too many linked files: %w", ErrInvalidSupersession)
 						}
 					}
 				}
