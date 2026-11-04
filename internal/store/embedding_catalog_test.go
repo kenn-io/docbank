@@ -2201,8 +2201,9 @@ func checkEmbeddingReconciliationPreparesEachImageOnce(t *testing.T, open func(*
 			t.Parallel()
 			f := seedImageEmbeddingCatalog(t, open(t))
 			if name == "paged discovery" {
-				// Only this photo has a preview; unrelated eligible photos still consume pages.
-				for i := range 4097 {
+				// Eight photos span two full pages and one partial page. Only the
+				// fixture photo has a preview; the others still consume discovery slots.
+				for i := range 7 {
 					_, err := f.s.CreateFile(t.Context(), f.s.RootID(), fmt.Sprintf("scope-%04d.jpg", i), testSHA256([]byte(fmt.Sprintf("scope-%04d", i))), 20, "image/jpeg")
 					require.NoError(t, err)
 				}
@@ -2223,7 +2224,7 @@ func checkEmbeddingReconciliationPreparesEachImageOnce(t *testing.T, open func(*
 				}
 			}
 			calls := 0
-			request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 100, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
+			request := EmbeddingReconcileRequest{ImageProfiles: []ProcessingProfileRecord{f.request.Profile}, Limit: 3, At: time.Now(), DescriptorFingerprints: []string{f.request.Descriptor.Fingerprint}, Mutate: embeddingTestMutation, PrepareImageGeneration: func(_ context.Context, _ ProcessingProfileRecord, binding document.EmbeddingBindingV1, version string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
 				require.Equal(t, f.node.CurrentVersionID, version)
 				calls++
 				generation := f.request.InputGeneration
@@ -2240,10 +2241,10 @@ func checkEmbeddingReconciliationPreparesEachImageOnce(t *testing.T, open func(*
 					if request.ImageAfter == (ImageReconcilePosition{}) {
 						break
 					}
-					require.Less(t, pages, 50)
+					require.Less(t, pages, 3, "discovery cursor must advance")
 				}
 				if name == "paged discovery" {
-					require.Greater(t, pages, 40)
+					require.Equal(t, 3, pages, "discover all eight photos, including those without previews")
 				}
 			}
 			if name == "paged discovery" {
