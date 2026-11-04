@@ -157,6 +157,8 @@ func NewServer(d Deps) *Server {
 	}
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
+	// Middlewares bind at registration, so this precedes every route.
+	humaAPI.UseMiddleware(rejectDeclaredOversizeBodies(humaAPI, d.Logger))
 	masterOwner := randomSnapshotOwner()
 	var snapshots *store.QuerySnapshotService
 	if d.Store != nil {

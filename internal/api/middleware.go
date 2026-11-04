@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -219,6 +220,24 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 			if operation != nil && timeoutExempt(operation.Method, path) {
 				operation.BodyReadTimeout = -1
 			}
+		}
+	}
+}
+
+// rejectDeclaredOversizeBodies answers 413 from Content-Length before Huma
+// reads the body. Huma enforces MaxBodyBytes only by reading up to the limit
+// under its five-second body-read deadline, so a declared-oversize body sent
+// slowly drew 408 after the server had read it in full.
+func rejectDeclaredOversizeBodies(api huma.API, logger *slog.Logger) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		limit := ctx.Operation().MaxBodyBytes
+		r, _ := humago.Unwrap(ctx)
+		if limit <= 0 || r.ContentLength <= limit {
+			next(ctx)
+			return
+		}
+		if err := huma.WriteErr(api, ctx, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body is too large limit=%d bytes", limit)); err != nil {
+			logger.Debug("write oversize body rejection", "path", r.URL.Path, "error", err)
 		}
 	}
 }
