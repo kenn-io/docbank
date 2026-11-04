@@ -201,10 +201,11 @@ func (s *Store) nodeByPath(ctx context.Context, q rowQuerier, path string) (Node
 				SELECT CAST($2 AS BIGINT), 0
 				UNION ALL
 				SELECT child.id, resolved.depth + 1
-				FROM resolved JOIN segments ON segments.position = resolved.depth
-				JOIN nodes child ON child.parent_id = resolved.id
+				FROM resolved CROSS JOIN segments CROSS JOIN nodes child
+				WHERE segments.position = resolved.depth
+					AND child.parent_id = resolved.id
 					AND child.name = segments.value
-				WHERE child.trashed_at IS NULL
+					AND child.trashed_at IS NULL
 			)
 			SELECT `+nodeCols+` FROM `+nodeFrom+`
 			WHERE n.id = (SELECT id FROM resolved WHERE depth = $3)`, string(encoded), s.rootID, len(segments)))

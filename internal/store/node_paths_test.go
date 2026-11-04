@@ -1,11 +1,40 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type pathPlanQuerier struct {
+	*sql.DB
+	query string
+	args  []any
+}
+
+func (q *pathPlanQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	q.query, q.args = query, args
+	return q.DB.QueryRowContext(ctx, query, args...)
+}
+
+func TestNodeByPathUsesLiveNameIndex(t *testing.T) {
+	t.Parallel()
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			directory, err := s.MkdirAll(t.Context(), "/corpus/wide")
+			require.NoError(t, err)
+			q := &pathPlanQuerier{DB: s.db}
+			got, err := s.nodeByPath(t.Context(), q, "/corpus/wide")
+			require.NoError(t, err)
+			require.Equal(t, directory.ID, got.ID)
+			plan := explainQueryPlan(t, s, q.query, q.args...)
+			require.Contains(t, plan, "SEARCH child USING INDEX live_sibling_names (parent_id=? AND name=?)")
+		})
+	}
+}
 
 func TestNodeByPathResolution(t *testing.T) {
 	t.Parallel()
