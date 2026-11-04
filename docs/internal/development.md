@@ -555,10 +555,11 @@ GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vecto
     documents.rendition_units, documents.rendition_lexical_segments,
     documents.rendition_lexical_index, documents.rendition_lexical_heads,
     documents.rendition_lexical_generations, documents.rendition_lexical_generation_manifests,
+    documents.rendition_lexical_stream_builds,
     documents.text_searchable_versions, documents.extracted_text,
     documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.derivative_blob_purge_pending,
-    documents.rendition_lexical_generations, documents.rendition_lexical_generation_builds,
+    documents.rendition_lexical_generations, documents.rendition_lexical_stream_builds,
     documents.rendition_lexical_generation_manifests, documents.rendition_lexical_index
     TO docbank_runtime;
 GRANT UPDATE(generation_id) ON documents.rendition_lexical_heads TO docbank_runtime;

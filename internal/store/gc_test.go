@@ -28,7 +28,7 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 	build.Units = nil
 	require.NoError(t, s.StageRenditionBuild(ctx, build))
 	generationID := fakeHash("8d")
-	_, err := s.StageLexicalGeneration(ctx, generationID)
+	generation, err := s.StageLexicalGeneration(ctx, generationID)
 	require.NoError(t, err)
 	attachment := RenditionAttachmentRecord{
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
@@ -66,7 +66,7 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 	rebuilt, err := restored.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, rebuilt.BuildCount)
-	assert.Equal(t, lexicalBuildDigest([]string{build.ID}), rebuilt.BuildDigest)
+	assert.Equal(t, generation.BuildDigest, rebuilt.BuildDigest)
 	var rootedGeneration string
 	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT target_id FROM current_rendition_roots
 		WHERE root_id='durable-audit' AND active=1`).Scan(&rootedGeneration))

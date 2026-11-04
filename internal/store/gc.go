@@ -605,6 +605,11 @@ func (s *Store) PurgeDerivatives(
 				return fmt.Errorf("releasing collected lexical generation %s from completed jobs: %w",
 					generation.id, err)
 			}
+			var streamID string
+			if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
+				WHERE generation_id=$1`, generation.id).Scan(&streamID); err != nil {
+				return fmt.Errorf("reading collected lexical stream: %w", err)
+			}
 			result, err = tx.ExecContext(ctx,
 				`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`, generation.id)
 			if err != nil {
@@ -614,6 +619,11 @@ func (s *Store) PurgeDerivatives(
 			if err != nil {
 				return err
 			}
+			removedRows, err := trimLexicalStreamTx(ctx, tx, streamID)
+			if err != nil {
+				return err
+			}
+			report.RemovedLexicalRows += removedRows
 			report.RemovedLexicalGenerations += count
 		}
 

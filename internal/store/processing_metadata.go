@@ -447,6 +447,12 @@ func exportLexicalGenerations(
 		return fmt.Errorf("closing lexical generation metadata: %w", err)
 	}
 	for _, record := range records {
+		segments, err := readLexicalManifestRowsTx(ctx, tx, record.GenerationID, "")
+		if err != nil {
+			return err
+		}
+		record.ManifestDigest = lexicalManifestDigest(segments)
+		record.BuildDigest = lexicalBuildDigest(record.BuildIDs)
 		if err := write(record); err != nil {
 			return err
 		}
@@ -677,26 +683,8 @@ func restoreLexicalGenerationTx(
 		return fmt.Errorf("restored lexical generation %s has a different immutable manifest",
 			value.GenerationID)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generations(generation_id,segment_count,build_count,built_at)
-		VALUES(?,?,?,?)`, value.GenerationID, value.SegmentCount, len(value.BuildIDs), value.BuiltAt,
-	); err != nil {
+	if _, err := writeLexicalStreamTx(ctx, tx, value.GenerationID, segments, value.BuildIDs, value.BuiltAt); err != nil {
 		return fmt.Errorf("restoring lexical generation %s: %w", value.GenerationID, err)
-	}
-	for _, buildID := range value.BuildIDs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_builds(
-			generation_id,build_id) VALUES(?,?)`, value.GenerationID, buildID); err != nil {
-			return fmt.Errorf("restoring lexical generation %s build %s: %w",
-				value.GenerationID, buildID, err)
-		}
-	}
-	if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
-		return fmt.Errorf("rebuilding restored lexical generation %s: %w", value.GenerationID, err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_manifests(
-		generation_id,manifest_digest,build_digest) VALUES(?,?,?)`,
-		value.GenerationID, value.ManifestDigest, value.BuildDigest); err != nil {
-		return fmt.Errorf("restoring lexical generation %s manifest: %w", value.GenerationID, err)
 	}
 	if value.Headed {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_heads(

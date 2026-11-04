@@ -1187,6 +1187,7 @@ CREATE TABLE {{schema}}.rendition_lexical_index (
 
 CREATE TABLE {{schema}}.rendition_lexical_generations (
     generation_id TEXT COLLATE "C" PRIMARY KEY,
+    stream_id     TEXT COLLATE "C" NOT NULL,
     segment_count BIGINT NOT NULL,
     build_count   BIGINT NOT NULL,
     built_at      TEXT COLLATE "C" NOT NULL
@@ -1198,11 +1199,27 @@ CREATE TABLE {{schema}}.rendition_lexical_generation_manifests (
     build_digest    TEXT COLLATE "C" NOT NULL
 );
 
-CREATE TABLE {{schema}}.rendition_lexical_generation_builds (
-    generation_id TEXT COLLATE "C" NOT NULL,
-    build_id      TEXT COLLATE "C" NOT NULL,
-    PRIMARY KEY (generation_id, build_id)
+CREATE INDEX rendition_lexical_generations_stream
+    ON {{schema}}.rendition_lexical_generations(stream_id);
+
+CREATE TABLE {{schema}}.rendition_lexical_stream_builds (
+    stream_id      TEXT COLLATE "C" NOT NULL,
+    ordinal        BIGINT NOT NULL,
+    build_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.rendition_builds(build_id),
+    manifest_chain TEXT COLLATE "C" NOT NULL,
+    build_chain    TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (stream_id, ordinal),
+    UNIQUE (stream_id, build_id)
 );
+
+CREATE INDEX rendition_lexical_stream_builds_build
+    ON {{schema}}.rendition_lexical_stream_builds(build_id);
+
+CREATE VIEW {{schema}}.rendition_lexical_generation_builds(generation_id, build_id) AS
+    SELECT g.generation_id, b.build_id
+    FROM {{schema}}.rendition_lexical_generations g
+    JOIN {{schema}}.rendition_lexical_stream_builds b
+      ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count;
 
 CREATE TABLE {{schema}}.rendition_lexical_heads (
     singleton     BIGINT PRIMARY KEY,
@@ -1961,11 +1978,6 @@ ALTER TABLE {{schema}}.embedding_failures ADD FOREIGN KEY (profile_fingerprint) 
 ALTER TABLE {{schema}}.rendition_lexical_index ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
 
 ALTER TABLE {{schema}}.rendition_lexical_generation_manifests ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
-
-ALTER TABLE {{schema}}.rendition_lexical_generation_builds ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE;
-
-ALTER TABLE {{schema}}.rendition_lexical_generation_builds ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
 
 ALTER TABLE {{schema}}.rendition_lexical_heads ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
 
