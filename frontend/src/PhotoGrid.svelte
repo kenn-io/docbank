@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import {
-    computeMonthLayout,
-    HEADER_HEIGHT,
+    createPhotoChunks,
+    chunkAt,
     layoutRow,
     monthAt,
     type PhotoGridRow,
@@ -80,23 +80,16 @@
   let width = $state(800);
   let initialized = $state(false);
   let viewport = $state(960);
-  const chunks: PhotoChunk[] = $derived.by(() => {
-    let offset = 0;
-    return groups.map((group) => {
-      const layout = computeMonthLayout(
-        group.items,
-        width,
-        targetRowHeight,
-        group.key === "relevance" ? 12 : HEADER_HEIGHT,
-      );
-      const chunk = { group, layout, offset };
-      offset += layout.intrinsicHeight;
-      return chunk;
-    });
-  });
+  const buildChunks = createPhotoChunks();
+  const chunks: PhotoChunk[] = $derived(buildChunks(groups, width, targetRowHeight));
   const totalHeight = $derived(
-    chunks.reduce((sum, chunk) => sum + chunk.layout.intrinsicHeight, 0),
+    chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.layout.intrinsicHeight : 0,
   );
+  const firstChunk = $derived(chunkAt(chunks, Math.max(0, scrollTop - viewport)));
+  const windowChunks = $derived.by(() => {
+    const end = chunkAt(chunks, scrollTop + 2 * viewport);
+    return chunks.slice(firstChunk, Math.min(chunks.length, end + 1));
+  });
   const showTimeline = $derived(
     !!onjump &&
       (!!timelineError ||
@@ -178,16 +171,27 @@
     const viewportTop = element.getBoundingClientRect().top;
     const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find((item) => {
       const group = item.closest<HTMLElement>("[data-month]");
-      const chunk = chunks.find((chunk) => chunk.group.key === group?.dataset.month);
+      const chunk = windowChunks.find((chunk) => chunk.group.key === group?.dataset.month);
       return item.getBoundingClientRect().bottom > viewportTop + (chunk?.layout.contentOffset ?? 0);
     });
     const id = cell?.dataset.asset;
+    const key = cell?.closest<HTMLElement>("[data-month]")?.dataset.month;
+    const chunkIndex = firstChunk + windowChunks.findIndex((chunk) => chunk.group.key === key);
+    const itemIndex = Number(cell?.closest<HTMLElement>("[data-index]")?.dataset.index ?? -1);
     const pixelOffset = cell ? cell.getBoundingClientRect().top - viewportTop : 0;
     return async () => {
       let newTop = oldTop;
       if (id) {
-        for (const chunk of chunks) {
-          const index = chunk.group.items.findIndex((item) => item.asset_id === id);
+        const own =
+          chunks[chunkIndex]?.group.key === key
+            ? chunks[chunkIndex]
+            : chunks.find((chunk) => chunk.group.key === key);
+        const candidates = own ? [own] : chunks;
+        for (const chunk of candidates) {
+          const index =
+            chunk.group.items[itemIndex]?.asset_id === id
+              ? itemIndex
+              : chunk.group.items.findIndex((item) => item.asset_id === id);
           if (index < 0) continue;
           const row = layoutRow(chunk, index);
           if (row) newTop = rowTop(chunk, row) - pixelOffset;
@@ -238,26 +242,28 @@
   {/if}
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
-      {#each chunks as chunk (chunk.group.key)}
-        <PhotoMonthChunk
-          group={chunk.group}
-          layout={chunk.layout}
-          offset={chunk.offset}
-          top={Math.max(0, scrollTop - viewport)}
-          bottom={scrollTop + 2 * viewport}
-          {cache}
-          {selectedIDs}
-          {onselect}
-          {oncheck}
-          {onopen}
-          {expandedStacks}
-          {onexpand}
-          {onhidden}
-          {hidden}
-          {ondragstart}
-          {ondragend}
-        />
-      {/each}
+      <div style:position="relative" style:top={`${windowChunks[0]?.offset ?? 0}px`}>
+        {#each windowChunks as chunk (chunk.group.key)}
+          <PhotoMonthChunk
+            group={chunk.group}
+            layout={chunk.layout}
+            offset={chunk.offset}
+            top={Math.max(0, scrollTop - viewport)}
+            bottom={scrollTop + 2 * viewport}
+            {cache}
+            {selectedIDs}
+            {onselect}
+            {oncheck}
+            {onopen}
+            {expandedStacks}
+            {onexpand}
+            {onhidden}
+            {hidden}
+            {ondragstart}
+            {ondragend}
+          />
+        {/each}
+      </div>
     {/if}
   </div>
 </div>

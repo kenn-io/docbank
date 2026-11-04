@@ -67,3 +67,20 @@ export function photoStacksChanged(
   // A receipt can mention a companion outside the current preparation, especially on Undo.
   return rows.some((row) => row.stack && (affected.has(row.asset_id) || affected.has(undefined)));
 }
+
+// Publishers own the buffer. Readers get a fresh, length-limited array on each append.
+// Indices inherit from the owned buffer; publishing allocates only the view.
+export type ArrayView<T> = T[] & { readonly source?: T[]; readonly changedFrom?: number };
+export function arrayView<T>(source: T[], changedFrom = 0): ArrayView<T> {
+  const view: ArrayView<T> = [];
+  Object.setPrototypeOf(view, source);
+  Object.defineProperties(view, {
+    source: { value: source },
+    changedFrom: { value: changedFrom },
+  });
+  view.length = source.length;
+  return Object.freeze(view) as ArrayView<T>;
+}
+export function arraySource<T>(items: ArrayView<T>): T[] {
+  return items.source ?? items;
+}

@@ -1,6 +1,8 @@
 import { expect, it } from "vite-plus/test";
 import {
   computeJustified,
+  createPhotoGrouper,
+  createPhotoChunks,
   computeMonthLayout,
   groupPhotos,
   monthAt,
@@ -9,7 +11,195 @@ import {
   visibleRows,
   type PhotoGridRow,
 } from "./photoGrid.js";
+import { arrayView } from "./photoRows.js";
 import { photo } from "./photo-test-fixtures.js";
+
+it("keeps bridge and long-burst representatives in capture order", () => {
+  for (const [times, expected] of [
+    [
+      ["09:00:00", "01:00:00", "03:00:00", "07:00:00"],
+      [["photo-0", "photo-3", "photo-2", "photo-1"]],
+    ],
+    [
+      ["09:00:00", "09:00:01", "13:00:02", "13:00:01"],
+      [["photo-2", "photo-3", "photo-1", "photo-0"]],
+    ],
+  ] as const) {
+    const rows: PhotoGridRow[] = [];
+    const grouper = createPhotoGrouper(),
+      expanded = new Set<string>();
+    for (const [i, time] of times.entries()) {
+      rows.push(photo(i, `2025-06-01T${time}Z`));
+      const groups = grouper.sync(arrayView(rows), "sessions", expanded);
+      if (rows.length === times.length)
+        expect(groups.map((group) => group.items.map((row) => row.asset_id))).toEqual(expected);
+    }
+  }
+});
+
+it("matches full grouping and exact layouts after shuffled pages and stack changes", () => {
+  for (const grouping of ["months", "sessions", "flat", "relevance"] as const) {
+    for (let seed = 1; seed <= 12; seed++) {
+      let state = seed;
+      const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+      const grouper = createPhotoGrouper(),
+        build = createPhotoChunks();
+      const rows: PhotoGridRow[] = [];
+      let expanded = new Set<string>();
+      for (let page = 0; page < 8; page++) {
+        for (let i = 0; i < 17; i++) {
+          const id = rows.length;
+          const dates = [
+            null,
+            "invalid",
+            "2025-01-01T00:30:00+14:00",
+            "2024-12-31T23:30:00-12:00",
+            `2025-06-01T${String(Math.floor(random() * 24)).padStart(2, "0")}:00:00Z`,
+          ];
+          const row = photo(id, dates[Math.floor(random() * dates.length)]);
+          if (id % 7 === 0) row.file_modified_time = "2025-05-01T09:00:00Z";
+          if (id < 2)
+            row.stack = { asset_ids: ["photo-0", "photo-1"], representative_id: "photo-0" };
+          rows.push(row);
+        }
+        if (page === 3) expanded = new Set(["photo-0"]);
+        if (page === 6) expanded = new Set();
+        const groups = grouper.sync(arrayView(rows), grouping, expanded);
+        const expected = groupPhotos(
+          rows.filter((row) => !row.stack || expanded.has("photo-0") || row.asset_id === "photo-0"),
+          grouping,
+        );
+        expect([...groups]).toEqual(expected);
+        const width = page < 4 ? 997 : 816;
+        const chunks = build(groups, width, 173);
+        let offset = 0;
+        expect(chunks).toHaveLength(expected.length);
+        for (const [i, group] of expected.entries()) {
+          const layout = computeMonthLayout(
+            group.items,
+            width,
+            173,
+            grouping === "relevance" ? 12 : undefined,
+          );
+          expect(chunks[i].layout).toEqual(layout);
+          expect(chunks[i].offset).toBe(offset);
+          offset += layout.intrinsicHeight;
+        }
+      }
+      // An independent replacement buffer takes the rebuild path.
+      const replaced = rows.slice().reverse();
+      expect([...grouper.sync(replaced, grouping, new Set(["photo-0"]))]).toEqual(
+        groupPhotos(replaced, grouping),
+      );
+    }
+  }
+});
+
+it.each(["months", "flat", "relevance"] as const)(
+  "resumes %s without traversing old photos or finished layout rows",
+  (grouping) => {
+    const rows = Array.from({ length: 20_000 }, (_, id) => photo(id));
+    const grouper = createPhotoGrouper(),
+      build = createPhotoChunks(),
+      expanded = new Set<string>();
+    const first = build(grouper.sync(arrayView(rows), grouping, expanded), 1000, 200);
+    let dates = 0,
+      sizes = 0,
+      finishedRows = 0;
+    for (const row of rows) {
+      const capture = row.capture_time,
+        width = row.width_px;
+      Object.defineProperty(row, "capture_time", {
+        get: () => {
+          dates++;
+          return capture;
+        },
+      });
+      Object.defineProperty(row, "width_px", {
+        get: () => {
+          sizes++;
+          return width;
+        },
+      });
+    }
+    const packed = first[0].layout.rows;
+    for (let i = 0; i < packed.length - 1; i++) {
+      const row = packed[i];
+      Object.defineProperty(packed, i, {
+        configurable: true,
+        get: () => {
+          finishedRows++;
+          return row;
+        },
+      });
+    }
+    rows.push(...Array.from({ length: 250 }, (_, i) => photo(20_000 + i)));
+    const next = build(grouper.sync(arrayView(rows), grouping, expanded), 1000, 200);
+    expect(dates).toBe(0);
+    expect(sizes).toBeLessThanOrEqual(4);
+    expect(finishedRows).toBe(0);
+    expect(next[0].group.items).toHaveLength(20_250);
+  },
+);
+
+it("touches only nearby sessions when one page spans years", () => {
+  const rows = Array.from({ length: 20_000 }, (_, id) =>
+    photo(id, new Date(Date.UTC(2025, 0, 1) - id * 24 * 3600_000).toISOString()),
+  );
+  const grouper = createPhotoGrouper(),
+    build = createPhotoChunks(),
+    expanded = new Set<string>();
+  const first = grouper.sync(arrayView(rows), "sessions", expanded);
+  build(first, 1000, 200);
+  let reads = 0;
+  for (const row of rows) {
+    const date = row.capture_time,
+      width = row.width_px;
+    Object.defineProperty(row, "capture_time", {
+      get: () => {
+        reads++;
+        return date;
+      },
+    });
+    Object.defineProperty(row, "width_px", {
+      get: () => {
+        reads++;
+        return width;
+      },
+    });
+  }
+  rows.push(photo(20_000, "2025-01-01T01:00:00Z"), photo(20_001, "1970-04-01T01:00:00Z"));
+  const next = grouper.sync(arrayView(rows), "sessions", expanded);
+  build(next, 1000, 200);
+  expect(reads).toBeLessThan(25);
+  expect(next[1]).toBe(first[1]);
+});
+
+it("appends older sessions without traversing the retained group prefix", () => {
+  const rows = Array.from({ length: 20_000 }, (_, id) =>
+    photo(id, new Date(Date.UTC(2025, 0, 1) - id * 5 * 3600_000).toISOString()),
+  );
+  const grouper = createPhotoGrouper(),
+    build = createPhotoChunks(),
+    expanded = new Set<string>();
+  const groups = grouper.sync(arrayView(rows), "sessions", expanded);
+  const chunks = build(groups, 1000, 200);
+  let reads = 0;
+  for (const group of groups) {
+    const key = group.key;
+    Object.defineProperty(group, "key", {
+      get: () => {
+        reads++;
+        return key;
+      },
+    });
+  }
+  rows.push(photo(20_000, "2000-01-01T00:00:00Z"));
+  const next = build(grouper.sync(arrayView(rows), "sessions", expanded), 1000, 200);
+  expect(reads).toBeLessThan(10);
+  expect(next[19_999]).toBe(chunks[19_999]);
+  expect(next).toHaveLength(20_001);
+});
 
 // Lays out groups at 144px wide, so every 3:2 photo gets its own 96px row.
 function chunks(groups: { key: string; year: string; items: PhotoGridRow[] }[]) {
@@ -356,4 +546,19 @@ it("places a row with only a file modified time in its month and keeps rows with
   expect(groups.map((group) => group.key)).toEqual(["2023-11", "2020-01", "undated"]);
   expect(groups[0]!.items).toEqual([items[0]]);
   expect(groups.at(-1)!.items).toEqual([items[2]]);
+});
+
+it("publishes bounded array views with normal iteration, slicing, and concatenation", () => {
+  const buffer = [1, 2],
+    first = arrayView(buffer);
+  buffer.push(3);
+  const second = arrayView(buffer);
+  expect(Array.isArray(first)).toBe(true);
+  expect([...first]).toEqual([1, 2]);
+  expect(first.slice()).toEqual([1, 2]);
+  expect(first.map((n) => n * 2)).toEqual([2, 4]);
+  expect(first.concat([4])).toEqual([1, 2, 4]);
+  expect(JSON.stringify(first)).toBe("[1,2]");
+  expect([...second]).toEqual([1, 2, 3]);
+  expect(() => first.push(4)).toThrow();
 });

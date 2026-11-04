@@ -7,10 +7,10 @@
   import { type MapTiles } from "./photoMap.js";
   import { APIError, sessionResponse } from "./api-transport.js";
   import type { PhotoMapRow } from "./generated/docbank.js";
-  import type { MapView, PhotoRow } from "./photos.svelte.js";
+  import { arraySource } from "./photoRows.js";
+  import type { MapView } from "./photos.svelte.js";
   let {
     items,
-    appendedFrom,
     tiles,
     session,
     onauthfailure,
@@ -20,7 +20,6 @@
     onview,
   }: {
     items: PhotoMapRow[];
-    appendedFrom?: PhotoRow[];
     tiles: MapTiles;
     session: string;
     onauthfailure?: (cause: unknown) => void;
@@ -36,9 +35,11 @@
   let tileError = $state(false);
   const failedTiles = new Set<string>();
   let scanned: PhotoMapRow[] = [];
+  let scannedCount = 0;
   let inView: PhotoMapRow[] = [];
   const markers = new Map<string, L.Marker>();
   let built: PhotoMapRow[] = [];
+  let builtCount = 0;
   let pending: PhotoMapRow[] = [];
   let offset = 0;
   function cancelBuild() {
@@ -48,21 +49,22 @@
   function visible(incremental = false) {
     if (!map) return;
     const bounds = map.getPixelBounds();
-    const append = incremental && appendedFrom === scanned;
-    const hits = (append ? items.slice(scanned.length) : items).filter(
+    const append = incremental && arraySource(items) === scanned;
+    const hits = (append ? items.slice(scannedCount) : items).filter(
       (row) =>
         row.latitude != null &&
         row.longitude != null &&
         bounds.contains(map!.project([row.latitude, row.longitude])),
     );
     inView = append ? [...inView, ...hits] : hits;
-    scanned = items;
+    scanned = arraySource(items);
+    scannedCount = items.length;
     onvisible(inView);
   }
   function build(photos = items) {
     if (!cluster || !map) return;
     cancelBuild();
-    const append = appendedFrom === built;
+    const append = arraySource(photos) === built;
     const removed: L.Marker[] = [];
     if (!append) {
       pending = [];
@@ -74,7 +76,7 @@
           markers.delete(id);
         }
     }
-    for (const row of append ? photos.slice(built.length) : photos) {
+    for (const row of append ? photos.slice(builtCount) : photos) {
       const marker = markers.get(row.asset_id);
       const position = marker?.getLatLng();
       if (
@@ -92,7 +94,8 @@
         pending.push(row);
       }
     }
-    built = photos;
+    built = arraySource(photos);
+    builtCount = photos.length;
     cluster.removeLayers(removed);
     const target = cluster;
     function batch() {

@@ -1,3 +1,5 @@
+import { SvelteSet } from "svelte/reactivity";
+import { arrayView } from "./photoRows.js";
 import { patchPhotoRows, photoRows, photoStacksChanged, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
@@ -347,14 +349,14 @@ export class Photos {
   filtersOpen = $state(false);
   private rows = $state.raw<PhotoRow[]>([]);
   private seenIDs: Set<string> | undefined;
-  appendedFrom = $state.raw<PhotoRow[]>();
+  private rowBuffer: PhotoRow[] = [];
   get items() {
     return this.rows;
   }
   set items(value: PhotoRow[]) {
-    this.appendedFrom = undefined;
+    this.rowBuffer = value;
     this.seenIDs = undefined;
-    this.rows = value;
+    this.rows = arrayView(value);
   }
   burstGapSeconds = $state(2);
   groupingIncomplete = $state(false);
@@ -867,14 +869,20 @@ export class Photos {
           added.push(item);
         }
         const restore = preserve?.();
-        const previous = this.items;
-        this.rows = [...previous, ...added];
-        this.appendedFrom = previous;
-        if (this.allResults && !this.authored.targets.length)
-          this.selection = {
-            selectedIDs: new Set(this.items.map((item) => item.asset_id)),
-            anchorID: undefined,
-          };
+        this.rowBuffer.push(...added);
+        this.rows = arrayView(this.rowBuffer);
+        if (this.selectsAll) {
+          // Photos owns this reactive set. Selection edits replace it.
+          const selected = this.selection.selectedIDs;
+          if (selected instanceof SvelteSet) {
+            for (const item of added) selected.add(item.asset_id);
+          } else {
+            this.selection = {
+              ...this.selection,
+              selectedIDs: new SvelteSet([...selected, ...added.map((item) => item.asset_id)]),
+            };
+          }
+        }
         if (!this.started || !this.projection) this.total = page.total;
         this.cursor = capped ? this.cursor : page.next_cursor;
         this.started = true;
@@ -1879,12 +1887,16 @@ export class Photos {
     }
     return true;
   }
+  get selectsAll() {
+    return this.allResults && !this.authored.targets.length;
+  }
   async selectAllResults() {
     if (!this.authored.canChangeTarget()) return;
     if (this.snapshotID) {
       if (!(await this.loadRankedResults())) return;
     }
     this.selectLoaded();
+    this.selection = { ...this.selection, selectedIDs: new SvelteSet(this.selection.selectedIDs) };
     this.allResults = true;
   }
   dispose() {

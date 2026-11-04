@@ -1,3 +1,6 @@
+import { tick } from "svelte";
+import { observeSelectionSize } from "./test/selection-observer.svelte.js";
+import { arraySource } from "./photoRows.js";
 import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
@@ -591,7 +594,7 @@ it("retains prepared Map targets when a metadata edit leaves the inherited filte
     await photos.refresh();
   });
   expect(photos.authored.error).toBe("");
-  expect(photos.items).toEqual([]);
+  expect([...photos.items]).toEqual([]);
   expect(photos.authored.targets).toEqual([after]);
   expect([...photos.selectedIDs]).toEqual(["photo-1"]);
   const revalidation = JSON.parse(fetcher.mock.calls[2]![1].body as string);
@@ -886,7 +889,7 @@ it.each(["confirmed", "server", "unknown ID", "missing ID", "maintenance busy", 
     expect(photos.rejects).toBeUndefined();
     expect(photos.error).toBe("Refresh unavailable");
     if (outcome === "confirmed") {
-      expect(photos.items).toEqual([photo(2)]);
+      expect([...photos.items]).toEqual([photo(2)]);
       expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
       expect(preserve).toHaveBeenCalledOnce();
       expect(restore).toHaveBeenCalledOnce();
@@ -946,7 +949,7 @@ it.each([
     if (kind === "trash") expect(await photos.trashSelected(undefined, changed)).toBe(false);
     else await photos.setHidden("photo-1", undefined, changed);
     expect(changed).toHaveBeenCalledTimes(refused ? 0 : 1);
-    expect(photos.items).toEqual([photo(1)]);
+    expect([...photos.items]).toEqual([photo(1)]);
     expect(photos.trashTargets).toEqual([photo(1)]);
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -1372,7 +1375,7 @@ it("restarts Library expiry recovery after its second page fails", async () => {
   await photos.loadMore();
   await photos.loadMore();
   await photos.retry();
-  expect(photos.items).toEqual(first);
+  expect([...photos.items]).toEqual(first);
   expect(photos.error).toBe("Page unavailable");
   await photos.retry();
   expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([
@@ -1383,7 +1386,7 @@ it("restarts Library expiry recovery after its second page fails", async () => {
     undefined,
     "recovery-second",
   ]);
-  expect(photos.items).toEqual([...first, ...second]);
+  expect([...photos.items]).toEqual([...first, ...second]);
   expect(photos.cursor).toBe("recovery-third");
   photos.dispose();
 });
@@ -1417,7 +1420,7 @@ it.each(["unavailable", "cursor_expired", "invalid_photo_cursor"])(
         ? [undefined, "second", undefined, "renewed-second"]
         : [undefined, "second", "second"],
     );
-    expect(photos.items).toEqual([first, second]);
+    expect([...photos.items]).toEqual([first, second]);
     expect(photos.staged).toBeUndefined();
     photos.dispose();
   },
@@ -1613,7 +1616,7 @@ it.each(
     expect(photos.authored.validating).toBe(false);
     expect(photos.authored.concealed).toBe(!accepted);
     expect(groups).toBe(2);
-    expect(photos.items).toEqual(accepted ? prefix : previous);
+    expect([...photos.items]).toEqual(accepted ? prefix : previous);
     if (outcome === "success") {
       expect([...photos.selection.selectedIDs]).toEqual(
         captured.slice(0, 64).map((item) => item.asset_id),
@@ -1830,7 +1833,7 @@ it.each([false, true])(
     const photos = new Photos("scoped", vi.fn(), hidden);
     photos.items = [item];
     expect((await photos.lookup("photo-2", new AbortController().signal)).asset_id).toBe("photo-2");
-    expect(photos.items).toEqual([item]);
+    expect([...photos.items]).toEqual([item]);
     const fresh = { ...item, content_version_id: "new-version" };
     fetcher.mockResolvedValueOnce(response([fresh]));
     expect(
@@ -2013,7 +2016,7 @@ it.each([
     if (scenario === "download-success") expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     else expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:original");
     expect(onauth).toHaveBeenCalledTimes(scenario === "download-auth" ? 1 : 0);
-    expect(photos.items).toEqual([old]);
+    expect([...photos.items]).toEqual([old]);
     return;
   }
   if (scenario === "version")
@@ -2022,7 +2025,7 @@ it.each([
     status: 409,
     code: "photo_display_changed",
   });
-  expect(photos.items).toEqual([old]);
+  expect([...photos.items]).toEqual([old]);
   expect(fetcher).toHaveBeenCalledTimes(scenario === "version" ? 1 : 0);
   expect(read).not.toHaveBeenCalled();
   if (scenario === "display") {
@@ -2102,7 +2105,7 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])(
   },
 );
 
-it("marks appended pages and clears the marker on other item assignments", async () => {
+it("publishes a fresh view over appended rows and replaces the buffer on assignments", async () => {
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   const previous = [mapPhoto(1)];
   photos.items = previous;
@@ -2110,10 +2113,11 @@ it("marks appended pages and clears the marker on other item assignments", async
   photos.cursor = "next";
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([mapPhoto(2)])));
   await photos.loadMore();
-  expect(photos.appendedFrom).toBe(previous);
+  expect(arraySource(photos.items)).toBe(previous);
+  expect(photos.items).not.toBe(previous);
   expect(photos.items).toHaveLength(2);
   photos.items = photos.items.map((row) => ({ ...row, latitude: 3 }));
-  expect(photos.appendedFrom).toBeUndefined();
+  expect(arraySource(photos.items)).not.toBe(previous);
   photos.dispose();
 });
 
@@ -3340,7 +3344,7 @@ it("uses refreshed revisions after saving Hidden setup before the hide batch", a
     ["/api/v1/photos/assets/photo-2/hide", "7"],
   ]);
   expect(photos.hiding).toBe(false);
-  expect(photos.items).toEqual([]);
+  expect([...photos.items]).toEqual([]);
   expect(photos.actionError).toBe("");
   photos.dispose();
 });
@@ -3876,3 +3880,64 @@ it.each([0, 2])(
     photos.dispose();
   },
 );
+
+it.each([false, true])(
+  "grows select-all IDs reactively unless authored targets own selection, targets=%s",
+  async (targets) => {
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1)];
+    photos.started = true;
+    photos.cursor = "next";
+    await photos.selectAllResults();
+    const selected = photos.selectedIDs;
+    const oldView = photos.items;
+    if (targets) photos.authored.targets = [preparedPhoto(1)];
+    const fetcher = vi.fn().mockResolvedValue(response([photo(2)], "last"));
+    stubPhotoFetch(fetcher);
+    const sizes: number[] = [];
+    const stop = observeSelectionSize(photos, (size) => sizes.push(size));
+    await tick();
+    await photos.loadMore();
+    expect(photos.allResults).toBe(true);
+    expect(photos.selectsAll).toBe(!targets);
+    if (!targets) expect(photos.selectedIDs).toBe(selected);
+    expect([...photos.selectedIDs]).toEqual(targets ? ["photo-1"] : ["photo-1", "photo-2"]);
+    expect(oldView).toHaveLength(1);
+    expect(photos.items).not.toBe(oldView);
+    expect(photos.items).toHaveLength(2);
+    await tick();
+    expect(sizes.at(-1)).toBe(targets ? 1 : 2);
+    stop();
+    photos.dispose();
+  },
+);
+
+it("appends a selected page without visiting retained row slots", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id));
+  photos.items = rows;
+  photos.started = true;
+  photos.cursor = "warm";
+  stubPhotoFetch(vi.fn().mockResolvedValue(response([photo(20_000)], "page")));
+  await photos.loadMore();
+  await photos.selectAllResults();
+  let visits = 0;
+  for (let i = 0; i < 20_000; i++) {
+    const row = rows[i];
+    Object.defineProperty(rows, i, {
+      configurable: true,
+      get: () => {
+        visits++;
+        return row;
+      },
+    });
+  }
+  stubPhotoFetch(
+    vi.fn().mockResolvedValue(response(Array.from({ length: 250 }, (_, i) => photo(20_001 + i)))),
+  );
+  await photos.loadMore();
+  expect(visits).toBe(0);
+  expect(photos.items).toHaveLength(20_251);
+  expect(photos.selectedIDs.size).toBe(20_251);
+  photos.dispose();
+});

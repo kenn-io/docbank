@@ -44,7 +44,7 @@
     type Photos,
     type PhotoReturn,
   } from "./photos.svelte.js";
-  import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
+  import { createPhotoGrouper, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
@@ -279,7 +279,9 @@
         : undefined
       : photoID
         ? current
-        : photos.items.find((row) => row.asset_id === id);
+        : id
+          ? photos.items.find((row) => row.asset_id === id)
+          : undefined;
     const concealed = untrack(() => inspectorFaces.concealed);
     void reloadRevision;
     const controller = new AbortController();
@@ -555,7 +557,7 @@
   let openIntent = $state("");
   let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
-  const listed = $derived(photos.items.some((item) => item.asset_id === photoID));
+  const listed = $derived(!!photoID && photos.items.some((item) => item.asset_id === photoID));
   const membershipNote = $derived(
     photoID && fromGrid && !listed && !photos.loading
       ? "This photo is no longer in the refreshed result."
@@ -824,17 +826,8 @@
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
-  const collapsed = $derived(
-    shown.filter(
-      (row) =>
-        !("stack" in row) ||
-        !row.stack ||
-        photos.expandedStacks.has(row.stack.asset_ids[0]!) ||
-        row.asset_id === row.stack.representative_id,
-    ),
-  );
   const selectedStack = $derived.by(() => {
-    if (photos.allResults) return;
+    if (photos.allResults || !photos.selectedIDs.size) return;
     const selected = shown.filter((row) => photos.selectedIDs.has(row.asset_id));
     const row = selected[0];
     if (
@@ -914,14 +907,16 @@
       },
     );
   }
+  const grouper = createPhotoGrouper();
   const groups = $derived(
-    groupPhotos(
-      collapsed,
+    grouper.sync(
+      shown,
       photos.query.sort?.field === "relevance"
         ? "relevance"
         : albumID && photos.query.sort?.field !== "capture_time"
           ? "flat"
           : photos.grouping,
+      photos.expandedStacks,
     ),
   );
   const searchable = $derived(searchablePhotoView(albumID, mapMode));
@@ -935,7 +930,9 @@
   const outsideSelection = $derived(
     mapMode ? [...photos.selectedIDs].filter((id) => !shownIDs.has(id)).length : 0,
   );
-  const listedRow = $derived(photos.items.find((item) => item.asset_id === photoID));
+  const listedRow = $derived(
+    photoID ? photos.items.find((item) => item.asset_id === photoID) : undefined,
+  );
   const listedDetail = $derived(!!listedRow && "content_version_id" in listedRow);
   const current = $derived(
     photoID
@@ -1665,7 +1662,8 @@
               outsideCount={outsideSelection}
               selectedCount={photos.selectedIDs.size}
               visibleDocumentCount={shown.length}
-              loadedSelected={shown.every((item) => photos.selectedIDs.has(item.asset_id))}
+              loadedSelected={photos.selectsAll ||
+                !shown.findLast((item) => !photos.selectedIDs.has(item.asset_id))}
               wholeQueryCount={photos.allResults && editor.count ? editor.count : photos.total}
               allResults={photos.allResults}
               onallresults={mapMode ? undefined : () => photos.selectAllResults()}
@@ -1759,7 +1757,6 @@
             <PhotoMap
               bind:this={map}
               items={photos.items as PhotoMapRow[]}
-              appendedFrom={photos.appendedFrom}
               {tiles}
               session={photos.session}
               onauthfailure={photos.onauthfailure}

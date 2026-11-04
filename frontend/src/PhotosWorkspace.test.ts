@@ -3142,7 +3142,7 @@ it.each(["resolution", "background import"])(
       await tick();
       await photos.authored.onXMPChanged!(receipt);
       await waitFor(() => expect(photos.items[0]?.rotation).toBe(90));
-      expect(photos.items).toEqual([{ ...photo(1), rating: 4, rotation: 90 }]);
+      expect([...photos.items]).toEqual([{ ...photo(1), rating: 4, rotation: 90 }]);
       expect(photos.total).toBe(1);
       expect(photos.facets).toEqual([]);
     } else {
@@ -3433,7 +3433,7 @@ it("reads the open photo again on a live change and conceals its cached image on
   await screen.findByText("This photo is no longer in this view.");
   expect(screen.queryByText("Fit preview")).toBeNull();
   expect(screen.getByText("No preview")).toBeTruthy();
-  expect(photos.items).toEqual([]);
+  expect([...photos.items]).toEqual([]);
   photos.dispose();
 });
 
@@ -3696,14 +3696,11 @@ function railLibrary(
   return { photos, cache, pages, bodies };
 }
 
-// Sections stack in the grid, so a month starts below the sections before it.
+// Virtual sections retain their absolute layout offset.
 function sectionTop(month: string) {
-  let top = 0;
-  for (const section of document.querySelectorAll<HTMLElement>("[data-month]")) {
-    if (section.dataset.month === month) return top;
-    top += Number.parseFloat(section.style.height);
-  }
-  throw new Error(`no section for ${month}`);
+  const section = document.querySelector<HTMLElement>(`[data-month="${month}"]`);
+  if (!section) throw new Error(`no section for ${month}`);
+  return Number(section.dataset.chunkOffset);
 }
 
 it("pages a chosen year in until it arrives, with the query, count, and selection unchanged", async () => {
