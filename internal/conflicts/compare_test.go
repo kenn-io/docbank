@@ -665,6 +665,16 @@ func TestInvalidDateKeepsYearDiscriminator(t *testing.T) {
 	}
 }
 
+func TestFindDoesNotCompareBoundedDateWithExactDate(t *testing.T) {
+	got := Find(Input{Query: "filing deadline", Passages: []Passage{
+		{Document: "bounded", Text: "The filing deadline is before 1 July 2026."},
+		{Document: "exact", Text: "The filing deadline is 1 July 2026."},
+	}})
+	if got.Status != NotComparable || got.Stats.AlignedPairs != 0 || len(got.Conflicts) != 0 {
+		t.Fatalf("bounded and exact dates compared as equivalent: %+v", got)
+	}
+}
+
 func TestFindBoundsConflictOutput(t *testing.T) {
 	in := Input{Passages: []Passage{
 		{Document: "a", Text: strings.Repeat("The fee is $10. ", 12)},
