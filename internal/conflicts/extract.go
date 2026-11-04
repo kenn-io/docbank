@@ -1079,11 +1079,11 @@ func normalizedPunctuation(r rune) rune {
 }
 
 // Blank lines and list or table rows separate independent statements.
-var capitalArticleRE = regexp.MustCompile(`^\s+(?:(?:A|An|Each)\s|P(?i:er\s+(?:[\p{L}]+(?:\s+[\p{L}]+)*\s*,|[\p{L}]+\s+(?:the|a|an)\s+[\p{L}]+(?:\s+[\p{L}]+)*\s+(?:is|are|was|were|has|have)\b|[\p{L}]+\s+[\p{L}]+\s+(?:start|starts|begin|begins|apply|applies)\s+from\b|[\p{L}]+(?:\s+[\p{L}]+)*\s+(?:` + negationRE.String() + `|[\p{L}]+n['’]t)\b)))`)
+var capitalArticleRE = regexp.MustCompile(`^\s+(?:(?:A|An|AN|Each|EACH)\s|P(?i:er\s+(?:[\p{L}]+(?:\s+[\p{L}]+)*\s*,|[\p{L}]+\s+(?:the|a|an)\s+[\p{L}]+(?:\s+[\p{L}]+)*\s+(?:is|are|was|were|has|have)\b|[\p{L}]+\s+[\p{L}]+\s+(?:start|starts|begin|begins|apply|applies)\s+from\b|[\p{L}]+(?:\s+[\p{L}]+)*\s+(?:` + negationRE.String() + `|[\p{L}]+n['’]t)\b)))`)
 
-var independentExclusionRE = regexp.MustCompile(`^\s*Excluding\s+[\p{L}]+(?:\s+[\p{L}]+)*\s*,\s*(?:the|a|an)\s+[\p{L}]+`)
+var independentExclusionRE = regexp.MustCompile(`(?i)^\s*Excluding\s+[\p{L}]+(?:\s+[\p{L}]+)*\s*,\s*(?:the|a|an)\s+[\p{L}]+`)
 
-var independentApproxLeadRE = regexp.MustCompile(`^\s*(?:About|Approximately|Around|Roughly|Nearly|Almost|Circa|Estimated)\b`)
+var independentApproxLeadRE = regexp.MustCompile(`(?i)^\s*(?:About|Approximately|Around|Roughly|Nearly|Almost|Circa|Estimated)\b`)
 
 func independentApproxAssertion(s string) bool {
 	loc := figureAssertionRE.FindStringIndex(s)
@@ -1094,7 +1094,7 @@ var figureAssertionRE = regexp.MustCompile(moneyRE.String() + `|` + unitRE.Strin
 
 var independentBoundSentenceRE = regexp.MustCompile(`(?i)^\s*(?:maximum|minimum)\s+[\p{L}]+(?:\s+[\p{L}]+)*\s+(?:has|have|is|are|was|were)\s+[\p{L}]+\b`)
 var quantifiedAssertionPrefixRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPrefix + `)\s*$`)
-var independentBoundPredicateRE = regexp.MustCompile(`(?i)^\s*(?:is|are|was|were|has|have|had|will(?:\s+be)?|would|can|could|may|might|must|do|does|did|receive(?:s|d)?)\b`)
+var independentBoundPredicateRE = regexp.MustCompile(`(?i)^\s*(?:is|are|was|were|has|have|had|will(?:\s+be)?|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 
 func independentBoundAssertion(s string) bool {
 	loc := figureAssertionRE.FindStringIndex(s)
@@ -1110,6 +1110,34 @@ var relativeDurationClauseConnectorRE = regexp.MustCompile(`(?i)^\s*[` + regexp.
 var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `|minus|negative|plus|positive)\s+|(?:<=|>=|≤|≥|<|>)\s*|[+~≈−-]\s*)`)
 var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?|` + assertionPredicatePattern + `)\b`)
 var relativeDurationConjunctionLeadRE = regexp.MustCompile(`(?i)^\s*[,;:]*\s*(?:and|or|but|while)\b`)
+var relativeDurationPrepositionLeadRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:about|above|across|after|against|along|among|around|at|before|behind|below|beneath|beside|between|by|despite|down|during|except|for|from|in|inside|into|like|near|of|off|on|onto|out|outside|over|past|since|through|throughout|to|toward|under|until|unto|upon|with|within|without)\b`)
+var relativeDurationBoundLeadRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPrefix + `)\b`)
+
+func independentDurationAssertion(s string) bool {
+	s = trimRelativeDurationWrappers(s)
+	if relativeDurationPrepositionLeadRE.MatchString(s) && !relativeDurationBoundLeadRE.MatchString(s) {
+		return false
+	}
+	return relativeDurationIndependentAssertionRE.MatchString(s) || independentTypedFigureAssertion(s)
+}
+
+func consumeRelativeDurationOperandQualifiers(s string) (operand string, consumed, signedStart int) {
+	signedStart = -1
+	for {
+		qualifier := relativeDurationOperandQualifierRE.FindStringIndex(s)
+		if qualifier == nil || qualifier[0] != 0 || qualifier[1] == 0 {
+			return s, consumed, signedStart
+		}
+		if signedStart < 0 && signedDurationOperand(s[:qualifier[1]]) {
+			signedStart = consumed
+		}
+		consumed += qualifier[1]
+		s = s[qualifier[1]:]
+		trimmed := trimRelativeDurationWrappers(s)
+		consumed += len(s) - len(trimmed)
+		s = trimmed
+	}
+}
 
 func abbreviatedDurationBoundary(prefix, suffix string) bool {
 	return durationAbbrevRE.MatchString(prefix) || strings.HasPrefix(suffix, ".") && durationAbbrevRE.MatchString(prefix+".")
@@ -1131,9 +1159,7 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 	}
 	connector := strings.ToLower(strings.Join(strings.Fields(suffix[loc[2]:loc[3]]), " "))
 	operand := trimRelativeDurationWrappers(suffix[loc[1]:])
-	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-		operand = trimRelativeDurationWrappers(operand[qualifier[1]:])
-	}
+	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
 	unit := unitRE.FindStringIndex(operand)
 	if unit == nil || unit[0] != 0 {
 		return unsupportedRelativeDurationOperand(operand, connector)
@@ -1162,6 +1188,7 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^an?\b`),
 }
 var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:of\s+)?(?:a|an)\s+|of\s+)?(?:(?:business|working|calendar)\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
+var adjacentDurationWordUnitRE = regexp.MustCompile(`(?i)^(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
 
 var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^\s+(and|or|through|to|until|till)\s+`)
 var durationLaterLeadRE = regexp.MustCompile(`(?i)^\s+(?:later|afterwards?|thereafter)\b`)
@@ -1185,9 +1212,7 @@ func unsupportedDurationAlternativeContinuation(suffix string) bool {
 		return false
 	}
 	operand := trimRelativeDurationWrappers(suffix[lead[1]:])
-	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-		operand = trimRelativeDurationWrappers(operand[qualifier[1]:])
-	}
+	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
 	_, unit, following, ok := relativeDurationOperandParts(operand)
 	if !ok {
 		return false
@@ -1218,9 +1243,7 @@ func independentDurationAlternativeLaterAssertion(suffix string) bool {
 		return false
 	}
 	operand := trimRelativeDurationWrappers(suffix[lead[1]:])
-	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-		operand = trimRelativeDurationWrappers(operand[qualifier[1]:])
-	}
+	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
 	_, _, following, ok := relativeDurationOperandParts(operand)
 	return ok && independentDurationLaterAssertion(following)
 }
@@ -1232,7 +1255,7 @@ func independentDurationLaterAssertion(following string) bool {
 		return false
 	}
 	assertion := following[later[1]:]
-	return relativeDurationIndependentAssertionRE.MatchString(assertion) || independentTypedFigureAssertion(assertion)
+	return independentDurationAssertion(assertion)
 }
 
 func trimRelativeDurationOperandClosers(s string) string {
@@ -1269,9 +1292,16 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 		if amount == nil || amount[0] != 0 {
 			continue
 		}
-		unitInRest := durationWordUnitRE.FindStringIndex(operand[amount[1]:])
+		rest := operand[amount[1]:]
+		unitInRest := durationWordUnitRE.FindStringIndex(rest)
 		if unitInRest == nil || unitInRest[0] != 0 {
-			continue
+			if !relativeDurationAmountStartsNumeric(operand[amount[0]:amount[1]]) {
+				continue
+			}
+			unitInRest = adjacentDurationWordUnitRE.FindStringIndex(rest)
+			if unitInRest == nil || unitInRest[0] != 0 {
+				continue
+			}
 		}
 		unit = []int{amount[1] + unitInRest[0], amount[1] + unitInRest[1]}
 		following = operand[unit[1]:]
@@ -1281,6 +1311,18 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 		return amount, unit, following, true
 	}
 	return nil, nil, "", false
+}
+
+func relativeDurationAmountStartsNumeric(amount string) bool {
+	first, size := utf8.DecodeRuneInString(amount)
+	if unicode.IsDigit(first) {
+		return true
+	}
+	if first != '.' || size >= len(amount) {
+		return false
+	}
+	second, _ := utf8.DecodeRuneInString(amount[size:])
+	return unicode.IsDigit(second)
 }
 
 func relativeDurationClauseOperand(s string) (connector, operand string, operandStart, signedOperandStart int, ok bool) {
@@ -1295,16 +1337,12 @@ func relativeDurationClauseOperand(s string) (connector, operand string, operand
 	trimmed := trimRelativeDurationWrappers(operand)
 	operandStart += len(operand) - len(trimmed)
 	operand = trimmed
-	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-		if signedDurationOperand(operand[:qualifier[1]]) {
-			signedOperandStart = operandStart
-		}
-		operandStart += qualifier[1]
-		operand = operand[qualifier[1]:]
-		trimmed = trimRelativeDurationWrappers(operand)
-		operandStart += len(operand) - len(trimmed)
-		operand = trimmed
+	qualifierStart := operandStart
+	operand, consumed, signedPrefixStart := consumeRelativeDurationOperandQualifiers(operand)
+	if signedPrefixStart >= 0 {
+		signedOperandStart = qualifierStart + signedPrefixStart
 	}
+	operandStart += consumed
 	return connector, operand, operandStart, signedOperandStart, true
 }
 
@@ -1336,16 +1374,12 @@ func independentUnsupportedRelativeDurationOperand(original string, offsets map[
 		trimmed := trimRelativeDurationWrappers(operand)
 		operandStart += len(operand) - len(trimmed)
 		operand = trimmed
-		if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-			if signedDurationOperand(operand[:qualifier[1]]) {
-				signedOperandStart = operandStart
-			}
-			operandStart += qualifier[1]
-			operand = operand[qualifier[1]:]
-			trimmed = trimRelativeDurationWrappers(operand)
-			operandStart += len(operand) - len(trimmed)
-			operand = trimmed
+		qualifierStart := operandStart
+		operand, consumed, signedPrefixStart := consumeRelativeDurationOperandQualifiers(operand)
+		if signedPrefixStart >= 0 {
+			signedOperandStart = qualifierStart + signedPrefixStart
 		}
+		operandStart += consumed
 		amount, unit, following, ok = relativeDurationOperandParts(operand)
 		if !ok || !independentDurationLaterAssertion(following) {
 			return 0, 0, false
@@ -1381,7 +1415,7 @@ func independentRelativeDurationAssertion(connector, following string) bool {
 		if relativeDurationConjunctionLeadRE.MatchString(following) {
 			return false
 		}
-		return relativeDurationIndependentAssertionRE.MatchString(following) || independentTypedFigureAssertion(following)
+		return independentDurationAssertion(following)
 	default:
 		return false
 	}

@@ -2619,6 +2619,9 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. prior to 10 min.",
 		"The deadline is 7 min. After 10 min.",
 		"The deadline is 7 min. before about 10 min.",
+		"The deadline is 7 min. before about -10 min.",
+		"The deadline is 7 min. before at least about -10 min.",
+		"The deadline is 7 min. before 10 minutes of processing.",
 		"The deadline is 7 min. After approximately 10 min.",
 		"The deadline is 7 min. prior to at least 10 min.",
 		"The deadline is 7 min. before no more than 10 min.",
@@ -2721,6 +2724,60 @@ func TestExtractSeparatesPredicateOnlyAssertionAfterRelativeDuration(t *testing.
 		}
 	}
 	t.Fatalf("independent predicate-only sentence swallowed the duration assertion: %+v", got)
+}
+
+func TestExtractPreservesIndependentAssertionAfterUnsupportedQualifiedDurations(t *testing.T) {
+	for _, text := range []string{
+		"The wait is 7 min. After about -10 minutes customers pay $5.",
+		"The wait is 7 min. After at least about -10 minutes customers pay $5.",
+		"The wait is 7 min. After +10min customers pay $5.",
+	} {
+		got := Extract(text)
+		var wait, fee bool
+		for _, figure := range got {
+			wait = wait || figure.Text == "7 min" && figure.Clause == "The wait is 7 min."
+			fee = fee || figure.Text == "$5"
+		}
+		if !wait || !fee {
+			t.Errorf("unsupported duration hid an independent assertion in %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractKeepsIndependentBoundedSentenceAfterDuration(t *testing.T) {
+	text := "The wait is 7 min. More than 2 devices cost $5."
+	got := Extract(text)
+	var wait, fee bool
+	for _, figure := range got {
+		wait = wait || figure.Text == "7 min" && figure.Clause == "The wait is 7 min."
+		fee = fee || figure.Text == "$5"
+	}
+	if !wait || !fee {
+		t.Fatalf("bounded assertion sentence swallowed the preceding duration or fee: %+v", got)
+	}
+}
+
+func TestExtractKeepsIndependentSentenceAfterUppercaseLeads(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The wait is 7 min. APPROXIMATELY 2 devices are included.", []string{"7 min"}},
+		{"The wait is 7 min. AN account pays $5 per month.", []string{"7 min", "$5"}},
+		{"The wait is 7 min. EXCLUDING weekends, the fee is $5.", []string{"7 min", "$5"}},
+	} {
+		got := Extract(tt.text)
+		if len(got) != len(tt.want) {
+			t.Errorf("%q: got %+v, want %v", tt.text, got, tt.want)
+			continue
+		}
+		for i := range tt.want {
+			if got[i].Text != tt.want[i] {
+				t.Errorf("%q: got %+v, want %v", tt.text, got, tt.want)
+				break
+			}
+		}
+	}
 }
 
 func TestExtractRejectsCoordinatedRelativeDurationContinuations(t *testing.T) {
