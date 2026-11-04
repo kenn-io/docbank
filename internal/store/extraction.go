@@ -231,8 +231,8 @@ func rebuildImportedTextExtractionStateTx(ctx context.Context, tx *sql.Tx) error
 }
 
 // SeedTextExtractionQueue discovers supported selected content once at daemon
-// startup. Discovery and projection writes share one storage transaction, so a
-// concurrent deletion cannot invalidate a selected version between those steps.
+// startup. Discovery reads a snapshot; projection writes recheck that each
+// pending version is still current before taking effect.
 // Later logical writes enqueue in Go while existing vaults converge here.
 func (s *Store) SeedTextExtractionQueue(
 	ctx context.Context, extractor string, version int64,
@@ -252,7 +252,8 @@ func (s *Store) SeedTextExtractionQueue(
 		versionID, hash, mimeType string
 		needsExtraction           bool
 	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	var seeds []seed
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT v.version_id, v.blob_hash, COALESCE(v.mime_type, ''),
 			       CASE WHEN e.blob_hash IS NULL OR e.extractor_version < ? THEN 1 ELSE 0 END
@@ -260,12 +261,13 @@ func (s *Store) SeedTextExtractionQueue(
 			JOIN nodes n ON n.current_version_id = v.version_id
 			LEFT JOIN extracted_text e
 			  ON e.blob_hash=v.blob_hash AND e.extractor=?
-			ORDER BY v.version_id`, version, extractor)
+			WHERE NOT EXISTS (SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=v.version_id)
+			   OR e.blob_hash IS NULL OR e.extractor_version < ?
+			ORDER BY v.version_id`, version, extractor, version)
 		if err != nil {
 			return fmt.Errorf("discovering text extraction work: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
-		var seeds []seed
 		for rows.Next() {
 			var item seed
 			if err := rows.Scan(
@@ -273,9 +275,19 @@ func (s *Store) SeedTextExtractionQueue(
 			); err != nil {
 				return fmt.Errorf("discovering text extraction work: scanning row: %w", err)
 			}
-			if SupportsTextExtractionMIME(item.mimeType) {
-				seeds = append(seeds, item)
+			if !SupportsTextExtractionMIME(item.mimeType) {
+				continue
 			}
+			if suppressionProfile != "" {
+				suppressed, err := legacyDerivativeSuppressedTx(ctx, tx, item.hash, item.versionID, suppressionProfile)
+				if err != nil {
+					return fmt.Errorf("checking extraction purge suppression: %w", err)
+				}
+				if suppressed {
+					continue
+				}
+			}
+			seeds = append(seeds, item)
 		}
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("discovering text extraction work: %w", err)
@@ -283,9 +295,24 @@ func (s *Store) SeedTextExtractionQueue(
 		if err := rows.Close(); err != nil {
 			return fmt.Errorf("discovering text extraction work: %w", err)
 		}
-
+		return nil
+	})
+	if err != nil || len(seeds) == 0 {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		queued := make(map[string]struct{})
 		for _, item := range seeds {
+			var current bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM content_versions v
+				JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
+				WHERE v.version_id=$1)`, item.versionID).Scan(&current); err != nil {
+				return fmt.Errorf("checking current text version: %w", err)
+			}
+			if !current {
+				continue
+			}
 			if suppressionProfile != "" {
 				suppressed, err := legacyDerivativeSuppressedTx(
 					ctx, tx, item.hash, item.versionID, suppressionProfile)
