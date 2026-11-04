@@ -325,9 +325,14 @@ cannot hide its role. Accepted rate spans are removed from the subject, so
 are excluded from independent comparison. Thus `$5 per month` and `$60 per year`
 are not comparable; rate conversion is outside this package's scope. Ordinary
 duration conversions such as `24 hours` and `1 day` still agree, and differing
-numerators with the same denominator can conflict. Unsupported fractions or
-arithmetic after a rate omit the whole clause. Additional denominator words,
-such as `per passenger mile`, are unsupported. Denominator extensions such as
+numerators with the same denominator can conflict. Closing quotes around a
+numerator stay attached to its rate, so `"$5" a month` and `"$6" a year` are
+not compared as flat amounts. Accepted period connectors after a denominator,
+including `prior to`, remain valid; runs of spaces or tabs in multiword
+connectors such as `on or before` normalize before comparison. Unsupported
+fractions or arithmetic after a rate omit the whole clause. Additional
+denominator words, such as `per passenger mile`, are unsupported. Denominator
+extensions such as
 `per unit of energy`, `per bottle of water`, and `per bottle (of water)` are
 omitted instead of compared using only the first noun. Incomplete composite
 abbreviations such as `sq.` and `cu.` are also omitted instead of treating the

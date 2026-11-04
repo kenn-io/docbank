@@ -66,7 +66,7 @@ var subjectWordRE = regexp.MustCompile(`[\p{L}\p{Nd}]+`)
 
 // Rate conversion is deliberately unsupported; the full denominator remains
 // part of the comparison signature.
-var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
+var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:["'’”»]+\s*)?(?:(?:per|each)\s+|/\s*|(?:a|an)\s+)((?:(` + numRange + `)\s+)?(?:(?:` + rateDenominatorModifier + `)\s+)?[\p{L}\p{Nd}]+)`)
 var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
 var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:and\s+)?(?:[(\["'‘’“”«»]\s*)*(?:a|an)\b\s*(?:[(\["'‘’“”«»]\s*)*[\p{L}\p{Nd}]+\b`)
 var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
@@ -206,14 +206,17 @@ func makeSubject(f Figure, figures []Figure) subject {
 						s.isDenominator = true
 					}
 					continuation := text[suffixStart+match[1]:]
-					unsupportedExtension := rateDenominatorExtensionRE.MatchString(continuation) && !acceptedRateDateBound(text, suffixStart+match[1], f)
+					acceptedDateBound := acceptedRateDateBound(text, suffixStart+match[1], f)
+					unsupportedExtension := rateDenominatorExtensionRE.MatchString(continuation) && !acceptedDateBound
 					if rateFractionContinuationRE.MatchString(continuation) || rateArithmeticContinuationRE.MatchString(continuation) || rateArticleContinuationRE.MatchString(continuation) || unsupportedExtension {
 						invalidRate = true
 					}
-					if word := rateDenominatorContinuationRE.FindStringSubmatch(continuation); len(word) > 1 {
-						lower := strings.ToLower(word[1])
-						if !stopWords[lower] && !rateDenominatorContinuationWords[lower] {
-							invalidRate = true
+					if !acceptedDateBound {
+						if word := rateDenominatorContinuationRE.FindStringSubmatch(continuation); len(word) > 1 {
+							lower := strings.ToLower(word[1])
+							if !stopWords[lower] && !rateDenominatorContinuationWords[lower] {
+								invalidRate = true
+							}
 						}
 					}
 				}
@@ -276,6 +279,7 @@ func acceptedRateDateBound(text string, start int, f Figure) bool {
 			continue
 		}
 		lead := strings.TrimSpace(strings.Trim(text[start:span.start], `.,;:()[]{}"'‘’“”«»`))
+		lead = strings.Join(strings.Fields(lead), " ")
 		for _, word := range periodWords {
 			if strings.EqualFold(lead, word) {
 				return true
