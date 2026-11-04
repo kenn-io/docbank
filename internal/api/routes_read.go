@@ -92,6 +92,18 @@ func contentResponses() map[string]*huma.Response {
 	}
 }
 
+func setContentVersionHeaders(hctx huma.Context, version store.ContentVersion) {
+	contentType := version.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	hctx.SetHeader("Content-Type", contentType)
+	hctx.SetHeader(ContentVersionHeader, version.ID)
+	hctx.SetHeader(BlobHashHeader, version.BlobHash)
+	hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
+	hctx.SetHeader("Trailer", "Content-Digest")
+}
+
 func streamContentVersion(
 	ctx context.Context, d Deps, version store.ContentVersion,
 ) (*huma.StreamResponse, error) {
@@ -100,17 +112,9 @@ func streamContentVersion(
 		return nil, NewError(http.StatusInternalServerError, "internal",
 			fmt.Sprintf("opening blob %s: %v (run docbank verify)", version.BlobHash, err))
 	}
-	contentType := version.MimeType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
 	return &huma.StreamResponse{Body: func(hctx huma.Context) {
 		defer func() { _ = f.Close() }()
-		hctx.SetHeader("Content-Type", contentType)
-		hctx.SetHeader(ContentVersionHeader, version.ID)
-		hctx.SetHeader(BlobHashHeader, version.BlobHash)
-		hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
-		hctx.SetHeader("Trailer", "Content-Digest")
+		setContentVersionHeaders(hctx, version)
 		// The blob reader hashes the streamed bytes and verifies this identity
 		// at EOF. Reuse that result only after a complete, verified transfer.
 		if _, err := io.Copy(hctx.BodyWriter(), f); err == nil && f.Verified() {
@@ -163,17 +167,9 @@ func streamContentVersionRange(ctx context.Context, d Deps, version store.Conten
 	}
 	return &huma.StreamResponse{Body: func(hctx huma.Context) {
 		defer func() { _ = reader.Close() }()
-		contentType := version.MimeType
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-		hctx.SetHeader("Content-Type", contentType)
+		setContentVersionHeaders(hctx, version)
 		hctx.SetHeader("Accept-Ranges", "bytes")
 		hctx.SetHeader("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, version.Size))
-		hctx.SetHeader(ContentVersionHeader, version.ID)
-		hctx.SetHeader(BlobHashHeader, version.BlobHash)
-		hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
-		hctx.SetHeader("Trailer", "Content-Digest")
 		hctx.SetStatus(http.StatusPartialContent)
 		digest := sha256.New()
 		if n, err := io.Copy(io.MultiWriter(hctx.BodyWriter(), digest), io.LimitReader(reader, end-start)); err == nil && n == end-start {
