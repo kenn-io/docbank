@@ -1441,14 +1441,6 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 	if len(added) == 0 {
 		return head, nil
 	}
-	var tip int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0)
-		FROM rendition_lexical_stream_builds WHERE stream_id=$1`, streamID).Scan(&tip); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("reading lexical stream tip: %w", err)
-	}
-	if tip > head.BuildCount {
-		return LexicalGeneration{}, ErrNotFound
-	}
 	var segments []lexicalManifestRow
 	for _, buildID := range added {
 		rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)

@@ -2435,3 +2435,82 @@ func TestImportedSupersededLexicalGenerationIsCollectedAfterRootRelease(t *testi
 	assert.Zero(t, countGeneration(superseded.ID))
 	assert.Equal(t, 1, countGeneration(current.ID), "the head is never collected")
 }
+
+func TestPostCutoverReimportAfterPruneAndGCWithPinnedReader(t *testing.T) {
+	t.Parallel()
+	t.Run("pinned reader reimport", func(t *testing.T) {
+		ctx := t.Context()
+		s := newTestStore(t)
+		seedLegacyMigrationRow(t, s, "a.txt", "a1", ExtractionResult{
+			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "aauthority",
+		})
+		_, err := s.MigrateLegacyPlainText(ctx)
+		require.NoError(t, err)
+		b, err := s.CreateFile(ctx, s.RootID(), "b.txt", fakeHash("b1"), 10, "text/plain")
+		require.NoError(t, err)
+		extraction := ExtractionResult{
+			BlobHash: b.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: ExtractionOK, Text: "bauthority",
+		}
+		require.NoError(t, s.RecordExtraction(ctx, extraction))
+		lease, err := s.AcquireLexicalGeneration(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, lease.Release()) })
+		before, err := lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
+		require.NoError(t, err)
+		require.Len(t, before, 2)
+		replaced, _, err := s.ReplaceContent(ctx, b.ID, b.Revision, fakeHash("b2"), 10, "application/octet-stream")
+		require.NoError(t, err)
+		_, err = s.PruneContentVersions(ctx, b.ID, replaced.Revision, VersionPruneSelector{AllPrior: true}, true)
+		require.NoError(t, err)
+		_, err = s.PurgeDerivatives(ctx, PurgeRequest{})
+		require.NoError(t, err)
+		head, err := s.ActiveLexicalGeneration(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, head.BuildCount)
+		_, err = s.CreateFile(ctx, s.RootID(), "reimport.txt", extraction.BlobHash, 10, "text/plain")
+		require.NoError(t, err)
+		require.NoError(t, s.RecordExtraction(ctx, extraction))
+		hits, _, err := s.SearchPage(ctx, "bauthority", 20)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, "/reimport.txt", hits[0].Path)
+		assert.Equal(t, SearchMatchContent, hits[0].Match)
+		members, err := lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
+		require.NoError(t, err)
+		assert.Equal(t, before, members)
+	})
+	t.Run("purge without reader", func(t *testing.T) {
+		ctx := t.Context()
+		s := newTestStore(t)
+		for _, name := range []string{"a", "b"} {
+			seedLegacyMigrationRow(t, s, name+".txt", name+"1", ExtractionResult{
+				Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: name + "authority",
+			})
+		}
+		_, err := s.MigrateLegacyPlainText(ctx)
+		require.NoError(t, err)
+		fresh, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 10, "text/plain")
+		require.NoError(t, err)
+		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+			BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: ExtractionOK, Text: "cauthority",
+		}))
+		hits, _, err := s.SearchPage(ctx, "cauthority", 20)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		require.Equal(t, "/c.txt", hits[0].Path)
+		_, err = s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{fresh.CurrentVersionID}})
+		require.NoError(t, err)
+		hits, _, err = s.SearchPage(ctx, "cauthority", 20)
+		require.NoError(t, err)
+		require.Empty(t, hits)
+		for _, name := range []string{"a", "b"} {
+			hits, _, err := s.SearchPage(ctx, name+"authority", 20)
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+			assert.Equal(t, "/"+name+".txt", hits[0].Path)
+			assert.Equal(t, SearchMatchContent, hits[0].Match)
+		}
+	})
+}

@@ -2112,31 +2112,19 @@ func TestLexicalGenerationReuseRejectsSameCountContentSubstitution(t *testing.T)
 		WHERE build_id=?`, build.ID)
 	require.NoError(t, err)
 
-	_, err = s.StageLexicalGeneration(ctx, generationID)
-	require.ErrorContains(t, err, "immutable manifest")
-}
-
-func TestLexicalGenerationStagingRejectsDamagedExistingProjection(t *testing.T) {
-	t.Parallel()
-	s, _ := newRenditionCatalogFixture(t)
-	ctx := t.Context()
-	profile := catalogProcessingProfile(t, false)
-	build := lexicalSearchBuild(s, profile, catalogBuildID, "canonical mercury phrase")
-	require.NoError(t, s.StageRenditionBuild(ctx, build))
-	_, err := s.StageLexicalGeneration(ctx, fakeHash("98"))
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE rendition_lexical_index SET text='substituted venus phrase'
-		WHERE build_id=?`, build.ID)
-	require.NoError(t, err)
-
-	generationID := fakeHash("99")
-	_, err = s.StageLexicalGeneration(ctx, generationID)
-	require.ErrorContains(t, err, "has a different immutable manifest")
-	var count int
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_generations
-		WHERE generation_id=?`, generationID).Scan(&count))
-	assert.Zero(t, count, "failed staging rolls back the new generation")
+	t.Run("reuse existing generation", func(t *testing.T) {
+		_, err := s.StageLexicalGeneration(ctx, generationID)
+		require.ErrorContains(t, err, "immutable manifest")
+	})
+	t.Run("stage fresh generation", func(t *testing.T) {
+		freshID := fakeHash("99")
+		_, err := s.StageLexicalGeneration(ctx, freshID)
+		require.ErrorContains(t, err, "has a different immutable manifest")
+		var count int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_generations
+			WHERE generation_id=?`, freshID).Scan(&count))
+		assert.Zero(t, count, "failed staging rolls back the new generation")
+	})
 }
 
 func TestLexicalGenerationPublicationRejectsSameCountContentSubstitution(t *testing.T) {
