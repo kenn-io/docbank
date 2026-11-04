@@ -81,7 +81,7 @@
   let initialized = $state(false);
   let viewport = $state(960);
   const buildChunks = createPhotoChunks();
-  const seekOffset = createPhotoSeek();
+  let seekOffset = createPhotoSeek();
   const chunks: PhotoChunk[] = $derived(buildChunks(groups, width, targetRowHeight));
   const totalHeight = $derived(
     chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.layout.intrinsicHeight : 0,
@@ -162,7 +162,10 @@
       if (offset !== undefined || done) place(Math.ceil(offset ?? totalHeight));
       if (done) seek = "";
       else untrack(onloadmore);
-    } else if (totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    } else {
+      seekOffset = createPhotoSeek();
+      if (totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    }
   });
 
   export function preservePosition() {
