@@ -86,6 +86,11 @@ such as `7 min. before 10-7 min.`; and wrapped bounds such as
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
 the connector, so `(7 days ) before (about 10 days)` remains one unsupported
 comparison.
+Auxiliary-led text such as `10 minutes have elapsed` continues the duration
+operand. The full expression `The deadline is 7 min. before 10 minutes have
+elapsed.` yields no figures. A malformed numeric operand such as `1,00 minutes`
+is also unsupported: `The deadline is 7 min. before 1,00 minutes.` yields no
+figures.
 
 An independent temporal assertion after an abbreviated duration remains
 separate when it starts with its own subject and predicate, or with a typed
@@ -101,6 +106,13 @@ An `and <duration> later` continuation also stays separate when the later
 assertion starts with its own subject and predicate or a typed figure. For
 example, `The wait is 7 min. and 1 000 minutes later the fee is $5.` and `The
 wait is 7 min. and an hour later, $5 is charged.` keep `7 min` and `$5`.
+A signed duration in an independent later assertion also stays separate, as in
+`The wait is 7 min. and +10 minutes later the fee is $5.` Figures asserted
+after an approximate amount or percentage base remain separate too.
+`The fee is about $5 and $10 covers insurance.` keeps `$10`; `The fee is 5%
+of $100 and $200 covers insurance.` keeps `5%` and `$200`. A malformed operand
+does not discard a later independent assertion: `The wait is 7 min. After 1,00
+minutes customers pay $5.` keeps `7 min` and `$5`.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
@@ -129,6 +141,8 @@ never becomes a partial exact value. Unsupported sign words such as `minus`
 and `negative`
 before a numeric figure or its bound never yield a positive value. Postfix
 bounds such as `7 days maximum` are omitted rather than treated as exact.
+Signed alternatives such as `7 min. or +10 min.` and `7 min. or negative 10
+min.` also yield no figures.
 Recognition never rewrites the quoted source text.
 
 Money, percentages, durations and counts share one continuation check. When a

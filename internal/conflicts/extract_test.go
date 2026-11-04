@@ -2622,6 +2622,7 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. before about -10 min.",
 		"The deadline is 7 min. before at least about -10 min.",
 		"The deadline is 7 min. before 10 minutes of processing.",
+		"The deadline is 7 min. before 10 minutes have elapsed.",
 		"The deadline is 7 min. After approximately 10 min.",
 		"The deadline is 7 min. prior to at least 10 min.",
 		"The deadline is 7 min. before no more than 10 min.",
@@ -2699,7 +2700,9 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 		"The wait is 7 min. After 10⁶ minutes customers pay $5.",
 		"The wait is 7 min. After 10⁶ minutes, $5 is charged.",
 		"The wait is 7 min. and negative 10 minutes later the fee is $5.",
+		"The wait is 7 min. and +10 minutes later the fee is $5.",
 		"The wait is 7 min. After 1 000.5 minutes customers pay $5.",
+		"The wait is 7 min. After 1,00 minutes customers pay $5.",
 	} {
 		t.Run(text, func(t *testing.T) {
 			got := Extract(text)
@@ -2797,6 +2800,8 @@ func TestExtractRejectsUnsupportedDurationAlternativesAfterAbbreviation(t *testi
 		"The wait is 7 min. or an hour.",
 		"The wait is 7 min. or a quarter of an hour.",
 		"The wait is 7 min. or one and a half hours.",
+		"The wait is 7 min. or +10 min.",
+		"The wait is 7 min. or negative 10 min.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("unsupported duration alternative retained an endpoint for %q: %+v", text, got)
@@ -2810,6 +2815,7 @@ func TestExtractRejectsDurationShapedRelativeOperandsBeforeValueValidation(t *te
 		"The deadline is 7 min. before 10-7 min.",
 		"The deadline is 7 min. before half an hour.",
 		"The deadline is 7 min. before a half hour.",
+		"The deadline is 7 min. before 1,00 minutes.",
 		"The deadline is 7 min. before " + overlong + " minutes.",
 	} {
 		t.Run(text, func(t *testing.T) {
@@ -4902,6 +4908,7 @@ func TestExtractReviewPercentageBaseAndIndependentSentences(t *testing.T) {
 	}{
 		{"The fee is 5% (approximately) of $100. The deposit is $7.", []string{"$7"}, ""},
 		{"The fee is 5% of $100 and $200 is deposited.", []string{"5%", "$200"}, ""},
+		{"The fee is 5% of $100 and $200 covers insurance.", []string{"5%", "$200"}, ""},
 		{"The fee is 5% of $100 and $200. The deposit is $7.", []string{"5%", "$7"}, ""},
 		{"The fee is 5% of $100. The deposit is $7.", []string{"5%", "$7"}, ""},
 		{"The wait is 7 min. Per customer no fee applies.", []string{"7 min"}, "The wait is 7 min."},
@@ -5036,6 +5043,8 @@ func TestExtractReviewQualifiedBoundariesAndIndependentGroups(t *testing.T) {
 		{"The notice is due 2 days prior to «1 July 2026».", []string{"2 days"}, Period{}},
 		{"The notice is due 2 days from (1 July 2026).", []string{"2 days"}, Period{}},
 		{"The fee is about $5 and $10 is deposited.", []string{"$10"}, Period{}},
+		{"The fee is about $5 and $10 covers insurance.", []string{"$10"}, Period{}},
+		{"The fee is about 5% of $100 and $200 covers insurance.", []string{"$200"}, Period{}},
 		{"The wait is about 7 days and 3 days are included.", []string{"3 days"}, Period{}},
 		{"The fee is $5 and at least $10 is deposited.", []string{"$5", "$10"}, Period{}},
 		{"Policy number: AB1234 and at least 2 devices are covered.", []string{"Policy number: AB1234", "2 devices"}, Period{}},

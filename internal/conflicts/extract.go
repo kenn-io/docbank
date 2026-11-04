@@ -1087,7 +1087,7 @@ var independentApproxLeadRE = regexp.MustCompile(`(?i)^\s*(?:About|Approximately
 
 func independentApproxAssertion(s string) bool {
 	loc := figureAssertionRE.FindStringIndex(s)
-	return independentApproxLeadRE.MatchString(s) && loc != nil && quantitySubjectRE.MatchString(s[loc[1]:])
+	return independentApproxLeadRE.MatchString(s) && loc != nil && quantitySubjectAssertion(s[loc[1]:])
 }
 
 var figureAssertionRE = regexp.MustCompile(moneyRE.String() + `|` + unitRE.String() + `|` + countRE.String())
@@ -1112,9 +1112,13 @@ var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:
 var relativeDurationConjunctionLeadRE = regexp.MustCompile(`(?i)^\s*[,;:]*\s*(?:and|or|but|while)\b`)
 var relativeDurationPrepositionLeadRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:about|above|across|after|against|along|among|around|at|before|behind|below|beneath|beside|between|by|despite|down|during|except|for|from|in|inside|into|like|near|of|off|on|onto|out|outside|over|past|since|through|throughout|to|toward|under|until|unto|upon|with|within|without)\b`)
 var relativeDurationBoundLeadRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPrefix + `)\b`)
+var relativeDurationAuxiliaryLeadRE = regexp.MustCompile(`(?i)^\s*(?:am|is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did)\b`)
 
 func independentDurationAssertion(s string) bool {
 	s = trimRelativeDurationWrappers(s)
+	if relativeDurationAuxiliaryLeadRE.MatchString(s) {
+		return false
+	}
 	if relativeDurationPrepositionLeadRE.MatchString(s) && !relativeDurationBoundLeadRE.MatchString(s) {
 		return false
 	}
@@ -1179,6 +1183,7 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
 	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|['‘’_]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
+	regexp.MustCompile(`^[0-9][0-9,._'‘’]*`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
 	spokenDecimalNumberRE,
@@ -1212,7 +1217,7 @@ func unsupportedDurationAlternativeContinuation(suffix string) bool {
 		return false
 	}
 	operand := trimRelativeDurationWrappers(suffix[lead[1]:])
-	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
+	operand, _, signedPrefixStart := consumeRelativeDurationOperandQualifiers(operand)
 	_, unit, following, ok := relativeDurationOperandParts(operand)
 	if !ok {
 		return false
@@ -1222,6 +1227,9 @@ func unsupportedDurationAlternativeContinuation(suffix string) bool {
 		if independentDurationLaterAssertion(following) {
 			return false
 		}
+	}
+	if signedPrefixStart >= 0 {
+		return true
 	}
 	match := unitRE.FindStringSubmatchIndex(operand)
 	if match == nil || match[0] != 0 || match[1] != unit[1] {
@@ -1426,7 +1434,7 @@ func independentTypedFigureAssertion(s string) bool {
 	if loc == nil {
 		return false
 	}
-	if directTypedFigureAssertionPrefixRE.MatchString(s[:loc[0]]) && quantitySubjectRE.MatchString(s[loc[1]:]) {
+	if directTypedFigureAssertionPrefixRE.MatchString(s[:loc[0]]) && quantitySubjectAssertion(s[loc[1]:]) {
 		return true
 	}
 	words := assertionPrefixWordRE.FindAllString(s[:loc[0]], -1)
@@ -1627,10 +1635,10 @@ func omitUncertainGroups(s string, checks, cs []candidate) []candidate {
 	previousExcluded := false
 	for i := 0; i < len(figures); {
 		j := i + 1
-		for j < len(figures) && figures[j].f.Kind == figures[i].f.Kind && figures[j-1].end <= figures[j].start && !quantitySubjectRE.MatchString(s[figures[j].end:]) && durationJoined(s[figureRelationEnd(s, checks, figures[j-1], figures[j].start):figures[j].start]) {
+		for j < len(figures) && figures[j].f.Kind == figures[i].f.Kind && figures[j-1].end <= figures[j].start && !quantitySubjectAssertion(s[figures[j].end:]) && durationJoined(s[figureRelationEnd(s, checks, figures[j-1], figures[j].start):figures[j].start]) {
 			j++
 		}
-		uncertain, excluded := false, previousExcluded && i > 0 && figures[i-1].end <= figures[i].start && !quantitySubjectRE.MatchString(s[figures[i].end:]) && durationJoinRE.MatchString(s[figures[i-1].end:figures[i].start])
+		uncertain, excluded := false, previousExcluded && i > 0 && figures[i-1].end <= figures[i].start && !quantitySubjectAssertion(s[figures[i].end:]) && durationJoinRE.MatchString(s[figures[i-1].end:figures[i].start])
 		if loc := numericExclusionRE.FindStringIndex(s[:figures[i].start]); loc != nil {
 			words := strings.FieldsFunc(strings.ToLower(s[loc[0]:figures[i].start]), func(r rune) bool { return !unicode.IsLetter(r) })
 			excluded = excluded || !slices.Contains(words, andWord) && !slices.Contains(words, "or") && !slices.Contains(words, "but") && !slices.Contains(words, "while")
@@ -1799,7 +1807,7 @@ func extendPercentageBases(s string, checks, bases []candidate) []candidate {
 		base := bases[i]
 		baseEnd := percentageBaseOperandEnd(s, base)
 		for _, c := range checks {
-			if c.f.Kind == base.f.Kind && c.start >= baseEnd && durationJoined(s[baseEnd:c.start]) && !quantitySubjectRE.MatchString(s[c.end:]) {
+			if c.f.Kind == base.f.Kind && c.start >= baseEnd && durationJoined(s[baseEnd:c.start]) && !quantitySubjectAssertion(s[c.end:]) {
 				bases = append(bases, c)
 				break
 			}
@@ -2068,7 +2076,7 @@ func rateEnd(s string) int {
 		kind := f.Kind
 		for {
 			next := re.FindStringIndex(s[end:])
-			if next == nil || !durationJoined(s[end:end+next[0]]) || quantitySubjectRE.MatchString(s[end+next[1]:]) {
+			if next == nil || !durationJoined(s[end:end+next[0]]) || quantitySubjectAssertion(s[end+next[1]:]) {
 				break
 			}
 			part = s[end+next[0] : end+next[1]]
@@ -2170,7 +2178,12 @@ var lessBareOperandRE = regexp.MustCompile(`(?i)^[\p{L}]+`)
 var lessArticleRE = regexp.MustCompile(`(?i)^(?:a|an|the)\s+(?:(?:[\p{L}]+\s+){1,3}of\s+)?`)
 var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + unitRE.String() + `|` + countRE.String() + `)`)
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
-var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?)\b`)
+var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
+var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
+
+func quantitySubjectAssertion(s string) bool {
+	return quantitySubjectRE.MatchString(s) && !quantitySubjectContinuationRE.MatchString(s)
+}
 
 var proportionArticleRE = regexp.MustCompile(`(?i)^(?:every|a|an|the)\s+`)
 var repeatedNumericSeparatorRE = regexp.MustCompile(`^[,.]{2,}[0-9]`)
@@ -2240,7 +2253,7 @@ func compoundNumberSuffix(suffix string, f Figure) bool {
 		if loc == nil && f.Kind != durationKind {
 			loc = lessBareOperandRE.FindStringIndex(suffix)
 		}
-		if loc != nil && !quantitySubjectRE.MatchString(suffix[loc[1]:]) {
+		if loc != nil && !quantitySubjectAssertion(suffix[loc[1]:]) {
 			return true
 		}
 		if loc := lessArticleRE.FindStringIndex(suffix); loc != nil {
@@ -2272,7 +2285,7 @@ func compoundNumberSuffix(suffix string, f Figure) bool {
 					end = unit[1]
 				}
 			}
-			if end > 0 && !quantitySubjectRE.MatchString(tail[end:]) {
+			if end > 0 && !quantitySubjectAssertion(tail[end:]) {
 				return true
 			}
 		}
@@ -2320,7 +2333,7 @@ func independentBoundedFigure(s string, prior Figure) bool {
 			case countRE:
 				f, ok = parseCount(s[:loc[1]], parts)
 			}
-			return ok && (quantitySubjectRE.MatchString(s[loc[1]:]) || f.Kind != prior.Kind || f.Kind == "count" && f.Unit != prior.Unit)
+			return ok && (quantitySubjectAssertion(s[loc[1]:]) || f.Kind != prior.Kind || f.Kind == "count" && f.Unit != prior.Unit)
 		}
 	}
 	return false
