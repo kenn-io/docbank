@@ -67,7 +67,8 @@ var (
 	identifierEndingRE     = regexp.MustCompile(`(?i)^[\s,:(\["'‘’“”]+ending\s+in\s+`)
 	identifierSuffixMaskRE = regexp.MustCompile(`(?i:^[\s,:(\["'‘’“”]+ending\s+in\b)|^\s+[A-Z]+(?:[^\pL\pN_]|$)|^\s+[*xX]+[0-9*xX-]*(?:[^\pL\pN_]|$)|^\s*[/_-]\s*(?:[0-9*]|(?i:[A-Z]+(?:-[A-Z]+)*-?)[0-9]|[A-Z]{2,}(?:[.,;!?)]|\s+(?i:and|but|while)\b|$))`)
 	// Only listed nouns and modifiers participate: arbitrary prose is not parsed as a count.
-	countRE               = regexp.MustCompile(`(?i)\b(` + numRange + `)\s+(?:(free|paid|additional|extra)\s+)?(relocations?|devices?|items?|users?|accounts?|payments?|calls?|visits?|tickets?|orders?|requests?|documents?|connections?)\b`)
+	countUnitPattern      = `(relocations?|devices?|items?|users?|accounts?|payments?|calls?|visits?|tickets?|orders?|requests?|documents?|connections?)`
+	countRE               = regexp.MustCompile(`(?i)\b(` + numRange + `)\s+(?:(free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
 	negationRE            = regexp.MustCompile(`(?i)(?:\b(?:not|cannot|never|neither|nor|no|without)\b|n['’‘ʼ]t\b|\bno\s+longer\b|\banything\s+but\b)`)
 	approximation         = `(?:about|approximately|around|roughly|nearly|almost|circa|estimated)`
 	approximationPrefixRE = regexp.MustCompile(`(?i)(?:\b` + approximation + `|[~≈])(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?[\s()\[\],:"'‘’“”«»]*$`)
@@ -1504,8 +1505,11 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 }
 
 var (
-	approximateWordLeadRE = regexp.MustCompile(`(?i)\b` + approximation + `\b`)
-	spokenMoneyUnitLeadRE = regexp.MustCompile(`(?i)^\s+(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
+	approximateWordLeadRE      = regexp.MustCompile(`(?i)\b` + approximation + `\b(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?`)
+	spokenMoneyUnitLeadRE      = regexp.MustCompile(`(?i)^\s+(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
+	spokenCountUnitLeadRE      = regexp.MustCompile(`(?i)^\s+(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
+	spokenPercentUnitLeadRE    = regexp.MustCompile(`(?i)^(?:\s+(?:percentage\s+points?|percent|per\s+cent)\b|\s*%)`)
+	spokenPercentageBaseLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:of|on)\s+(?:(?:the|a|an)\s+)?[\s.()\[\]"'‘’“”«»]*`)
 )
 
 // Preserve approximate spoken operands that the exact-number recognizers do
@@ -1525,6 +1529,46 @@ func approximateUnsupportedWordOperandChecks(s string) []candidate {
 		}
 		amount := numeralWordSequenceRE.FindStringIndex(operand)
 		if amount == nil || amount[0] != 0 || supportedWordAmount(operand[amount[0]:amount[1]]) {
+			continue
+		}
+		if unit := spokenCountUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
+			checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: "count"}, 1})
+			continue
+		}
+		if unit := spokenPercentUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
+			checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: percentKind, Unit: percentKind}, 1})
+			continue
+		}
+		unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:])
+		if unit == nil || unit[0] != 0 {
+			continue
+		}
+		checks = append(checks, candidate{start, start + amount[1] + unit[1], Figure{Kind: "money"}, 1})
+	}
+	return append(checks, unresolvedSpokenPercentageBaseChecks(s)...)
+}
+
+func unresolvedSpokenPercentageBaseChecks(s string) []candidate {
+	var checks []candidate
+	for _, rate := range unitRE.FindAllStringSubmatchIndex(s, -1) {
+		parts := make([]string, len(rate)/2)
+		for i := range parts {
+			if rate[2*i] >= 0 {
+				parts[i] = s[rate[2*i]:rate[2*i+1]]
+			}
+		}
+		figure, ok := parseUnit(s[rate[0]:rate[1]], parts)
+		if !ok || figure.Kind != percentKind || figure.Unit != percentKind {
+			continue
+		}
+		baseLead := spokenPercentageBaseLeadRE.FindStringIndex(s[rate[1]:])
+		if baseLead == nil || baseLead[0] != 0 {
+			continue
+		}
+		start := rate[1] + baseLead[1]
+		operand := s[start:]
+		amount := numeralWordSequenceRE.FindStringIndex(operand)
+		if amount == nil || amount[0] != 0 || supportedWordAmount(operand[:amount[1]]) {
 			continue
 		}
 		unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:])
@@ -2188,15 +2232,14 @@ func verbalComparisonWithNumericOrWordOperand(s string) bool {
 	}
 	number := numeralWordSequenceRE.FindStringIndex(operand)
 	if number == nil || number[0] != 0 {
-		return nominalComparisonOperandRE.MatchString(operand)
+		return unresolvedVerbalComparisonOperandRE.MatchString(operand)
 	}
 	return true
 }
 
-// A modified or possessive nominal still leaves a comparison baseline
-// unresolved; require it to end in a known baseline noun (or an established
-// standalone comparison term) to avoid treating arbitrary prose as an operand.
-var nominalComparisonOperandRE = regexp.MustCompile(`(?i)^(?:[\p{L}][\p{L}'’]*\s+)*(?:rates?|prices?|fees?|costs?|charges?|amounts?|totals?|baselines?)\b|^(?:normal|usual|regular)\b|^(?:(?:last|this|next|previous|prior|current)\s+)+(?:days?|weeks?|months?|years?|quarters?|periods?|cycles?|terms?|seasons?)\b`)
+// Any lexical operand after a recognized verbal comparator is unresolved when
+// it does not match one of the supported numeric forms above.
+var unresolvedVerbalComparisonOperandRE = regexp.MustCompile(`(?i)^[\p{L}]`)
 
 var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)?)[\s(["'‘’“”«»]*$`)
 
@@ -2478,13 +2521,14 @@ var lessArticleRE = regexp.MustCompile(`(?i)^(?:a|an|the)\s+(?:(?:[\p{L}]+\s+){1
 var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + unitRE.String() + `|` + countRE.String() + `)`)
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 
-const quantitySubjectPredicatePattern = `(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d|ing)?|cover(?:s|ed|ing)?|represent(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|offset(?:s|ting)?|pay(?:s|ing)?|paid|cost(?:s|ing)?|charge(?:s|d|ing)?|appl(?:y|ies|ied|ying)|increase(?:s|d|ing)?|decrease(?:s|d|ing)?|rise|rises|rose|risen|rising|fall|falls|fell|fallen|falling|change(?:s|d|ing)?|require(?:s|d|ing)?|contain(?:s|ed|ing)?|provide(?:s|d|ing)?)`
+const quantitySubjectPredicatedNominalLeadPattern = `is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d|ing)?|cover(?:s|ed|ing)?|represent(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|offset(?:s|ting)?|pay(?:s|ing)?|paid|appl(?:y|ies|ied|ying)|increase(?:s|d|ing)?|decrease(?:s|d|ing)?|rise|rises|rose|risen|rising|fall|falls|fell|fallen|falling|change(?:s|d|ing)?|require(?:s|d|ing)?|contain(?:s|ed|ing)?|provide(?:s|d|ing)?`
+const quantitySubjectPredicatePattern = `(?:` + quantitySubjectPredicatedNominalLeadPattern + `|cost(?:s|ing)?|charge(?:s|d|ing)?)`
 
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+` + quantitySubjectPredicatePattern + `\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
 var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|deposits?|expenses?|fees?|payments?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
-var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+` + quantitySubjectPredicatePattern + `\b`)
+var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:` + quantitySubjectPredicatedNominalLeadPattern + `)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	s = sentenceLookahead(s)

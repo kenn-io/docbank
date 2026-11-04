@@ -111,8 +111,9 @@ such as `7 min. before 10-7 min.`; and wrapped bounds such as
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
 the connector, so `(7 days ) before (about 10 days)` remains one unsupported
 comparison.
-Modified and possessive baselines such as `last year's rate`, and temporal
-baselines such as `last year`, also keep the comparison amount unresolved.
+Modified and possessive baselines such as `last year's rate`, temporal
+baselines such as `last year`, and pronoun baselines such as `it was` also keep
+the comparison amount unresolved.
 Following sentences remain independent.
 Auxiliary-led text such as `10 minutes have elapsed` continues the duration
 operand. The full expression `The deadline is 7 min. before 10 minutes have
@@ -188,6 +189,11 @@ $200 fixed monthly charges.`, `The fee is 5% of $100 and $200 sales taxes.`,
 $200 shipping and handling charges.`, `The fee is 5% of $100 and $200 access
 fees.`, and `The fee is 5% of $100 and $200 express delivery charges.` keep
 `5%` only.
+Ambiguous predicate/noun forms such as `charges` and `costs` do not end those
+groups: `The plans require about $5 and $10 charges.` yields no figures, while
+`The surcharge is 5% of the $100 and $200 costs.` keeps `5%` only. Clear
+predicates such as `covers shipping costs` still identify an independent
+assertion.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
@@ -212,6 +218,11 @@ omission, including markers before a bound or inside a range. The suffixes
 `more or less` and `and change` also mark a figure as approximate. A marker followed
 by `exactly`, as in `almost exactly`, or `a total of` also omits the figure. An approximate component omits a
 compound duration joined by `and` or a comma, while an independently stated exact figure can remain.
+Unsupported spoken operands remain attached too: `There are about thirty
+devices and 2 users.`, `The rate is about thirty percent and 5 percent.`, and
+`The wait is almost exactly thirty minutes and 2 hours.` yield no figures. An
+unsupported spoken amount in a percentage base also keeps following amounts in
+that base: `The fee is 5% of thirty dollars and $200.` keeps `5%` only.
 An unsupported numeric or verbal duration alternative such as `7 or 10 days`,
 `7 min. or an hour`, `7 min. or .5 hours`, or `7 min. and thirty minutes`
 never becomes a partial exact value. Unsupported sign words such as `minus`
