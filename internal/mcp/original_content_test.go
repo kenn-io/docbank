@@ -3,18 +3,15 @@ package mcp
 import (
 	"encoding/base64"
 	"fmt"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestMCPOriginalContent(t *testing.T) {
@@ -27,17 +24,12 @@ func TestMCPOriginalContent(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
 	require.NoError(t, err)
-	cfg := config.Default()
-	cfg.Server.APIKey = "synthetic-export-key"
-	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, VaultRoot: os.Getenv("DOCBANK_HOME"), Cfg: cfg})
-	t.Cleanup(daemon.Close)
-	handler := daemon.Handler()
 	wrapped := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/info" {
 			http.Error(w, "unreadable unrelated blob shard", http.StatusInternalServerError)
 			return
 		}
-		handler.ServeHTTP(w, r)
+		f.handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(wrapped.Close)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, wrapped.URL))

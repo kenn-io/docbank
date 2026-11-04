@@ -86,6 +86,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 
 | Endpoint | Purpose | Status |
 |----------|---------|--------|
+| `GET /vault` | read the selected vault's ID without counting its contents | Implemented |
 | `GET /nodes/{id}` | stat by id (live or trashed) | Implemented |
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
 | `GET /formats/capabilities?family=&format=&extension=` | read the running binary's per-format capability snapshot | Implemented |
