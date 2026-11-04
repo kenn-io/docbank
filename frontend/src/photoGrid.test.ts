@@ -15,6 +15,33 @@ import { photo } from "./photo-test-fixtures.js";
 
 const seekOffset = createPhotoSeek();
 
+it.each(["months", "sessions", "flat", "relevance"] as const)(
+  "keeps every photo when appending a large %s group",
+  (grouping) => {
+    const source = [photo(0)];
+    const rows = source.concat(Array.from({ length: 140_000 }, (_, i) => photo(i + 1)));
+    const grouper = createPhotoGrouper(),
+      expanded = new Set<string>();
+    grouper.sync(source, grouping, expanded);
+    expect(grouper.sync(rows, grouping, expanded, source).groups).toEqual(
+      groupPhotos(rows, grouping),
+    );
+  },
+);
+
+it("keeps a large older session when an appended photo bridges two sessions", () => {
+  const source = [photo(0, "2025-06-01T12:00:00Z")].concat(
+    Array.from({ length: 140_000 }, (_, i) => photo(i + 1, "2025-06-01T04:00:00Z")),
+  );
+  const grouper = createPhotoGrouper(),
+    expanded = new Set<string>();
+  expect(grouper.sync(source, "sessions", expanded).groups).toHaveLength(2);
+  const rows = source.concat(photo(140_001, "2025-06-01T08:00:00Z"));
+  expect(grouper.sync(rows, "sessions", expanded, source).groups).toEqual(
+    groupPhotos(rows, "sessions"),
+  );
+});
+
 it("seeks a collapsed 500-frame stack through a hidden member without walking member pairs", () => {
   let visits = 0;
   const assetIDs = Array.from({ length: 500 }, (_, id) => `photo-${id}`);

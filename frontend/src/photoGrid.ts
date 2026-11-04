@@ -275,7 +275,7 @@ export function createPhotoGrouper() {
             );
             changedFrom = Math.min(changedFrom, index);
             if (old) {
-              old.items.push(...part.items);
+              for (const item of part.items) old.items.push(item);
               const next = { ...old };
               groups[index] = next;
               byKey.set(part.key, next);
@@ -311,12 +311,13 @@ export function createPhotoGrouper() {
                 old.items.length <= next.items.length &&
                 old.items.every((item, index) => item === next.items[index])
               ) {
-                old.items.push(...next.items.slice(old.items.length));
+                for (let j = old.items.length; j < next.items.length; j++)
+                  old.items.push(next.items[j]);
                 next.items = old.items;
               }
             }
             changedFrom = Math.min(changedFrom, start);
-            groups.splice(start, end - start, ...regrouped);
+            groups = groups.slice(0, start).concat(regrouped, groups.slice(end));
           }
         }
       }
