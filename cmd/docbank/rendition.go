@@ -19,10 +19,11 @@ next-page command; get prints a whole verified rendition by attachment ID
 Requires: PDF/Office text needs a configured processing profile first; the
 default daemon's supplied-captions and supplied-transcript do not convert
 documents. List available profiles with "docbank processing profiles".`,
-	GroupID: groupSearch,
-	Use:     "rendition",
-	Short:   "Read retained document renditions",
-	Args:    cobra.NoArgs,
+	GroupID:     groupSearch,
+	Use:         "rendition",
+	Short:       "Read retained document renditions",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
