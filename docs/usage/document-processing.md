@@ -259,7 +259,9 @@ cannot start a review. **Fit page** initially shows the whole page; choose
 **Original** is an unchecked browser rendering of verified source bytes. It may
 differ from the server renderer. Server coverage gaps and the verified
 **Redacted** view remain authoritative. Drawing is disabled while the displayed
-page is loading or has failed; **Retry page** retries a failed image.
+page is loading or has failed; **Retry page** retries a failed image. Cropped
+pages may use fractional point coordinates, but unsupported precision or a
+browser/server geometry disagreement still disables drawing.
 
 **Back to reading** discards masks and preview after confirmation, then restores
 the reading position. The original stays loaded. Original print and export are

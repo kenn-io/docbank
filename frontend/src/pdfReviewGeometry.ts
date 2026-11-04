@@ -13,6 +13,17 @@ export interface ReaderRect {
   size: { width: number; height: number };
 }
 const quantize = (value: number) => Math.sign(value) * Math.round(Math.abs(value * 10000));
+// Match PDFium's specific binary32 projection, not any nearby coordinate.
+function boxCoordinateMatches(value: number, expected: number) {
+  const projected = quantize(Math.fround(expected / 10000));
+  return (
+    Number.isFinite(value) &&
+    Number.isSafeInteger(expected) &&
+    Number.isSafeInteger(projected) &&
+    Math.abs(projected - expected) <= 1 &&
+    quantize(value) === projected
+  );
+}
 export function bindReaderPages(
   doc: { normalizedRotation: boolean; pages: ReaderPage[] },
   frames: PageFrameV1[],
@@ -27,11 +38,8 @@ export function bindReaderPages(
     const sameBoxes = boxes.every(
       (box, i) =>
         box &&
-        [box.left, box.bottom, box.right, box.top].every(
-          (v, j) =>
-            Number.isFinite(v) &&
-            Number.isSafeInteger(quantize(v)) &&
-            quantize(v) === expected[i]![j],
+        [box.left, box.bottom, box.right, box.top].every((v, j) =>
+          boxCoordinateMatches(v, expected[i]![j]!),
         ),
     );
     const rotated = frame.rotation === 90 || frame.rotation === 270;
