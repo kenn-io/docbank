@@ -27,8 +27,10 @@ jobs:
         with:
           node-version: "24.22.1"
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install pinned Vercel CLI
-        run: npm install --global vercel@65.5.0
+        run: kit-retry 3 5 npm install --global vercel@65.5.0
 
       - name: Check upload inputs, build, and publish
         env:
