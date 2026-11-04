@@ -230,7 +230,7 @@ func (s *Store) Children(ctx context.Context, dirID int64) ([]Node, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
 		 WHERE n.parent_id = $1 AND n.trashed_at IS NULL
-		 ORDER BY n.kind = 'file', n.name`, dirID)
+		 ORDER BY n.kind, n.name`, dirID)
 	if err != nil {
 		return nil, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}
@@ -263,6 +263,12 @@ func (s *Store) ChildrenPage(
 	}
 	return page.Children, page.Total, nil
 }
+
+// Byte order puts the only node kinds, "dir" and "file", dirs first.
+const directoryChildrenPageIDsSQL = `SELECT id FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL
+	ORDER BY kind, name LIMIT $2 OFFSET $3`
+
+const directoryChildrenCountSQL = `SELECT COUNT(*) FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL`
 
 // DirectoryChildrenPage returns a live directory's current canonical path and
 // one ordered child page from a single read transaction.
@@ -299,7 +305,7 @@ func (s *Store) DirectoryChildrenPage(
 
 	var total int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL`,
+		directoryChildrenCountSQL,
 		dirID,
 	).Scan(&total); err != nil {
 		return DirectoryPageView{}, fmt.Errorf("counting children of %d: %w", dirID, err)
@@ -308,11 +314,8 @@ func (s *Store) DirectoryChildrenPage(
 	// only loads versions and checksums for the children being returned.
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.id IN (
-			 SELECT id FROM nodes WHERE parent_id = $1 AND trashed_at IS NULL
-			 ORDER BY kind = 'file', name LIMIT $2 OFFSET $3
-		 )
-		 ORDER BY n.kind = 'file', n.name`, dirID, limit, offset)
+		 WHERE n.id IN (`+directoryChildrenPageIDsSQL+`)
+		 ORDER BY n.kind, n.name`, dirID, limit, offset)
 	if err != nil {
 		return DirectoryPageView{}, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}

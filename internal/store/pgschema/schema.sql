@@ -30,6 +30,9 @@ CREATE UNIQUE INDEX live_sibling_names ON {{schema}}.nodes(parent_id, name)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_parent ON {{schema}}.nodes(parent_id);
 CREATE INDEX nodes_parent_name_id ON {{schema}}.nodes(parent_id, name, id);
+-- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
+CREATE INDEX nodes_live_children ON {{schema}}.nodes(parent_id, kind, name, trashed_at, id)
+    WHERE trashed_at IS NULL;
 CREATE INDEX nodes_live_modified ON {{schema}}.nodes(modified_at DESC, name, id)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_trashed ON {{schema}}.nodes(trashed_at) WHERE trashed_at IS NOT NULL;
