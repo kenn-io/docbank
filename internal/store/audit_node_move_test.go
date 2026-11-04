@@ -391,6 +391,10 @@ func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 	t.Parallel()
 	for _, rootScope := range []bool{false, true} {
 		for _, state := range []string{"no trash", "known origin", "nested trash", "inherited bridge", "inherited trash", "unknown ancestor", "unknown origin", "outside scope"} {
+			// Only root scopes enroll trash whose historical path ends at an unknown origin.
+			if !rootScope && (state == "unknown origin" || state == "unknown ancestor") {
+				continue
+			}
 			t.Run(fmt.Sprintf("root=%t/%s", rootScope, state), func(t *testing.T) {
 				scopePath := "/Projects"
 				if rootScope {

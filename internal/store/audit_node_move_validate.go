@@ -233,6 +233,7 @@ func auditMoveAffectsTrashOrigin(
 	return affected, nil
 }
 
+// auditMoveAffectsTrashOriginTx is the SQL counterpart of this rule for live moves.
 func auditHistoricalParent(node replayAuditTopologyNode) (*uint64, error) {
 	originValue, err := auditField(node.record, auditOriginField)
 	if err != nil {
