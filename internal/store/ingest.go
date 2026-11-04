@@ -241,7 +241,7 @@ func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash st
 				SELECT 1 FROM nodes WHERE parent_id = $3 AND kind = 'file'
 				AND trashed_at IS NULL LIMIT $2
 			) AS children)`, blobHash, limit, parentID).Scan(&copies, &files); err != nil {
-			return "", fmt.Errorf("probing ingest candidate populations: %w", err)
+			return "", fmt.Errorf("checking for duplicates: %w", err)
 		}
 		if copies == 0 {
 			return "", nil
