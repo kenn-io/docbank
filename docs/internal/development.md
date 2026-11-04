@@ -68,6 +68,9 @@ browser cases with synthetic vaults and the built application. Reader cases cove
 activation, clipboard shortcuts, worker cleanup, Markdown form removal, link
 isolation, failed module loading and delayed file details. Selecting PDFs in the
 inspector must not prepare original-file downloads or start PDF workers.
+Entering redaction during a smooth page turn preserves its destination rather
+than an intermediate scroll offset. Returning to reading restores that page;
+settled reading positions retain their exact scroll offsets.
 
 ## Share the Go build cache across worktrees
 
