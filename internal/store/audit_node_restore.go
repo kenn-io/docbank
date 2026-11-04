@@ -113,11 +113,7 @@ func (s *Store) prepareAuditedRestore(
 	}
 	scope := scopes[0]
 	if target.finalName != target.originalName {
-		scopeMembers, err := auditScopeMemberSetTx(ctx, tx, scope.scopeID)
-		if err != nil {
-			return snapshot, err
-		}
-		topology, err := currentAuditTopology(ctx, tx)
+		topology, scopeMembers, err := auditTrashOriginTopologyTx(ctx, tx, scope.scopeID)
 		if err != nil {
 			return snapshot, err
 		}

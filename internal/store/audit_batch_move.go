@@ -42,7 +42,7 @@ func (s *Store) prepareAuditedBatchMove(
 			return nil, unsupportedAuditedNodeMutation(nodeID)
 		}
 	}
-	topology, err := currentAuditTopology(ctx, tx)
+	topology, _, err := auditTrashOriginTopologyTx(ctx, tx, scopes[0].scopeID)
 	if err != nil {
 		return nil, err
 	}

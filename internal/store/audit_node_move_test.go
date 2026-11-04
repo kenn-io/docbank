@@ -2,8 +2,10 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -378,4 +380,156 @@ func TestAuditedBatchMoveRejectsLaterItemAboveTrashOrigin(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, second.ID, unchanged.ID)
 	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
+	t.Parallel()
+	for _, rootScope := range []bool{false, true} {
+		for _, state := range []string{"no trash", "known origin", "nested trash", "unknown origin", "no origin", "missing node", "cycle", "outside scope"} {
+			t.Run(fmt.Sprintf("root=%t/%s", rootScope, state), func(t *testing.T) {
+				var s *Store
+				if rootScope {
+					s = newTestStore(t)
+					seedMetadataRoundTrip(t, s)
+					work, _, err := s.MkdirPath(t.Context(), "/Projects/Work")
+					require.NoError(t, err)
+					_, err = s.CreateFile(t.Context(), work.ID, "child.txt", fakeHash("a722"), 8, "text/plain")
+					require.NoError(t, err)
+					_, err = s.CreateFile(t.Context(), 12, "outside.txt", fakeHash("a721"), 7, "text/plain")
+					require.NoError(t, err)
+					seedInitialAuditAuthority(t, s, s.RootID())
+				} else {
+					s = newAuditedMoveStore(t)
+				}
+				ctx := t.Context()
+				_, _, err := s.Restore(ctx, 11, UnconditionalRev)
+				require.NoError(t, err)
+				projects, err := s.NodeByPath(ctx, "/Projects")
+				require.NoError(t, err)
+				work, err := s.NodeByPath(ctx, "/Projects/Work")
+				require.NoError(t, err)
+				child, err := s.NodeByPath(ctx, "/Projects/Work/child.txt")
+				require.NoError(t, err)
+				empty, err := s.NodeByPath(ctx, "/Empty")
+				require.NoError(t, err)
+				if state != "no trash" && state != "outside scope" {
+					_, _, err = s.Trash(ctx, child.ID, UnconditionalRev)
+					require.NoError(t, err)
+				}
+				if state == "nested trash" || state == "cycle" {
+					_, _, err = s.Trash(ctx, work.ID, UnconditionalRev)
+					require.NoError(t, err)
+				}
+
+				conn, err := s.db.Conn(ctx)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, conn.Close()) }()
+				_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`)
+				require.NoError(t, err)
+				defer func() {
+					_, err := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`)
+					require.NoError(t, err)
+				}()
+				tx, err := conn.BeginTx(ctx, nil)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, tx.Rollback()) }()
+				switch state {
+				case "outside scope":
+					outside, lookupErr := s.nodeByPath(ctx, tx, "/Empty/outside.txt")
+					require.NoError(t, lookupErr)
+					err = s.trashNodeTx(ctx, tx, outside, nowRFC3339())
+				case "unknown origin":
+					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=NULL WHERE id=$1`, child.ID)
+				case "no origin":
+					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_name=NULL,trash_parent=NULL WHERE id=$1`, child.ID)
+				case "missing node":
+					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=999999 WHERE id=$1`, child.ID)
+				case "cycle":
+					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=$1 WHERE id=$2`, child.ID, work.ID)
+				}
+				require.NoError(t, err)
+				full, err := currentAuditTopology(ctx, tx)
+				require.NoError(t, err)
+				members, err := auditScopeMemberSetTx(ctx, tx, testAuditScopeID)
+				require.NoError(t, err)
+				subset, subsetMembers, err := auditTrashOriginTopologyTx(ctx, tx, testAuditScopeID)
+				require.NoError(t, err)
+				for _, record := range full {
+					id := mustAuditUnsignedField(t, record, metadataNodeIDField)
+					oldAnswer, oldErr := auditMoveAffectsTrashOrigin(full, members, map[uint64]bool{id: true})
+					answer, err := auditMoveAffectsTrashOrigin(subset, subsetMembers, map[uint64]bool{id: true})
+					assert.Equal(t, oldAnswer, answer, "node %d", id)
+					if oldErr != nil {
+						require.EqualError(t, err, oldErr.Error(), "node %d", id)
+					} else {
+						require.NoError(t, err, "node %d", id)
+					}
+					if state == "missing node" {
+						require.EqualError(t, err, "audit trash origin references missing node 999999")
+					} else if state == "cycle" && id != uint64(work.ID) && id != uint64(child.ID) {
+						require.EqualError(t, err, "audit trash-origin topology contains a cycle")
+					} else {
+						require.NoError(t, err)
+						want := (state == "known origin" || state == "nested trash") &&
+							(id == uint64(work.ID) || id == uint64(projects.ID) || id == uint64(s.RootID())) ||
+							state == "cycle" || state == "outside scope" && rootScope && (id == uint64(empty.ID) || id == uint64(s.RootID()))
+						assert.Equal(t, want, answer != 0, "node %d", id)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAuditTrashOriginTopologyUsesTrashIndex(t *testing.T) {
+	t.Parallel()
+	s := newAuditedMoveStore(t)
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+auditTrashOriginTopologySQL, testAuditScopeID)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	plan := strings.Join(details, "\n")
+	assert.Contains(t, plan, "nodes_trashed")
+	for _, detail := range details {
+		assert.NotEqual(t, "SCAN n", detail, plan)
+		assert.False(t, strings.HasPrefix(detail, "SCAN n "), plan)
+	}
+}
+
+func checkAuditTrashOriginMove(t *testing.T, openStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := openStore(t)
+	ctx := t.Context()
+	projects, err := s.Mkdir(ctx, s.RootID(), "Projects")
+	require.NoError(t, err)
+	work, err := s.Mkdir(ctx, projects.ID, "Work")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, work.ID, "child.txt", fakeHash("a1"), 8, "text/plain")
+	require.NoError(t, err)
+	sibling, err := s.CreateFile(ctx, s.RootID(), "sibling.txt", fakeHash("b1"), 8, "text/plain")
+	require.NoError(t, err)
+	plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "cli", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(ctx, plan)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, file.ID, UnconditionalRev)
+	require.NoError(t, err)
+	_, _, err = s.Move(ctx, projects.ID, s.RootID(), "Renamed", UnconditionalRev)
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	require.ErrorContains(t, err, "trash-origin paths")
+	unchanged, err := s.NodeByPath(ctx, "/Projects/Work")
+	require.NoError(t, err)
+	assert.Equal(t, work.ID, unchanged.ID)
+	moved, path, err := s.Move(ctx, sibling.ID, s.RootID(), "renamed.txt", UnconditionalRev)
+	require.NoError(t, err)
+	assert.Equal(t, sibling.ID, moved.ID)
+	assert.Equal(t, "/renamed.txt", path)
 }
