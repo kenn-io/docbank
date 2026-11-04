@@ -103,7 +103,7 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 	var asset PhotoAsset
 	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var id string
-		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=$1 AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return fmt.Errorf("finding photo asset for node %d: %w", nodeID, err)
@@ -401,7 +401,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	if count, err := result.RowsAffected(); err != nil {
 		return err
 	} else if count != 0 {
-		return nil
+		return s.refreshPhotoMemberTx(ctx, tx, member)
 	}
 	fileID, err := newUUIDv4()
 	if err != nil {
@@ -415,7 +415,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
 	}
-	return nil
+	return s.refreshPhotoMemberTx(ctx, tx, member)
 }
 
 func photoRoleValidOrError(role string) error {
@@ -611,6 +611,14 @@ func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID stri
 	}
 	result, err := commitPhotoAssetTx(ctx, tx, before, asset, operation)
 	if err != nil {
+		return PhotoAsset{}, err
+	}
+	for _, file := range before.Files {
+		if err := s.refreshPhotoTimelineTx(ctx, tx, file.NodeID); err != nil {
+			return PhotoAsset{}, err
+		}
+	}
+	if err := s.refreshPhotoAssetWorkTx(ctx, tx, result.ID); err != nil {
 		return PhotoAsset{}, err
 	}
 	return result, validatePhotoAssetGraph(ctx, tx, result.ID)
@@ -830,11 +838,11 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 					return false, err
 				}
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE asset_id=$1 AND sidecar_of_file_id=$2`, asset.ID, fileID); err != nil {
 				return false, err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE file_id=? AND asset_id=?`, fileID, asset.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE file_id=$1 AND asset_id=$2`, fileID, asset.ID); err != nil {
 			return false, err
 		}
 		return true, nil

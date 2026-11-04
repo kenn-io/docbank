@@ -354,12 +354,13 @@ and replay receipts through shared native operations. Visual previews, image
 embedding inputs and retained email PDFs also use shared native publication
 and read paths. Plain-text extraction covers queue discovery, retry scheduling,
 terminal results and publication of retained text under rendition authority.
+Grouped photo imports include pairing, source replay, browser folder
+continuation and import progress.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, email PDF
+operations still open SQLite. XMP sidecar writing, photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer, backup recovery, multi-store placement and storage-operation jobs
+transfer, backup recovery, multi-store placement and their storage-operation jobs
 remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
@@ -545,6 +546,11 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
 GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
+GRANT INSERT ON documents.photo_hidden_credentials TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
+    copied_objects, copied_bytes, cancel_requested, error, receipt_json,
+    updated_at, finished_at, retention_until)
+    ON documents.storage_operations TO docbank_runtime;
 GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
 GRANT INSERT, UPDATE(generation_id, published_at)
     ON documents.visual_preview_heads TO docbank_runtime;
@@ -606,7 +612,7 @@ record per genesis kind, matching SQLite; it does not reject other kinds.
 Go still owns which record kinds are valid. Conditional unique indexes also
 preserve alias, current external identity and active custodian relationships.
 These predicates enforce uniqueness; they do not reject unknown kind or state
-values. Go validators own those values. Physical storage operations are read-only
+values. Go validators own those values. Multi-store operations are read-only
 inputs to validation here; their active-evacuation uniqueness rule remains part
 of the future write port rather than a closed state list in the new schema.
 
@@ -1027,6 +1033,36 @@ conflicts, replay, visibility, consent, continuations, late-write rollback and
 concurrent reads. It does not qualify remote network acquisition, media provider
 execution, metadata recovery or public PostgreSQL vault opening.
 
+#### Grouped photo import
+
+Native photo import groups RAW files, JPEGs and sidecars in one writer
+transaction. Repeated imports preserve node and member identities; changed
+source bytes create a new version unless create-only import was requested.
+Separate source owners keep their own bytes. Ambiguous groups remain unpaired
+and return the same explanation on both backends. Operator pairing, hidden and
+excluded state survive later imports. Audited vaults continue to refuse grouped
+import through the existing mutation boundary.
+
+A retained XMP sync receipt lets import recognize accepted outside bytes without
+replacing the newer published sidecar. SQLite keeps its indexed source-path
+lookup and exact receipt-index expression. PostgreSQL uses its JSON expressions
+and receipt indexes. Size matching keeps SQLite's released expression index;
+PostgreSQL indexes the integer size directly. Browser folder continuation uses
+current eligible members; hidden, excluded, trashed and sidecar files cannot
+supply another folder's identity.
+
+PostgreSQL refreshes source claims, timeline rows and export work when membership
+changes, inside the same transaction. SQLite retains its released triggers. A
+failed receipt write rolls back the documents, memberships, derived rows and node
+allocation together. Photo import's progress, cancellation and finalization use
+the shared operation records under writer admission. Expired receipts stay until
+pending physical cleanup is gone; this does not qualify multi-store operations.
+
+The `photo-import` suite covers these native Store workflows. Retained XMP
+receipts used by import are produced by SQLite's publisher; XMP publication,
+authored editing, people/review workflows and public PostgreSQL vault opening
+remain separate qualification boundaries.
+
 #### Recoverable deletion
 
 Native document and folder trash, photo-group trash, trash browsing and restore
@@ -1196,7 +1232,7 @@ Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
 They force a late invalidation failure to verify rollback, and commit concurrent
 writes during history reads to verify snapshot consistency. These capabilities
-do not expose a public PostgreSQL vault or qualify grouped photo imports, XMP
+do not expose a public PostgreSQL vault or qualify XMP
 sidecar writing, portable metadata import, collection snapshots, reporting,
 backup or restore.
 

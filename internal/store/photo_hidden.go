@@ -264,7 +264,7 @@ func (s *Store) SetupPhotoHidden(ctx context.Context, passcode string) error {
 		if exists {
 			return ErrHiddenConfigured
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_credentials(singleton,passcode_hash) VALUES(1,?)`, hash)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_credentials(singleton,passcode_hash) VALUES(1,$1)`, hash)
 		return err
 	})
 }

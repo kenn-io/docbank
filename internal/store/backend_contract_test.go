@@ -22,6 +22,75 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "photo-import", postgres: "native operations", scope: "Grouped RAW/JPEG/sidecar ingestion, source replay, explicit pairing, browser continuation and import progress; excludes authored editing and XMP publication.", scenarios: []backendScenario{
+		{"PhotoImportRollback", nil, checkPhotoImportRollbackPostgres},
+		{"PhotoImportAcceptedSidecar", nil, checkPhotoImportAcceptedSidecarPostgres},
+		{"PhotoImportEmbeddedObservation", func(t *testing.T) { t.Helper(); checkPhotoImportEmbeddedObservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportEmbeddedObservation(t, newPostgresQueryStore) }},
+		{"OrdinaryPhotoMediaEnrollment", func(t *testing.T) { t.Helper(); checkOrdinaryPhotoMediaEnrollment(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkOrdinaryPhotoMediaEnrollment(t, newPostgresQueryStore) }},
+		{"PhotoImportLateSidecarUpdatesLockedHiddenAsset", func(t *testing.T) { t.Helper(); checkPhotoImportLateSidecarUpdatesLockedHiddenAsset(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportLateSidecarUpdatesLockedHiddenAsset(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportAtomicGroup", func(t *testing.T) { t.Helper(); checkPhotoImportAtomicGroup(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportAtomicGroup(t, newPostgresQueryStore) }},
+		{"PhotoImportQualifiedSidecarTargets", func(t *testing.T) { t.Helper(); checkPhotoImportQualifiedSidecarTargets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportQualifiedSidecarTargets(t, newPostgresQueryStore) }},
+		{"PhotoImportSeparatePhotosAreReported", func(t *testing.T) { t.Helper(); checkPhotoImportSeparatePhotosAreReported(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportSeparatePhotosAreReported(t, newPostgresQueryStore) }},
+		{"PhotoImportMultipleRAWsImportAlone", func(t *testing.T) { t.Helper(); checkPhotoImportMultipleRAWsImportAlone(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportMultipleRAWsImportAlone(t, newPostgresQueryStore) }},
+		{"PhotoImportLoneSidecarWaitsForItsImage", func(t *testing.T) { t.Helper(); checkPhotoImportLoneSidecarWaitsForItsImage(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportLoneSidecarWaitsForItsImage(t, newPostgresQueryStore) }},
+		{"PhotoImportOperatorPairedRAWsAreSettled", func(t *testing.T) { t.Helper(); checkPhotoImportOperatorPairedRAWsAreSettled(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportOperatorPairedRAWsAreSettled(t, newPostgresQueryStore) }},
+		{"PhotoImportDedupObservation", func(t *testing.T) { t.Helper(); checkPhotoImportDedupObservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportDedupObservation(t, newPostgresQueryStore) }},
+		{"PhotoImportReusesOrdinaryRAWInAnotherFolder", func(t *testing.T) { t.Helper(); checkPhotoImportReusesOrdinaryRAWInAnotherFolder(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportReusesOrdinaryRAWInAnotherFolder(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportEditedSourceBecomesNewVersion", func(t *testing.T) { t.Helper(); checkPhotoImportEditedSourceBecomesNewVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportEditedSourceBecomesNewVersion(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportCreateOnlyPreservesGroupContent", func(t *testing.T) { t.Helper(); checkPhotoImportCreateOnlyPreservesGroupContent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportCreateOnlyPreservesGroupContent(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportEditedSourceLeavesSharedNodeAlone", func(t *testing.T) { t.Helper(); checkPhotoImportEditedSourceLeavesSharedNodeAlone(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportEditedSourceLeavesSharedNodeAlone(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportDuplicateRawNextToSeparateJPEGIsReported", func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportVideoWithSameNameJPEG", func(t *testing.T) { t.Helper(); checkPhotoImportVideoWithSameNameJPEG(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportVideoWithSameNameJPEG(t, newPostgresQueryStore) }},
+		{"PhotoImportSidecarDedupStaysWithinSourceGroup", func(t *testing.T) { t.Helper(); checkPhotoImportSidecarDedupStaysWithinSourceGroup(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportSidecarDedupStaysWithinSourceGroup(t, newPostgresQueryStore)
+		}},
+		{"PhotoSidecarImageTarget", func(t *testing.T) { t.Helper(); checkPhotoSidecarImageTarget(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSidecarImageTarget(t, newPostgresQueryStore) }},
+		{"PhotoImportNodeStates", func(t *testing.T) { t.Helper(); checkPhotoImportNodeStates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportNodeStates(t, newPostgresQueryStore) }},
+		{"PhotoImportVersionStates", func(t *testing.T) { t.Helper(); checkPhotoImportVersionStates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportVersionStates(t, newPostgresQueryStore) }},
+		{"PhotoImportOperationLifecycle", func(t *testing.T) { t.Helper(); checkPhotoImportOperationLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportOperationLifecycle(t, newPostgresQueryStore) }},
+		{"FinalizeLocalOperationSettlesCancelRace", func(t *testing.T) { t.Helper(); checkFinalizeLocalOperationSettlesCancelRace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFinalizeLocalOperationSettlesCancelRace(t, newPostgresQueryStore) }},
+		{"PhotoImportRefusesAuditedVault", func(t *testing.T) { t.Helper(); checkPhotoImportRefusesAuditedVault(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportRefusesAuditedVault(t, newPostgresQueryStore) }},
+		{"PhotoImportDestinationCreatesAndReusesPath", func(t *testing.T) { t.Helper(); checkPhotoImportDestinationCreatesAndReusesPath(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationCreatesAndReusesPath(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportDestinationRollsBackOnInvalidComponent", func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationRollsBackOnInvalidComponent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationRollsBackOnInvalidComponent(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportDestinationRejectsAuditedVault", func(t *testing.T) { t.Helper(); checkPhotoImportDestinationRejectsAuditedVault(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationRejectsAuditedVault(t, newPostgresQueryStore)
+		}},
+		{"PreparePhotoImportDestination", func(t *testing.T) { t.Helper(); checkPreparePhotoImportDestination(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreparePhotoImportDestination(t, newPostgresQueryStore) }},
+		{"BrowserPhotoDirectoryContinuation", func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newPostgresQueryStore) }},
+		{"BrowserPhotoSizeCandidates", func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newPostgresQueryStore) }},
+	}},
 	{name: "visual-evidence", postgres: "native operations", scope: "Preview publication, exact-version reads, image preparation and retained email PDF evidence; excludes renderer executables and photo/person workflows.", scenarios: []backendScenario{
 		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
 		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
@@ -898,7 +967,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
+	{name: "photo-editing", postgres: "unqualified", scope: "XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{

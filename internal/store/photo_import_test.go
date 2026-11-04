@@ -45,9 +45,10 @@ func TestPhotoNodeFactsKeepVideoFamily(t *testing.T) {
 	assert.Equal(t, PhotoKindVideo, video.AssetKind)
 }
 
-func TestOrdinaryPhotoMediaEnrollment(t *testing.T) {
+func checkOrdinaryPhotoMediaEnrollment(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	for _, test := range []struct {
 		name string
@@ -76,9 +77,10 @@ func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 	return PhotoImportGroup{Members: members, DestinationID: 1}
 }
 
-func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
+func checkPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	root := filepath.Join(t.TempDir(), "camera")
 	run, err := s.BeginIngest(ctx, "photo-import", root)
@@ -98,9 +100,10 @@ func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
 }
 
-func TestPhotoImportAtomicGroup(t *testing.T) {
+func checkPhotoImportAtomicGroup(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -143,11 +146,12 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	assert.Equal(t, result.Asset.ID, rerun.Asset.ID)
 }
 
-func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
+func checkPhotoImportQualifiedSidecarTargets(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, mode := range []string{"ambiguous", "qualified RAW first", "qualified JPEG first", "unqualified RAW sidecar"} {
 		t.Run(mode, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			ctx := t.Context()
 			root := t.TempDir()
 			run, err := s.BeginIngest(ctx, "photo-import", root)
@@ -192,9 +196,10 @@ func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
 	}
 }
 
-func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
+func checkPhotoImportSeparatePhotosAreReported(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -225,9 +230,10 @@ func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	}
 }
 
-func TestPhotoImportMultipleRAWsImportAlone(t *testing.T) {
+func checkPhotoImportMultipleRAWsImportAlone(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -283,9 +289,10 @@ func TestPhotoImportMultipleRAWsImportAlone(t *testing.T) {
 	assert.Len(t, alone.Files, 1)
 }
 
-func TestPhotoImportLoneSidecarWaitsForItsImage(t *testing.T) {
+func checkPhotoImportLoneSidecarWaitsForItsImage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -309,9 +316,10 @@ func TestPhotoImportLoneSidecarWaitsForItsImage(t *testing.T) {
 	assert.Equal(t, alone.Nodes[0].ID, fileByRole(paired.Asset.Files, PhotoRoleSidecar).NodeID)
 }
 
-func TestPhotoImportOperatorPairedRAWsAreSettled(t *testing.T) {
+func checkPhotoImportOperatorPairedRAWsAreSettled(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -334,9 +342,10 @@ func TestPhotoImportOperatorPairedRAWsAreSettled(t *testing.T) {
 	assert.True(t, rerun.Skipped)
 }
 
-func TestPhotoImportDedupObservation(t *testing.T) {
+func checkPhotoImportDedupObservation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -360,13 +369,14 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, asset.Files, 2)
 	var observations int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provenance WHERE original_path=$1`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
 	assert.Equal(t, 1, observations)
 }
 
-func TestPhotoImportReusesOrdinaryRAWInAnotherFolder(t *testing.T) {
+func checkPhotoImportReusesOrdinaryRAWInAnotherFolder(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	inbox, err := s.Mkdir(ctx, s.RootID(), "Inbox")
 	require.NoError(t, err)
@@ -385,9 +395,10 @@ func TestPhotoImportReusesOrdinaryRAWInAnotherFolder(t *testing.T) {
 	assert.Equal(t, 1, nodes)
 }
 
-func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
+func checkPhotoImportEditedSourceBecomesNewVersion(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -423,7 +434,8 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)
 }
 
-func TestPhotoImportCreateOnlyPreservesGroupContent(t *testing.T) {
+func checkPhotoImportCreateOnlyPreservesGroupContent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name         string
@@ -451,7 +463,7 @@ func TestPhotoImportCreateOnlyPreservesGroupContent(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			ctx := t.Context()
 			root := filepath.Join(t.TempDir(), "camera")
 			run, err := s.BeginIngest(ctx, "photo-import", root)
@@ -515,9 +527,10 @@ func TestPhotoImportCreateOnlyPreservesGroupContent(t *testing.T) {
 	}
 }
 
-func TestPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T) {
+func checkPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -538,9 +551,10 @@ func TestPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T) {
 	assert.Equal(t, fakeHash("raw-v1"), kept.BlobHash)
 }
 
-func TestPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T) {
+func checkPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -563,9 +577,10 @@ func TestPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T) {
 	assert.Len(t, jpegAsset.Files, 1)
 }
 
-func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {
+func checkPhotoImportVideoWithSameNameJPEG(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -581,9 +596,10 @@ func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {
 	assert.Len(t, clip.Asset.Files, 1)
 }
 
-func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
+func checkPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -604,9 +620,10 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.Len(t, second.Asset.Files, 2)
 }
 
-func TestPhotoSidecarImageTarget(t *testing.T) {
+func checkPhotoSidecarImageTarget(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "IMG.JPG", fakeHash("image"), 4, "image/jpeg")
 	require.NoError(t, err)
@@ -681,9 +698,10 @@ func TestPhotoSidecarImageLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoImportNodeStates(t *testing.T) {
+func checkPhotoImportNodeStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -718,9 +736,10 @@ func TestPhotoImportNodeStates(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoImportVersionStates(t *testing.T) {
+func checkPhotoImportVersionStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	image, err := s.CreateFile(ctx, s.RootID(), "versions.JPG", fakeHash("version-current"), 4, "image/jpeg")
 	require.NoError(t, err)
@@ -814,9 +833,10 @@ func TestPhotoImportMetadata(t *testing.T) {
 	assert.Len(t, restoredAsset.Files, 2)
 }
 
-func TestPhotoImportOperationLifecycle(t *testing.T) {
+func checkPhotoImportOperationLifecycle(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
 	require.NoError(t, err)
@@ -825,6 +845,16 @@ func TestPhotoImportOperationLifecycle(t *testing.T) {
 	_, err = s.ClaimStorageOperation(ctx, operation.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetStorageOperationTotal(ctx, operation.ID, 3))
+	require.NoError(t, s.DeferStorageOperation(ctx, operation.ID, nil))
+	require.NoError(t, s.NoteQueuedStorageOperation(ctx, operation.ID, "Waiting for import input"))
+	queued, err := s.StorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	require.Equal(t, StorageOperationQueued, queued.State)
+	require.Equal(t, "Waiting for import input", queued.Error)
+	resumed, err := s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	require.Equal(t, StorageOperationRunning, resumed.State)
+	require.Empty(t, resumed.Error)
 	require.NoError(t, s.AdvanceStorageOperation(ctx, operation.ID, "", 1, 0, 0, `{"added":1}`))
 	require.NoError(t, s.RequestStorageOperationCancel(ctx, operation.ID))
 	resumable, err := s.ResumableStorageOperations(ctx)
@@ -841,9 +871,10 @@ func TestPhotoImportOperationLifecycle(t *testing.T) {
 	_, err = s.CreateLocalOperation(ctx, "unknown", `{}`)
 	require.ErrorContains(t, err, `unsupported storage operation kind "unknown"`)
 }
-func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
+func checkFinalizeLocalOperationSettlesCancelRace(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	start := func() string {
 		operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
@@ -865,9 +896,10 @@ func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
 	assert.True(t, cancelled)
 }
 
-func TestPhotoImportRefusesAuditedVault(t *testing.T) {
+func checkPhotoImportRefusesAuditedVault(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	destination, _, err := s.MkdirPath(ctx, "/audited")
 	require.NoError(t, err)
@@ -880,9 +912,10 @@ func TestPhotoImportRefusesAuditedVault(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
 
-func TestPhotoImportDestinationCreatesAndReusesPath(t *testing.T) {
+func checkPhotoImportDestinationCreatesAndReusesPath(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 
 	created, err := s.EnsurePhotoImportDestination(ctx, "/photos/2027")
@@ -903,9 +936,10 @@ func TestPhotoImportDestinationCreatesAndReusesPath(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotDir)
 }
 
-func TestPhotoImportDestinationRollsBackOnInvalidComponent(t *testing.T) {
+func checkPhotoImportDestinationRollsBackOnInvalidComponent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	before, err := s.NodeByID(ctx, s.RootID())
 	require.NoError(t, err)
@@ -920,9 +954,10 @@ func TestPhotoImportDestinationRollsBackOnInvalidComponent(t *testing.T) {
 	assert.Equal(t, before.Revision, after.Revision)
 }
 
-func TestPhotoImportDestinationRejectsAuditedVault(t *testing.T) {
+func checkPhotoImportDestinationRejectsAuditedVault(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	parent, err := s.Mkdir(ctx, s.RootID(), "audited")
 	require.NoError(t, err)
@@ -953,9 +988,10 @@ func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
 	return asset
 }
 
-func TestPreparePhotoImportDestination(t *testing.T) {
+func checkPreparePhotoImportDestination(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	_, err := s.PreparePhotoImportDestination(ctx, "/")
 	require.NoError(t, err)
@@ -981,9 +1017,10 @@ func TestPreparePhotoImportDestination(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidName)
 }
 
-func TestBrowserPhotoDirectoryContinuation(t *testing.T) {
+func checkBrowserPhotoDirectoryContinuation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	for _, source := range []string{"first", "second"} {
 		run, err := s.BeginIngest(ctx, "photo-import", "browser: selection")
@@ -1029,13 +1066,14 @@ func TestBrowserPhotoDirectoryContinuation(t *testing.T) {
 	}
 }
 
-func TestBrowserPhotoSizeCandidates(t *testing.T) {
+func checkBrowserPhotoSizeCandidates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	ingest := func(source, name string, size int64, kind string) PhotoImportResult {
-		run, err := s.BeginIngest(ctx, kind, "browser: selection")
+	ingest := func(source, name string, size int64) PhotoImportResult {
+		run, err := s.BeginIngest(ctx, "photo-import", "browser: selection")
 		require.NoError(t, err)
 		member := photoImportTestMember(source+"/"+name, PhotoRoleImage, fakeHash(name), "image/jpeg")
 		member.Size = size
@@ -1043,15 +1081,15 @@ func TestBrowserPhotoSizeCandidates(t *testing.T) {
 		require.NoError(t, err)
 		return result
 	}
-	ingest("browser:prior", "eligible.JPG", 11, "photo-import")
-	hidden := ingest("browser:prior", "hidden.JPG", 12, "photo-import")
+	ingest("browser:prior", "eligible.JPG", 11)
+	hidden := ingest("browser:prior", "hidden.JPG", 12)
 	_, err := s.SetPhotoAssetHidden(ctx, hidden.Asset.ID, hidden.Asset.Revision, true)
 	require.NoError(t, err)
-	excluded := ingest("browser:prior", "excluded.JPG", 13, "photo-import")
+	excluded := ingest("browser:prior", "excluded.JPG", 13)
 	_, err = s.SetPhotoAssetExcluded(ctx, excluded.Asset.ID, excluded.Asset.Revision, true)
 	require.NoError(t, err)
-	ingest("/card", "local.JPG", 14, "photo-import")
-	trashed := ingest("browser:prior", "trashed.JPG", 15, "photo-import")
+	ingest("/card", "local.JPG", 14)
+	trashed := ingest("browser:prior", "trashed.JPG", 15)
 	_, _, err = s.Trash(ctx, trashed.Nodes[0].ID, trashed.Nodes[0].Revision)
 	require.NoError(t, err)
 	run, err := s.BeginIngest(ctx, "photo-import", "browser: selection")

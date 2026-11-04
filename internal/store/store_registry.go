@@ -539,8 +539,8 @@ func markStorageOperationFinalizingTx(
 	ctx context.Context, tx *sql.Tx, operationID string,
 ) error {
 	update, err := tx.ExecContext(ctx, `
-		UPDATE storage_operations SET cursor=?,updated_at=?
-		WHERE operation_id=? AND state=?`,
+		UPDATE storage_operations SET cursor=$1,updated_at=$2
+		WHERE operation_id=$3 AND state=$4`,
 		storageOperationFinalizingCursor, nowRFC3339(),
 		operationID, StorageOperationRunning,
 	)

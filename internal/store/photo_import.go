@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -158,36 +159,57 @@ func photoImportNodeFacts(node Node, member PhotoImportMember, role string) Phot
 func photoImportRoleFilter(role string) (string, []any) {
 	switch role {
 	case PhotoRoleSidecar:
-		return "(pf.node_id IS NULL OR pf.role=?)", []any{role}
+		return "(pf.node_id IS NULL OR pf.role=$1)", []any{role}
 	case PhotoRoleRAW:
-		return "pf.role IN (?,?)", []any{role, PhotoRoleImage}
+		return "pf.role IN ($1,$2)", []any{role, PhotoRoleImage}
 	default:
-		return "pf.role=?", []any{role}
+		return "pf.role=$1", []any{role}
 	}
 }
 
-// photoImportAcceptedSQL recognizes an unchanged outside copy while the latest
-// completed Docbank publication remains current: the source (?6) last held
-// those bytes, or has no packet of its own and the bytes match another source's.
-const photoImportAcceptedSQL = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_file
+// photoImportAcceptedSQL recognizes outside bytes accepted before the latest
+// completed sidecar publication. Bind hash, normalized path, then original path
+// in first-use order so both drivers bind the same values.
+const photoImportAcceptedPostgres = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr
+ WHERE (xr.after_json::jsonb ->> 'file_id')=pf.sidecar_of_file_id AND xr.operation='xmp_sync'
+ AND (xr.after_json::jsonb #>> '{sync,sidecar,node_id}')::bigint=n.id
+ AND xr.after_json::jsonb #>> '{sync,sidecar,file_id}'=pf.file_id
+ AND xr.after_json::jsonb #>> '{sync,written_version}'=n.current_version_id
+ AND EXISTS(SELECT 1 FROM jsonb_array_elements(xr.after_json::jsonb #> '{sync,outside}') o WHERE o.value->>'digest'=$1
+ AND (o.value->>'path'=$2 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(xr.after_json::jsonb #> '{sync,outside}') own WHERE own.value->>'path'=$2)))
+) THEN $1 ELSE '' END`
+
+const photoImportAcceptedSQLite = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_file
  WHERE CAST(json_extract(xr.after_json,'$.file_id') AS TEXT)=pf.sidecar_of_file_id AND xr.operation='xmp_sync' AND json_extract(xr.after_json,'$.sync.sidecar.node_id')=n.id
  AND json_extract(xr.after_json,'$.sync.sidecar.file_id')=pf.file_id
  AND json_extract(xr.after_json,'$.sync.written_version')=n.current_version_id
- AND EXISTS(SELECT 1 FROM json_each(xr.after_json,'$.sync.outside') o WHERE json_extract(o.value,'$.digest')=?2
- AND (json_extract(o.value,'$.path')=?6 OR NOT EXISTS(SELECT 1 FROM json_each(xr.after_json,'$.sync.outside') own WHERE json_extract(own.value,'$.path')=?6)))
-) THEN ?2 ELSE '' END`
+ AND EXISTS(SELECT 1 FROM json_each(xr.after_json,'$.sync.outside') o WHERE json_extract(o.value,'$.digest')=$1
+ AND (json_extract(o.value,'$.path')=$2 OR NOT EXISTS(SELECT 1 FROM json_each(xr.after_json,'$.sync.outside') own WHERE json_extract(own.value,'$.path')=$2)))
+) THEN $1 ELSE '' END`
 
-// photoImportSidecarCandidatesQuery finds sidecars by source path (?1) first:
-// a rescan can supply the outside bytes Docbank accepted before writing a
-// newer version, which no longer match the current content.
-const photoImportSidecarCandidatesQuery = `SELECT ` + nodeCols + `,p.original_path,` + photoImportAcceptedSQL + `
- FROM provenance p INDEXED BY provenance_source_path
+func (s *Store) photoImportAcceptedSQL() string {
+	if s.postgresSchema != "" {
+		return photoImportAcceptedPostgres
+	}
+	return photoImportAcceptedSQLite
+}
+
+const photoImportSidecarTail = `
  JOIN nodes n ON n.id=p.node_id
  LEFT JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
  LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
- WHERE p.original_path=?1 AND n.trashed_at IS NULL AND (pf.node_id IS NULL OR pf.role='sidecar')
+ WHERE p.original_path=$3 AND n.trashed_at IS NULL AND (pf.node_id IS NULL OR pf.role='sidecar')
  AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY n.id,p.identity`
+
+// Find exact source paths first; accepted outside bytes may differ from the
+// current published sidecar. SQLite keeps its indexed source-path lookup.
+func (s *Store) photoImportSidecarCandidatesSQL() string {
+	if s.postgresSchema != "" {
+		return `SELECT ` + nodeCols + `,p.original_path,` + photoImportAcceptedPostgres + ` FROM provenance p` + photoImportSidecarTail
+	}
+	return `SELECT ` + nodeCols + `,p.original_path,` + photoImportAcceptedSQLite + ` FROM provenance p INDEXED BY provenance_source_path` + photoImportSidecarTail
+}
 
 // browserPhotoSourceSQL selects the eligible earlier browser photos: live,
 // visible, included, non-sidecar, and claimed by a canonical browser folder.
@@ -208,9 +230,7 @@ func (s *Store) BrowserPhotoSizeCandidates(ctx context.Context, sizes []int64) (
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT cv.size`+browserPhotoSourceSQL()+`
- AND substr(c.original_path, 1, 8)='browser:'
- AND printf('%020d',cv.size) IN (SELECT printf('%020d',value) FROM json_each(?))`, string(encoded))
+	rows, err := s.db.QueryContext(ctx, s.browserPhotoSizeCandidatesSQL(), string(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("finding browser photo sizes: %w", err)
 	}
@@ -224,6 +244,18 @@ func (s *Store) BrowserPhotoSizeCandidates(ctx context.Context, sizes []int64) (
 		candidates[size] = true
 	}
 	return candidates, rows.Err()
+}
+
+// Preserve SQLite's size expression index; PostgreSQL indexes the integer directly.
+func (s *Store) browserPhotoSizeCandidatesSQL() string {
+	if s.postgresSchema != "" {
+		return `SELECT DISTINCT cv.size` + browserPhotoSourceSQL() + `
+ AND substr(c.original_path, 1, 8)='browser:'
+ AND cv.size IN (SELECT value::bigint FROM json_array_elements_text($1::json))`
+	}
+	return `SELECT DISTINCT cv.size` + browserPhotoSourceSQL() + `
+ AND substr(c.original_path, 1, 8)='browser:'
+ AND printf('%020d',cv.size) IN (SELECT printf('%020d',value) FROM json_each($1))`
 }
 
 // ResolveBrowserPhotoPaths continues a selected directory only when its matching
@@ -242,7 +274,7 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
 	}
 	rows, err := s.db.QueryContext(ctx, `
  SELECT cv.blob_hash, c.original_path`+browserPhotoSourceSQL()+`
- AND cv.blob_hash IN (SELECT value FROM json_each(?))`, string(encoded))
+ AND cv.blob_hash IN (SELECT value FROM (`+s.jsonArrayRowsSQL()+`) hashes)`, string(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("finding browser photo provenance: %w", err)
 	}
@@ -300,10 +332,10 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		LEFT JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
-		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
+		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=$`+strconv.Itoa(len(roleArgs)+1)+`
 		ORDER BY n.id, p.identity`, slices.Concat(roleArgs, []any{member.BlobHash})
 	if role == PhotoRoleSidecar {
-		query, args = photoImportSidecarCandidatesQuery, []any{member.OriginalPath, member.BlobHash, nil, nil, nil, normalizePhotoSourcePath(member.OriginalPath)}
+		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, normalizePhotoSourcePath(member.OriginalPath), member.OriginalPath}
 	}
 	if role == PhotoRoleSidecar && fallback && target != "" {
 		original, bound, err := photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
@@ -311,10 +343,10 @@ func (s *Store) photoImportCurrentDuplicateTx(
 			return Node{}, false, err
 		}
 		// Exact paths take priority over content matches and a generated attachment.
-		query = `SELECT * FROM (` + query + `) UNION ALL SELECT ` + nodeCols + `, '',` + photoImportAcceptedSQL + `
- FROM ` + nodeFrom + ` JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=?3 AND pf.role='sidecar'
- WHERE n.trashed_at IS NULL AND (?5=0 OR pf.sidecar_of_file_id=?4) AND (cv.blob_hash=?2 OR ` + photoImportAcceptedSQL + `<>'' OR pf.sidecar_of_file_id=?4)`
-		args[2], args[3], args[4] = target, original, bound
+		query = `SELECT * FROM (` + query + `) UNION ALL SELECT ` + nodeCols + `, '',` + s.photoImportAcceptedSQL() + `
+ FROM ` + nodeFrom + ` JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=$4 AND pf.role='sidecar'
+ WHERE n.trashed_at IS NULL AND (NOT $5 OR pf.sidecar_of_file_id=$6) AND (cv.blob_hash=$1 OR ` + s.photoImportAcceptedSQL() + `<>'' OR pf.sidecar_of_file_id=$6)`
+		args = append(args, target, bound, original)
 	}
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -382,7 +414,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	// provenance to the version that holds them, while it is retained.
 	version := node.CurrentVersionID
 	if node.BlobHash != member.BlobHash {
-		err := tx.QueryRowContext(ctx, `SELECT version_id FROM content_versions WHERE node_id=? AND blob_hash=?
+		err := tx.QueryRowContext(ctx, `SELECT version_id FROM content_versions WHERE node_id=$1 AND blob_hash=$2
  ORDER BY node_revision DESC LIMIT 1`, node.ID, member.BlobHash).Scan(&version)
 		if errors.Is(err, sql.ErrNoRows) {
 			version = ""
@@ -405,21 +437,23 @@ func (s *Store) photoImportChangedSourceTx(
 	claimed map[int64]bool,
 ) (Node, bool, error) {
 	photoFilter, roleArgs := photoImportRoleFilter(role)
+	pathParam := "$" + strconv.Itoa(len(roleArgs)+1)
+	sidecarParam := "$" + strconv.Itoa(len(roleArgs)+2)
 	var nodeID int64
 	err := queryRows(ctx, tx, `
 		SELECT DISTINCT n.id FROM nodes n
 		JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=?
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=`+pathParam+`
 		  -- Accepted photo-import paths share sidecar versions. Other source owners keep their bytes.
 		  -- Checkout observations record edits to this node, not independent import sources.
 		  AND NOT EXISTS (SELECT 1 FROM provenance other JOIN ingests i ON i.id=other.ingest_id
-		    WHERE other.node_id=n.id AND other.original_path IS NOT ? AND i.source_kind NOT LIKE 'embedded:%'
+		    WHERE other.node_id=n.id AND other.original_path IS DISTINCT FROM `+pathParam+` AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
 		      AND i.source_kind<>'photo-checkout'
-		      AND (NOT ? OR i.source_kind<>'photo-import')
+		      AND (NOT `+sidecarParam+` OR i.source_kind<>'photo-import')
 		      AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=other.identity))
-		ORDER BY n.id`, append(roleArgs, member.OriginalPath, member.OriginalPath, role == PhotoRoleSidecar), func(rows *sql.Rows) error {
+		ORDER BY n.id`, append(roleArgs, member.OriginalPath, role == PhotoRoleSidecar), func(rows *sql.Rows) error {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return err
@@ -755,6 +789,9 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if err := validatePhotoAssetGraph(ctx, tx, updated.ID); err != nil {
 				return err
 			}
+			if err := s.refreshPhotoAssetWorkTx(ctx, tx, updated.ID); err != nil {
+				return err
+			}
 			target = updated
 		}
 		result.Asset = target
@@ -802,9 +839,9 @@ func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidec
 	}
 	rows, err := q.QueryContext(ctx, `SELECT f.file_id,f.role,n.name,COALESCE(p.original_path,'') FROM photo_files f
  JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=n.id
- AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND i.source_kind NOT LIKE 'embedded:%' AND i.source_kind<>'url')
+ AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND i.source_kind<>'url')
  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
- WHERE f.asset_id=? AND f.role IN ('raw','image') AND n.trashed_at IS NULL ORDER BY f.file_id`, assetID)
+ WHERE f.asset_id=$1 AND f.role IN ('raw','image') AND n.trashed_at IS NULL ORDER BY f.file_id`, assetID)
 	if err != nil {
 		return "", bound, err
 	}
