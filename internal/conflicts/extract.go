@@ -491,7 +491,10 @@ func coordinatedPeriodScope(s string, firstFigureEnd, lastDateEnd, dateCount int
 		return false, false
 	}
 	prefix := trimDateOpening(s[firstFigureEnd:c.start])
-	if subordinatePeriodRE.MatchString(prefix) || eligibleSubjectPeriodRE.MatchString(prefix) || leadingEventPeriodRE.MatchString(prefix) || coordinatedPredicateRE.MatchString(prefix) || strings.HasPrefix(strings.TrimSpace(prefix), ",") && predicatedPeriodRE.MatchString(prefix) || qualifiedPeriodRE.MatchString(prefix) || conditionalPeriodRE.MatchString(prefix) {
+	explicitInterval := dateCount == 1 && firstDate != "" && lastDateEnd >= 0 &&
+		slices.Contains(periodStartWords, firstConnector) && dateBoundConnectorRE.MatchString(s[lastDateEnd:c.start])
+	subordinatePeriod := subordinatePeriodRE.MatchString(prefix) && !explicitInterval
+	if subordinatePeriod || eligibleSubjectPeriodRE.MatchString(prefix) || leadingEventPeriodRE.MatchString(prefix) || coordinatedPredicateRE.MatchString(prefix) || strings.HasPrefix(strings.TrimSpace(prefix), ",") && predicatedPeriodRE.MatchString(prefix) || qualifiedPeriodRE.MatchString(prefix) || conditionalPeriodRE.MatchString(prefix) {
 		return true, false
 	}
 	interval := dateCount == 1 && firstDate != "" && lastDateEnd >= 0 && slices.Contains(periodStartWords, firstConnector) &&
@@ -1186,6 +1189,7 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
 	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
 	regexp.MustCompile(`^[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?`),
+	regexp.MustCompile(`^[0-9]+(?:(?:[,.][[:space:]]*|[[:space:]]+)[0-9]+)+`),
 	regexp.MustCompile(`^[0-9][0-9,.` + numericGroupingSeparatorChars + `]*`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
@@ -1198,7 +1202,9 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:of\s+)?(?:a|an)\s+|of\s+)?(?:(?:business|working|calendar)\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
 var adjacentDurationWordUnitRE = regexp.MustCompile(`(?i)^(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
 
-var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^\s+(and|or|through|to|until|till)\s+`)
+const durationAlternativeBoundaryPattern = `(?:\s+[\)\]\"'‘’”»]*\s*|[\)\]\"'‘’”»]+\s+)`
+
+var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^` + durationAlternativeBoundaryPattern + `(and|or|through|to|until|till)\s+`)
 var durationLaterLeadRE = regexp.MustCompile(`(?i)^\s+(?:later|afterwards?|thereafter)\b`)
 var independentDurationLaterClauseLeadRE = regexp.MustCompile(`(?i)^\s*and\s+`)
 
@@ -1468,9 +1474,9 @@ var nonPredicateFigurePrefixWords = map[string]struct{}{
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
 var rateDateOperandPattern = `(?:\(\s*` + dateRE.String() + `\s*\)|\[\s*` + dateRE.String() + `\s*\]|["'‘’“”«]\s*` + dateRE.String() + `\s*["'”’»]|` + dateRE.String() + `)`
-var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:\s+(?:until|till|through|to)\s+` + rateDateOperandPattern + `)?\s*[.!?](?:\s|$)`)
+var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:\s+(?:until|till|through|to)\s+` + rateDateOperandPattern + `)?\s*(?:[.!?;:](?:\s|$)|$)`)
 var durationArithmeticRE = regexp.MustCompile(`(?i)^\s*(?:[+−*/⁄×÷±∓^\p{Pd}⁓⁻₋<>=≤≥]|out\s+of\b|(?:multiplied\s+by|divided\s+by|times|plus|minus|x)\b|and\s+(?:a\s+few|few|some|several)\s+|and\s+(?:a|an)\s+(?:` + approximation + `\s+` + number + `\b|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*[.,;!?]|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*$)|and\s+(?:a\s+)?` + fractionWords + `s?\b|[(\[]\s*(?:[+−*/⁄×÷±∓^-]|(?:and|plus|minus|times|x|multiplied|divided)\b))`)
-var durationAlternativeRE = regexp.MustCompile(`(?i)^\s+(?:or|and|through|to|until|till)\s+[(\["'‘’“”«»]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:[$€£¥]|(?:` + currencyCodes + `)\s*)?(?:` + number + `)\b`)
+var durationAlternativeRE = regexp.MustCompile(`(?i)^` + durationAlternativeBoundaryPattern + `(?:or|and|through|to|until|till)\s+[(\["'‘’“”«»]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:[$€£¥]|(?:` + currencyCodes + `)\s*)?(?:` + number + `)\b`)
 var listRowRE = regexp.MustCompile(`^\s*(?:[-*+]\s+|[0-9]+[.)]\s+)`)
 
 func hardLineBreak(s string, i int) bool {
@@ -2135,7 +2141,7 @@ func rateBoundConnector(s string) bool {
 }
 
 var plainDateBoundConnectorRE = regexp.MustCompile(`(?i)^\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
-var dateBoundConnectorRE = regexp.MustCompile(`(?i)^\s*(?:` + rateRE.String() + `\.?)?\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
+var dateBoundConnectorRE = regexp.MustCompile(`(?i)^\s*[\)\]\"'‘’”»]*\s*(?:` + rateRE.String() + `\.?)?\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
 var standaloneDateBoundPrefixRE = regexp.MustCompile(`(?i)\b(?:before|after|prior\s+to)\s+[(\["'‘’“”«]*\s*$`)
 var standaloneDateBoundLeadRE = regexp.MustCompile(`(?i)\b(?:before|after|prior\s+to)\s+`)
 var standaloneDateAlternativeLeadRE = regexp.MustCompile(`(?i)(?:,\s*)?\b(?:or|and|through|to|until|till)\s*[(\["'‘’“”«]*\s*$`)
@@ -2184,7 +2190,7 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
-var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|fixed\s+charges?|sales\s+taxes?)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {

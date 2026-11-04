@@ -512,6 +512,27 @@ func TestExtractNominalBoundsPreserveIndependentAmounts(t *testing.T) {
 	}
 }
 
+func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) {
+	for _, text := range []string{
+		"The fees are about $5 and $10 fixed charges.",
+		"The fees are about $5 and $10 sales taxes.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("nominal continuation exposed an exact amount in %q: %+v", text, got)
+		}
+	}
+
+	text := "The fee is about $5 and $10 covers insurance."
+	if got := Extract(text); len(got) != 1 || got[0].Text != "$10" {
+		t.Errorf("independent amount predicate was swallowed in %q: %+v", text, got)
+	}
+
+	text = "The fee is 5% of $100 and $200 fixed charges."
+	if got := Extract(text); len(got) != 1 || got[0].Text != "5%" {
+		t.Errorf("nominal percentage-base continuation exposed an amount in %q: %+v", text, got)
+	}
+}
+
 func FuzzExtract(f *testing.F) {
 	f.Add("The wait is " + strings.Repeat("9", 128) + " weeks.")
 	f.Add("The wait is 7 days - 10 days.")
@@ -2703,6 +2724,7 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 		"The wait is 7 min. and +10 minutes later the fee is $5.",
 		"The wait is 7 min. After 1 000.5 minutes customers pay $5.",
 		"The wait is 7 min. After 1,00 minutes customers pay $5.",
+		"The wait is 7 min. After 1, 00 minutes customers pay $5.",
 	} {
 		t.Run(text, func(t *testing.T) {
 			got := Extract(text)
@@ -2802,6 +2824,7 @@ func TestExtractRejectsUnsupportedDurationAlternativesAfterAbbreviation(t *testi
 		"The wait is 7 min. or one and a half hours.",
 		"The wait is 7 min. or +10 min.",
 		"The wait is 7 min. or negative 10 min.",
+		"The wait is (7 min. ) or 10 min.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("unsupported duration alternative retained an endpoint for %q: %+v", text, got)
@@ -2816,6 +2839,7 @@ func TestExtractRejectsDurationShapedRelativeOperandsBeforeValueValidation(t *te
 		"The deadline is 7 min. before half an hour.",
 		"The deadline is 7 min. before a half hour.",
 		"The deadline is 7 min. before 1,00 minutes.",
+		"The deadline is 7 min. before 1, 00 minutes.",
 		"The deadline is 7 min. before 1ʼ000 minutes.",
 		"The deadline is 7 min. before " + overlong + " minutes.",
 	} {
@@ -4294,6 +4318,25 @@ func TestExtractReviewAbbreviationDateBounds(t *testing.T) {
 	}
 }
 
+func TestExtractReviewAbbreviatedRateDateContinuationAtClauseBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		text   string
+		period Period
+	}{
+		{"The fee is $5/hr. before 1 July 2026", Period{To: "2026-06-30"}},
+		{"The fee is $5/hr. before 1 July 2026;", Period{To: "2026-06-30"}},
+		{"The fee is $5/hr. before (1 July 2026)", Period{To: "2026-06-30"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			wantClause := strings.TrimSuffix(tt.text, ";")
+			got := Extract(tt.text)
+			if len(got) != 1 || got[0].Text != "$5" || got[0].Period != tt.period || got[0].Clause != wantClause || string([]rune(tt.text)[got[0].ClauseStart:got[0].ClauseEnd]) != wantClause {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+}
+
 func TestExtractReviewAbbreviationsAndQuotedArithmetic(t *testing.T) {
 	for _, tt := range []struct {
 		text string
@@ -4370,6 +4413,7 @@ func TestExtractReviewRateAndRelativeDateBounds(t *testing.T) {
 		{"The fee is $5 per month until 1 July 2026.", "$5", Period{To: "2026-07-01"}},
 		{"The fee is $5/hr. from 1 July 2026 until 31 July 2026.", "$5", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The notice is 2 hr. from 1 July 2026 until 31 July 2026.", "2 hr", Period{From: "2026-07-01", To: "2026-07-31"}},
+		{"The wait is 7 days from (1 July 2026) until (31 July 2026).", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)

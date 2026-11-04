@@ -46,6 +46,11 @@ Period words after an abbreviated rate are matched without regard to case, so
 `The fee is $5/hr. BEFORE 1 July 2026.` retains the exclusive end bound.
 Supported date wrappers remain part of that bound, so
 `The fee is $5/hr. before (1 July 2026).` also retains it.
+The bound also survives when the clause ends at that date or a semicolon, as in
+`The fee is $5/hr. before 1 July 2026` and
+`The fee is $5/hr. before 1 July 2026;`. Parenthesized endpoints in a stated
+two-date interval remain an interval: `The wait is 7 days from (1 July 2026)
+until (31 July 2026).` retains both bounds.
 
 Each figure retains the extraction-accepted date spans as byte offsets in its
 normalized clause for same-package consumers. Consumers use these decisions
@@ -96,6 +101,8 @@ operand. The full expression `The deadline is 7 min. before 10 minutes have
 elapsed.` yields no figures. A malformed numeric operand such as `1,00 minutes`
 or `1 00 minutes` is also unsupported: `The deadline is 7 min. before 1,00
 minutes.` and `The deadline is 7 min. before 1 00 minutes.` yield no figures.
+A malformed mixed-separator operand such as `1, 00 minutes` is also
+unsupported: `The deadline is 7 min. before 1, 00 minutes.` yields no figures.
 Complements such as `including breaks` and `excluding breaks` stay attached to
 the duration operand, so `The deadline is 7 min. before 10 minutes including
 breaks.` and `The deadline is 7 min. before 10 minutes excluding breaks.`
@@ -123,6 +130,8 @@ of $100 and $200 covers insurance.` keeps `5%` and `$200`. A malformed operand
 does not discard a later independent assertion: `The wait is 7 min. After 1,00
 minutes customers pay $5.` and `The wait is 7 min. After 1 00 minutes customers
 pay $5.` keep `7 min` and `$5`.
+The mixed separator form also preserves that later assertion: `The wait is 7
+min. After 1, 00 minutes customers pay $5.` keeps both figures.
 Nominal phrases such as `shipping charges` or `shipping and handling charges`
 stay inside an approximate group:
 `The fees are about $5 and $10 shipping charges.` and `The fees are about 5%
@@ -130,6 +139,10 @@ of $100 and $200 shipping charges.` yield no figures. The coordinated nominal
 form `The fees are about $5 and $10 shipping and handling charges.` and the
 percentage-base form `The fees are about 5% of $100 and $200 shipping and
 handling charges.` also yield no figures.
+The same rule covers the nominal continuations `fixed charges` and
+`sales taxes`, including a coordinated percentage base: `The fees are about $5
+and $10 fixed charges.`, `The fees are about $5 and $10 sales taxes.`, and
+`The fee is 5% of $100 and $200 fixed charges.` yield no figures.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
