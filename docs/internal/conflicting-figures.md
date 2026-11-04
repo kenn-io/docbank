@@ -234,10 +234,18 @@ yield no figures. An unsupported spoken count, duration, or amount in a
 percentage base also keeps following operands in that base, including after a
 bound: `The fee is 5% of thirty devices and 2 devices.`, `The fee is 5% of at
 least thirty dollars and $200.`, and `The fee is 5% of at least thirty minutes
-and 2 hours.` keep `5%` only. A later sentence remains independent.
+and 2 hours.` keep `5%` only. The same rule keeps unresolved fractional and
+cents operands attached in these groups: `The fee is about fifty cents and
+$5.`, `The fee is about half a percent and 5 percent.`, `The fee is 5% of
+fifty cents and $200.`, and `The fee is 5% of half a dollar and $200.` The
+approximate clauses yield no figures; each percentage-base clause keeps `5%`
+only. A later sentence remains independent.
 An unsupported numeric or verbal duration alternative such as `7 or 10 days`,
 `7 min. or an hour`, `7 min. or .5 hours`, or `7 min. and thirty minutes`
-never becomes a partial exact value. Unsupported sign words such as `minus`
+never becomes a partial exact value. An unsupported leading duration also stays
+attached to a recognized alternative: `The wait is thirty minutes or 2 hours.`
+yields no figures, while a later sentence remains independent. Unsupported sign
+words such as `minus`
 and `negative`
 before a numeric figure or its bound never yield a positive value. Postfix
 bounds such as `7 days maximum` are omitted rather than treated as exact.

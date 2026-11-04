@@ -4910,6 +4910,8 @@ func TestExtractReviewUnqualifiedUnsupportedRateNumeratorsSuppressDenominators(t
 		{"subunit spoken money numerator before independent sentence", "The fee is fifty cents per 2 devices. The deposit is $7.", []string{"$7"}},
 		{"numeric cents numerator", "The fee is 50 cents per 2 devices.", nil},
 		{"numeric cents numerator before independent sentence", "The fee is 50 cents per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"fractional money numerator with of article", "The fee is a quarter of a dollar per 2 devices.", nil},
+		{"fractional money numerator with of article before independent sentence", "The fee is a quarter of a dollar per 2 devices. The deposit is $7.", []string{"$7"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Extract(tt.text)
@@ -4926,6 +4928,28 @@ func TestExtractReviewUnqualifiedUnsupportedRateNumeratorsSuppressDenominators(t
 			for i, want := range tt.want {
 				if texts[i] != want {
 					t.Errorf("figure %d = %q, want %q", i, texts[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractRejectsAlternativesWithUnsupportedLeadingDuration(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The wait is thirty minutes or 2 hours.", nil},
+		{"The wait is thirty minutes or 2 hours. The deposit is $7.", []string{"$7"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("unsupported duration alternative retained an exact operand or hid the following sentence: %+v", got)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want {
+					t.Errorf("figure %d = %q, want %q", i, got[i].Text, want)
 				}
 			}
 		})
@@ -6225,6 +6249,32 @@ func TestExtractSuppressesDenominatorAfterFractionalPercentageRate(t *testing.T)
 			}
 			if want == 1 && (got[0].Text != "$7" || got[0].Clause != "The deposit is $7.") {
 				t.Fatalf("following assertion was altered by the unresolved rate: %+v", got)
+			}
+		})
+	}
+}
+
+func TestExtractKeepsFractionalOperandsInsideApproximationAndPercentageBases(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The fee is about fifty cents and $5.", nil},
+		{"The fee is about fifty cents and $5. The deposit is $7.", []string{"$7"}},
+		{"The fee is about half a percent and 5 percent.", nil},
+		{"The fee is about half a percent and 5 percent. The deposit is $7.", []string{"$7"}},
+		{"The fee is 5% of fifty cents and $200.", []string{"5%"}},
+		{"The fee is 5% of half a dollar and $200.", []string{"5%"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("fractional operand escaped its approximation or percentage base: %+v", got)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want {
+					t.Errorf("figure %d = %q, want %q", i, got[i].Text, want)
+				}
 			}
 		})
 	}

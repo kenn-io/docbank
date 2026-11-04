@@ -1514,6 +1514,7 @@ var (
 	unsupportedCurrencyCodePrefixRE     = regexp.MustCompile(`(?i)^(?:` + currencyCodes + `)\s+`)
 	unsupportedCurrencySymbolPrefixRE   = regexp.MustCompile(`^[$€£¥]\s*`)
 	spokenMoneyUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
+	spokenFractionalMoneyUnitLeadRE     = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+|of\s+(?:a|an)\s+)?(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
 	spokenCentsUnitLeadRE               = regexp.MustCompile(`(?i)^\s+cents?\b`)
 	spokenFractionalCountUnitLeadRE     = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
 	spokenFractionalPercentUnitLeadRE   = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:percentage\s+points?|percent|per\s+cent)\b`)
@@ -1536,11 +1537,39 @@ func unresolvedSpokenWordOperandChecks(s string) []candidate {
 			checks = appendUnresolvedWordOperandCheck(checks, check)
 		}
 	}
+	for _, check := range unresolvedDurationAlternativeChecks(s) {
+		checks = appendUnresolvedWordOperandCheck(checks, check)
+	}
 	for _, check := range unqualifiedRateNumeratorChecks(s) {
 		checks = appendUnresolvedWordOperandCheck(checks, check)
 	}
 	for _, check := range unresolvedSpokenPercentageBaseChecks(s) {
 		checks = appendUnresolvedWordOperandCheck(checks, check)
+	}
+	return checks
+}
+
+func unresolvedDurationAlternativeChecks(s string) []candidate {
+	var checks []candidate
+	for start, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			continue
+		}
+		if start > 0 {
+			previous, _ := utf8.DecodeLastRuneInString(s[:start])
+			if unicode.IsLetter(previous) || unicode.IsDigit(previous) || previous == '_' {
+				continue
+			}
+		}
+		amount, unit, _, ok := relativeDurationOperandParts(s[start:])
+		if !ok || supportedWordAmount(s[start+amount[0]:start+amount[1]]) {
+			continue
+		}
+		end := start + unit[1]
+		if !durationAlternativeContinuation(s[:end], s[end:]) {
+			continue
+		}
+		checks = appendUnresolvedWordOperandCheck(checks, candidate{start + amount[0], end, Figure{Kind: durationKind}, 1})
 	}
 	return checks
 }
@@ -1643,7 +1672,7 @@ func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, boo
 }
 
 func unresolvedFractionalMoneyOperandCheck(operand string, start int) (candidate, bool) {
-	return unresolvedFractionalOperandCheck(operand, start, spokenMoneyUnitLeadRE, Figure{Kind: moneyKind})
+	return unresolvedFractionalOperandCheck(operand, start, spokenFractionalMoneyUnitLeadRE, Figure{Kind: moneyKind})
 }
 
 func unresolvedFractionalOperandCheck(operand string, start int, unitLead *regexp.Regexp, figure Figure) (candidate, bool) {
@@ -1656,9 +1685,6 @@ func unresolvedFractionalOperandCheck(operand string, start int, unitLead *regex
 		return candidate{}, false
 	}
 	end := amount[1] + unit[1]
-	if rateEnd(operand[end:]) == 0 {
-		return candidate{}, false
-	}
 	return candidate{start, start + end, figure, 1}, true
 }
 
@@ -1672,9 +1698,6 @@ func unresolvedCentsMoneyOperandCheck(operand string, start int) (candidate, boo
 		return candidate{}, false
 	}
 	end := amount[1] + unit[1]
-	if rateEnd(operand[end:]) == 0 {
-		return candidate{}, false
-	}
 	return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
 }
 
