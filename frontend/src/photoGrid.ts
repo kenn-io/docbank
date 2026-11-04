@@ -288,21 +288,30 @@ export function createPhotoGrouper() {
         if (grouping !== "sessions") merge(groupPhotos(added, grouping));
         else {
           const page = groupPhotos(added, "sessions");
+          const replacements: { start: number; end: number; items: PhotoGridRow[] }[] = [];
+          const undated = page.at(-1)?.key === "undated" ? page.pop() : undefined;
+          const endOfDated = groups.length - (groups.at(-1)?.key === "undated" ? 1 : 0);
           // Each page session is a separate clock cluster. A wide page touches only
           // nearby retained sessions, even when Imported order spans many years.
           for (const part of page) {
-            if (part.key === "undated") {
-              merge([part]);
-              continue;
-            }
             const hi = clockOf(part.items[0]),
               lo = clockOf(part.items.at(-1)!);
             const gap = 4 * 3600 * 1000;
-            const endOfDated = groups.length - (groups.at(-1)?.key === "undated" ? 1 : 0);
             const start = boundary(endOfDated, (i) => clockOf(groups[i].items.at(-1)!) > hi + gap);
             const end = boundary(endOfDated, (i) => clockOf(groups[i].items[0]) >= lo - gap);
+            const previous = replacements.at(-1);
+            // Separate page clusters can still join through one retained session.
+            if (previous && start < previous.end) {
+              previous.end = end;
+              for (const item of part.items) previous.items.push(item);
+            } else replacements.push({ start, end, items: part.items });
+          }
+          const nextGroups: PhotoGroup[] = [];
+          let cursor = 0;
+          for (const { start, end, items } of replacements) {
+            while (cursor < start) nextGroups.push(groups[cursor++]);
             const retained = groups.slice(start, end).flatMap((group) => group.items);
-            const regrouped = groupPhotos([...retained, ...part.items], "sessions");
+            const regrouped = groupPhotos([...retained, ...items], "sessions");
             for (let i = 0; i < regrouped.length; i++) {
               const next = regrouped[i],
                 old = groups[start + i];
@@ -315,10 +324,14 @@ export function createPhotoGrouper() {
                   old.items.push(next.items[j]);
                 next.items = old.items;
               }
+              nextGroups.push(next);
             }
             changedFrom = Math.min(changedFrom, start);
-            groups = groups.slice(0, start).concat(regrouped, groups.slice(end));
+            cursor = end;
           }
+          while (cursor < groups.length) nextGroups.push(groups[cursor++]);
+          groups = nextGroups;
+          if (undated) merge([undated]);
         }
       }
       return { groups: groups.slice(), changedFrom };

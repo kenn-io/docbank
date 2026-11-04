@@ -60,6 +60,17 @@ it("seeks a collapsed 500-frame stack through a hidden member without walking me
 });
 
 it("matches full grouping and exact layouts after shuffled pages and stack changes", () => {
+  // Both page clusters join the same retained session.
+  {
+    const source = ["01", "05", "09"].map((hour, id) => photo(id, `2025-06-01T${hour}:00:00Z`));
+    const rows = source.concat(photo(3, "2025-06-01T00:00:00Z"), photo(4, "2025-06-01T10:00:00Z"));
+    const grouper = createPhotoGrouper(),
+      expanded = new Set<string>();
+    grouper.sync(source, "sessions", expanded);
+    expect(grouper.sync(rows, "sessions", expanded, source).groups).toEqual(
+      groupPhotos(rows, "sessions"),
+    );
+  }
   for (const times of [
     ["09:00:00", "01:00:00", "03:00:00", "07:00:00"],
     ["09:00:00", "09:00:01", "13:00:02", "13:00:01"],
@@ -233,6 +244,51 @@ it("touches only nearby sessions when one page spans years", () => {
       expect(next).toHaveLength(20_001);
     }
   }
+
+  const source = Array.from({ length: 100_000 }, (_, id) =>
+    photo(id, new Date(Date.UTC(2025, 0, 1) - id * 24 * 3600_000).toISOString()),
+  );
+  // Random import order, with each new photo forming a separate session.
+  const page = Array.from({ length: 250 }, (_, i) =>
+    photo(
+      100_000 + i,
+      new Date(Date.UTC(2025, 0, 1) - (((i * 97) % 250) * 397 + 0.5) * 24 * 3600_000).toISOString(),
+    ),
+  );
+  const grouper = createPhotoGrouper(),
+    expanded = new Set<string>();
+  const first = grouper.sync(source, "sessions", expanded).groups;
+  const rows = source.concat(page);
+  let copied = 0;
+  const slice = Array.prototype.slice,
+    concat = Array.prototype.concat,
+    push = Array.prototype.push;
+  let result: ReturnType<typeof grouper.sync>;
+  try {
+    Array.prototype.slice = function (start, end) {
+      const result = slice.call(this, start, end);
+      if (result[0]?.items) copied += result.length;
+      return result;
+    };
+    Array.prototype.concat = function (...items) {
+      const result = concat.apply(this, items);
+      if (result[0]?.items) copied += result.length;
+      return result;
+    };
+    Array.prototype.push = function (...items) {
+      if (items[0]?.items) copied += items.length;
+      return push.apply(this, items);
+    };
+    result = grouper.sync(rows, "sessions", expanded, source);
+  } finally {
+    Array.prototype.slice = slice;
+    Array.prototype.concat = concat;
+    Array.prototype.push = push;
+  }
+  expect(copied).toBeLessThan(1_000_000);
+  expect(result.groups).toEqual(groupPhotos(rows, "sessions"));
+  expect(result.changedFrom).toBe(1);
+  expect(result.groups[0]).toBe(first[0]);
 });
 
 // Lays out groups at 144px wide, so every 3:2 photo gets its own 96px row.
