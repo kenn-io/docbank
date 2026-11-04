@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestFindAlignment(t *testing.T) {
@@ -86,6 +87,7 @@ func FuzzFind(f *testing.F) {
 	f.Add("The cooling period is 7 days.", "The cooling period is 15 days.", "period")
 	f.Add("Élan has 2 free devices.", "Élan has 3 free devices.", "devices")
 	f.Add("From １ July ２０２６ the fee is $5.", "From １ July ２０２４ the fee is $6.", "fee")
+	f.Add("\xe4B 0$", "B 1$", "")
 	f.Add("The fee from 31 February 2024 is $10.", "The fee from 31 February 2025 is $20.", "fee")
 	f.Add("The cooling period isn’t 7 days.", "The cooling period is 15 days.", "period")
 	f.Add("The fee is $10 per 2 months.", "The fee is $20 per 4 months.", "fee")
@@ -111,12 +113,16 @@ func FuzzFind(f *testing.F) {
 				if s.Passage < 0 || s.Passage >= len(in.Passages) {
 					t.Fatal("passage out of bounds")
 				}
-				text := []rune(in.Passages[s.Passage].Text)
+				text := in.Passages[s.Passage].Text
 				fig := s.Figure
-				if fig.Start < 0 || fig.End < fig.Start || fig.End > len(text) || fig.ClauseStart < 0 || fig.ClauseEnd < fig.ClauseStart || fig.ClauseEnd > len(text) {
+				figureStart, figureStartOK := byteIndexAtRuneOffset(text, fig.Start)
+				figureEnd, figureEndOK := byteIndexAtRuneOffset(text, fig.End)
+				clauseStart, clauseStartOK := byteIndexAtRuneOffset(text, fig.ClauseStart)
+				clauseEnd, clauseEndOK := byteIndexAtRuneOffset(text, fig.ClauseEnd)
+				if !figureStartOK || !figureEndOK || fig.End < fig.Start || !clauseStartOK || !clauseEndOK || fig.ClauseEnd < fig.ClauseStart {
 					t.Fatal("offset out of bounds")
 				}
-				if string(text[fig.Start:fig.End]) != fig.Text || string(text[fig.ClauseStart:fig.ClauseEnd]) != fig.Clause {
+				if text[figureStart:figureEnd] != fig.Text || text[clauseStart:clauseEnd] != fig.Clause {
 					t.Fatal("inexact offsets")
 				}
 			}
@@ -126,6 +132,21 @@ func FuzzFind(f *testing.F) {
 			t.Fatal("same document conflict")
 		}
 	})
+}
+
+func byteIndexAtRuneOffset(text string, runeOffset int) (int, bool) {
+	if runeOffset < 0 {
+		return 0, false
+	}
+	byteOffset := 0
+	for range runeOffset {
+		if byteOffset >= len(text) {
+			return 0, false
+		}
+		_, size := utf8.DecodeRuneInString(text[byteOffset:])
+		byteOffset += size
+	}
+	return byteOffset, true
 }
 
 func TestFindNontransitiveSubjects(t *testing.T) {
