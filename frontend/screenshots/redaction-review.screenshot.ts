@@ -103,9 +103,16 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         const zoom = reader.getByRole("textbox", { name: "Set zoom" });
         await zoom.fill("125");
         await zoom.press("Enter");
-        await reader.getByRole("button", { name: "Next Page", exact: true }).click();
-        await expect(reader.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
-        await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
+        const redact = await reader
+          .getByRole("button", { name: "Redact PDF", exact: true })
+          .elementHandle();
+        // Enter review before the smooth page turn can move the viewport.
+        await reader
+          .getByRole("button", { name: "Next Page", exact: true })
+          .evaluate((button, redact) => {
+            (button as HTMLButtonElement).click();
+            (redact as HTMLButtonElement).click();
+          }, redact);
       } else {
         await file.click();
         await expect(page.getByRole("button", { name: "Redact PDF", exact: true })).toBeEnabled();
@@ -159,8 +166,15 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(drawer).toBeHidden();
     const reader = page.getByRole("dialog", { name: "Read two-pages.pdf", exact: true });
     await expect(reader.getByRole("textbox", { name: "Set zoom" })).toHaveValue("125");
+    await expect(
+      reader.locator('[data-review-page="2"]').locator("..").locator("img").first(),
+    ).toBeInViewport({ ratio: 0.5 });
     await expect(reader.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeFocused();
+    await page.screenshot({
+      path: path.join(captures!, "reader-return-page-two.png"),
+      animations: "disabled",
+    });
     await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     await originalPage(1);
     await page.setViewportSize({ width: 640, height: 400 });

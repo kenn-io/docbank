@@ -71,6 +71,7 @@ export class PDFReviewBridge {
     rotation: number;
     x: number;
     y: number;
+    page?: number;
   };
   private updating = false;
   private settingMode = false;
@@ -221,11 +222,14 @@ export class PDFReviewBridge {
           .setRotation(saved.rotation);
         this.zoom()!.requestZoom(saved.zoom);
         requestAnimationFrame(() => {
-          if (!this.disposed && !this.review)
-            this.registry!.getPlugin<ViewportPlugin>("viewport")!
-              .provides()
-              .forDocument(id)
-              .scrollTo({ x: saved.x, y: saved.y, behavior: "instant" });
+          if (!this.disposed && !this.review) {
+            if (saved.page) this.goToPage(saved.page);
+            else
+              this.registry!.getPlugin<ViewportPlugin>("viewport")!
+                .provides()
+                .forDocument(id)
+                .scrollTo({ x: saved.x, y: saved.y, behavior: "instant" });
+          }
         });
       }
       this.saved = undefined;
@@ -237,14 +241,18 @@ export class PDFReviewBridge {
       const id = this.document()!.id,
         viewport = this.registry!.getPlugin<ViewportPlugin>("viewport")!.provides().forDocument(id),
         rotation = this.registry!.getPlugin<RotatePlugin>("rotate")!.provides().forDocument(id);
-      const metrics = viewport.getMetrics();
+      const metrics = viewport.getMetrics(),
+        navigation = this.scroll()!.getPageChangeState();
       this.saved = {
         zoom: this.zoom()!.getState().zoomLevel,
         rotation: rotation.getRotation(),
         x: metrics.scrollLeft,
         y: metrics.scrollTop,
+        // A page turn announces its destination before smooth scrolling reaches it.
+        page: navigation.isChanging ? navigation.targetPage : undefined,
       };
       this.zoom()!.requestZoom(ZoomMode.FitPage);
+      if (this.saved.page) this.goToPage(this.saved.page);
     }
     for (const category of ["document-print", "document-export"]) {
       const commands = this.registry?.getPlugin<CommandsPlugin>("commands")?.provides(),
