@@ -5600,3 +5600,92 @@ func TestExtractReviewNominalAndCompleteDateRanges(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractOmitsApproximateDurationAcrossNominalContinuation(t *testing.T) {
+	text := "The job needs about 7 days and 3 hours processing time."
+	if got := Extract(text); len(got) != 0 {
+		t.Fatalf("approximate duration group leaked a component: %+v", got)
+	}
+
+	text = "The wait is about 7 days and 3 hours. The fee is $5."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$5" || string([]rune(text)[got[0].Start:got[0].End]) != "$5" {
+		t.Errorf("independent exact fee was lost: %+v", got)
+	}
+}
+
+func TestExtractKeepsWrappedPostCommaConjunctionWithRelativeDuration(t *testing.T) {
+	text := "The deadline is 7 min. before 10 minutes have elapsed, (and the monthly fee is $5)."
+	for _, got := range Extract(text) {
+		if got.Text == "7 min" {
+			t.Errorf("relative duration was split before a wrapped conjunction: %+v", got)
+		}
+	}
+
+	text = "The deadline is 7 min. The monthly fee is $5."
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "7 min" || got[1].Text != "$5" {
+		t.Errorf("independent sentence after the abbreviation was lost: %+v", got)
+	}
+}
+
+func TestExtractOmitsRelativeDurationsComparedWithUnsupportedSeconds(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is 7 min. before 10 seconds.",
+		"The deadline is 7 minutes before 10 seconds.",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("unsupported seconds comparison emitted an exact figure for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractOmitsBareFeeOperandsAfterPercentageBase(t *testing.T) {
+	text := "The surcharge is 5% of the $100 and $200 fees."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "5%" || got[0].Period != (Period{}) {
+		t.Fatalf("nominal fee operands escaped the percentage-base group: %+v", got)
+	}
+}
+
+func TestExtractKeepsPredicatedFigureAfterApproximateAndPercentageBases(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The fee is about $5 and $10 covers shipping costs.", []string{"$10"}},
+		{"The surcharge is 5% of $100 and $10 covers shipping costs.", []string{"5%", "$10"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("predicated amount was swallowed by nominal continuation: %+v, want %v", got, tt.want)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+					t.Errorf("figure %d = %+v, want exact source %q", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractDoesNotApplyOrderDateToPluralSubjectFee(t *testing.T) {
+	text := "Fees of $5 apply to orders before 1 July 2026."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$5" || got[0].Period != (Period{}) {
+		t.Fatalf("order eligibility date was treated as the fee validity period: %+v", got)
+	}
+}
+
+func TestExtractRejectsLeadingDecimalRateComparison(t *testing.T) {
+	if got := Extract("The fee is $5/month higher than .5."); len(got) != 0 {
+		t.Fatalf("rate with unsupported leading-decimal comparison emitted an exact figure: %+v", got)
+	}
+
+	text := "The fee is $5/month higher than .5. The deposit is $7."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$7" || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
+		t.Errorf("independent following sentence was lost or rate leaked: %+v", got)
+	}
+}

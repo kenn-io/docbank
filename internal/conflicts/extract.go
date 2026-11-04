@@ -482,7 +482,7 @@ func unclassifiedLeadingPeriod(s string) bool {
 
 var assertionJoinRE = regexp.MustCompile(`(?i)^(?:[\s,]*(?:and|while|but)\b|\s*,)`)
 var subordinatePeriodRE = regexp.MustCompile(`(?i)(?:\bbecause\b|\bsince\b|\()\s*[\p{L}\p{N}.,:'’‘()-]+(?:\s+[\p{L}\p{N}.,:'’‘()-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
-var eligibleSubjectPeriodRE = regexp.MustCompile(`(?i)\bapplies?\s+to\s+[\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
+var eligibleSubjectPeriodRE = regexp.MustCompile(`(?i)\bappl(?:y|ies)\s+to\s+[\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
 
 const coordinatedEndConnectorPattern = `[)\]"'‘’“”»]*\s+and\s+ending\s+[(\["'‘’“”«]*`
 
@@ -1215,8 +1215,11 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^an?\b`),
 }
-var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:of\s+)?(?:a|an)\s+|of\s+)?(?:(?:business|working|calendar)\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
-var adjacentDurationWordUnitRE = regexp.MustCompile(`(?i)^(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
+
+// Seconds are unsupported figures, but must still be recognized when they
+// appear as the operand of a relative duration clause.
+var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:of\s+)?(?:a|an)\s+|of\s+)?(?:(?:business|working|calendar)\s+)?(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
+var adjacentDurationWordUnitRE = regexp.MustCompile(`(?i)^(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`)
 
 const durationAlternativeBoundaryPattern = `(?:\s+[\)\]\"'‘’”»]*\s*|[\)\]\"'‘’”»]+\s+)`
 
@@ -1452,7 +1455,11 @@ func independentRelativeDurationAssertion(connector, following string) bool {
 			return true
 		}
 		comma := strings.IndexByte(following, ',')
-		return comma >= 0 && !relativeDurationConjunctionLeadRE.MatchString(following[comma+1:]) && independentDurationAssertion(following[comma+1:])
+		if comma < 0 {
+			return false
+		}
+		afterComma := trimRelativeDurationWrappers(following[comma+1:])
+		return !relativeDurationConjunctionLeadRE.MatchString(afterComma) && independentDurationAssertion(afterComma)
 	default:
 		return false
 	}
@@ -1940,6 +1947,7 @@ var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?
 var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
 var verbalComparisonCurrencyPrefixRE = regexp.MustCompile(`(?i)^(?:[$€£¥]|` + currencyCodes + `\s+)`)
 var verbalComparisonSignPrefixRE = regexp.MustCompile(`(?i)^(?:(?:minus|negative|plus|positive)\s+|[+−-]\s*)`)
+var leadingDecimalComparisonOperandRE = regexp.MustCompile(`^\.[0-9]+`)
 
 func verbalComparisonWithNumericOrWordOperand(s string) bool {
 	lead := verbalComparisonLeadRE.FindStringIndex(s)
@@ -1960,6 +1968,9 @@ func verbalComparisonWithNumericOrWordOperand(s string) bool {
 		if operand == before {
 			break
 		}
+	}
+	if leadingDecimalComparisonOperandRE.MatchString(operand) {
+		return true
 	}
 	if fractionSuffixRE.MatchString(operand) {
 		return true
@@ -2227,13 +2238,18 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
-var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:[\p{L}]+(?:\s+[\p{L}]+){0,2}\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
+var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
+var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|covers?)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {
 		return false
 	}
-	if nominal := quantitySubjectNominalContinuationRE.FindStringIndex(s); nominal != nil {
+	if nominal := quantitySubjectNominalDurationRE.FindStringIndex(s); nominal != nil && !quantitySubjectPredicatedNominalLeadRE.MatchString(s) {
+		return quantitySubjectRE.MatchString(s[nominal[1]:])
+	}
+	if nominal := quantitySubjectNominalContinuationRE.FindStringIndex(s); nominal != nil && !quantitySubjectPredicatedNominalLeadRE.MatchString(s) {
 		return quantitySubjectRE.MatchString(s[nominal[1]:])
 	}
 	return true
