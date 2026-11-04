@@ -594,51 +594,18 @@ func (s *Store) PurgeDerivatives(
 			); err != nil {
 				return fmt.Errorf("removing lexical generation %s head: %w", generation.id, err)
 			}
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`, generation.id,
-			); err != nil {
-				return fmt.Errorf("removing lexical generation %s manifest: %w", generation.id, err)
-			}
 			if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs
 				SET lexical_generation_id=NULL
 				WHERE phase='published' AND lexical_generation_id=$1`, generation.id); err != nil {
 				return fmt.Errorf("releasing collected lexical generation %s from completed jobs: %w",
 					generation.id, err)
 			}
-			var streamID string
-			if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
-				WHERE generation_id=$1`, generation.id).Scan(&streamID); err != nil {
-				return fmt.Errorf("reading collected lexical stream: %w", err)
-			}
-			result, err = tx.ExecContext(ctx,
-				`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`, generation.id)
-			if err != nil {
-				return fmt.Errorf("removing lexical generation %s: %w", generation.id, err)
-			}
-			count, err := rowsAffectedInt(result)
-			if err != nil {
-				return err
-			}
-			removedRows, err := trimLexicalStreamTx(ctx, tx, streamID)
+			removedRows, err := dropLexicalGenerationTx(ctx, tx, generation.id)
 			if err != nil {
 				return err
 			}
 			report.RemovedLexicalRows += removedRows
-			report.RemovedLexicalGenerations += count
-		}
-
-		if collectGarbage {
-			unindexed, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
-			WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
-			                  WHERE gb.build_id=rendition_lexical_index.build_id)`)
-			if err != nil {
-				return fmt.Errorf("removing lexical index rows no generation names: %w", err)
-			}
-			count, err := rowsAffectedInt(unindexed)
-			if err != nil {
-				return err
-			}
-			report.RemovedLexicalRows += count
+			report.RemovedLexicalGenerations++
 		}
 
 		artifactBlobs := make(map[string]struct{})

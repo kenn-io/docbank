@@ -1297,15 +1297,11 @@ func (s *Store) StageLexicalGenerationWithRoot(
 func stageLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 ) (LexicalGeneration, error) {
-	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
-	if err != nil {
-		return LexicalGeneration{}, err
-	}
 	buildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, segments, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs)
 }
 
 func stageLexicalGenerationExcludingTx(
@@ -1331,12 +1327,12 @@ func stageLexicalGenerationExcludingTx(
 		return LexicalGeneration{}, nil
 	}
 	generationID := lexicalReplacementGenerationID(segments, buildIDs)
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, segments, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs)
 }
 
 func stageLexicalGenerationRowsTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
-	segments []lexicalManifestRow, buildIDs []string,
+	buildIDs []string,
 ) (LexicalGeneration, error) {
 	stored, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
 	if err == nil {
@@ -1345,7 +1341,7 @@ func stageLexicalGenerationRowsTx(
 	if !errors.Is(err, ErrNotFound) {
 		return LexicalGeneration{}, err
 	}
-	return writeLexicalStreamTx(ctx, tx, generationID, segments, buildIDs, nowRFC3339())
+	return extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, generationID, nowRFC3339())
 }
 
 // lexicalChain extends an ordered digest with one build, including empty builds.
@@ -1369,17 +1365,6 @@ func lexicalChain(previous, buildID string, segments []lexicalManifestRow) strin
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func insertLexicalStreamBuildTx(ctx context.Context, tx *sql.Tx, streamID string, ordinal int, buildID string, segments []lexicalManifestRow, manifestChain, buildChain string) (string, string, error) {
-	manifestChain = lexicalChain(manifestChain, buildID, segments)
-	buildChain = lexicalChain(buildChain, buildID, nil)
-	_, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_stream_builds
-		(stream_id,ordinal,build_id) VALUES($1,$2,$3)`, streamID, ordinal, buildID)
-	if err != nil {
-		return "", "", fmt.Errorf("recording lexical stream %s build %s: %w", streamID, buildID, err)
-	}
-	return manifestChain, buildChain, nil
-}
-
 func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation LexicalGeneration, streamID, builtAt string) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generations
 		(generation_id,stream_id,segment_count,build_count,built_at) VALUES($1,$2,$3,$4,$5)`, generation.ID, streamID, generation.SegmentCount, generation.BuildCount, builtAt); err != nil {
@@ -1392,28 +1377,37 @@ func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation Lexic
 	return nil
 }
 
-func writeLexicalStreamTx(ctx context.Context, tx *sql.Tx, generationID string, segments []lexicalManifestRow, buildIDs []string, builtAt string) (LexicalGeneration, error) {
-	generation := LexicalGeneration{ID: generationID, SegmentCount: len(segments), BuildCount: len(buildIDs)}
-	streamID := uuid.New().String()
-	byBuild := make(map[string][]lexicalManifestRow)
-	for _, row := range segments {
-		byBuild[row.buildID] = append(byBuild[row.buildID], row)
-	}
-	for ordinal, buildID := range buildIDs {
-		var err error
-		generation.ManifestDigest, generation.BuildDigest, err = insertLexicalStreamBuildTx(ctx, tx,
-			streamID, ordinal+1, buildID, byBuild[buildID], generation.ManifestDigest, generation.BuildDigest)
+// extendLexicalStreamTx shares indexing and ordered membership for staging and append.
+// A supplied generation ID preserves full-stage and metadata restore identities.
+func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, generationID, builtAt string) (LexicalGeneration, error) {
+	generation := from
+	for _, buildID := range buildIDs {
+		segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
 		if err != nil {
 			return LexicalGeneration{}, err
 		}
+		if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
+			return LexicalGeneration{}, err
+		}
+		generation.BuildCount++
+		generation.SegmentCount += len(segments)
+		generation.ManifestDigest = lexicalChain(generation.ManifestDigest, buildID, segments)
+		generation.BuildDigest = lexicalChain(generation.BuildDigest, buildID, nil)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_stream_builds
+			(stream_id,ordinal,build_id) VALUES($1,$2,$3)`, streamID, generation.BuildCount, buildID); err != nil {
+			return LexicalGeneration{}, fmt.Errorf("recording lexical stream %s build %s: %w", streamID, buildID, err)
+		}
 	}
-	if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
-		return LexicalGeneration{}, err
+	if generationID == "" {
+		digest := sha256.Sum256([]byte("docbank-lexical-append/v1\x00" + streamID + "\x00" +
+			strconv.Itoa(generation.BuildCount) + "\x00" + generation.ManifestDigest + generation.BuildDigest))
+		generationID = hex.EncodeToString(digest[:])
 	}
+	generation.ID = generationID
 	if err := insertLexicalGenerationTx(ctx, tx, generation, streamID, builtAt); err != nil {
 		return LexicalGeneration{}, err
 	}
-	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
+	return generation, nil
 }
 
 func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []string) (LexicalGeneration, error) {
@@ -1446,69 +1440,46 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 		return LexicalGeneration{}, fmt.Errorf("reading lexical stream tip: %w", err)
 	}
 	if tip > head.BuildCount {
-		segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
-		allBuildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
-		return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(segments, allBuildIDs), segments, allBuildIDs)
+		return LexicalGeneration{}, ErrNotFound
 	}
-	generation := head
-	for _, buildID := range added {
-		segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
-		if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
-			return LexicalGeneration{}, err
-		}
-		generation.BuildCount++
-		generation.SegmentCount += len(segments)
-		generation.ManifestDigest, generation.BuildDigest, err = insertLexicalStreamBuildTx(ctx, tx,
-			streamID, generation.BuildCount, buildID, segments, generation.ManifestDigest, generation.BuildDigest)
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
-	}
-	digest := sha256.Sum256([]byte("docbank-lexical-append/v1\x00" + generation.ManifestDigest + generation.BuildDigest))
-	generation.ID = hex.EncodeToString(digest[:])
-	if err := insertLexicalGenerationTx(ctx, tx, generation, streamID, nowRFC3339()); err != nil {
-		return LexicalGeneration{}, err
-	}
-	return generation, nil
+	return extendLexicalStreamTx(ctx, tx, streamID, head, added, "", nowRFC3339())
 }
 
-// trimLexicalStreamTx releases only membership beyond every remaining cutoff.
-func trimLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string) (int, error) {
+// dropLexicalGenerationTx trims only the tail no retained generation can read.
+func dropLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generationID string) (int, error) {
+	var streamID string
+	if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
+		WHERE generation_id=$1`, generationID).Scan(&streamID); err != nil {
+		return 0, fmt.Errorf("reading collected lexical stream: %w", err)
+	}
+	for _, statement := range []string{
+		`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`,
+		`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
+			return 0, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
+		}
+	}
 	var cutoff int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(build_count),0)
 		FROM rendition_lexical_generations WHERE stream_id=$1`, streamID).Scan(&cutoff); err != nil {
 		return 0, fmt.Errorf("reading retained lexical stream cutoff: %w", err)
 	}
-	buildIDs, err := stringColumnTx(ctx, tx, "trimmed lexical stream builds", `SELECT build_id
-		FROM rendition_lexical_stream_builds WHERE stream_id=$1 AND ordinal>$2`, streamID, cutoff)
+	result, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
+		WHERE build_id IN (SELECT build_id FROM rendition_lexical_stream_builds
+		                   WHERE stream_id=$1 AND ordinal>$2)
+		AND NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
+		                WHERE gb.build_id=rendition_lexical_index.build_id)`, streamID, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("collecting trimmed lexical index rows: %w", err)
+	}
+	removed, err := rowsAffectedInt(result)
 	if err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_stream_builds
 		WHERE stream_id=$1 AND ordinal>$2`, streamID, cutoff); err != nil {
 		return 0, fmt.Errorf("trimming lexical stream membership: %w", err)
-	}
-	removed := 0
-	for _, buildID := range buildIDs {
-		result, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index WHERE build_id=$1
-			AND NOT EXISTS(SELECT 1 FROM rendition_lexical_generation_builds WHERE build_id=$1)`, buildID)
-		if err != nil {
-			return 0, fmt.Errorf("collecting trimmed lexical index rows: %w", err)
-		}
-		count, err := rowsAffectedInt(result)
-		if err != nil {
-			return removed, err
-		}
-		removed += count
 	}
 	return removed, nil
 }
@@ -1665,20 +1636,7 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 		if _, live := pinned[generationID]; live {
 			continue
 		}
-		var streamID string
-		if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
-			WHERE generation_id=$1`, generationID).Scan(&streamID); err != nil {
-			return removed, fmt.Errorf("reading collected lexical stream: %w", err)
-		}
-		for _, statement := range []string{
-			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`,
-			`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`,
-		} {
-			if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
-				return removed, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
-			}
-		}
-		if _, err := trimLexicalStreamTx(ctx, tx, streamID); err != nil {
+		if _, err := dropLexicalGenerationTx(ctx, tx, generationID); err != nil {
 			return removed, err
 		}
 		removed++

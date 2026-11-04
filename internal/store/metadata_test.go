@@ -1939,3 +1939,56 @@ func materializeCatalogBlobs(t *testing.T, databasePath, omittedHash, corruptHas
 		}
 	}
 }
+
+func TestProcessingMetadataAppendedGenerationRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s := newTestStore(t)
+	seedLegacyMigrationRow(t, s, "a.txt", "a1", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "aauthority",
+	})
+	_, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	b, err := s.CreateFile(ctx, s.RootID(), "b.txt", fakeHash("b1"), 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: b.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "bauthority",
+	}))
+	head, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	members, err := lexicalGenerationBuildIDsTx(ctx, s.db, head.ID)
+	require.NoError(t, err)
+	segments, err := readLexicalManifestRowsTx(ctx, s.db, head.ID, "")
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	var record metadataLexicalGeneration
+	require.NoError(t, json.Unmarshal(firstProcessingMetadataRecord(t, exported.Bytes(), metadataLexicalGenerationType), &record))
+	assert.Equal(t, members, record.BuildIDs)
+	assert.Equal(t, lexicalManifestDigest(segments), record.ManifestDigest)
+	assert.Equal(t, lexicalBuildDigest(members), record.BuildDigest)
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restoredMembers, err := lexicalGenerationBuildIDsTx(ctx, restored.db, head.ID)
+	require.NoError(t, err)
+	assert.Equal(t, members, restoredMembers)
+	var roundTrip bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(ctx, &roundTrip))
+	assert.Equal(t, exported.String(), roundTrip.String())
+	c, err := restored.CreateFile(ctx, restored.RootID(), "c.txt", fakeHash("c1"), 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, restored.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: c.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "cauthority",
+	}))
+	after, err := restored.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, len(members)+1, after.BuildCount)
+	for _, query := range []string{"aauthority", "bauthority", "cauthority"} {
+		hits, _, err := restored.SearchPage(ctx, query, 20)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, SearchMatchContent, hits[0].Match)
+	}
+}

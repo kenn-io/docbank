@@ -233,6 +233,9 @@ func (s *Store) migrateLegacyPlainTextTx(
 			`SELECT build_id FROM rendition_builds WHERE source_sha256=$1 ORDER BY build_id`, []any{blobHash})
 		if err == nil {
 			generation, err = appendLexicalGenerationTx(ctx, tx, buildIDs)
+			if errors.Is(err, ErrNotFound) {
+				generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+			}
 		}
 	}
 	if err != nil {
@@ -815,7 +818,7 @@ func stageLegacyLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), rows, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs)
 }
 
 func compareLegacyServingCompatibilityTx(
