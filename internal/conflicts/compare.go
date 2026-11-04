@@ -70,7 +70,7 @@ var rateDenominatorRE = regexp.MustCompile(`(?i)^\s*(?:(?:per|each)\s+|/\s*|(?:a
 var rateDenominatorContinuationRE = regexp.MustCompile(`(?i)^\s+([\p{L}\p{Nd}]+)\b`)
 var rateArticleContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:and\s+)?(?:[(\["'‘’“”«»]\s*)*(?:a|an)\b\s*(?:[(\["'‘’“”«»]\s*)*[\p{L}\p{Nd}]+\b`)
 var wrappedArticleRateRE = regexp.MustCompile(`(?i)^\s+(?:a|an)\s*(?:(?:\(\s*[\p{L}\p{Nd}]+\s*\))|(?:\[\s*[\p{L}\p{Nd}]+\s*\])|(?:["'‘“«]\s*[\p{L}\p{Nd}]+\s*["'’”»]))`)
-var rateDenominatorExtensionRE = regexp.MustCompile(`(?i)^\s+(?:of|for|in|to|from|by|with|on|at|and|or)\s+(?:(?:a|an|the)\s+)?[\p{L}\p{Nd}]+\b`)
+var rateDenominatorExtensionRE = regexp.MustCompile(`(?i)^\s+(?:[\(\[\{\"'‘’“”«»]\s*)?(?:of|for|in|to|from|by|with|on|at|and|or)\s+(?:(?:a|an|the)\s+)?[\p{L}\p{Nd}]+\b`)
 var rateFractionContinuationRE = regexp.MustCompile(`(?i)^\s*(?:and\s+)?(?:a\s+)?(?:` + fractionWords + `)\b`)
 var rateArithmeticContinuationRE = regexp.MustCompile(`(?i)^\s*(?:[+*/×÷−]|-\s+)\s*(?:[$€£¥]\s*)?[0-9]`)
 var rateDenominatorContinuationWords = wordSet("apply applies applied bill bills billed charge charges charged cost costs cover covers covered expire expires include includes included start starts started end ends ended available")
@@ -174,8 +174,8 @@ func makeSubject(f Figure, figures []Figure) subject {
 					parts := strings.Fields(text[a:b])
 					noun := parts[len(parts)-1]
 					first := utfFirst(noun)
-					// An abbreviated composite prefix such as "sq." is not a complete denominator.
-					incompleteCompositePrefix := strings.EqualFold(noun, "sq")
+					// An abbreviated composite prefix such as "sq." or "cu." is not a complete denominator.
+					incompleteCompositePrefix := strings.EqualFold(noun, "sq") || strings.EqualFold(noun, "cu")
 					if incompleteCompositePrefix || strings.EqualFold(parts[0], "per") || strings.EqualFold(parts[0], "each") || !unicode.IsLetter(first) || numeralWord(noun) || stopWords[strings.ToLower(noun)] || rateDeterminers[strings.ToLower(noun)] || contrasts[strings.ToLower(noun)] {
 						invalidRate = true
 						continue
