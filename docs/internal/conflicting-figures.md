@@ -111,6 +111,9 @@ such as `7 min. before 10-7 min.`; and wrapped bounds such as
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
 the connector, so `(7 days ) before (about 10 days)` remains one unsupported
 comparison.
+Modified and possessive baselines such as `last year's rate`, and temporal
+baselines such as `last year`, also keep the comparison amount unresolved.
+Following sentences remain independent.
 Auxiliary-led text such as `10 minutes have elapsed` continues the duration
 operand. The full expression `The deadline is 7 min. before 10 minutes have
 elapsed.` yields no figures. A malformed numeric operand such as `1,00 minutes`

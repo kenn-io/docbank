@@ -3139,6 +3139,68 @@ func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
 	}
 }
 
+func TestExtractReviewUnresolvedApproximateAndComparisonOperands(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "approximate leading duration remains attached",
+			text: "The wait is about thirty minutes and 2 hours.",
+		},
+		{
+			name: "approximate leading rate operand remains attached",
+			text: "The fee is about thirty dollars per 2 devices.",
+		},
+		{
+			name: "following duration sentence remains independent",
+			text: "The wait is about thirty minutes and 2 hours. The fee is $5.",
+			want: []string{"$5"},
+		},
+		{
+			name: "following rate sentence remains independent",
+			text: "The fee is about thirty dollars per 2 devices. The deposit is $7.",
+			want: []string{"$7"},
+		},
+		{
+			name: "temporal comparison baseline is unresolved",
+			text: "The fee is $5/month higher than last year.",
+		},
+		{
+			name: "following sentence remains independent of temporal baseline",
+			text: "The fee is $5/month higher than last year. The deposit is $7.",
+			want: []string{"$7"},
+		},
+		{
+			name: "shipping expenses do not expose approximate amount",
+			text: "The fees are about $5 and $10 shipping expenses.",
+		},
+		{
+			name: "shipping expenses remain attached to percentage base",
+			text: "The surcharge is 5% of $100 and $200 shipping expenses.",
+			want: []string{"5%"},
+		},
+		{
+			name: "following sentence remains independent of nominal continuation",
+			text: "The fees are about $5 and $10 shipping expenses. The deposit is $7.",
+			want: []string{"$7"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("Extract(%q) = %+v, want figures %v", tt.text, got, tt.want)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+					t.Errorf("figure %d = %+v, want %q with its source span", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractRejectsVerbalComparisonsWithWordOperands(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5/month greater than thirty dollars.",
