@@ -1996,7 +1996,12 @@ type imageEmbeddingCatalogFixture struct {
 
 func newImageEmbeddingCatalogFixture(t *testing.T, inputKinds ...document.EmbeddingInputKind) imageEmbeddingCatalogFixture {
 	t.Helper()
-	s, _, profile, _ := newEmbeddingCatalogFixture(t)
+	return seedImageEmbeddingCatalog(t, newTestStore(t), inputKinds...)
+}
+
+func seedImageEmbeddingCatalog(t *testing.T, s *Store, inputKinds ...document.EmbeddingInputKind) imageEmbeddingCatalogFixture {
+	t.Helper()
+	s, _, profile, _ := seedEmbeddingCatalog(t, s)
 	bindingID := "optional"
 	node, err := s.CreateFile(t.Context(), s.RootID(), "coverage.jpg", testSHA256([]byte("image-coverage")), 20, "image/jpeg")
 	require.NoError(t, err)
@@ -2139,14 +2144,15 @@ func TestEnqueueEmbeddingJobRejectsNewerPreview(t *testing.T) {
 	require.ErrorContains(t, err, "canonical identity validation")
 }
 
-func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T) {
+func checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	f := newImageEmbeddingCatalogFixture(t)
+	f := seedImageEmbeddingCatalog(t, open(t))
 	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile)
 	}))
 	var secondVersion string
-	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE blob_hash=? ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))
+	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE blob_hash=$1 ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))
 	record := embeddingSetFixture(t.Context(), f.s, secondVersion, f.request.Profile.Fingerprint, document.EmbeddingInputOriginalFile, "required", "")
 	require.NoError(t, f.s.StageEmbeddingSet(t.Context(), record))
 	require.NoError(t, f.s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -2180,19 +2186,20 @@ func TestEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t *
 	require.NoError(t, err)
 	var imageJobs, originalJobs int
 	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT
-		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='optional' AND input_kind='image'),
-		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=? AND binding_id='required')`,
+		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=$1 AND binding_id='optional' AND input_kind='image'),
+		(SELECT COUNT(*) FROM embedding_jobs WHERE content_version_id=$2 AND binding_id='required')`,
 		f.node.CurrentVersionID, f.node.CurrentVersionID).Scan(&imageJobs, &originalJobs))
 	require.Equal(t, 1, imageJobs)
 	require.Zero(t, originalJobs)
 }
 
-func TestEmbeddingReconciliationPreparesEachImageOnce(t *testing.T) {
+func checkEmbeddingReconciliationPreparesEachImageOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, name := range []string{"paged discovery", "published heads not reopened", "purge-suppressed"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := newImageEmbeddingCatalogFixture(t)
+			f := seedImageEmbeddingCatalog(t, open(t))
 			if name == "paged discovery" {
 				// Only this photo has a preview; unrelated eligible photos still consume pages.
 				for i := range 4097 {

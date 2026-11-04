@@ -285,9 +285,35 @@ func checkEmailMissingStatesAndDeterministicRefusal(t *testing.T, open func(*tes
 	checkRetentionMetadata(t, s)
 }
 
-func TestEmailPDFAttachmentNotifiesOnce(t *testing.T) {
+func checkEmailPDFAttachmentNotifiesOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, _ := newRenditionCatalogFixture(t)
+	s := open(t)
+	seedRenditionCatalogVersions(t, s)
+	attachment := stageEmailPDFFixture(t, s)
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
+	for range 2 {
+		require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	}
+	receipt, err := s.EmailPDFReceipt(t.Context(), attachment.ContentVersionID, attachment.Profile.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, attachment.ID, receipt.AttachmentID)
+	require.Equal(t, attachment.ContentVersionID, receipt.Source.VersionID)
+	require.Equal(t, catalogEvidenceBlobHash, receipt.Output.PDFSHA256)
+	require.Equal(t, int64(1), receipt.Output.Pages)
+	receipts, err := s.EmailPDFReceipts(t.Context(), attachment.ContentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, []EmailPDFReceipt{receipt}, receipts)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, receipt.Source.NodeID, changes[0].NodeID)
+}
+
+func stageEmailPDFFixture(t *testing.T, s *Store) RenditionAttachmentRecord {
+	t.Helper()
 	f := newEmailFixture(t, s, "message.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -310,14 +336,5 @@ func TestEmailPDFAttachmentNotifiesOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), pdf))
 	attachment := RenditionAttachmentRecord{ID: fakeHash("b6"), VaultID: s.VaultID(), ContentVersionID: view.Version.ID, BuildID: pdf.ID, Profile: profile, AttachedAt: nowRFC3339()}
-	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
-	require.NoError(t, err)
-	for range 2 {
-		require.NoError(t, publishAttachmentForTest(t, s, attachment))
-	}
-	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
-	require.NoError(t, err)
-	require.Len(t, changes, 1)
-	require.Equal(t, "processed", changes[0].Kind)
-	require.Equal(t, view.Version.NodeID, changes[0].NodeID)
+	return attachment
 }

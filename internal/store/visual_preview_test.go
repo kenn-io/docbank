@@ -44,9 +44,10 @@ func TestVisualPreviewReadyPublicationRequiresPhysicalReceipt(t *testing.T) {
 	}
 }
 
-func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
+func checkVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("11"), 12, "image/x-raw")
 	require.NoError(t, err)
 	canonical := readyVisualPreview(t, node.BlobHash, fakeHash("22"), 9)
@@ -76,9 +77,10 @@ func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "conflicting output membership must roll back")
 }
 
-func TestVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *testing.T) {
+func checkVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("91"), 12, "image/x-raw")
 	require.NoError(t, err)
 	physical := &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9}
@@ -107,18 +109,19 @@ func TestVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t *tes
 	assert.Equal(t, fakeHash("94"), view.Generation.Preview.Output.BlobSHA256)
 }
 
-func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) {
+func checkVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("95"), 12, "image/x-raw")
 	require.NoError(t, err)
 	canonical := readyVisualPreview(t, node.BlobHash, fakeHash("96"), 9)
 	physical := &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9}
 
-	first, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, physical)
+	first, err := s.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, physical)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `DELETE FROM visual_preview_heads WHERE content_version_id=?`, node.CurrentVersionID)
-	require.NoError(t, err)
+	_, err = s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+	require.ErrorIs(t, err, ErrNotFound)
 
 	recovered, err := s.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, physical)
 	require.NoError(t, err)
@@ -129,7 +132,8 @@ func TestVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t *testing.T) 
 	assert.Equal(t, first.GenerationID, view.Generation.GenerationID)
 }
 
-func TestVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T) {
+func checkVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name  string
@@ -140,7 +144,7 @@ func TestVisualPreviewTerminalHeadsHoldOnRepublication(t *testing.T) {
 		{name: "failed", state: document.VisualPreviewFailed, code: "decode_failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("97"), 12, "image/x-raw")
 			require.NoError(t, err)
 
@@ -190,9 +194,10 @@ func TestVisualPreviewMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, fakeHash("32"), view.Generation.Preview.Output.BlobSHA256)
 }
 
-func TestVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t *testing.T) {
+func checkVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", fakeHash("41"), 5, "text/plain")
 	require.NoError(t, err)
 	recipe := visualPreviewRecipe()
@@ -209,9 +214,10 @@ func TestVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t *testing
 	assert.Equal(t, document.VisualPreviewUnsupported, view.Generation.Preview.State)
 }
 
-func TestVisualPreviewLifecycleFollowsExactContentVersion(t *testing.T) {
+func checkVisualPreviewLifecycleFollowsExactContentVersion(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	created, err := s.CreateFile(t.Context(), s.RootID(), "image.jpg", fakeHash("61"), 6, "image/jpeg")
 	require.NoError(t, err)
 	canonical := readyVisualPreview(t, created.BlobHash, fakeHash("62"), 8)
