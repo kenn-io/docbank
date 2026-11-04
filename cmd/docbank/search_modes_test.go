@@ -21,6 +21,8 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
+		case "GET /api/v1/info":
+			http.Error(w, "unreadable unrelated blob shard", http.StatusInternalServerError)
 		case "GET /api/v1/processing/profiles":
 			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{
 				Name: "private", Fingerprint: profileFingerprint,

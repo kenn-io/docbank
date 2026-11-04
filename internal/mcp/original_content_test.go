@@ -17,9 +17,16 @@ import (
 	"go.kenn.io/docbank/internal/config"
 )
 
-func TestMCPOriginalContentSkipsVaultInventory(t *testing.T) {
+func TestMCPOriginalContent(t *testing.T) {
 	f := newNativeExportFixture(t)
-	selected := f.addFile(t, "selected.bin", "abcdefgh")
+	original := "original\x00\xffbytes\n"
+	selected := f.addFile(t, "reviewed.bin", original)
+	node, err := f.catalog.NodeByID(t.Context(), selected.NodeID)
+	require.NoError(t, err)
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
+	require.NoError(t, err)
+	_, _, err = f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
+	require.NoError(t, err)
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-export-key"
 	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, VaultRoot: os.Getenv("DOCBANK_HOME"), Cfg: cfg})
@@ -34,37 +41,6 @@ func TestMCPOriginalContentSkipsVaultInventory(t *testing.T) {
 	}))
 	t.Cleanup(wrapped.Close)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, wrapped.URL))
-	var received []byte
-	for _, offset := range []int{0, 4} {
-		result := decodeResult(t, exportExchange(t, server, "stdio", "tools/call", map[string]any{
-			"name": "read_document_content", "arguments": map[string]any{
-				"vault_id": f.catalog.VaultID(), "node_id": selected.NodeID,
-				"content_version_id": selected.VersionID, "blob_hash": selected.SHA256,
-				"size": selected.Size, "offset": offset, "max_bytes": 4,
-			},
-		}))
-		out := objectField(t, result, "structuredContent")
-		require.Equal(t, f.catalog.VaultID(), out["vault_id"])
-		encoded, ok := out["data_base64"].(string)
-		require.True(t, ok)
-		data, err := base64.StdEncoding.DecodeString(encoded)
-		require.NoError(t, err)
-		received = append(received, data...)
-	}
-	require.Equal(t, []byte("abcdefgh"), received)
-}
-
-func TestMCPOriginalContent(t *testing.T) {
-	f := newNativeExportFixture(t)
-	original := "original\x00\xffbytes\n"
-	selected := f.addFile(t, "reviewed.bin", original)
-	node, err := f.catalog.NodeByID(t.Context(), selected.NodeID)
-	require.NoError(t, err)
-	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
-	require.NoError(t, err)
-	_, _, err = f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
-	require.NoError(t, err)
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
 	args := map[string]any{"vault_id": f.catalog.VaultID(), "node_id": selected.NodeID,
 		"content_version_id": selected.VersionID, "blob_hash": selected.SHA256, "size": selected.Size,
 		"max_bytes": 7}
