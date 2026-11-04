@@ -416,6 +416,7 @@ type sourceFenceOutput struct {
 
 type searchDocumentsOutput struct {
 	privateCache
+
 	VaultID            string                              `json:"vault_id,omitzero"`
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
