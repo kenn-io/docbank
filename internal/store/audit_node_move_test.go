@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -299,4 +300,82 @@ func mustAuditUnsignedField(t *testing.T, record audit.Record, name string) uint
 	value, err := auditUnsignedField(record, name)
 	require.NoError(t, err)
 	return value
+}
+
+func TestAuditedBatchMoveRecordsDescendantPaths(t *testing.T) {
+	t.Parallel()
+	for _, moveChild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("moveChild=%t", moveChild), func(t *testing.T) {
+			s := newAuditedMoveStore(t)
+			work, err := s.NodeByPath(t.Context(), "/Projects/Work")
+			require.NoError(t, err)
+			child, err := s.NodeByPath(t.Context(), "/Projects/Work/child.txt")
+			require.NoError(t, err)
+			requests := []BatchMoveRequest{{SourcePath: "/Projects/Work", DestinationPath: "/Projects/Archive/Renamed"}}
+			childPath := "/Projects/Archive/Renamed/child.txt"
+			if moveChild {
+				childPath = "/Projects/Archive/child.txt"
+				requests = append(requests, BatchMoveRequest{SourcePath: "/Projects/Work/child.txt", DestinationPath: childPath})
+			}
+			_, err = s.BatchMove(t.Context(), requests)
+			require.NoError(t, err)
+			resolved, err := s.NodeByPath(t.Context(), childPath)
+			require.NoError(t, err)
+			assert.Equal(t, child.ID, resolved.ID)
+			var raw []byte
+			require.NoError(t, s.db.QueryRowContext(t.Context(),
+				`SELECT record_json FROM audit_records WHERE kind='path_effect_list'`).Scan(&raw))
+			effectList, err := audit.UnmarshalJSONRecord(raw)
+			require.NoError(t, err)
+			effects, err := auditRecordListField(effectList, "effects")
+			require.NoError(t, err)
+			require.Len(t, effects, 2)
+			assert.Equal(t, uint64(work.ID), mustAuditUnsignedField(t, effects[0], "member_node_id"))
+			assert.Equal(t, uint64(child.ID), mustAuditUnsignedField(t, effects[1], "member_node_id"))
+			oldPath, err := auditNestedField(effects[1], "old")
+			require.NoError(t, err)
+			newPath, err := auditNestedField(effects[1], "new")
+			require.NoError(t, err)
+			oldBytes, ok := auditFieldBytes(oldPath, auditPathField)
+			require.True(t, ok)
+			assert.Equal(t, []byte("/Projects/Work/child.txt"), oldBytes)
+			newBytes, ok := auditFieldBytes(newPath, auditPathField)
+			require.True(t, ok)
+			assert.Equal(t, []byte(childPath), newBytes)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
+		})
+	}
+}
+
+func TestAuditedBatchMoveRejectsLaterItemAboveTrashOrigin(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.Mkdir(ctx, s.RootID(), "first")
+	require.NoError(t, err)
+	second, err := s.Mkdir(ctx, s.RootID(), "second")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, second.ID, "old.txt", fakeHash("a724"), 3, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, file.ID, file.Revision)
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, s.RootID())
+
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/first", DestinationPath: "/renamed-first"},
+		{SourcePath: "/second", DestinationPath: "/renamed-second"},
+	})
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	require.ErrorContains(t, err, fmt.Sprintf("moving node %d would change retained trash-origin paths", second.ID))
+	var sequence int64
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT operation_sequence_high_water FROM audit_authority`).Scan(&sequence))
+	assert.Equal(t, int64(1), sequence)
+	unchanged, err := s.NodeByPath(ctx, "/first")
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, unchanged.ID)
+	unchanged, err = s.NodeByPath(ctx, "/second")
+	require.NoError(t, err)
+	assert.Equal(t, second.ID, unchanged.ID)
+	require.NoError(t, s.ValidateMetadata(ctx))
 }

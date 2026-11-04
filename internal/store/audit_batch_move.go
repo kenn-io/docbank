@@ -46,21 +46,21 @@ func (s *Store) prepareAuditedBatchMove(
 	if err != nil {
 		return nil, err
 	}
+	movedIDs := make(map[uint64]bool, len(plan.movedIDs))
 	for _, nodeID := range plan.movedIDs {
 		auditNodeID, err := positiveAuditNodeID(nodeID)
 		if err != nil {
 			return nil, err
 		}
-		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(topology, members, auditNodeID)
-		if err != nil {
-			return nil, err
-		}
-		if affectsTrashOrigin {
-			return nil, fmt.Errorf(
-				"moving node %d would change retained trash-origin paths: %w",
-				nodeID, ErrAuditMutationUnsupported,
-			)
-		}
+		movedIDs[auditNodeID] = true
+	}
+	affected, err := auditMoveAffectsTrashOrigin(topology, members, movedIDs)
+	if err != nil {
+		return nil, err
+	}
+	if affected != 0 {
+		return nil, fmt.Errorf("moving node %d would change retained trash-origin paths: %w",
+			affected, ErrAuditMutationUnsupported)
 	}
 	operationID, err := newUUIDv4()
 	if err != nil {
@@ -77,6 +77,9 @@ func (s *Store) prepareAuditedBatchMove(
 			return nil, err
 		}
 		snapshot.priorNodes[nodeID] = node
+	}
+	if err := s.addBatchMoveSubtreePaths(ctx, tx, plan); err != nil {
+		return nil, err
 	}
 	snapshot.eventNodeIDs, err = batchMoveChangedPathIDs(*plan, members)
 	if err != nil {

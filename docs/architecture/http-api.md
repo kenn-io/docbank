@@ -1303,7 +1303,7 @@ the caller, and supplies `destination_path`. Every selector resolves against
 one pre-transaction topology. Each destination is an exact final coordinate,
 and its parent resolves against the planned final topology. Batch requests do
 not apply the single-move “move into an existing directory” shorthand. Docbank
-constructs and checks the complete final topology in Go before applying it, so
+resolves and checks requested paths before applying moves, so
 file and directory swaps and nested reorganizations do not depend on unsafe
 intermediate names. A failure rejects the whole plan. The response preserves
 request order and returns each node's prior path plus its complete final node
