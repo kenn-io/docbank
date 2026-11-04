@@ -66,7 +66,7 @@ func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership
 	rebuilt, err := restored.ActiveLexicalGeneration(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, rebuilt.BuildCount)
-	assert.Equal(t, generation.BuildDigest, rebuilt.BuildDigest)
+	assert.Equal(t, generation.ManifestDigest, rebuilt.ManifestDigest)
 	var rootedGeneration string
 	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT target_id FROM current_rendition_roots
 		WHERE root_id='durable-audit' AND active=1`).Scan(&rootedGeneration))

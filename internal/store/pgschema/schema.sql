@@ -1195,8 +1195,7 @@ CREATE TABLE {{schema}}.rendition_lexical_generations (
 
 CREATE TABLE {{schema}}.rendition_lexical_generation_manifests (
     generation_id  TEXT COLLATE "C" PRIMARY KEY,
-    manifest_digest TEXT COLLATE "C" NOT NULL,
-    build_digest    TEXT COLLATE "C" NOT NULL
+    manifest_digest TEXT COLLATE "C" NOT NULL
 );
 
 CREATE INDEX rendition_lexical_generations_stream

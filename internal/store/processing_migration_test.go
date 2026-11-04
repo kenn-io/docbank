@@ -103,7 +103,7 @@ func TestProviderFreeLexicalRebuildReplacesZeroSegmentMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, initial.ID, rebuilt.ID)
 	assert.Equal(t, 2, rebuilt.BuildCount)
-	assert.NotEqual(t, initial.BuildDigest, rebuilt.BuildDigest)
+	assert.NotEqual(t, initial.ManifestDigest, rebuilt.ManifestDigest)
 	members, err := lexicalGenerationBuildIDsTx(ctx, s.db, rebuilt.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{first.ID, second.ID}, members)
@@ -951,15 +951,13 @@ func TestPostCutoverExtractionLeavesOtherDocumentsToOpen(t *testing.T) {
 func TestPostCutoverExtractionAppendsSearchSnapshot(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	s := newTestStore(t)
 	for _, name := range []string{"a", "b"} {
 		seedLegacyMigrationRow(t, s, name+".txt", name+"1", ExtractionResult{
 			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: name + "authority",
 		})
 	}
-	_, err = s.MigrateLegacyPlainText(ctx)
+	_, err := s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)
 	lease, err := s.AcquireLexicalGeneration(ctx)
 	require.NoError(t, err)
@@ -1047,13 +1045,11 @@ func TestPostCutoverExtractionPurgePreservesSearch(t *testing.T) {
 func TestPostCutoverExtractionFromEarlierStreamCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "a.txt", "a1", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "firstauthority",
 	})
-	_, err = s.MigrateLegacyPlainText(ctx)
+	_, err := s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)
 	first, err := s.AcquireLexicalGeneration(ctx)
 	require.NoError(t, err)

@@ -407,7 +407,7 @@ func exportLexicalGenerations(
 	ctx context.Context, tx metadataQuerier, write metadataWrite,
 ) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT g.generation_id,g.segment_count,m.manifest_digest,m.build_digest,g.built_at,
+		SELECT g.generation_id,g.segment_count,m.manifest_digest,g.built_at,
 		       EXISTS(SELECT 1 FROM rendition_lexical_heads h
 		              WHERE h.generation_id=g.generation_id)
 		FROM rendition_lexical_generations g
@@ -432,7 +432,7 @@ func exportLexicalGenerations(
 	for rows.Next() {
 		record := metadataLexicalGeneration{Type: metadataLexicalGenerationType}
 		if err := rows.Scan(&record.GenerationID, &record.SegmentCount,
-			&record.ManifestDigest, &record.BuildDigest, &record.BuiltAt, &record.Headed); err != nil {
+			&record.ManifestDigest, &record.BuiltAt, &record.Headed); err != nil {
 			return fmt.Errorf("scanning lexical generation metadata: %w", err)
 		}
 		record.BuildIDs, err = lexicalGenerationBuildIDsQuery(ctx, tx, record.GenerationID)

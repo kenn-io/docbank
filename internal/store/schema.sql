@@ -1670,8 +1670,7 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_generation_manifests (
     generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
-    manifest_digest TEXT NOT NULL,
-    build_digest    TEXT NOT NULL
+    manifest_digest TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS rendition_lexical_generations_stream
