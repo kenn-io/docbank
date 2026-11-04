@@ -172,6 +172,8 @@ func (s *redactionPageSequence) Next(context.Context) (pdfproduction.PageArtifac
 
 func assertRedactionPixels(t *testing.T, pdf []byte, original image.Image, fixture redactionFixture) {
 	t.Helper()
+	// Return retired pixel-check memory before another PDF operation measures process RSS.
+	defer debug.FreeOSMemory()
 	pages, err := pdfapi.ExtractImagesRaw(bytes.NewReader(pdf), nil, redactionPDFConfig())
 	require.NoError(t, err)
 	require.Len(t, pages, 1)
