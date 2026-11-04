@@ -1555,19 +1555,11 @@ func unqualifiedRateNumeratorChecks(s string) []candidate {
 				continue
 			}
 		}
-		amount := numeralWordSequenceRE.FindStringIndex(s[start:])
-		if amount == nil || amount[0] != 0 {
+		check, ok := unresolvedSpokenWordOperandCheck(s[start:], start)
+		if !ok || rateEnd(s[check.end:]) == 0 {
 			continue
 		}
-		unit := spokenMoneyUnitLeadRE.FindStringIndex(s[start+amount[1]:])
-		if unit == nil || unit[0] != 0 {
-			continue
-		}
-		end := amount[1] + unit[1]
-		if rateEnd(s[start+end:]) == 0 {
-			continue
-		}
-		checks = appendUnresolvedWordOperandCheck(checks, candidate{start, start + end, Figure{Kind: moneyKind}, 1})
+		checks = appendUnresolvedWordOperandCheck(checks, check)
 	}
 	return checks
 }
@@ -1839,7 +1831,7 @@ var directTypedFigureAssertionPrefixRE = regexp.MustCompile(`^\s*[,;:]?\s*(?:[\(
 var assertionPrefixWordRE = regexp.MustCompile(`(?i)[\p{L}\p{Nd}]+`)
 var coordinatedTypedAssertionLeadRE = regexp.MustCompile(`(?i)^\s*(?:and|but|while)\s+`)
 
-const assertionPredicatePattern = `(?:[\p{L}]+(?:s|ed|ing)|pay|paid|offsets?|cost|put|set|cut|hit|run)`
+const assertionPredicatePattern = `(?:am|are|be|been|being|is|was|were|[\p{L}]+(?:s|ed|ing)|pay|paid|offsets?|cost|put|set|cut|hit|run)`
 
 var assertionPredicateRE = regexp.MustCompile(`(?i)^` + assertionPredicatePattern + `$`)
 var nonPredicateFigurePrefixWords = map[string]struct{}{
@@ -2298,10 +2290,11 @@ func comparisonContinuationAfterRate(s string) bool {
 	if n := rateEnd(s); n > 0 {
 		s = s[n:]
 	}
-	return bareComparisonRE.MatchString(s) || symbolicComparisonContinuationRE.MatchString(s) || verbalComparisonWithNumericOrWordOperand(s)
+	return bareComparisonRE.MatchString(s) || symbolicComparisonContinuationRE.MatchString(s) || verbalComparisonWithNumericOrWordOperand(s) || incompleteComparisonContinuationRE.MatchString(s)
 }
 
 var symbolicComparisonContinuationRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥)\s*[^\p{L}\p{N}]*[\p{L}\p{N}]`)
+var incompleteComparisonContinuationRE = regexp.MustCompile(`(?i)(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[\s\p{P}]*$`)
 var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:<=|>=|<|>|≤|≥|(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?)\s*[(\["'‘’“”«]*\s*(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?(?:[$€£¥]|\b` + currencyCodes + `\s*)?\s*(?:[+\-−]\s*)?(?:` + number + `)\b`)
 
 var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:a|an|the)\s+)?(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)

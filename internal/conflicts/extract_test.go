@@ -6248,3 +6248,67 @@ func TestExtractKeepsFollowingSentenceAfterArticleLedEstimatedComparison(t *test
 		t.Fatalf("article-led estimated comparison leaked or hid the next assertion: %+v", got)
 	}
 }
+
+func TestExtractKeepsCopularAssertionsIndependentAfterRateDates(t *testing.T) {
+	for _, text := range []string{
+		"The fee is $5/hr. before 1 July 2026 and the deposits are $7.",
+		"The fee is $5/hr. before 1 July 2026 and the deposit will be $7.",
+		"The fee is $5/hr. before 1 July 2026 and the deposits were $7.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := Extract(text)
+			if len(got) != 2 || got[0].Text != "$5" || got[1].Text != "$7" {
+				t.Fatalf("coordinated copular assertions were split or lost: %+v", got)
+			}
+			for _, figure := range got {
+				if figure.Period != (Period{}) {
+					t.Errorf("ambiguous coordinated period was assigned to %q: %+v", figure.Text, figure)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractPreservesWordRateNumeratorAndSuppressesUnsupportedDenominators(t *testing.T) {
+	text := "From 1 July 2026 the fee is five dollars per month."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "five dollars" || got[0].Period != (Period{From: "2026-07-01"}) {
+		t.Errorf("supported word amount rate lost its stated period: %+v", got)
+	}
+
+	for _, text := range []string{
+		"The plan allows thirty devices per 5 days. The deposit is $7.",
+		"The plan includes thirty minutes per 2 devices. The deposit is $7.",
+		"The plan charges thirty percent per 2 devices. The deposit is $7.",
+		"The plan includes thirty calls per 2 days. The deposit is $7.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := Extract(text)
+			if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+				t.Fatalf("unsupported rate denominator escaped or later assertion was lost: %+v", got)
+			}
+		})
+	}
+}
+
+func TestExtractOmitsIncompleteTrailingComparisons(t *testing.T) {
+	for _, text := range []string{
+		"The fee is $5/month <",
+		"The fee is $5 >=",
+		"The fee is $5/month less than",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("incomplete comparison retained an exact figure for %q: %+v", text, got)
+		}
+	}
+
+	for _, text := range []string{
+		"The fee is $5/month <. The deposit is $7.",
+		"The fee is $5 <. The deposit is $7.",
+	} {
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+			t.Errorf("incomplete comparison leaked or hid the following sentence for %q: %+v", text, got)
+		}
+	}
+}

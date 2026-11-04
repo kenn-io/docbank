@@ -64,6 +64,9 @@ The bound also survives when the clause ends at that date or a semicolon, as in
 two-date interval remain an interval: `The wait is 7 days from (1 July 2026)
 until (31 July 2026).` and `The wait is 7 days from (1 July 2026) and ending
 (31 July 2026).` retain both bounds.
+Copular coordinated assertions after an abbreviated rate stay in the same
+scope check: `The fee is $5/hr. before 1 July 2026 and the deposits are $7.`
+leaves both periods unknown because the date's scope is ambiguous.
 
 Each figure retains the extraction-accepted date spans as byte offsets in its
 normalized clause for same-package consumers. Consumers use these decisions
@@ -110,7 +113,8 @@ such as `7 min. before 10-7 min.`; and wrapped bounds such as
 `7 min. before (about 10 min.)` or
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
 the connector, so `(7 days ) before (about 10 days)` remains one unsupported
-comparison.
+comparison. A trailing comparison operator with no right operand also omits
+the figure, as in `The fee is $5/month <` or `The fee is $5 >=`.
 Modified and possessive baselines such as `last year's rate`, temporal
 baselines such as `last year`, and pronoun baselines such as `it was` also keep
 the comparison amount unresolved.
@@ -282,8 +286,11 @@ any recognized numeric denominator for later rate classification. A denominator
 must include a noun; a bare numeric divisor remains an unsupported fraction.
 When a rate's numerator is unsupported, its denominator is not emitted as a
 standalone figure: `The fee is thirty dollars per 2 devices.` and
-`The fee is $.50 per 2 devices.` yield no figures. A later sentence remains
-eligible.
+`The fee is $.50 per 2 devices.` yield no figures. This also applies to
+unsupported count, duration and percentage numerators, as in `thirty devices
+per 5 days`, `thirty minutes per 2 devices`, and `thirty percent per 2
+devices`. Supported word amounts such as `five dollars per month` retain their
+stated period. A later sentence remains eligible.
 Arithmetic following a rate still causes the whole clause to be omitted. A
 postfix bound on a rate also suppresses its denominator across wrapped
 whitespace, as in `$5 [maximum  ] per 2 devices`.
