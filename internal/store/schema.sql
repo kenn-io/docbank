@@ -449,6 +449,7 @@ CREATE INDEX IF NOT EXISTS nodes_photo_import ON nodes(created_at)
     WHERE trashed_at IS NULL AND kind='file';
 CREATE INDEX IF NOT EXISTS nodes_photo_name ON nodes(substr(name,1,1024))
     WHERE trashed_at IS NULL AND kind='file';
+CREATE INDEX IF NOT EXISTS nodes_trash_parent ON nodes(trash_parent);
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (

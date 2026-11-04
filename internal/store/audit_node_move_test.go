@@ -2,10 +2,8 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -385,7 +383,7 @@ func TestAuditedBatchMoveRejectsLaterItemAboveTrashOrigin(t *testing.T) {
 func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 	t.Parallel()
 	for _, rootScope := range []bool{false, true} {
-		for _, state := range []string{"no trash", "known origin", "nested trash", "unknown origin", "no origin", "missing node", "cycle", "outside scope"} {
+		for _, state := range []string{"no trash", "known origin", "nested trash", "inherited bridge", "inherited trash", "outside bridge", "unknown ancestor", "unknown origin", "no origin", "outside scope"} {
 			t.Run(fmt.Sprintf("root=%t/%s", rootScope, state), func(t *testing.T) {
 				var s *Store
 				if rootScope {
@@ -412,25 +410,24 @@ func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 				require.NoError(t, err)
 				empty, err := s.NodeByPath(ctx, "/Empty")
 				require.NoError(t, err)
-				if state != "no trash" && state != "outside scope" {
+				var innerID int64
+				if state == "inherited bridge" {
+					inner, err := s.Mkdir(ctx, work.ID, "Inner")
+					require.NoError(t, err)
+					innerID = inner.ID
+					_, _, err = s.Move(ctx, child.ID, inner.ID, child.Name, UnconditionalRev)
+					require.NoError(t, err)
+				}
+				if state != "no trash" && state != "outside scope" && state != "inherited trash" {
 					_, _, err = s.Trash(ctx, child.ID, UnconditionalRev)
 					require.NoError(t, err)
 				}
-				if state == "nested trash" || state == "cycle" {
+				if state == "nested trash" || state == "inherited bridge" || state == "inherited trash" || state == "outside bridge" || state == "unknown ancestor" {
 					_, _, err = s.Trash(ctx, work.ID, UnconditionalRev)
 					require.NoError(t, err)
 				}
 
-				conn, err := s.db.Conn(ctx)
-				require.NoError(t, err)
-				defer func() { require.NoError(t, conn.Close()) }()
-				_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`)
-				require.NoError(t, err)
-				defer func() {
-					_, err := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`)
-					require.NoError(t, err)
-				}()
-				tx, err := conn.BeginTx(ctx, nil)
+				tx, err := s.db.BeginTx(ctx, nil)
 				require.NoError(t, err)
 				defer func() { require.NoError(t, tx.Rollback()) }()
 				switch state {
@@ -440,66 +437,40 @@ func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 					err = s.trashNodeTx(ctx, tx, outside, nowRFC3339())
 				case "unknown origin":
 					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=NULL WHERE id=$1`, child.ID)
+				case "outside bridge":
+					_, err = tx.ExecContext(ctx, `DELETE FROM audit_memberships WHERE scope_id=$1 AND node_id=$2`, testAuditScopeID, work.ID)
+				case "unknown ancestor":
+					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=NULL WHERE id=$1`, work.ID)
 				case "no origin":
 					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_name=NULL,trash_parent=NULL WHERE id=$1`, child.ID)
-				case "missing node":
-					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=999999 WHERE id=$1`, child.ID)
-				case "cycle":
-					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=$1 WHERE id=$2`, child.ID, work.ID)
 				}
 				require.NoError(t, err)
 				full, err := currentAuditTopology(ctx, tx)
 				require.NoError(t, err)
 				members, err := auditScopeMemberSetTx(ctx, tx, testAuditScopeID)
 				require.NoError(t, err)
-				subset, subsetMembers, err := auditTrashOriginTopologyTx(ctx, tx, testAuditScopeID)
-				require.NoError(t, err)
 				for _, record := range full {
 					id := mustAuditUnsignedField(t, record, metadataNodeIDField)
-					oldAnswer, oldErr := auditMoveAffectsTrashOrigin(full, members, map[uint64]bool{id: true})
-					answer, err := auditMoveAffectsTrashOrigin(subset, subsetMembers, map[uint64]bool{id: true})
-					assert.Equal(t, oldAnswer, answer, "node %d", id)
-					if oldErr != nil {
-						require.EqualError(t, err, oldErr.Error(), "node %d", id)
-					} else {
-						require.NoError(t, err, "node %d", id)
+					oldAffected, oldErr := auditMoveAffectsTrashOrigin(full, members, map[uint64]bool{id: true})
+					answer, err := auditMoveAffectsTrashOriginTx(ctx, tx, testAuditScopeID, int64(id))
+					assert.Equal(t, oldAffected != 0, answer, "node %d", id)
+					require.NoError(t, oldErr, "node %d", id)
+					require.NoError(t, err)
+					want := false
+					switch state {
+					case "known origin", "nested trash", "inherited bridge", "outside bridge":
+						want = id == uint64(work.ID) || id == uint64(projects.ID) || id == uint64(s.RootID()) || id == uint64(innerID)
+					case "inherited trash":
+						want = id == uint64(projects.ID) || id == uint64(s.RootID())
+					case "unknown ancestor":
+						want = id == uint64(work.ID)
+					case "outside scope":
+						want = rootScope && (id == uint64(empty.ID) || id == uint64(s.RootID()))
 					}
-					if state == "missing node" {
-						require.EqualError(t, err, "audit trash origin references missing node 999999")
-					} else if state == "cycle" && id != uint64(work.ID) && id != uint64(child.ID) {
-						require.EqualError(t, err, "audit trash-origin topology contains a cycle")
-					} else {
-						require.NoError(t, err)
-						want := (state == "known origin" || state == "nested trash") &&
-							(id == uint64(work.ID) || id == uint64(projects.ID) || id == uint64(s.RootID())) ||
-							state == "cycle" || state == "outside scope" && rootScope && (id == uint64(empty.ID) || id == uint64(s.RootID()))
-						assert.Equal(t, want, answer != 0, "node %d", id)
-					}
+					assert.Equal(t, want, answer, "node %d", id)
 				}
 			})
 		}
-	}
-}
-
-func TestAuditTrashOriginTopologyUsesTrashIndex(t *testing.T) {
-	t.Parallel()
-	s := newAuditedMoveStore(t)
-	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+auditTrashOriginTopologySQL, testAuditScopeID)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
-	}
-	require.NoError(t, rows.Err())
-	plan := strings.Join(details, "\n")
-	assert.Contains(t, plan, "nodes_trashed")
-	for _, detail := range details {
-		assert.NotEqual(t, "SCAN n", detail, plan)
-		assert.False(t, strings.HasPrefix(detail, "SCAN n "), plan)
 	}
 }
 

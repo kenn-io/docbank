@@ -30,72 +30,45 @@ const (
 	auditStateField     = "state"
 )
 
-const auditTopologyColumns = `n.id,n.parent_id,n.name,n.kind,n.created_at,n.modified_at,
-	n.trashed_at,n.trash_parent,n.trash_name`
-
-func scanAuditTopology(row scanner, extra ...any) (audit.Record, error) {
-	var node auditTopologyRow
-	if err := row.Scan(append([]any{&node.id, &node.parentID, &node.name, &node.kind,
-		&node.createdAt, &node.modifiedAt, &node.trashedAt, &node.trashParent, &node.trashName}, extra...)...); err != nil {
-		return audit.Record{}, fmt.Errorf("scanning current audit topology: %w", err)
-	}
-	return topologyRecord(node)
-}
-
-const auditTrashOriginTopologySQL = `WITH RECURSIVE chain(id) AS (
-	SELECT n.id FROM nodes n
-	WHERE n.trashed_at IS NOT NULL AND n.trash_name IS NOT NULL AND n.trash_parent IS NOT NULL
-		AND EXISTS(SELECT 1 FROM audit_memberships WHERE scope_id=$1 AND node_id=n.id)
-	UNION
-	SELECT CASE WHEN n.trash_name IS NULL THEN n.parent_id ELSE n.trash_parent END
-	FROM chain JOIN nodes n ON n.id=chain.id
-	WHERE CASE WHEN n.trash_name IS NULL THEN n.parent_id ELSE n.trash_parent END IS NOT NULL
-) SELECT ` + auditTopologyColumns + `,
-	EXISTS(SELECT 1 FROM audit_memberships WHERE scope_id=$1 AND node_id=n.id)
-	FROM chain JOIN nodes n ON n.id=chain.id ORDER BY n.id`
-
-// auditTrashOriginTopologyTx reads only retained origins and their historical ancestors.
-// UNION ends the query on cycles so the Go rule can report them.
-func auditTrashOriginTopologyTx(
-	ctx context.Context, tx metadataQuerier, scopeID string,
-) ([]audit.Record, map[uint64]bool, error) {
-	rows, err := tx.QueryContext(ctx, auditTrashOriginTopologySQL, scopeID)
+// auditMoveAffectsTrashOriginTx walks historical children, including inherited
+// trash and roots outside the scope. Starting at children excludes the moved
+// node's own origin. UNION ends cycles, and EXISTS stops at the first match.
+func auditMoveAffectsTrashOriginTx(
+	ctx context.Context, tx metadataQuerier, scopeID string, movedID int64,
+) (bool, error) {
+	var affects bool
+	err := tx.QueryRowContext(ctx, `WITH RECURSIVE descendants(id) AS (
+		SELECT id FROM nodes
+		WHERE (parent_id=$1 AND trash_name IS NULL) OR (trash_parent=$1 AND trash_name IS NOT NULL)
+		UNION
+		SELECT n.id FROM descendants d JOIN nodes n
+			ON (n.parent_id=d.id AND n.trash_name IS NULL) OR (n.trash_parent=d.id AND n.trash_name IS NOT NULL)
+	) SELECT EXISTS(
+		SELECT 1 FROM descendants d JOIN nodes n ON n.id=d.id
+		WHERE n.trash_name IS NOT NULL AND n.trash_parent IS NOT NULL
+			AND EXISTS(SELECT 1 FROM audit_memberships WHERE scope_id=$2 AND node_id=n.id)
+	)`, movedID, scopeID).Scan(&affects)
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading audit trash-origin topology: %w", err)
+		return false, fmt.Errorf("checking audit trash-origin paths: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var records []audit.Record
-	members := make(map[uint64]bool)
-	for rows.Next() {
-		var member bool
-		record, err := scanAuditTopology(rows, &member)
-		if err != nil {
-			return nil, nil, err
-		}
-		records = append(records, record)
-		if member {
-			id, err := auditUnsignedField(record, metadataNodeIDField)
-			if err != nil {
-				return nil, nil, err
-			}
-			members[id] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("reading audit trash-origin topology: %w", err)
-	}
-	return records, members, nil
+	return affects, nil
 }
 
 func currentAuditTopology(ctx context.Context, tx metadataQuerier) ([]audit.Record, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT `+auditTopologyColumns+` FROM nodes n ORDER BY n.id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id,parent_id,name,kind,created_at,modified_at,
+		trashed_at,trash_parent,trash_name FROM nodes ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("reading current audit topology: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var records []audit.Record
 	for rows.Next() {
-		record, err := scanAuditTopology(rows)
+		var row auditTopologyRow
+		if err := rows.Scan(&row.id, &row.parentID, &row.name, &row.kind, &row.createdAt,
+			&row.modifiedAt, &row.trashedAt, &row.trashParent, &row.trashName); err != nil {
+			return nil, fmt.Errorf("scanning current audit topology: %w", err)
+		}
+		record, err := topologyRecord(row)
 		if err != nil {
 			return nil, err
 		}
