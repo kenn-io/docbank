@@ -319,8 +319,8 @@ export class PDFReviewBridge {
       svg.style.cssText =
         "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible";
       event.target.append(svg);
-      event.target.setAttribute("role", "group");
-      event.target.setAttribute("aria-label", `Page ${event.pageIndex + 1} review layer`);
+      event.target.setAttribute("aria-hidden", "true");
+      event.target.dataset.reviewPage = String(event.pageIndex + 1);
       const surface = event.target.parentElement!;
       const down = (e: PointerEvent) => {
         if (!this.review?.drawing) return;

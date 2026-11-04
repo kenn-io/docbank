@@ -52,7 +52,7 @@ describe("reader coordinate authority", () => {
     const changed = structuredClone(pages);
     changed[0]!.boxes.crop.left = 25;
     expect(() => bindReaderPages({ normalizedRotation: true, pages: changed }, frames)).toThrow(
-      /geometry/,
+      /differs from the server/,
     );
     expect(() => bindReaderPages({ normalizedRotation: false, pages }, frames)).toThrow(/rotation/);
   });
@@ -85,6 +85,6 @@ describe("reader coordinate authority", () => {
       bindReaderPages({ normalizedRotation: true, pages: [page] }, [
         { ...frame, crop_box: [385512, 251234, 11905512, 8171234] },
       ]),
-    ).toThrow(/geometry/);
+    ).toThrow(/differs from the server/);
   });
 });

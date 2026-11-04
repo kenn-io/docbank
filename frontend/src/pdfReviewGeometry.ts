@@ -17,9 +17,9 @@ export function bindReaderPages(
   doc: { normalizedRotation: boolean; pages: ReaderPage[] },
   frames: PageFrameV1[],
 ) {
-  if (!doc.normalizedRotation) throw new Error("The reader's page rotation is not normalized.");
+  if (!doc.normalizedRotation) throw new Error("Page rotation prevents marking.");
   if (doc.pages.length !== frames.length)
-    throw new Error("The reader's page count differs from preparation.");
+    throw new Error("Browser and server page counts disagree.");
   frames.forEach((frame, index) => {
     const page = doc.pages[index]!;
     const boxes = [page.boxes?.media, page.boxes?.crop];
@@ -47,9 +47,7 @@ export function bindReaderPages(
       Math.round((page.size.width * 10000) / 72) !== (rotated ? frame.height : frame.width) ||
       Math.round((page.size.height * 10000) / 72) !== (rotated ? frame.width : frame.height)
     )
-      throw new Error(
-        `Page ${index + 1} geometry differs from preparation. Drawing is unavailable.`,
-      );
+      throw new Error(`Page ${index + 1} differs from the server. Drawing is unavailable.`);
   });
 }
 function corners(x0: number, y0: number, x1: number, y1: number) {

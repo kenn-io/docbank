@@ -196,9 +196,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
           }));
           expect(r.scroll).toBeLessThanOrEqual(r.height + 1);
         } else {
-          const bounds = await drawer
-            .getByRole("group", { name: "Page 1 review layer", exact: true })
-            .boundingBox();
+          const bounds = await drawer.locator('[data-review-page="1"]').boundingBox();
           const viewer = await drawer.locator("embedpdf-container").boundingBox();
           expect(bounds!.height).toBeGreaterThan(100);
           expect(bounds!.y).toBeGreaterThanOrEqual(viewer!.y);
@@ -300,7 +298,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await drawer.getByRole("button", { name: "Retry page", exact: true }).click();
     await expect(drawToggle).toBeEnabled();
     await setZoom(fitZoom);
-    const canvas = drawer.getByRole("group", { name: "Page 1 review layer", exact: true });
+    const canvas = drawer.locator('[data-review-page="1"]');
     const drag = async (x0: number, y0: number, x1: number, y1: number) => {
       const toggle = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
       if (!(await toggle.isChecked())) await toggle.click();
@@ -425,10 +423,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         `${gesture} draft before page ${failedPage} fails`,
       ).toBeDisabled();
       // Fail an actual displayed image: only its own page's draft may be canceled.
-      const failedLayer = drawer.getByRole("group", {
-        name: `Page ${failedPage} review layer`,
-        exact: true,
-      });
+      const failedLayer = drawer.locator(`[data-review-page="${failedPage}"]`);
       const imageURL = await failedLayer.evaluate(
         (layer, failedPage) =>
           new Promise<string>((resolve) => {
@@ -679,9 +674,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     ).toBe(204);
     await drawer.getByRole("button", { name: "Redacted", exact: true }).click();
     await originalPage(2);
-    await expect(
-      drawer.getByRole("group", { name: "Page 2 review layer", exact: true }),
-    ).toBeVisible();
+    await expect(drawer.locator('[data-review-page="2"]')).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
     preview = await createPreview();
     await drawer.getByRole("combobox", { name: /^Page:/ }).click();
@@ -814,7 +807,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       if (i === 2) await page.setViewportSize({ width: 1280, height: 960 });
       const toggle = cropped.getByRole("switch", { name: "Draw rectangle", exact: true });
       if (!(await toggle.isChecked())) await toggle.click();
-      const c = cropped.getByRole("group", { name: `Page ${i + 1} review layer`, exact: true });
+      const c = cropped.locator(`[data-review-page="${i + 1}"]`);
       await c.scrollIntoViewIfNeeded();
       await expect(async () => {
         const bounds = await c.boundingBox();
@@ -909,10 +902,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     const fractional = page.getByRole("dialog", { name: "Redact fractional.pdf", exact: true });
     await originalPage(1, fractional);
     await setZoom("200", fractional);
-    const fractionalLayer = fractional.getByRole("group", {
-      name: "Page 1 review layer",
-      exact: true,
-    });
+    const fractionalLayer = fractional.locator('[data-review-page="1"]');
     const beforeScroll = await scrollPage(fractionalLayer, 200, 200, fractional);
     await expect
       .poll(async () => (await fractionalLayer.boundingBox())!.y)
@@ -944,7 +934,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
           fractional.getByRole("button", { name: "Page 4 · whole page", exact: true }),
         ).toBeVisible();
         const gap = fractional
-          .getByRole("group", { name: "Page 4 review layer", exact: true })
+          .locator('[data-review-page="4"]')
           .locator("svg rect[stroke-dasharray]");
         await expect(gap).toHaveAttribute("width", "1152");
         await expect(gap).toHaveAttribute("height", "792");
