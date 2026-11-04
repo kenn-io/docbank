@@ -2121,7 +2121,7 @@ it("publishes a fresh view over appended rows and replaces the buffer on assignm
   photos.dispose();
 });
 
-it("reuses seen IDs across pages and resets them when items are replaced", async () => {
+it("deduplicates pages without rereading retained IDs and resets on replacement", async () => {
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   const previous = [mapPhoto(1)];
   photos.items = previous;
@@ -2135,7 +2135,7 @@ it("reuses seen IDs across pages and resets them when items are replaced", async
     .mockResolvedValueOnce(response([mapPhoto(2), mapPhoto(3), mapPhoto(3)]));
   vi.stubGlobal("fetch", fetcher);
   await photos.loadMore();
-  expect(scans).toHaveBeenCalledTimes(1);
+  expect(scans).not.toHaveBeenCalled();
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
   photos.items = [mapPhoto(2), mapPhoto(4)];
   photos.cursor = "replacement-tail";
@@ -3911,6 +3911,27 @@ it.each([false, true])(
     photos.dispose();
   },
 );
+
+it("deduplicates the first page after replacement without rereading retained IDs", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id));
+  let reads = 0;
+  for (const row of rows) {
+    const id = row.asset_id;
+    Object.defineProperty(row, "asset_id", { get: () => (reads++, id) });
+  }
+  photos.items = rows;
+  photos.started = true;
+  photos.cursor = "next";
+  reads = 0;
+  stubPhotoFetch(vi.fn().mockResolvedValue(response([photo(1), photo(20_000)])));
+  await photos.loadMore();
+  expect(reads).toBe(0);
+  expect(photos.items).toHaveLength(20_001);
+  expect(photos.rowByID("photo-1")).toBe(rows[1]);
+  expect(photos.rowByID("photo-20000")?.asset_id).toBe("photo-20000");
+  photos.dispose();
+});
 
 it("appends a selected page without visiting retained row slots", async () => {
   const photos = new Photos("scoped", vi.fn());

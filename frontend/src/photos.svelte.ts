@@ -348,7 +348,6 @@ export class Photos {
   // Only the Filters panel shows counts, so they load while it is open.
   filtersOpen = $state(false);
   private rows = $state.raw<PhotoRow[]>([]);
-  private seenIDs: Set<string> | undefined;
   private rowsByID = new Map<string, PhotoRow>();
   private rowBuffer: PhotoRow[] = [];
   get items() {
@@ -356,7 +355,6 @@ export class Photos {
   }
   set items(value: PhotoRow[]) {
     this.rowBuffer = value;
-    this.seenIDs = undefined;
     this.rowsByID = new Map(value.map((row) => [row.asset_id, row]));
     this.rows = arrayView(value);
   }
@@ -863,16 +861,14 @@ export class Photos {
         this.coverageIncomplete = page.coverage_incomplete ?? false;
         if (!this.started) this.relevanceAvailable = page.relevance_available;
         pages++;
-        const seen = (this.seenIDs ??= new Set(this.items.map((item) => item.asset_id)));
         const added: PhotoRow[] = [];
         let capped = false;
         for (const item of page.items) {
-          if (seen.has(item.asset_id)) continue;
+          if (this.rowsByID.has(item.asset_id)) continue;
           if (this.projection === "map" && this.items.length + added.length >= mapPhotoLimit) {
             capped = true;
             break;
           }
-          seen.add(item.asset_id);
           this.rowsByID.set(item.asset_id, item);
           added.push(item);
         }

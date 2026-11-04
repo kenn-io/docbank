@@ -16,6 +16,23 @@ import { photo } from "./photo-test-fixtures.js";
 
 const seekOffset = createPhotoSeek();
 
+it("seeks an expanded 500-frame stack without walking member pairs", () => {
+  let visits = 0;
+  const assetIDs = Array.from({ length: 500 }, (_, id) => `photo-${id}`);
+  for (let i = 0; i < assetIDs.length; i++) {
+    const id = assetIDs[i];
+    Object.defineProperty(assetIDs, i, { get: () => (visits++, id) });
+  }
+  const stack = { asset_ids: assetIDs, representative_id: "photo-0" };
+  const items = Array.from({ length: 500 }, (_, id) => ({
+    ...photo(id, "2025-06-01T12:00:00Z"),
+    stack,
+  }));
+  const chunks = createPhotoChunks()(groupPhotos(items, "months"), 1000, 200);
+  expect(createPhotoSeek()(chunks, "2025-06", false, items)).toBe(0);
+  expect(visits).toBeLessThan(1000);
+});
+
 it("keeps bridge and long-burst representatives in capture order", () => {
   for (const [times, expected] of [
     [

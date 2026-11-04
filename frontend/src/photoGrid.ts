@@ -437,8 +437,7 @@ export function createPhotoSeek() {
   let scanned = new WeakMap<PhotoGridRow[], Scan>();
   type Location = { scan: Scan; index: number };
   let locations = new Map<string, Location>();
-  let members = new Set<string>();
-  let stacks = new Map<string, Set<string>>();
+  let representatives = new Set<string>();
   let own: string | undefined, stack: string | undefined, older: string | undefined;
   let olderMonth = "";
   return (chunks: PhotoChunk[], month: string, ended = false, loadedItems: PhotoGridRow[] = []) => {
@@ -453,8 +452,7 @@ export function createPhotoSeek() {
     if (reset) {
       scanned = new WeakMap();
       locations = new Map();
-      members = new Set();
-      stacks = new Map();
+      representatives = new Set();
       own = stack = older = undefined;
       olderMonth = "";
       consumed = 0;
@@ -486,8 +484,9 @@ export function createPhotoSeek() {
     for (let i = consumed; i < loadedItems.length; i++) {
       const row = loadedItems[i];
       if (!row.stack || photoMonth(row) !== month) continue;
-      members.add(row.asset_id);
-      for (const id of stacks.get(row.asset_id) ?? []) stack = earlier(stack, id);
+      const id = row.stack.representative_id;
+      representatives.add(id);
+      if (locations.has(id)) stack = earlier(stack, id);
     }
     consumed = loadedItems.length;
     for (let c = start; c < chunks.length; c++) {
@@ -505,12 +504,7 @@ export function createPhotoSeek() {
           older = found > olderMonth ? id : earlier(older, id);
           olderMonth = found;
         }
-        for (const member of row.stack?.asset_ids ?? []) {
-          let representatives = stacks.get(member);
-          if (!representatives) stacks.set(member, (representatives = new Set()));
-          representatives.add(id);
-          if (members.has(member)) stack = earlier(stack, id);
-        }
+        if (representatives.has(id)) stack = earlier(stack, id);
       }
       scan.count = items.length;
     }
