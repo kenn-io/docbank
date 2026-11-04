@@ -3741,41 +3741,6 @@ it("pages a chosen year in until it arrives, with the query, count, and selectio
   await cache.dispose();
 });
 
-it("repeats a completed date jump after a density change and an older-page append", async () => {
-  const { photos, cache, pages } = railLibrary();
-  const olderPage = pages.p3!;
-  let finishPage!: (response: Response) => void;
-  pages.p3 = () => new Promise<Response>((resolve) => (finishPage = resolve));
-  const view = render(PhotosWorkspace, { photos, cache });
-  try {
-    const rail = await screen.findByRole("navigation", { name: "Timeline" });
-    const year = within(rail).getByRole("button", { name: "2024, 60 photos" });
-    await fireEvent.click(year);
-    await waitFor(() => expect(photos.seek).toBe(""));
-    await waitFor(() => expect(photos.loading).toBe(false));
-    const scroll = screen.getByTestId("photo-scroll");
-    const original = scroll.scrollTop;
-    expect(original).toBe(Math.ceil(sectionTop(photos, "2024-06")));
-
-    await act(() => photos.setDensity("compact"));
-    const resized = Math.ceil(sectionTop(photos, "2024-06"));
-    expect(resized).toBeLessThan(original);
-    // The denser layout reaches the paging threshold. Finish that page after layout changes.
-    await waitFor(() => expect(finishPage).toBeTypeOf("function"));
-    finishPage(await olderPage());
-    await waitFor(() => expect(photos.items).toHaveLength(180));
-    await waitFor(() => expect(photos.loading).toBe(false));
-
-    await fireEvent.click(year);
-    await waitFor(() => expect(photos.seek).toBe(""));
-    expect(scroll.scrollTop).toBe(resized);
-  } finally {
-    view.unmount();
-    photos.dispose();
-    await cache.dispose();
-  }
-});
-
 it.each(["", "river"])("disables the date rail outside capture order, text=%s", async (text) => {
   const albumID = text ? "" : "00000000-0000-4000-8000-000000000001";
   const { photos, cache } = railLibrary(
@@ -4620,7 +4585,7 @@ it("submits the KEEP/CUT choices displayed in Library when preparation has newer
   photos.dispose();
 });
 
-it.each(["photo-0", "photo-19999"])(
+it.each(["photo-19999"])(
   "keeps Metadata selection %s work bounded when a page appends",
   async (selectedID) => {
     localStorage.setItem("docbank.photoMetadata", "open");

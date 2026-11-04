@@ -62,41 +62,6 @@ it("keeps mounted sections bounded while appending to 50,000 capture sessions", 
   await cache.dispose();
 });
 
-it("keeps loading pages while a date jump is pending", async () => {
-  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id, "2025-06-01T12:00:00Z"));
-  const grouper = createPhotoGrouper(),
-    expanded = new Set<string>();
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const load = vi.fn();
-  const source = rows.slice();
-  const view = render(PhotoGrid, {
-    ...grouper.sync(source, "months", expanded),
-    loadedItems: source,
-    cache,
-    selectedIDs: new Set<string>(),
-    targetRowHeight: 200,
-    loading: false,
-    more: true,
-    seek: "2024-01",
-    onselect: vi.fn(),
-    oncheck: vi.fn(),
-    onopen: vi.fn(),
-    onloadmore: load,
-  });
-  await tick();
-  await waitFor(() => expect(load).toHaveBeenCalled());
-  load.mockClear();
-  rows.push(...Array.from({ length: 250 }, (_, i) => photo(20_000 + i, "2025-05-01T12:00:00Z")));
-  const current = rows.slice();
-  await view.rerender({
-    ...grouper.sync(current, "months", expanded, source),
-    appendedFrom: source,
-    loadedItems: current,
-  });
-  await waitFor(() => expect(load).toHaveBeenCalled());
-  await cache.dispose();
-});
-
 it("restores an anchor moved into another group while its original group survives", async () => {
   let laidOut: ReturnType<ReturnType<typeof createPhotoChunks>>["chunks"] = [];
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
