@@ -16,9 +16,7 @@ func BenchmarkTrashEmptyVaultSize(b *testing.B) {
 	for _, nodes := range []int{1000, 4000, 16000} {
 		b.Run(fmt.Sprintf("nodes=%d", nodes), func(b *testing.B) {
 			ctx := b.Context()
-			s, err := Open(ctx, filepath.Join(b.TempDir(), "docbank.db"))
-			require.NoError(b, err)
-			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			s := newTestStore(b)
 			const stamp = "2026-01-01T00:00:00Z"
 			trashed := nodes / 10
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
