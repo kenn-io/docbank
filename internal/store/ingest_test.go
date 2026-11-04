@@ -11,6 +11,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIngestCandidatesUseBlobIndex(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	// Fresh vaults have no ANALYZE statistics. The per-file lookup must seek
+	// by content rather than visit every live file in the destination folder.
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+resolveIngestCandidatesSQL,
+		fakeHash("a1"), s.RootID())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	plan := strings.Join(details, "\n")
+	assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
+	assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+}
+
 func TestIngestFileIdempotency(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

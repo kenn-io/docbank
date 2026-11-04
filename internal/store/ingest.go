@@ -210,6 +210,22 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	return inserted == 1, nil
 }
 
+// Unary + keeps SQLite from choosing a folder scan before the blob lookup
+// when ANALYZE statistics are absent. PostgreSQL also accepts it for bigint.
+const resolveIngestCandidatesSQL = `SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
+		 LEFT JOIN provenance AS p ON p.node_id = n.id
+		   AND NOT EXISTS (
+			 SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
+		   )
+		 LEFT JOIN ingests AS i ON i.id = p.ingest_id
+		 WHERE n.id IN (
+			 SELECT candidate.id FROM content_versions AS cv
+			 JOIN nodes AS candidate ON candidate.id = cv.node_id
+			 WHERE cv.blob_hash = $1 AND candidate.current_version_id = cv.version_id
+			   AND +candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
+		 )
+		 ORDER BY n.id`
+
 // resolveIngestNameTx applies the import idempotency rule: a live suffix
 // candidate of name under parentID that carries blobHash AND was originally
 // imported under this same basename means the file is already imported
@@ -227,19 +243,7 @@ func resolveIngestNameTx(
 	// so an early match need not load every sibling's origins. The left join
 	// preserves the name fallback for unknown origins.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
-		 LEFT JOIN provenance AS p ON p.node_id = n.id
-		   AND NOT EXISTS (
-			 SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
-		   )
-		 LEFT JOIN ingests AS i ON i.id = p.ingest_id
-		 WHERE n.id IN (
-			 SELECT candidate.id FROM content_versions AS cv
-			 JOIN nodes AS candidate ON candidate.id = cv.node_id
-			 WHERE cv.blob_hash = $1 AND candidate.current_version_id = cv.version_id
-			   AND candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
-		 )
-		 ORDER BY n.id`, blobHash, parentID)
+		resolveIngestCandidatesSQL, blobHash, parentID)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
