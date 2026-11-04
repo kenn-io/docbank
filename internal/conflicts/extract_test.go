@@ -3709,6 +3709,11 @@ func TestExtractReviewUncertainRateAndArithmeticOperands(t *testing.T) {
 		{"The fee is $5 multiplied by at least 2. The deposit is $7.", []string{"$7"}},
 		{"The fee is $5 divided by at most 2. The deposit is $7.", []string{"$7"}},
 		{"The fee is $5 multiplied by approximately 2. The deposit is $7.", []string{"$7"}},
+		{"The fee is $5 times .5. The deposit is $7.", []string{"$7"}},
+		{"The fee is $5 multiplied by .5. The deposit is $7.", []string{"$7"}},
+		{"The fee is $5 divided by .5. The deposit is $7.", []string{"$7"}},
+		{"The fee is $5 per .5. The deposit is $7.", []string{"$7"}},
+		{"The fee is $5 each .5. The deposit is $7.", []string{"$7"}},
 		{"The fee is $5 and at least 2 devices are included.", []string{"$5", "2 devices"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
@@ -3723,6 +3728,27 @@ func TestExtractReviewUncertainRateAndArithmeticOperands(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzExtractRejectsLeadingDecimalCompoundAmounts(f *testing.F) {
+	for _, connector := range []string{"x", "times", "multiplied by", "divided by", "per", "each", "a", "an"} {
+		f.Add(connector, "5")
+	}
+	f.Fuzz(func(t *testing.T, connector, digits string) {
+		switch connector {
+		case "x", "times", "multiplied by", "divided by", "per", "each", "a", "an":
+		default:
+			t.Skip()
+		}
+		if digits == "" || len(digits) > 12 || strings.Trim(digits, "0123456789") != "" {
+			t.Skip()
+		}
+		text := "The fee is $5 " + connector + " ." + digits + ". The deposit is $7."
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+			t.Fatalf("leading-decimal continuation leaked or hid the next assertion for %q: %+v", text, got)
+		}
+	})
 }
 
 func TestExtractReviewAnnotationsAndLists(t *testing.T) {
@@ -3806,6 +3832,7 @@ func TestExtractReviewLatestScopeCases(t *testing.T) {
 	}{
 		{"Estimated fee: $5. The deposit is $7.", []string{"$7"}, false},
 		{"The wait is 7 min. Estimated fee is $5.", []string{"7 min"}, false},
+		{"The wait is 7 min. Estimated fee: $5.", []string{"7 min"}, false},
 		{"The fee is $5 from 1 July 2026, the deposit was $8, and from 1 July 2026 the charge is $7.", []string{"$5", "$8", "$7"}, true},
 		{"The deadline is 1 July 2026 or 1 August 2026.", nil, false},
 		{"New customers before 1 July 2026 pay $5.", []string{"$5"}, true},

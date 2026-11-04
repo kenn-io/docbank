@@ -1197,7 +1197,7 @@ var independentApproxLeadRE = regexp.MustCompile(`(?i)^\s*(?:About|Approximately
 func independentApproxAssertion(s string) bool {
 	s = sentenceLookahead(s)
 	loc := figureAssertionRE.FindStringIndex(s)
-	return independentApproxLeadRE.MatchString(s) && loc != nil && (quantitySubjectAssertion(s[loc[1]:]) || estimatedSubjectRE.MatchString(s[:loc[0]]))
+	return independentApproxLeadRE.MatchString(s) && loc != nil && (quantitySubjectAssertion(s[loc[1]:]) || estimatedSubjectRE.MatchString(s[:loc[0]]) || estimatedLabelRE.MatchString(s[:loc[0]]))
 }
 
 var figureAssertionRE = regexp.MustCompile(moneyRE.String() + `|` + unitRE.String() + `|` + countRE.String())
@@ -2081,7 +2081,7 @@ var bareComparisonRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?
 var verbalComparisonLeadRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?\s*[(\["'‘’“”«]*\s*(?:(?:a|an|the)\s+)?(?:(?:an?\s+)?(?:` + approximation + `|` + rateBoundPrefix + `)\s+|[~≈]\s*)?`)
 var verbalComparisonCurrencyPrefixRE = regexp.MustCompile(`(?i)^(?:[$€£¥]|` + currencyCodes + `\s+)`)
 var verbalComparisonSignPrefixRE = regexp.MustCompile(`(?i)^(?:(?:minus|negative|plus|positive)\s+|[+−-]\s*)`)
-var leadingDecimalComparisonOperandRE = regexp.MustCompile(`^\.[0-9]+`)
+var leadingDecimalOperandRE = regexp.MustCompile(`^\.[0-9]+`)
 
 func verbalComparisonWithNumericOrWordOperand(s string) bool {
 	lead := verbalComparisonLeadRE.FindStringIndex(s)
@@ -2103,7 +2103,7 @@ func verbalComparisonWithNumericOrWordOperand(s string) bool {
 			break
 		}
 	}
-	if leadingDecimalComparisonOperandRE.MatchString(operand) {
+	if leadingDecimalOperandRE.MatchString(operand) {
 		return true
 	}
 	if fractionSuffixRE.MatchString(operand) {
@@ -2453,7 +2453,7 @@ func compoundNumberSuffix(suffix string, f Figure) bool {
 		suffix = strings.TrimLeftFunc(suffix[i:], func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(`(["'‘’“”«»`, r) })
 	}
 	r, _ = utf8.DecodeRuneInString(suffix)
-	if numericOperator(r) && (arithmeticConnectors[connector] || connector == "per" || connector == "each" || connector == "a" || connector == "an") {
+	if (numericOperator(r) || leadingDecimalOperandRE.MatchString(suffix)) && (arithmeticConnectors[connector] || connector == "per" || connector == "each" || connector == "a" || connector == "an") {
 		return true
 	}
 	if arithmeticConnectors[connector] {
