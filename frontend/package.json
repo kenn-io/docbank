@@ -22,7 +22,7 @@
     "@embedpdf/pdfium": "2.15.1",
     "@embedpdf/svelte-pdf-viewer": "2.15.1",
     "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#5b99e44d9e9cfbaca05868f146b674cb6eea39a0",
-    "@lucide/svelte": "1.61.0",
+    "@lucide/svelte": "1.63.0",
     "@noble/hashes": "^2.2.0",
     "leaflet": "1.9.4",
     "leaflet.markercluster": "1.5.3",
