@@ -26,8 +26,12 @@ assertions with unclear date scope also receive an unknown period. A date
 without another figure remains a date value with day or month precision,
 unless it is a standalone bound such as `before 1 July 2026` or
 `before 1 July 2026 or 2 August 2026`; those dates are omitted rather than
-compared as exact values. A file's modification date is a separate source
-property and is not inferred by this package.
+compared as exact values. Standalone intervals such as `1 July 2026 through
+31 July 2026`, `1 July 2026 until 31 July 2026`, and
+`1 July 2026 till 31 July 2026` also omit both endpoints. Explicit period
+bounds remain usable, as in `From 1 July 2026 through 31 July 2026, the fee is
+$5`, which retains `$5` with both bounds. A file's modification date is a
+separate source property and is not inferred by this package.
 If a clause states different dates for the same period bound, extraction omits
 the clause rather than assigning the final date to every figure.
 The search report date facility extracts dates from verified, identity-bound artifact
@@ -113,10 +117,10 @@ minutes.` and `The deadline is 7 min. before 1 00 minutes.` yield no figures.
 A malformed mixed-separator operand such as `1, 00 minutes` is also
 unsupported: `The deadline is 7 min. before 1, 00 minutes.` yields no figures.
 Arithmetic-shaped relative operands stay attached across an abbreviated unit,
-including chained and Unicode-minus expressions: `The deadline is 7 min.
-before 10 + 5 + 2 min. The deposit is $7.` and `The deadline is 7 min. before
-10 − 5 − 2 min. The deposit is $7.` omit the relative comparison and keep the
-independent `$7`.
+including mixed operator chains and number words: `The deadline is 7 min.
+before 10 + 5 - 2 min. The deposit is $7.` and `The deadline is 7 min. before
+ten + five − two min. The deposit is $7.` omit the relative comparison and
+keep the independent `$7`.
 Complements such as `including breaks` and `excluding breaks` stay attached to
 the duration operand, so `The deadline is 7 min. before 10 minutes including
 breaks.` and `The deadline is 7 min. before 10 minutes excluding breaks.`
@@ -147,13 +151,18 @@ after an approximate amount or percentage base remain separate too.
 $10 pays shipping costs.` and `The fee is about $5 and $10 includes shipping
 costs.` keep `$10`; `The fee is 5% of $100 and $200 covers insurance.` and `The
 fee is 5% of $100 and $200 pays shipping costs.` keep `5%` and `$200`. `The
-fee is 5% of $100 and $10 includes shipping costs.` keeps `5%` and `$10`. A
-malformed operand
+fee is 5% of $100 and $10 includes shipping costs.` keeps `5%` and `$10`.
+Independent predicates also remain separate: `The fee was about $5 and $10
+covered shipping costs.` keeps `$10`, and `The fee is 5% of $100 and $10
+offsets shipping costs.` keeps `5%` and `$10`. A malformed operand
 does not discard a later independent assertion: `The wait is 7 min. After 1,00
 minutes customers pay $5.` and `The wait is 7 min. After 1 00 minutes customers
 pay $5.` keep `7 min` and `$5`.
 The mixed separator form also preserves that later assertion: `The wait is 7
 min. After 1, 00 minutes customers pay $5.` keeps both figures.
+Assertion lookahead ends at sentence punctuation. Thus `The deadline is 7 min.
+before 10 minutes. The fee is $5.` omits the relative comparison and keeps only
+`$5`; `The wait is 7 min. approximately. $5 is charged.` also keeps only `$5`.
 Closing wrappers and their surrounding whitespace do not split arithmetic
 continuations: `The wait is (7 min. ) + 3 min.` yields no figures. The same
 wrapper before an independent sentence preserves both assertions, as in `The
@@ -204,6 +213,9 @@ never becomes a partial exact value. Unsupported sign words such as `minus`
 and `negative`
 before a numeric figure or its bound never yield a positive value. Postfix
 bounds such as `7 days maximum` are omitted rather than treated as exact.
+Postfix modifiers remain active inside guillemets: `7 days «approximately»`,
+`7 days «maximum»`, `7 days «excluding weekends»`, and `7 days «give or take»`
+all omit the duration.
 Signed alternatives such as `7 min. or +10 min.` and `7 min. or negative 10
 min.` also yield no figures.
 Recognition never rewrites the quoted source text.

@@ -71,7 +71,7 @@ var (
 	negationRE            = regexp.MustCompile(`(?i)(?:\b(?:not|cannot|never|neither|nor|no|without)\b|n['’‘ʼ]t\b|\bno\s+longer\b|\banything\s+but\b)`)
 	approximation         = `(?:about|approximately|around|roughly|nearly|almost|circa|estimated)`
 	approximationPrefixRE = regexp.MustCompile(`(?i)(?:\b` + approximation + `|[~≈])(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?[\s()\[\],:"'‘’“”«»]*$`)
-	approximationSuffixRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”»]*(?:` + approximation + `\b|more\s+or\s+less\b|and\s+change(?:\s*[,.;!?)]|$)|[~≈])\s*\)*`)
+	approximationSuffixRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”«»]*(?:` + approximation + `\b|more\s+or\s+less\b|and\s+change(?:\s*[,.;!?)]|$)|[~≈])\s*\)*`)
 	fractionWords         = `(?:half|quarter|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)`
 	fractionSuffixRE      = regexp.MustCompile(`(?i)^(?:a\s+)?` + fractionWords + `\b`)
 	fractionPrefixRE      = regexp.MustCompile(`(?i)\b(?:(?:a\s+)?` + fractionWords + `s?|[0-9]+\s*/\s*[0-9]+)\s+of\s*$`)
@@ -338,12 +338,13 @@ clauses:
 
 const calendarExclusion = `(?:excluding|excepting|except(?:\s+for)?|(?:apart\s+from|other\s+than)\s+(?:[\p{L}]+\s+){0,3}(?:holidays?|weekends?|christmas|sundays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?))\b`
 const durationExclusion = `(?:` + calendarExclusion + `|less\b)`
+const dateIntervalConnectorPattern = `(?:through|until|till|to)`
 
 var periodStartWords = []string{"from", "since", "effective", "effective on", "as of", "starting", "starting on", "beginning", "beginning on"}
 var periodWords = append(slices.Clone(periodStartWords), "until", "till", "prior to", "to", "through", "ending", "on or before", "before")
-var calendarExclusionRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”»]+` + durationExclusion)
+var calendarExclusionRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”«»]+` + durationExclusion)
 var numericExclusionRE = regexp.MustCompile(`(?i)\b` + calendarExclusion + `[^,;0-9]*$`)
-var exclusionJoinRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”»]+` + durationExclusion + `(?s:.*?)(\s+and\s+|,\s*)$`)
+var exclusionJoinRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”«»]+` + durationExclusion + `(?s:.*?)(\s+and\s+|,\s*)$`)
 var dateBeforeConnectorRE = regexp.MustCompile(`(?i)^[\s,()\]"'”’»]+(?:` + durationExclusion + `.*?[\s,()\]"'”’»]+)?(?:before|prior\s+to)\s+[(\["'‘’“”«]*\s*$`)
 var dateFromConnectorRE = regexp.MustCompile(`(?i)^[\s,()\]"'”’»]+from\s+[(\["'‘’“”«]*\s*$`)
 var uncertainDateSuffixRE = regexp.MustCompile(`(?i)^(?:[\s,()\[\]"'‘’“”«»]+or\s+(?:earlier|later)|[\s,()\[\]"'‘’“”«»]+(?:inclusive|exclusive))\b`)
@@ -383,8 +384,10 @@ func hasAlternativeDates(s string, checks []candidate) bool {
 func standaloneDateRange(s string, first, second candidate) bool {
 	before := strings.ToLower(trimDateRangePunctuation(s[:first.start]))
 	connector := strings.ToLower(trimDateRangePunctuation(s[first.end:second.start]))
-	return connector == andWord && endsWord(before, "between") || connector == "to" && !endsWord(before, periodStartWords...)
+	return connector == andWord && endsWord(before, "between") || dateIntervalConnectorRE.MatchString(connector) && !endsWord(before, periodStartWords...)
 }
+
+var dateIntervalConnectorRE = regexp.MustCompile(`(?i)^` + dateIntervalConnectorPattern + `$`)
 
 func trimDateRangePunctuation(s string) string {
 	return strings.TrimFunc(s, func(r rune) bool {
@@ -811,7 +814,7 @@ func postfixFigureBound(f Figure, s string) bool {
 	return postfixBound(s)
 }
 
-var postfixBoundLeadRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”»]*(?:(?:at\s+)?(?:a|the)\s+)?`)
+var postfixBoundLeadRE = regexp.MustCompile(`(?i)^[\s,.()\[\]"'‘’“”«»]*(?:(?:at\s+)?(?:a|the)\s+)?`)
 
 // Compile the shared bound vocabulary once; match indices remain byte offsets.
 var postfixBounds = func() []*regexp.Regexp {
@@ -862,7 +865,7 @@ func parenthesizedMoney(f Figure, prefix, suffix string) bool {
 }
 
 var uncertaintyPrefixRE = regexp.MustCompile(`(?i)\bgive\s+or\s+take[\s(\["'‘’“”]*$`)
-var uncertaintySuffixRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”»]*,?\s*give\s+or\s+take\b`)
+var uncertaintySuffixRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*,?\s*give\s+or\s+take\b`)
 
 func uncertaintyAdjacent(prefix, suffix string) bool {
 	prefix, _ = splitQualifier(strings.ToLower(strings.Join(strings.Fields(prefix), " ")))
@@ -1120,6 +1123,61 @@ func sentenceEndPunctuation(r rune) bool {
 	}
 }
 
+// sentenceLookahead keeps assertion checks inside the sentence whose figure
+// they qualify. Decimal points and familiar abbreviations are not boundaries.
+func sentenceLookahead(s string) string {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		normalized := normalizedPunctuation(r)
+		if normalized == '.' && i > 0 && i+size < len(s) {
+			before, _ := utf8.DecodeLastRuneInString(s[:i])
+			after, _ := utf8.DecodeRuneInString(s[i+size:])
+			if unicode.IsDigit(before) && unicode.IsDigit(after) {
+				i += size
+				continue
+			}
+		}
+		if sentenceEndPunctuation(r) && sentenceBoundaryAfter(s, i+size) {
+			prefix := strings.ToLower(norm.NFKC.String(s[:i+size]))
+			next := norm.NFKC.String(s[i+size:])
+			dot := len(norm.NFKC.String(s[:i]))
+			if abbreviationRE.MatchString(prefix) || noAbbreviationRE.MatchString(prefix) && identifierAbbreviation(norm.NFKC.String(s), dot) || maxAbbreviationRE.MatchString(prefix) && figureLeadRE.MatchString(next) && !endsTypedFigure(strings.TrimSpace(prefix[:len(prefix)-4])) {
+				i += size
+				continue
+			}
+			if durationAbbrevRE.MatchString(prefix) && durationAbbreviationContinues(s[i+size:]) {
+				i += size
+				continue
+			}
+			return s[:i]
+		}
+		if normalized == ';' || r == '\n' && hardLineBreak(s, i) {
+			return s[:i]
+		}
+		i += size
+	}
+	return s
+}
+
+func sentenceBoundaryAfter(s string, i int) bool {
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if unicode.IsSpace(r) {
+			return true
+		}
+		if strings.ContainsRune(closingPunctuation, normalizedPunctuation(r)) {
+			i += size
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func durationAbbreviationContinues(s string) bool {
+	return relativeDurationClauseConnectorRE.MatchString(s) || durationAlternativeRE.MatchString(s) || unsupportedDurationAlternativeLeadRE.MatchString(s) || approximationSuffixRE.MatchString(s) || uncertaintySuffixRE.MatchString(s) || durationArithmeticRE.MatchString(trimRelativeDurationOperandClosers(s)) || rateEnd(s) > 0 || calendarExclusionRE.MatchString(s) || postfixBound(s) || rateDateContinuation(s)
+}
+
 func normalizedPunctuation(r rune) rune {
 	normalized := norm.NFKC.String(string(r))
 	if utf8.RuneCountInString(normalized) != 1 {
@@ -1137,6 +1195,7 @@ var independentExclusionRE = regexp.MustCompile(`(?i)^\s*Excluding\s+[\p{L}]+(?:
 var independentApproxLeadRE = regexp.MustCompile(`(?i)^\s*(?:About|Approximately|Around|Roughly|Nearly|Almost|Circa|Estimated)\b`)
 
 func independentApproxAssertion(s string) bool {
+	s = sentenceLookahead(s)
 	loc := figureAssertionRE.FindStringIndex(s)
 	return independentApproxLeadRE.MatchString(s) && loc != nil && quantitySubjectAssertion(s[loc[1]:])
 }
@@ -1148,12 +1207,18 @@ var quantifiedAssertionPrefixRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPr
 var independentBoundPredicateRE = regexp.MustCompile(`(?i)^\s*(?:is|are|was|were|has|have|had|will(?:\s+be)?|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 
 func independentBoundAssertion(s string) bool {
+	s = sentenceLookahead(s)
 	loc := figureAssertionRE.FindStringIndex(s)
 	return independentBoundSentenceRE.MatchString(s) || loc != nil && (nominalSubjectMatches(nominalBoundSubjectRE, s[:loc[0]]) || nominalSubjectMatches(estimatedLabelRE, s[:loc[0]]) || quantifiedAssertionPrefixRE.MatchString(s[:loc[0]]) && independentBoundPredicateRE.MatchString(s[loc[1]:]))
 }
 
 func normalizedDurationContinuation(prefix, suffix string) bool {
-	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeContinuation(prefix, suffix) || numericRelativeDurationContinuation(prefix, suffix) || comparisonContinuationAfterRate(suffix) && !independentBoundAssertion(suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(trimRelativeDurationOperandClosers(suffix)) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) && !independentBoundAssertion(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuation(suffix))
+	assertionSuffix := suffix
+	if strings.HasPrefix(assertionSuffix, ".") && abbreviatedDurationBoundary(prefix, assertionSuffix) {
+		assertionSuffix = assertionSuffix[1:]
+	}
+	assertionSuffix = sentenceLookahead(assertionSuffix)
+	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(assertionSuffix) || durationAlternativeContinuation(prefix, suffix) || numericRelativeDurationContinuation(prefix, suffix) || comparisonContinuationAfterRate(suffix) && !independentBoundAssertion(assertionSuffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(trimRelativeDurationOperandClosers(suffix)) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) && !independentBoundAssertion(assertionSuffix) || postfixBound(suffix) && !independentBoundAssertion(assertionSuffix) || rateDateContinuation(suffix))
 }
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^(?:\s*[` + regexp.QuoteMeta(closingPunctuation) + `]+\s*|\s+)(after|before|prior\s+to)\s+`)
@@ -1166,6 +1231,7 @@ var relativeDurationBoundLeadRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPr
 var relativeDurationAuxiliaryLeadRE = regexp.MustCompile(`(?i)^\s*(?:am|is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did)\b`)
 
 func independentDurationAssertion(s string) bool {
+	s = sentenceLookahead(s)
 	s = trimRelativeDurationWrappers(s)
 	if relativeDurationAuxiliaryLeadRE.MatchString(s) {
 		return false
@@ -1216,8 +1282,8 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 	operand := trimRelativeDurationWrappers(suffix[loc[1]:])
 	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
 	if relativeDurationArithmeticAmountRE.MatchString(operand) {
-		if _, _, _, ok := relativeDurationOperandParts(operand); ok {
-			return true
+		if _, _, following, ok := relativeDurationOperandParts(operand); ok {
+			return !independentRelativeDurationAssertion(connector, following)
 		}
 	}
 	unit := unitRE.FindStringIndex(operand)
@@ -1225,7 +1291,7 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 		return unsupportedRelativeDurationOperand(operand, connector)
 	}
 	following := trimRelativeDurationWrappers(operand[unit[1]:])
-	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:unit[1]]+".") {
+	if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:unit[1]]+".") && !durationAbbreviationSentenceEnd(following) {
 		following = following[1:]
 	}
 	if independentRelativeDurationAssertion(connector, following) {
@@ -1242,15 +1308,13 @@ const numericGroupingSeparatorChars = `_'’‘ʼ`
 // fraction; slash arithmetic must continue with another operator.
 var relativeDurationArithmeticNonDashOperator = `(?:[+*×÷±∓^]|multiplied\s+by|divided\s+by|times|plus|minus|x)`
 var relativeDurationArithmeticDashOperator = `[\p{Pd}−]`
-var relativeDurationArithmeticOperator = `(?:` + relativeDurationArithmeticNonDashOperator + `|[/⁄])`
-var relativeDurationArithmeticNumericOperator = `(?:` + relativeDurationArithmeticOperator + `|` + relativeDurationArithmeticDashOperator + `)`
+var relativeDurationArithmeticOperator = `(?:` + relativeDurationArithmeticNonDashOperator + `|[/⁄]|` + relativeDurationArithmeticDashOperator + `)`
 var relativeDurationArithmeticGroupedNumber = `(?:[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?|[0-9]+(?:(?:[,.][[:space:]]*|[[:space:]]+)[0-9]+)+)`
 var relativeDurationArithmeticNumber = `(?:` + number + `|` + relativeDurationArithmeticGroupedNumber + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
-var relativeDurationArithmeticNumericNumber = `(?:[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?|` + relativeDurationArithmeticGroupedNumber + `)`
 var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` +
 	`(?:` + relativeDurationArithmeticNumber + `)\s*` + relativeDurationArithmeticNonDashOperator + `\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))*` +
 	`|(?:` + relativeDurationArithmeticNumber + `)\s*[/⁄]\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))+` +
-	`|(?:` + relativeDurationArithmeticNumericNumber + `)(?:\s*` + relativeDurationArithmeticNumericOperator + `\s*(?:` + relativeDurationArithmeticNumericNumber + `))*\s*` + relativeDurationArithmeticDashOperator + `\s*(?:` + relativeDurationArithmeticNumericNumber + `)(?:\s*` + relativeDurationArithmeticNumericOperator + `\s*(?:` + relativeDurationArithmeticNumericNumber + `))*` +
+	`|(?:` + relativeDurationArithmeticNumber + `)\s*` + relativeDurationArithmeticDashOperator + `\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))*` +
 	`)`)
 
 var relativeDurationAmountREs = []*regexp.Regexp{
@@ -1395,12 +1459,27 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 		}
 		unit = []int{amount[1] + unitInRest[0], amount[1] + unitInRest[1]}
 		following = operand[unit[1]:]
-		if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:unit[1]]+".") {
+		if strings.HasPrefix(following, ".") && durationAbbrevRE.MatchString(operand[:unit[1]]+".") && !durationAbbreviationSentenceEnd(following) {
 			following = following[1:]
 		}
 		return amount, unit, following, true
 	}
 	return nil, nil, "", false
+}
+
+func durationAbbreviationSentenceEnd(following string) bool {
+	if !strings.HasPrefix(following, ".") || !sentenceBoundaryAfter(following, 1) {
+		return false
+	}
+	tail := strings.TrimLeftFunc(following[1:], func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(`()[]{}"'‘’“”«`, r)
+	})
+	first, _ := utf8.DecodeRuneInString(tail)
+	if unicode.IsUpper(first) {
+		return true
+	}
+	figure := figureAssertionRE.FindStringIndex(tail)
+	return figure != nil && figure[0] == 0 && quantitySubjectAssertion(tail[figure[1]:])
 }
 
 func relativeDurationAmountStartsNumeric(amount string) bool {
@@ -1501,7 +1580,7 @@ func originalSpanHasUnsupportedNumeric(original string, offsets map[int]int, sta
 func independentRelativeDurationAssertion(connector, following string) bool {
 	switch connector {
 	case "after", "before", "prior to":
-		following = trimRelativeDurationWrappers(following)
+		following = trimRelativeDurationWrappers(sentenceLookahead(following))
 		if relativeDurationConjunctionLeadRE.MatchString(following) {
 			return false
 		}
@@ -1556,7 +1635,7 @@ var nonPredicateFigurePrefixWords = map[string]struct{}{
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
 var rateDateOperandPattern = `(?:\(\s*` + dateRE.String() + `\s*\)|\[\s*` + dateRE.String() + `\s*\]|["'‘’“”«]\s*` + dateRE.String() + `\s*["'”’»]|` + dateRE.String() + `)`
 var rateDateClosingPunctuationPattern = `[` + regexp.QuoteMeta(closingPunctuation) + `]*`
-var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+(?:until|till|through|to)\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?\s*(?:[.!?;:]` + rateDateClosingPunctuationPattern + `(?:\s|$)|$)`)
+var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+` + dateIntervalConnectorPattern + `\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?\s*(?:[.!?;:]` + rateDateClosingPunctuationPattern + `(?:\s|$)|$)`)
 
 func rateDateContinuation(s string) bool {
 	if rateDateContinuationRE.MatchString(s) {
@@ -2243,11 +2322,11 @@ func rateBoundConnector(s string) bool {
 	return n > 0 && dateBoundConnectorRE.MatchString(s[n:])
 }
 
-var plainDateBoundConnectorRE = regexp.MustCompile(`(?i)^\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
-var dateBoundConnectorRE = regexp.MustCompile(`(?i)^\s*[\)\]\"'‘’”»]*\s*(?:` + rateRE.String() + `\.?)?\s+(?:until|till|through|to)\s+[(\["'‘’“”«]*\s*$`)
+var plainDateBoundConnectorRE = regexp.MustCompile(`(?i)^\s+` + dateIntervalConnectorPattern + `\s+[(\["'‘’“”«]*\s*$`)
+var dateBoundConnectorRE = regexp.MustCompile(`(?i)^\s*[\)\]\"'‘’”»]*\s*(?:` + rateRE.String() + `\.?)?\s+` + dateIntervalConnectorPattern + `\s+[(\["'‘’“”«]*\s*$`)
 var standaloneDateBoundPrefixRE = regexp.MustCompile(`(?i)\b(?:before|after|prior\s+to)\s+[(\["'‘’“”«]*\s*$`)
 var standaloneDateBoundLeadRE = regexp.MustCompile(`(?i)\b(?:before|after|prior\s+to)\s+`)
-var standaloneDateAlternativeLeadRE = regexp.MustCompile(`(?i)(?:,\s*)?\b(?:or|and|through|to|until|till)\s*[(\["'‘’“”«]*\s*$`)
+var standaloneDateAlternativeLeadRE = regexp.MustCompile(`(?i)(?:,\s*)?\b(?:or|and|` + dateIntervalConnectorPattern + `)\s*[(\["'‘’“”«]*\s*$`)
 
 func standaloneDateBoundPrefix(prefix string) bool {
 	if standaloneDateBoundPrefixRE.MatchString(prefix) {
@@ -2295,9 +2374,10 @@ var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closin
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
 var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
-var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d)?|covers?|pay(?:s|ing)?|paid)\b`)
+var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d)?|cover(?:s|ed)?|offsets?|pay(?:s|ing)?|paid)\b`)
 
 func quantitySubjectAssertion(s string) bool {
+	s = sentenceLookahead(s)
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {
 		return false
 	}

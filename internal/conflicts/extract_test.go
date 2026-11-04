@@ -3134,6 +3134,95 @@ func TestExtractDoesNotApplyQuotedSentenceDateToPriorRate(t *testing.T) {
 	}
 }
 
+func TestExtractOmitsCompleteArithmeticRelativeDurationChains(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is 7 min. before 10 + 5 - 2 min. The deposit is $7.",
+		"The deadline is 7 min. before ten + five − two min. The deposit is $7.",
+	} {
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
+			t.Errorf("incomplete arithmetic relative-duration chain leaked or hid the next sentence for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractSeparatesIndependentAssertionsFromNominalAmountGroups(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The fee was about $5 and $10 covered shipping costs.", []string{"$10"}},
+		{"The fee is 5% of $100 and $10 offsets shipping costs.", []string{"5%", "$10"}},
+		{"The fee was about $5 and $10 fixed shipping costs.", nil},
+		{"The fee is 5% of $100 and $10 fixed shipping costs.", []string{"5%"}},
+	} {
+		got := Extract(tt.text)
+		if len(got) != len(tt.want) {
+			t.Errorf("%q: got %+v, want %v", tt.text, got, tt.want)
+			continue
+		}
+		for i, want := range tt.want {
+			if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+				t.Errorf("%q: got %+v, want %q", tt.text, got[i], want)
+			}
+		}
+	}
+}
+
+func TestExtractLimitsRelativeDurationLookaheadToCurrentSentence(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is 7 min. before 10 minutes. The fee is $5.",
+		"The deadline is 7 min. before 10 min. The fee is $5.",
+		"The wait is 7 min. approximately. $5 is charged.",
+	} {
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$5" || string([]rune(text)[got[0].Start:got[0].End]) != "$5" {
+			t.Errorf("a later sentence changed the duration decision for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractKeepsAssertionsAfterArithmeticRelativeDurationOperand(t *testing.T) {
+	text := "The wait is 7 min. After 10 + 5 minutes customers pay $5."
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "7 min" || got[1].Text != "$5" {
+		t.Fatalf("arithmetic operand hid independent assertions: %+v", got)
+	}
+	for i, want := range []string{"7 min", "$5"} {
+		if string([]rune(text)[got[i].Start:got[i].End]) != want {
+			t.Errorf("incorrect source span for %q: %+v", want, got[i])
+		}
+	}
+}
+
+func TestExtractOmitsGuillemetWrappedPostfixModifiers(t *testing.T) {
+	for _, text := range []string{
+		"The wait is 7 days «approximately».",
+		"The wait is 7 days «maximum».",
+		"The wait is 7 days «excluding weekends».",
+		"The wait is 7 days «give or take».",
+	} {
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("guillemet-wrapped postfix modifier retained an exact duration for %q: %+v", text, got)
+		}
+	}
+}
+
+func TestExtractOmitsStandaloneDateIntervals(t *testing.T) {
+	for _, connector := range []string{"through", "until", "till"} {
+		text := "The service window is 1 July 2026 " + connector + " 31 July 2026."
+		if got := Extract(text); len(got) != 0 {
+			t.Errorf("standalone date interval retained exact endpoints for %q: %+v", text, got)
+		}
+	}
+
+	text := "From 1 July 2026 through 31 July 2026, the fee is $5."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "$5" || got[0].Period != (Period{From: "2026-07-01", To: "2026-07-31"}) {
+		t.Errorf("explicit period bounds were treated as a standalone date interval: %+v", got)
+	}
+}
+
 func TestExtractKeepsIndependentAmountsAfterIncludesPredicates(t *testing.T) {
 	for _, tt := range []struct {
 		text string
