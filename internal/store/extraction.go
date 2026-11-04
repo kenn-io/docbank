@@ -313,16 +313,6 @@ func (s *Store) SeedTextExtractionQueue(
 			if !current {
 				continue
 			}
-			if suppressionProfile != "" {
-				suppressed, err := legacyDerivativeSuppressedTx(
-					ctx, tx, item.hash, item.versionID, suppressionProfile)
-				if err != nil {
-					return fmt.Errorf("checking extraction purge suppression: %w", err)
-				}
-				if suppressed {
-					continue
-				}
-			}
 			if err := markTextSearchableVersionTx(ctx, tx, item.versionID, item.mimeType); err != nil {
 				return err
 			}
