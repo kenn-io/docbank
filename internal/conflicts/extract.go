@@ -1094,14 +1094,15 @@ var figureAssertionRE = regexp.MustCompile(moneyRE.String() + `|` + unitRE.Strin
 
 var independentBoundSentenceRE = regexp.MustCompile(`(?i)^\s*(?:maximum|minimum)\s+[\p{L}]+(?:\s+[\p{L}]+)*\s+(?:has|have|is|are|was|were)\s+[\p{L}]+\b`)
 var quantifiedAssertionPrefixRE = regexp.MustCompile(`(?i)^\s*(?:` + rateBoundPrefix + `)\s*$`)
+var independentBoundPredicateRE = regexp.MustCompile(`(?i)^\s*(?:is|are|was|were|has|have|had|will(?:\s+be)?|would|can|could|may|might|must|do|does|did|receive(?:s|d)?)\b`)
 
 func independentBoundAssertion(s string) bool {
 	loc := figureAssertionRE.FindStringIndex(s)
-	return independentBoundSentenceRE.MatchString(s) || loc != nil && (nominalSubjectMatches(nominalBoundSubjectRE, s[:loc[0]]) || nominalSubjectMatches(estimatedLabelRE, s[:loc[0]]) || quantifiedAssertionPrefixRE.MatchString(s[:loc[0]]) && quantitySubjectRE.MatchString(s[loc[1]:]))
+	return independentBoundSentenceRE.MatchString(s) || loc != nil && (nominalSubjectMatches(nominalBoundSubjectRE, s[:loc[0]]) || nominalSubjectMatches(estimatedLabelRE, s[:loc[0]]) || quantifiedAssertionPrefixRE.MatchString(s[:loc[0]]) && independentBoundPredicateRE.MatchString(s[loc[1]:]))
 }
 
 func normalizedDurationContinuation(prefix, suffix string) bool {
-	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeContinuation(prefix, suffix) || numericRelativeDurationContinuation(prefix, suffix) || comparisonContinuationAfterRate(suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(suffix) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuationRE.MatchString(suffix))
+	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeContinuation(prefix, suffix) || numericRelativeDurationContinuation(prefix, suffix) || comparisonContinuationAfterRate(suffix) && !independentBoundAssertion(suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(suffix) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) && !independentBoundAssertion(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuationRE.MatchString(suffix))
 }
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^(?:\s*[` + regexp.QuoteMeta(closingPunctuation) + `]+\s*|\s+)(after|before|prior\s+to)\s+`)
@@ -1151,7 +1152,7 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
-	regexp.MustCompile(`^[0-9]{1,3}(?:[[:space:]][0-9]{3})+`),
+	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|['‘’_]|,\s*)[0-9]{3})+`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
 	spokenDecimalNumberRE,
@@ -1225,12 +1226,36 @@ func independentDurationAlternativeLaterAssertion(suffix string) bool {
 }
 
 func independentDurationLaterAssertion(following string) bool {
+	following = trimRelativeDurationOperandClosers(following)
 	later := durationLaterLeadRE.FindStringIndex(following)
 	if later == nil {
 		return false
 	}
 	assertion := following[later[1]:]
 	return relativeDurationIndependentAssertionRE.MatchString(assertion) || independentTypedFigureAssertion(assertion)
+}
+
+func trimRelativeDurationOperandClosers(s string) string {
+	i := 0
+	separated := false
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if unicode.IsSpace(r) {
+			separated = true
+			i += size
+			continue
+		}
+		if strings.ContainsRune(closingPunctuation, r) {
+			i += size
+			separated = true
+			continue
+		}
+		break
+	}
+	if separated && i < len(s) {
+		return " " + s[i:]
+	}
+	return s[i:]
 }
 
 func unsupportedRelativeDurationOperand(operand, connector string) bool {
@@ -1258,29 +1283,42 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 	return nil, nil, "", false
 }
 
-func relativeDurationClauseOperand(s string) (connector, operand string, operandStart int, ok bool) {
+func relativeDurationClauseOperand(s string) (connector, operand string, operandStart, signedOperandStart int, ok bool) {
 	loc := relativeDurationClauseConnectorRE.FindStringSubmatchIndex(s)
 	if loc == nil {
-		return "", "", 0, false
+		return "", "", 0, -1, false
 	}
 	connector = strings.ToLower(strings.Join(strings.Fields(s[loc[2]:loc[3]]), " "))
 	operandStart = loc[1]
+	signedOperandStart = -1
 	operand = s[operandStart:]
 	trimmed := trimRelativeDurationWrappers(operand)
 	operandStart += len(operand) - len(trimmed)
 	operand = trimmed
 	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
+		if negativeDurationSign(operand[:qualifier[1]]) {
+			signedOperandStart = operandStart
+		}
 		operandStart += qualifier[1]
 		operand = operand[qualifier[1]:]
 		trimmed = trimRelativeDurationWrappers(operand)
 		operandStart += len(operand) - len(trimmed)
 		operand = trimmed
 	}
-	return connector, operand, operandStart, true
+	return connector, operand, operandStart, signedOperandStart, true
+}
+
+func negativeDurationSign(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "minus", "negative", "-", "−":
+		return true
+	default:
+		return false
+	}
 }
 
 func independentUnsupportedRelativeDurationOperand(original string, offsets map[int]int, s string) (start, end int, ok bool) {
-	connector, operand, operandStart, ok := relativeDurationClauseOperand(s)
+	connector, operand, operandStart, signedOperandStart, ok := relativeDurationClauseOperand(s)
 	var amount, unit []int
 	var following string
 	if ok {
@@ -1317,9 +1355,12 @@ func independentUnsupportedRelativeDurationOperand(original string, offsets map[
 				parts[i] = operand[match[2*i]:match[2*i+1]]
 			}
 		}
-		if parsed, valid := parseUnit(operand[:match[1]], parts); valid && parsed.Kind == durationKind && !originalSpanHasUnsupportedNumeric(original, offsets, operandStart+amount[0], operandStart+unit[1]) {
+		if parsed, valid := parseUnit(operand[:match[1]], parts); valid && parsed.Kind == durationKind && signedOperandStart < 0 && !originalSpanHasUnsupportedNumeric(original, offsets, operandStart+amount[0], operandStart+unit[1]) {
 			return 0, 0, false
 		}
+	}
+	if signedOperandStart >= 0 {
+		return signedOperandStart, operandStart + unit[1], true
 	}
 	return operandStart + amount[0], operandStart + unit[1], true
 }
@@ -1364,7 +1405,7 @@ func independentTypedFigureAssertion(s string) bool {
 	return assertionPredicateRE.MatchString(last)
 }
 
-var directTypedFigureAssertionPrefixRE = regexp.MustCompile(`^\s*[,;:]?\s*$`)
+var directTypedFigureAssertionPrefixRE = regexp.MustCompile(`^\s*[,;:]?\s*(?:[\(\[\{\"'‘’“”«]\s*)*$`)
 var assertionPrefixWordRE = regexp.MustCompile(`(?i)[\p{L}\p{Nd}]+`)
 var assertionPredicateRE = regexp.MustCompile(`(?i)^(?:[\p{L}]+(?:s|ed|ing)|pay|cost|put|set|cut|hit|run)$`)
 var nonPredicateFigurePrefixWords = map[string]struct{}{

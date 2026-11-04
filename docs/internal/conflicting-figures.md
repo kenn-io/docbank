@@ -74,6 +74,8 @@ than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
 duration operands such as `7 days before thirty days` or
 `7 min. before thirty-five min.`; grouped numeric, fractional or spoken-decimal
 durations such as `7 min. before 1 000 minutes`, `7 min. before 1/2 hour`,
+`7 min. before 1'000 minutes`, `7 min. before 1_000 minutes`,
+`7 min. before 1, 000 minutes`, or `7 min. before 1  000 minutes`,
 `7 min. before .5 hours`, `7 min. before half an hour`,
 `7 min. before seven point five minutes`, or signed operands such as
 `7 min. before negative 10 min.` and `7 min. before −10 min.`; rejected ranges
@@ -95,6 +97,14 @@ An `and <duration> later` continuation also stays separate when the later
 assertion starts with its own subject and predicate or a typed figure. For
 example, `The wait is 7 min. and 1 000 minutes later the fee is $5.` and `The
 wait is 7 min. and an hour later, $5 is charged.` keep `7 min` and `$5`.
+The same holds for grouped operands such as `After 1'000 minutes`, a
+parenthesized operand such as `and (an hour) later`, and a quoted typed figure
+such as `After 10 minutes, "$5" is charged.` Independent bounded assertions
+such as `More than 2 devices are included` and `Less than 2 devices are
+included` also start a new sentence after an abbreviated duration. Unsupported
+signed temporal operands such as
+`After negative 10 minutes` or `After −10 minutes` are excluded while a
+separate fee assertion can remain.
 Closing wrappers after the duration do not hide the following assertion:
 `The wait is 7 min. After (10 minutes), $5 is charged.` also keeps both figures.
 A coordinated continuation does not start an independent assertion, even when

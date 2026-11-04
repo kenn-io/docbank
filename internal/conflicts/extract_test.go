@@ -2716,6 +2716,44 @@ func TestExtractKeepsAssertionAfterClosingRelativeDurationWrapper(t *testing.T) 
 	}
 }
 
+func TestExtractReviewAbbreviatedDurationAssertionBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"apostrophe grouped relative operand", "The deadline is 7 min. before 1'000 minutes.", nil},
+		{"curly apostrophe grouped relative operand", "The deadline is 7 min. before 1’000 minutes.", nil},
+		{"underscore grouped relative operand", "The deadline is 7 min. before 1_000 minutes.", nil},
+		{"comma-space grouped relative operand", "The deadline is 7 min. before 1, 000 minutes.", nil},
+		{"repeated-space grouped relative operand", "The deadline is 7 min. before 1  000 minutes.", nil},
+		{"apostrophe grouped later assertion", "The wait is 7 min. After 1'000 minutes customers pay $5.", []string{"7 min", "$5"}},
+		{"underscore grouped later assertion", "The wait is 7 min. After 1_000 minutes customers pay $5.", []string{"7 min", "$5"}},
+		{"comma-space grouped later assertion", "The wait is 7 min. After 1, 000 minutes customers pay $5.", []string{"7 min", "$5"}},
+		{"repeated-space grouped later assertion", "The wait is 7 min. After 1  000 minutes customers pay $5.", []string{"7 min", "$5"}},
+		{"wrapped later operand", "The wait is 7 min. and (an hour) later, $5 is charged.", []string{"7 min", "$5"}},
+		{"independent more-than assertion", "The wait is 7 min. More than 2 devices are included.", []string{"7 min", "2 devices"}},
+		{"independent less-than assertion", "The wait is 7 min. Less than 2 devices are included.", []string{"7 min", "2 devices"}},
+		{"quoted typed assertion", "The wait is 7 min. After 10 minutes, \"$5\" is charged.", []string{"7 min", "10 minutes", "$5"}},
+		{"negative word later operand", "The wait is 7 min. After negative 10 minutes customers pay $5.", []string{"7 min", "$5"}},
+		{"minus word later operand", "The wait is 7 min. After minus 10 minutes customers pay $5.", []string{"7 min", "$5"}},
+		{"negative symbol later operand", "The wait is 7 min. After −10 minutes customers pay $5.", []string{"7 min", "$5"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %+v, want %v", got, tt.want)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want || string([]rune(tt.text)[got[i].Start:got[i].End]) != want {
+					t.Errorf("figure %d = %+v, want %q with matching source span", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractRejectsSymbolicRelativeDurationBounds(t *testing.T) {
 	for _, text := range []string{
 		"The deadline is 7 minutes before ≥10 minutes.",
@@ -2741,7 +2779,7 @@ func TestRelativeDurationClauseOperandNormalizesConnectorWhitespace(t *testing.T
 		"Prior  to thirty-five minutes customers pay $5.",
 		"Prior\tto\tthirty-five minutes customers pay $5.",
 	} {
-		connector, operand, _, ok := relativeDurationClauseOperand(text)
+		connector, operand, _, _, ok := relativeDurationClauseOperand(text)
 		if !ok || connector != "prior to" || !strings.HasPrefix(operand, "thirty-five minutes") {
 			t.Errorf("relative duration clause operand for %q = (%q, %q, %t)", text, connector, operand, ok)
 		}
