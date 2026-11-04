@@ -3138,6 +3138,7 @@ func TestExtractOmitsCompleteArithmeticRelativeDurationChains(t *testing.T) {
 	for _, text := range []string{
 		"The deadline is 7 min. before 10 + 5 - 2 min. The deposit is $7.",
 		"The deadline is 7 min. before ten + five − two min. The deposit is $7.",
+		"The deadline is 7 min. before 10 + 1 000 min. The deposit is $7.",
 	} {
 		got := Extract(text)
 		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." || string([]rune(text)[got[0].Start:got[0].End]) != "$7" {
@@ -3174,6 +3175,7 @@ func TestExtractLimitsRelativeDurationLookaheadToCurrentSentence(t *testing.T) {
 		"The deadline is 7 min. before 10 minutes. The fee is $5.",
 		"The deadline is 7 min. before 10 min. The fee is $5.",
 		"The wait is 7 min. approximately. $5 is charged.",
+		"«The deadline is 7 min. before 10 min.» The fee is $5.",
 	} {
 		got := Extract(text)
 		if len(got) != 1 || got[0].Text != "$5" || string([]rune(text)[got[0].Start:got[0].End]) != "$5" {
@@ -5739,6 +5741,8 @@ func TestExtractReviewNominalAndCompleteDateRanges(t *testing.T) {
 		{"The wait is 7 min. per day.", []string{"7 min"}, []string{"The wait is 7 min. per day."}, Period{}},
 		{"The deadline is between 1 July 2026 and 1 August 2026. The fee is $7.", []string{"$7"}, nil, Period{}},
 		{"The deadline is 1 July 2026 to 1 August 2026. The fee is $7.", []string{"$7"}, nil, Period{}},
+		{"The service window is 1 July 2026 to 31 July 2026.", nil, nil, Period{}},
+		{"The service window is from 1 July 2026 to 31 July 2026.", nil, nil, Period{}},
 		{"The deadline is (1 July 2026) to (1 August 2026). The fee is $7.", []string{"$7"}, nil, Period{}},
 		{"The deadline is between (1 July 2026) and (1 August 2026). The fee is $7.", []string{"$7"}, nil, Period{}},
 		{"The deadlines are 1 July 2026 and 1 August 2026. The fee is $7.", []string{"1 July 2026", "1 August 2026", "$7"}, nil, Period{}},
@@ -5813,8 +5817,12 @@ func TestExtractKeepsPredicatedFigureAfterApproximateAndPercentageBases(t *testi
 	}{
 		{"The fee is about $5 and $10 covers shipping costs.", []string{"$10"}},
 		{"The fee is about $5 and $10 pays shipping costs.", []string{"$10"}},
+		{"The fee is about $5 and $10 represents shipping costs.", []string{"$10"}},
+		{"The fee is about $5 and $10 reduces shipping costs.", []string{"$10"}},
 		{"The surcharge is 5% of $100 and $10 covers shipping costs.", []string{"5%", "$10"}},
 		{"The surcharge is 5% of $100 and $10 pays shipping costs.", []string{"5%", "$10"}},
+		{"The surcharge is 5% of $100 and $10 represents shipping costs.", []string{"5%", "$10"}},
+		{"The surcharge is 5% of $100 and $10 reduces shipping costs.", []string{"5%", "$10"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)

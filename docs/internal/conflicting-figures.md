@@ -28,10 +28,12 @@ unless it is a standalone bound such as `before 1 July 2026` or
 `before 1 July 2026 or 2 August 2026`; those dates are omitted rather than
 compared as exact values. Standalone intervals such as `1 July 2026 through
 31 July 2026`, `1 July 2026 until 31 July 2026`, and
-`1 July 2026 till 31 July 2026` also omit both endpoints. Explicit period
-bounds remain usable, as in `From 1 July 2026 through 31 July 2026, the fee is
-$5`, which retains `$5` with both bounds. A file's modification date is a
-separate source property and is not inferred by this package.
+`1 July 2026 till 31 July 2026` also omit both endpoints, including
+`From 1 July 2026 to 31 July 2026` when no other figure appears in the clause.
+Explicit period bounds remain usable, as in
+`From 1 July 2026 through 31 July 2026, the fee is $5`, which retains `$5`
+with both bounds. A file's modification date is a separate source property
+and is not inferred by this package.
 If a clause states different dates for the same period bound, extraction omits
 the clause rather than assigning the final date to every figure.
 The search report date facility extracts dates from verified, identity-bound artifact

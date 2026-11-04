@@ -384,7 +384,7 @@ func hasAlternativeDates(s string, checks []candidate) bool {
 func standaloneDateRange(s string, first, second candidate) bool {
 	before := strings.ToLower(trimDateRangePunctuation(s[:first.start]))
 	connector := strings.ToLower(trimDateRangePunctuation(s[first.end:second.start]))
-	return connector == andWord && endsWord(before, "between") || dateIntervalConnectorRE.MatchString(connector) && !endsWord(before, periodStartWords...)
+	return connector == andWord && endsWord(before, "between") || dateIntervalConnectorRE.MatchString(connector)
 }
 
 var dateIntervalConnectorRE = regexp.MustCompile(`(?i)^` + dateIntervalConnectorPattern + `$`)
@@ -1310,7 +1310,7 @@ var relativeDurationArithmeticNonDashOperator = `(?:[+*×÷±∓^]|multiplied\s+
 var relativeDurationArithmeticDashOperator = `[\p{Pd}−]`
 var relativeDurationArithmeticOperator = `(?:` + relativeDurationArithmeticNonDashOperator + `|[/⁄]|` + relativeDurationArithmeticDashOperator + `)`
 var relativeDurationArithmeticGroupedNumber = `(?:[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?|[0-9]+(?:(?:[,.][[:space:]]*|[[:space:]]+)[0-9]+)+)`
-var relativeDurationArithmeticNumber = `(?:` + number + `|` + relativeDurationArithmeticGroupedNumber + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
+var relativeDurationArithmeticNumber = `(?:` + relativeDurationArithmeticGroupedNumber + `|` + number + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
 var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` +
 	`(?:` + relativeDurationArithmeticNumber + `)\s*` + relativeDurationArithmeticNonDashOperator + `\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))*` +
 	`|(?:` + relativeDurationArithmeticNumber + `)\s*[/⁄]\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))+` +
@@ -1472,7 +1472,7 @@ func durationAbbreviationSentenceEnd(following string) bool {
 		return false
 	}
 	tail := strings.TrimLeftFunc(following[1:], func(r rune) bool {
-		return unicode.IsSpace(r) || strings.ContainsRune(`()[]{}"'‘’“”«`, r)
+		return unicode.IsSpace(r) || strings.ContainsRune("()[]{}‘“«"+closingPunctuation, r)
 	})
 	first, _ := utf8.DecodeRuneInString(tail)
 	if unicode.IsUpper(first) {
@@ -2389,7 +2389,7 @@ var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closin
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
 var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 var quantitySubjectNominalDurationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:(?:[\p{L}]+(?:\s+[\p{L}]+){0,2})\s+)?(?:times?|periods?|durations?|intervals?)\b`)
-var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d)?|cover(?:s|ed)?|offsets?|pay(?:s|ing)?|paid)\b`)
+var quantitySubjectPredicatedNominalLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|include(?:s|d)?|cover(?:s|ed)?|represent(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|offsets?|pay(?:s|ing)?|paid)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	s = sentenceLookahead(s)
