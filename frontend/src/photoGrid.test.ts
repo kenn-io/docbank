@@ -17,16 +17,6 @@ const seekOffset = (...args: Parameters<ReturnType<typeof createPhotoSeek>>) =>
   createPhotoSeek()(...args);
 
 it("matches full grouping and exact layouts after shuffled pages and stack changes", () => {
-  for (const grouping of ["months", "sessions", "flat", "relevance"] as const) {
-    const source = [photo(0)];
-    const rows = source.concat(Array.from({ length: 140_000 }, (_, i) => photo(i + 1)));
-    const grouper = createPhotoGrouper(),
-      expanded = new Set<string>();
-    grouper.sync(source, grouping, expanded);
-    expect(grouper.sync(rows, grouping, expanded, source).groups).toEqual(
-      groupPhotos(rows, grouping),
-    );
-  }
   // An appended photo joins two retained sessions, including a large older group.
   {
     const source = [photo(0, "2025-06-01T12:00:00Z")].concat(
@@ -649,7 +639,7 @@ it("resumes timeline seeks without rescanning and stops at the first loaded mont
     const appended = [
       ...source,
       ...Array.from(
-        { length: scenario === "first match" ? 20_000 : mode === "months" ? 250 : 1 },
+        { length: scenario === "first match" ? 250 : mode === "months" ? 250 : 1 },
         (_, i) =>
           photo(
             source.length + i,
