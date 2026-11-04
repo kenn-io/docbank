@@ -16,9 +16,8 @@ import { photo } from "./photo-test-fixtures.js";
 const seekOffset = (...args: Parameters<ReturnType<typeof createPhotoSeek>>) =>
   createPhotoSeek()(...args);
 
-it.each(["months", "sessions", "flat", "relevance"] as const)(
-  "keeps every photo when appending a large %s group",
-  (grouping) => {
+it("matches full grouping and exact layouts after shuffled pages and stack changes", () => {
+  for (const grouping of ["months", "sessions", "flat", "relevance"] as const) {
     const source = [photo(0)];
     const rows = source.concat(Array.from({ length: 140_000 }, (_, i) => photo(i + 1)));
     const grouper = createPhotoGrouper(),
@@ -27,23 +26,20 @@ it.each(["months", "sessions", "flat", "relevance"] as const)(
     expect(grouper.sync(rows, grouping, expanded, source).groups).toEqual(
       groupPhotos(rows, grouping),
     );
-  },
-);
-
-it("keeps a large older session when an appended photo bridges two sessions", () => {
-  const source = [photo(0, "2025-06-01T12:00:00Z")].concat(
-    Array.from({ length: 140_000 }, (_, i) => photo(i + 1, "2025-06-01T04:00:00Z")),
-  );
-  const grouper = createPhotoGrouper(),
-    expanded = new Set<string>();
-  expect(grouper.sync(source, "sessions", expanded).groups).toHaveLength(2);
-  const rows = source.concat(photo(140_001, "2025-06-01T08:00:00Z"));
-  expect(grouper.sync(rows, "sessions", expanded, source).groups).toEqual(
-    groupPhotos(rows, "sessions"),
-  );
-});
-
-it("matches full grouping and exact layouts after shuffled pages and stack changes", () => {
+  }
+  // An appended photo joins two retained sessions, including a large older group.
+  {
+    const source = [photo(0, "2025-06-01T12:00:00Z")].concat(
+      Array.from({ length: 140_000 }, (_, i) => photo(i + 1, "2025-06-01T04:00:00Z")),
+    );
+    const grouper = createPhotoGrouper(),
+      expanded = new Set<string>();
+    expect(grouper.sync(source, "sessions", expanded).groups).toHaveLength(2);
+    const rows = source.concat(photo(140_001, "2025-06-01T08:00:00Z"));
+    expect(grouper.sync(rows, "sessions", expanded, source).groups).toEqual(
+      groupPhotos(rows, "sessions"),
+    );
+  }
   // Both page clusters join the same retained session.
   {
     const source = ["01", "05", "09"].map((hour, id) => photo(id, `2025-06-01T${hour}:00:00Z`));
@@ -660,7 +656,7 @@ it("resumes timeline seeks without rescanning and stops at the first loaded mont
             scenario === "first match"
               ? "2025-06-01"
               : mode === "months"
-                ? "2025-05-01T12:00:00Z"
+                ? "2025-06-01T12:00:00Z"
                 : "2000-01-01T00:00:00Z",
           ),
       ),
@@ -689,13 +685,12 @@ it("resumes timeline seeks without rescanning and stops at the first loaded mont
         Object.defineProperty(next.chunks, i, { get: () => (reads++, chunk) });
       }
     }
+    expect(seekOffset(next.chunks, target, false, appended)).toBe(expected);
     reads = 0;
     expect(seek(next.chunks, target, false, appended, source, next.changedFrom)).toBe(expected);
     expect(reads).toBeLessThan(scenario === "first match" ? 20 : 100);
   }
-});
 
-it("keeps pending date jumps equal to a fresh scan after regrouping and stack arrivals", () => {
   for (const mode of ["months", "sessions", "reordered sessions", "stack collapse"] as const) {
     const rows: PhotoGridRow[] = [];
     const grouper = createPhotoGrouper(),

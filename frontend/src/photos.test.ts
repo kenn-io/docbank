@@ -2104,8 +2104,9 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])(
   },
 );
 
-it("publishes immutable append pages and deduplicates IDs across replacements", async () => {
-  for (const scenario of ["append origin", "deduplication"]) {
+it.each(["append origin", "deduplication"])(
+  "publishes immutable pages across replacements: %s",
+  async (scenario) => {
     const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
     const previous = [mapPhoto(1)];
     photos.items = previous;
@@ -2151,8 +2152,8 @@ it("publishes immutable append pages and deduplicates IDs across replacements", 
       ]);
     }
     photos.dispose();
-  }
-});
+  },
+);
 
 it("routes Map Reload authentication failures through the store handler", async () => {
   const onauth = vi.fn();

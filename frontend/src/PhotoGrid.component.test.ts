@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 it("keeps a pending date jump aligned after density changes while loading", async () => {
-  const rows = [photo(1, "2025-07-01T12:00:00Z"), photo(2, "2025-06-01T12:00:00Z")];
+  const rows = [photo(1, "2025-07-01T12:00:00Z"), photo(2, "2025-05-01T12:00:00Z")];
   const grouper = createPhotoGrouper();
   const expanded = new Set<string>();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
@@ -44,11 +44,11 @@ it("keeps a pending date jump aligned after density changes while loading", asyn
     onloadmore,
   });
   await waitFor(() => expect(onloadmore).toHaveBeenCalled());
-  expect(view.getByTestId("photo-scroll").scrollTop).toBe(256);
+  expect(view.getByTestId("photo-scroll").scrollTop).toBe(0);
 
   await view.rerender({ loading: true });
   await view.rerender({ targetRowHeight: 100 });
-  const appended = [...rows, photo(3, "2025-05-01T12:00:00Z")];
+  const appended = [...rows, photo(3, "2025-04-01T12:00:00Z")];
   await view.rerender({
     ...grouper.sync(appended, "months", expanded, rows),
     loadedItems: appended,
@@ -57,7 +57,7 @@ it("keeps a pending date jump aligned after density changes while loading", asyn
     more: false,
   });
 
-  // July now occupies a 56px heading and a 100px row.
+  // June is absent, so fall back to May after July's 56px heading and 100px row.
   expect(view.getByTestId("photo-scroll").scrollTop).toBe(156);
   await cache.dispose();
 });
