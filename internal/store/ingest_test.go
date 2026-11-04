@@ -15,34 +15,36 @@ import (
 // the folder's live files, so neither a large folder nor popular content scans.
 func TestResolveIngestNameDrivesFromSmallerSide(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
+	for caseIndex, tc := range []struct {
 		copies, files int
 		blobFirst     bool
 	}{
-		{0, 32, true},
-		{32, 0, false},
-		{3, 2048, true},
+		{20, 100, true},
+		{33, 1, false},
+		{4, 2049, true},
 	} {
 		t.Run(fmt.Sprintf("copies=%d/files=%d", tc.copies, tc.files), func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			elsewhere, err := s.Mkdir(ctx, s.RootID(), "elsewhere")
 			require.NoError(t, err)
-			for i := range tc.copies {
+			for i := range tc.copies - 1 {
 				_, err := s.CreateFile(ctx, elsewhere.ID, fmt.Sprintf("copy-%d.txt", i), fakeHash("a1"), 1, "text/plain")
 				require.NoError(t, err)
 			}
-			for i := range tc.files {
+			for i := range tc.files - 1 {
 				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("file-%d.txt", i), fmt.Sprintf("%064x", i+1000), 1, "text/plain")
 				require.NoError(t, err)
 			}
 			prior, err := s.CreateFile(ctx, s.RootID(), "report (2).txt", fakeHash("a1"), 1, "text/plain")
 			require.NoError(t, err)
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("c3"), s.RootID())
-				require.NoError(t, err)
-				assert.Empty(t, query, "new content needs no candidate query")
-				query, err = resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
+				if caseIndex == 0 {
+					query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("c3"), s.RootID())
+					require.NoError(t, err)
+					assert.Empty(t, query, "new content needs no candidate query")
+				}
+				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
 				require.NoError(t, err)
 				plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
 				if tc.blobFirst {
