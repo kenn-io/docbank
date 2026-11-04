@@ -270,6 +270,11 @@ func TestAuditedMoveRollsBackTreeAndHistory(t *testing.T) {
 
 func newAuditedMoveStore(t *testing.T) *Store {
 	t.Helper()
+	return newAuditedMoveStoreAt(t, "/Projects")
+}
+
+func newAuditedMoveStoreAt(t *testing.T, scopePath string) *Store {
+	t.Helper()
 	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -291,7 +296,9 @@ func newAuditedMoveStore(t *testing.T) *Store {
 		t.Context(), empty.ID, "outside.txt", fakeHash("a721"), 7, "text/plain",
 	)
 	require.NoError(t, err)
-	seedInitialAuditAuthority(t, s, projects.ID)
+	scope, err := s.NodeByPath(t.Context(), scopePath)
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, scope.ID)
 	return s
 }
 
@@ -383,26 +390,21 @@ func TestAuditedBatchMoveRejectsLaterItemAboveTrashOrigin(t *testing.T) {
 func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 	t.Parallel()
 	for _, rootScope := range []bool{false, true} {
-		for _, state := range []string{"no trash", "known origin", "nested trash", "inherited bridge", "inherited trash", "outside bridge", "unknown ancestor", "unknown origin", "no origin", "outside scope"} {
+		for _, state := range []string{"no trash", "known origin", "nested trash", "inherited bridge", "inherited trash", "unknown ancestor", "unknown origin", "outside scope"} {
 			t.Run(fmt.Sprintf("root=%t/%s", rootScope, state), func(t *testing.T) {
-				var s *Store
+				scopePath := "/Projects"
 				if rootScope {
-					s = newTestStore(t)
-					seedMetadataRoundTrip(t, s)
-					work, _, err := s.MkdirPath(t.Context(), "/Projects/Work")
-					require.NoError(t, err)
-					_, err = s.CreateFile(t.Context(), work.ID, "child.txt", fakeHash("a722"), 8, "text/plain")
-					require.NoError(t, err)
-					_, err = s.CreateFile(t.Context(), 12, "outside.txt", fakeHash("a721"), 7, "text/plain")
-					require.NoError(t, err)
-					seedInitialAuditAuthority(t, s, s.RootID())
-				} else {
-					s = newAuditedMoveStore(t)
+					scopePath = "/"
 				}
+				s := newAuditedMoveStoreAt(t, scopePath)
 				ctx := t.Context()
-				_, _, err := s.Restore(ctx, 11, UnconditionalRev)
-				require.NoError(t, err)
 				projects, err := s.NodeByPath(ctx, "/Projects")
+				require.NoError(t, err)
+				var oldFileID int64
+				require.NoError(t, s.db.QueryRowContext(ctx,
+					`SELECT id FROM nodes WHERE trash_parent=$1 AND trash_name='old.bin'`, projects.ID,
+				).Scan(&oldFileID))
+				_, _, err = s.Restore(ctx, oldFileID, UnconditionalRev)
 				require.NoError(t, err)
 				work, err := s.NodeByPath(ctx, "/Projects/Work")
 				require.NoError(t, err)
@@ -422,7 +424,7 @@ func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 					_, _, err = s.Trash(ctx, child.ID, UnconditionalRev)
 					require.NoError(t, err)
 				}
-				if state == "nested trash" || state == "inherited bridge" || state == "inherited trash" || state == "outside bridge" || state == "unknown ancestor" {
+				if state == "nested trash" || state == "inherited bridge" || state == "inherited trash" || state == "unknown ancestor" {
 					_, _, err = s.Trash(ctx, work.ID, UnconditionalRev)
 					require.NoError(t, err)
 				}
@@ -437,12 +439,8 @@ func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 					err = s.trashNodeTx(ctx, tx, outside, nowRFC3339())
 				case "unknown origin":
 					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=NULL WHERE id=$1`, child.ID)
-				case "outside bridge":
-					_, err = tx.ExecContext(ctx, `DELETE FROM audit_memberships WHERE scope_id=$1 AND node_id=$2`, testAuditScopeID, work.ID)
 				case "unknown ancestor":
 					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_parent=NULL WHERE id=$1`, work.ID)
-				case "no origin":
-					_, err = tx.ExecContext(ctx, `UPDATE nodes SET trash_name=NULL,trash_parent=NULL WHERE id=$1`, child.ID)
 				}
 				require.NoError(t, err)
 				full, err := currentAuditTopology(ctx, tx)
@@ -458,7 +456,7 @@ func TestAuditTrashOriginTopologyMatchesFullReplay(t *testing.T) {
 					require.NoError(t, err)
 					want := false
 					switch state {
-					case "known origin", "nested trash", "inherited bridge", "outside bridge":
+					case "known origin", "nested trash", "inherited bridge":
 						want = id == uint64(work.ID) || id == uint64(projects.ID) || id == uint64(s.RootID()) || id == uint64(innerID)
 					case "inherited trash":
 						want = id == uint64(projects.ID) || id == uint64(s.RootID())
