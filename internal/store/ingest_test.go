@@ -11,6 +11,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The candidate query drives from the smaller of the content's versions and
+// the folder's live files, so neither a large folder nor popular content scans.
+func TestResolveIngestNameDrivesFromSmallerSide(t *testing.T) {
+	t.Parallel()
+	for caseIndex, tc := range []struct {
+		copies, files int
+		blobFirst     bool
+	}{
+		{20, 100, true},
+		{33, 1, false},
+		{4, 2049, true},
+	} {
+		t.Run(fmt.Sprintf("copies=%d/files=%d", tc.copies, tc.files), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			elsewhere, err := s.Mkdir(ctx, s.RootID(), "elsewhere")
+			require.NoError(t, err)
+			for i := range tc.copies - 1 {
+				_, err := s.CreateFile(ctx, elsewhere.ID, fmt.Sprintf("copy-%d.txt", i), fakeHash("a1"), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			for i := range tc.files - 1 {
+				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("file-%d.txt", i), fmt.Sprintf("%064x", i+1000), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			prior, err := s.CreateFile(ctx, s.RootID(), "report (2).txt", fakeHash("a1"), 1, "text/plain")
+			require.NoError(t, err)
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if caseIndex == 0 {
+					query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("c3"), s.RootID())
+					require.NoError(t, err)
+					assert.Empty(t, query, "new content needs no candidate query")
+				}
+				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
+				require.NoError(t, err)
+				plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
+				if tc.blobFirst {
+					assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
+					assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+				} else {
+					assert.Contains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+				}
+				name, id, skipped, err := resolveIngestNameTx(ctx, tx, s.RootID(), "report.txt", fakeHash("a1"), "cli", "report.txt")
+				require.NoError(t, err)
+				assert.True(t, skipped)
+				assert.Equal(t, prior.ID, id)
+				assert.Empty(t, name)
+				return nil
+			}))
+		})
+	}
+}
+
 func TestIngestFileIdempotency(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
