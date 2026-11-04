@@ -51,7 +51,6 @@ var deferredBackendIndexes = map[string]string{
 	"photo_faces_assertion":                       "photo_faces",
 	"photo_set_members_added":                     "photo_set_members",
 	"photo_set_members_asset":                     "photo_set_members",
-	"rendition_lexical_generation_builds_build":   "rendition_lexical_generation_builds",
 	"storage_operations_retention":                "storage_operations",
 	"storage_operations_state":                    "storage_operations",
 	"term_report_history_recent":                  "term_report_history",

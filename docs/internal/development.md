@@ -352,11 +352,12 @@ Store operations. Supplied media, remote recording references,
 original recordings and transcript/caption inputs retain their source, occurrence
 and replay receipts through shared native operations. Visual previews, image
 embedding inputs and retained email PDFs also use shared native publication
-and read paths.
+and read paths. Plain-text extraction covers queue discovery, retry scheduling,
+terminal results and publication of retained text under rendition authority.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Grouped photo imports, XMP sidecar writing,
-photo-derived processing, extraction, email PDF
+photo-derived processing, email PDF
 rendering and other media workers, search,
 transfer, backup recovery, multi-store placement and storage-operation jobs
 remain unqualified.
@@ -447,6 +448,8 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
     max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
+GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at)
+    ON documents.extracted_text TO docbank_runtime;
 GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
     display_override_file_id, revision, updated_at)
     ON documents.photo_assets TO docbank_runtime;
@@ -858,6 +861,39 @@ resume, revocation, lease theft, staged-build reuse, failed publication and
 concurrent purge. It does not qualify photo-description or face-detection jobs,
 media producers, extraction workers, or public PostgreSQL vault opening.
 The email and page suites below qualify their own native producers.
+
+#### Plain-text extraction and publication
+
+The shared Store discovers selected text versions, deduplicates queued blobs,
+returns bounded ready batches, and defers retryable work behind ready items.
+Terminal failures retire their queue entry. Startup seeding queues missing or
+older results without reviving completed failures or purge-suppressed versions.
+
+`RecordExtraction` keeps the extractor version, exact UTF-8 text, attempt count
+and outcome together. It rejects version downgrades and same-version failures
+that would overwrite a success. The existing `MigrateLegacyPlainText` operation
+publishes retained plain-text results as immutable rendition builds and version
+attachments, with a complete lexical generation in the same transaction. Once a
+lexical head exists, `RecordExtraction` publishes only the affected blob's results
+inside its writer transaction. The result cache and publication commit together;
+a failure rolls both back and leaves the existing work queued for retry.
+Identical results reuse existing immutable records. Changed same-version text
+replaces the serving head and retires the queue entry. Processing changes identify
+newly served live versions and changed results.
+
+Purge suppression applies both to late worker results and subsequent startup
+seeding. A shared blob can still serve an unsuppressed version. PostgreSQL uses
+an identity column for the extraction cache's local row ID; it is not a document
+or audit identity. Document IDs continue to use the transactional counter.
+
+The `text-extraction` backend suite exercises these operations through native
+writes, including terminal outcomes, scheduling, exact Unicode and empty text,
+replay, same-version replacements, purge scopes and atomic rollback. PostgreSQL
+indexes lexical generation membership by build ID for publication cleanup,
+matching SQLite. SQLite alone
+maintains its legacy FTS5 cache. PostgreSQL retains the text and rendition lexical
+catalogs; ranked search, complete metadata transfer and public vault opening remain
+unqualified.
 
 #### Document embedding jobs and publication
 

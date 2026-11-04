@@ -2412,9 +2412,10 @@ func TestSeedTextExtractionQueueSettledWithoutWriter(t *testing.T) {
 	require.Empty(t, pending)
 }
 
-func TestPendingAndFailedTextExtractions(t *testing.T) {
+func checkPendingAndFailedTextExtractions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	textNode, err := s.CreateFile(
 		ctx, s.RootID(), "notes.txt", fakeHash("a1"), 10, "text/plain; charset=utf-8",
@@ -2523,9 +2524,10 @@ func TestRecordExtractionRejectsSameVersionFailureAfterSuccess(t *testing.T) {
 	require.Len(t, hits, 1)
 }
 
-func TestRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T) {
+func checkRecordExtractionNotifiesCurrentLiveNodesOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("aa")
 	first, err := s.CreateFile(ctx, s.RootID(), "stable.txt", hash, 10, "text/plain")
@@ -2606,9 +2608,10 @@ func TestRecordExtractionRejectsUnsupportedVersionAfterLegacyMigration(t *testin
 	}
 }
 
-func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
+func checkRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	seedLegacyMigrationRow(t, s, "published.txt", "ac", ExtractionResult{
 		Extractor: "plain-text", ExtractorVersion: 1,
@@ -2630,9 +2633,10 @@ func TestRecordExtractionRetiresFailureAfterLegacyMigration(t *testing.T) {
 	assert.Empty(t, pending)
 }
 
-func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
+func checkPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	created, err := s.CreateFile(
 		ctx, s.RootID(), "notes.txt", fakeHash("d1"), 10, "text/plain",
@@ -2656,9 +2660,10 @@ func TestPendingTextExtractionsSkipsSupersededQueuedContent(t *testing.T) {
 	assert.NotEqual(t, created.BlobHash, pending[0].BlobHash)
 }
 
-func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
+func checkTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hashes := make([]string, 65)
 	for i := range hashes {

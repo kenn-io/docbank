@@ -223,7 +223,11 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			destinations[i] = &values[i]
 			parameters[i] = fmt.Sprintf("$%d", i+1)
 		}
-		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ") VALUES(" + strings.Join(parameters, ",") + ")"
+		override := ""
+		if table == "extracted_text" {
+			override = " OVERRIDING SYSTEM VALUE"
+		}
+		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
 			_, err := to.ExecContext(ctx, insert, values...)
@@ -231,6 +235,10 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		}
 		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
+		if table == "extracted_text" {
+			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('extracted_text','id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM extracted_text`)
+			require.NoError(t, err)
+		}
 	}
 	var highWater int64
 	require.NoError(t, from.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name='nodes'`).Scan(&highWater))
