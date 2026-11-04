@@ -27,8 +27,6 @@ These layers must not be collapsed. Node reachability is product policy; blob
 membership is docbank's physical authority boundary; offsets, reader caches,
 and repacking are storage mechanics.
 
-Directory pages and counts read `nodes_live_children` in dirs-first byte order.
-
 Persisted rendition-artifact roles are recognized by a store-owned Go registry,
 which also supplies their stable order to backup derivative statistics. Retention
 and provider-request authorization remain separate policy checks. The
