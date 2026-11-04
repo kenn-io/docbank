@@ -4902,8 +4902,12 @@ func TestExtractReviewUnqualifiedUnsupportedRateNumeratorsSuppressDenominators(t
 	}{
 		{"spoken money numerator", "The fee is thirty dollars per 2 devices.", nil},
 		{"leading-decimal numerator", "The fee is $.50 per 2 devices.", nil},
+		{"fractional spoken money numerator", "The fee is half a dollar per 2 devices.", nil},
+		{"subunit spoken money numerator", "The fee is fifty cents per 2 devices.", nil},
 		{"spoken money numerator before independent sentence", "The fee is thirty dollars per 2 devices. The deposit is $7.", []string{"$7"}},
 		{"leading-decimal numerator before independent sentence", "The fee is $.50 per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"fractional spoken money numerator before independent sentence", "The fee is half a dollar per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"subunit spoken money numerator before independent sentence", "The fee is fifty cents per 2 devices. The deposit is $7.", []string{"$7"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Extract(tt.text)
@@ -6270,10 +6274,16 @@ func TestExtractKeepsCopularAssertionsIndependentAfterRateDates(t *testing.T) {
 }
 
 func TestExtractPreservesWordRateNumeratorAndSuppressesUnsupportedDenominators(t *testing.T) {
-	text := "From 1 July 2026 the fee is five dollars per month."
-	got := Extract(text)
-	if len(got) != 1 || got[0].Text != "five dollars" || got[0].Period != (Period{From: "2026-07-01"}) {
-		t.Errorf("supported word amount rate lost its stated period: %+v", got)
+	for _, tt := range []struct{ text, want string }{
+		{"From 1 July 2026 the fee is five dollars per month.", "five dollars"},
+		{"From 1 July 2026 the fee is five-ten dollars per month.", "five-ten dollars"},
+	} {
+		t.Run(tt.want, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != 1 || got[0].Text != tt.want || got[0].Period != (Period{From: "2026-07-01"}) {
+				t.Errorf("supported word amount rate lost its stated period: %+v", got)
+			}
+		})
 	}
 
 	for _, text := range []string{

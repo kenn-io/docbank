@@ -1510,10 +1510,14 @@ var (
 	unsupportedWordOperandScaffoldingRE = regexp.MustCompile(`(?i)^(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the)\s+`)
 	unsupportedCurrencyCodePrefixRE     = regexp.MustCompile(`(?i)^(?:` + currencyCodes + `)\s+`)
 	unsupportedCurrencySymbolPrefixRE   = regexp.MustCompile(`^[$€£¥]\s*`)
-	spokenMoneyUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
+	spokenMoneyUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
+	spokenCentsUnitLeadRE               = regexp.MustCompile(`(?i)^\s+cents?\b`)
+	unresolvedFractionalMoneyAmountRE   = regexp.MustCompile(`(?i)^(?:(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?|(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?|[0-9]+\s*/\s*[0-9]+|(?:a\s+)?` + fractionWords + `s?)\b`)
+	unresolvedCentsAmountRE             = regexp.MustCompile(`(?i)^(?:` + numRange + `|` + numeralWordAtom + `(?:[-\s]+(?:and\s+)?` + numeralWordAtom + `)*)\b`)
 	spokenCountUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
 	spokenPercentUnitLeadRE             = regexp.MustCompile(`(?i)^(?:\s+(?:percentage\s+points?|percent|per\s+cent)\b|\s*%)`)
 	spokenPercentageBaseLeadRE          = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:of|on)\s+(?:(?:the|a|an)\s+)?[\s.()\[\]"'‘’“”«»]*`)
+	supportedWordAmountRE               = regexp.MustCompile(`(?i)^(?:` + numRange + `)$`)
 )
 
 // Preserve uncertain spoken operands that the exact-number recognizers do not
@@ -1583,6 +1587,12 @@ func consumeUnresolvedWordOperandQualifiers(s string) (operand string, consumed 
 }
 
 func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, bool) {
+	if check, ok := unresolvedFractionalMoneyOperandCheck(operand, start); ok {
+		return check, true
+	}
+	if check, ok := unresolvedCentsMoneyOperandCheck(operand, start); ok {
+		return check, true
+	}
 	if amount, unit, _, ok := relativeDurationOperandParts(operand); ok {
 		if !supportedWordAmount(operand[amount[0]:amount[1]]) {
 			return candidate{start + amount[0], start + unit[1], Figure{Kind: durationKind}, 1}, true
@@ -1606,6 +1616,38 @@ func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, boo
 		return candidate{start, start + amount[1] + unit[1], Figure{Kind: moneyKind}, 1}, true
 	}
 	return candidate{}, false
+}
+
+func unresolvedFractionalMoneyOperandCheck(operand string, start int) (candidate, bool) {
+	amount := unresolvedFractionalMoneyAmountRE.FindStringIndex(operand)
+	if amount == nil || amount[0] != 0 {
+		return candidate{}, false
+	}
+	unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:])
+	if unit == nil || unit[0] != 0 {
+		return candidate{}, false
+	}
+	end := amount[1] + unit[1]
+	if rateEnd(operand[end:]) == 0 {
+		return candidate{}, false
+	}
+	return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
+}
+
+func unresolvedCentsMoneyOperandCheck(operand string, start int) (candidate, bool) {
+	amount := unresolvedCentsAmountRE.FindStringIndex(operand)
+	if amount == nil || amount[0] != 0 {
+		return candidate{}, false
+	}
+	unit := spokenCentsUnitLeadRE.FindStringIndex(operand[amount[1]:])
+	if unit == nil || unit[0] != 0 {
+		return candidate{}, false
+	}
+	end := amount[1] + unit[1]
+	if rateEnd(operand[end:]) == 0 {
+		return candidate{}, false
+	}
+	return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
 }
 
 func unresolvedCurrencyPrefixedOperandCheck(operand string, start int) (candidate, bool) {
@@ -1671,8 +1713,7 @@ func unresolvedSpokenPercentageBaseChecks(s string) []candidate {
 }
 
 func supportedWordAmount(s string) bool {
-	loc := wordRE.FindStringIndex(s)
-	return loc != nil && loc[0] == 0 && loc[1] == len(s)
+	return supportedWordAmountRE.MatchString(s)
 }
 
 func durationAbbreviationSentenceEnd(following string) bool {

@@ -290,7 +290,10 @@ standalone figure: `The fee is thirty dollars per 2 devices.` and
 unsupported count, duration and percentage numerators, as in `thirty devices
 per 5 days`, `thirty minutes per 2 devices`, and `thirty percent per 2
 devices`. Supported word amounts such as `five dollars per month` retain their
-stated period. A later sentence remains eligible.
+stated period. Unresolved fractional and subunit money operands such as `half a
+dollar per 2 devices` and `fifty cents per 2 devices` also suppress the
+denominator, while supported ranges such as `five-ten dollars per month` retain
+their stated period. A later sentence remains eligible.
 Arithmetic following a rate still causes the whole clause to be omitted. A
 postfix bound on a rate also suppresses its denominator across wrapped
 whitespace, as in `$5 [maximum  ] per 2 devices`.
