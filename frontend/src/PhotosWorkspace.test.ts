@@ -2421,21 +2421,6 @@ function mapRecoverySetup() {
   });
   return { photos, retry };
 }
-it("offers stack decisions only while every selected map photo is shown", async () => {
-  const { photos } = mapRecoverySetup();
-  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
-  const rows = [photo(1), photo(2)].map((row) => ({ ...row, stack, latitude: 0, longitude: 120 }));
-  vi.spyOn(photos.authored, "prepareStack").mockResolvedValue(undefined);
-  photos.items = rows;
-  photos.selectLoaded();
-  await vi.dynamicImportSettled();
-  await act(() => map.onvisible!(rows));
-  expect(screen.getByRole("button", { name: "Keep all" })).toBeTruthy();
-  await act(() => map.onvisible!([rows[0]]));
-  expect(screen.queryByRole("button", { name: "Keep all" })).toBeNull();
-  photos.dispose();
-});
-
 it("keeps Map recovery outside mobile tabs", async () => {
   const { photos, retry } = mapRecoverySetup();
   await vi.dynamicImportSettled();

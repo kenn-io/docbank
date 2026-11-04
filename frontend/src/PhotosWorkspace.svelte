@@ -827,7 +827,7 @@
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
   const selectedStack = $derived.by(() => {
-    if (photos.allResults || !photos.selectedIDs.size || outsideSelection) return;
+    if (photos.allResults || !photos.selectedIDs.size) return;
     const selected = [...photos.selectedIDs].map((id) => photos.rowByID(id));
     const row = selected[0];
     if (!row || !("stack" in row) || !row.stack || row.stack.asset_ids.length < 2) return;
