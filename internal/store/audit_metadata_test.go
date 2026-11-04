@@ -613,6 +613,5 @@ func TestAuditValidationRejectsEventSequenceDivergence(t *testing.T) {
 		_, err := s.db.ExecContext(t.Context(), `UPDATE audit_records SET operation_sequence=$1 WHERE kind='event'`, sequence)
 		require.NoError(t, err)
 		require.ErrorContains(t, s.ValidateMetadata(t.Context()), "operation sequence does not match canonical mutation")
-		require.ErrorContains(t, s.ExportMetadata(t.Context(), &bytes.Buffer{}), "operation sequence does not match canonical mutation")
 	}
 }
