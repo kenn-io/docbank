@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ func TestDetectFormatAcceptsBoundedPDFTrailingData(t *testing.T) {
 	require.NoError(t, err)
 	scanner := []byte("\r\nscanner padding\x00\xff\x01\r\nEND SCAN\n")
 	incremental := append(testPDFIncrementalUpdateWithoutFinalMarker(t), []byte("%%EOF\n")...)
+	linearizedWithoutFinalRoot := pdfTailLinearizedWithoutFinalRoot(t)
 	for _, test := range []struct {
 		name        string
 		pdf, suffix []byte
@@ -38,6 +40,10 @@ func TestDetectFormatAcceptsBoundedPDFTrailingData(t *testing.T) {
 		{"linearized scanner output", linearized, scanner},
 		{"linearized xref stream", linearizedStream, scanner},
 		{"linearized stream with table main xref", pdfTailLinearizedStreamWithTableMain(), scanner},
+		{"linearized without final root", linearizedWithoutFinalRoot, nil},
+		{"linearized without final root scanner output", linearizedWithoutFinalRoot, scanner},
+		{"hybrid-reference update", pdfTailHybridReference(), nil},
+		{"hybrid-reference update scanner output", pdfTailHybridReference(), scanner},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			content := append(bytes.Clone(test.pdf), test.suffix...)
@@ -303,6 +309,8 @@ func TestDetectFormatRejectsForgedPDFStartXRef(t *testing.T) {
 		{"indirect stream", pdfTailXRefStream(6, true)},
 		{"linearized stream", linearizedStream},
 		{"linearized stream with table main xref", pdfTailLinearizedStreamWithTableMain()},
+		{"linearized without final root", pdfTailLinearizedWithoutFinalRoot(t)},
+		{"hybrid-reference update", pdfTailHybridReference()},
 	} {
 		t.Run(pdf.name, func(t *testing.T) {
 			xref := bytes.LastIndex(pdf.content, []byte("startxref\n"))
@@ -321,6 +329,87 @@ func TestDetectFormatRejectsForgedPDFStartXRef(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An empty table section is valid only when its trailer defers to another
+// cross-reference section.
+func TestDetectFormatRejectsEmptyPDFXRefTableWithoutLink(t *testing.T) {
+	content := pdfTailHybridReference()
+	links := regexp.MustCompile(` /Prev \d+ /XRefStm \d+`)
+	require.Len(t, links.FindAllIndex(content, -1), 1)
+	content = links.ReplaceAll(content, nil)
+
+	_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+	require.ErrorContains(t, err, "PDF cross-reference data is invalid")
+}
+
+// The 4 KiB cross-reference read may end inside a subsection header or the
+// trailer keyword. That is truncation, so the final trailer governs. Blank
+// lines shift the layout through every byte position; the object-graph parser
+// rejects them, so only the unpadded layout is opened.
+func TestDetectFormatPDFTableAtXRefReadBoundary(t *testing.T) {
+	for padding := range 21 {
+		for count := 200; count <= 206; count++ {
+			t.Run(fmt.Sprintf("%d/%d", padding, count), func(t *testing.T) {
+				content := pdfTailTable(count, strings.Repeat("\n", padding))
+				format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+				require.NoError(t, err)
+				require.Equal(t, "pdf", format.ID)
+				if padding == 0 {
+					pages, err := formatdetect.CountPDFPages(content)
+					require.NoError(t, err)
+					require.Equal(t, int64(1), pages)
+				}
+			})
+		}
+	}
+}
+
+// Comment lines between subsections or before the trailer are not headers.
+// Format detection accepts them; the object-graph parser is a separate contract.
+func TestDetectFormatPDFTableWithComments(t *testing.T) {
+	for _, count := range []int{4, 204} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			content := pdfTailTable(count, "% producer note\n")
+			format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.NoError(t, err)
+			require.Equal(t, "pdf", format.ID)
+		})
+	}
+}
+
+// A first-page trailer governs even when the 4 KiB read ends before its
+// startxref or inside trailing text on its line, or when startxref appears in a
+// comment inside it. Each layout places an anchor at an offset from the table.
+func TestDetectFormatLinearizedTableTrailerBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name, trailer, anchor string
+		at                    int
+	}{
+		{"startxref crosses read", "trailer\n<< /Root 1 0 R /Size %[1]d /Prev %010[2]d%[3]s >>\n", "startxref", 4090},
+		{"startxref beyond read", "trailer\n<< /Root 1 0 R /Size %[1]d /Prev %010[2]d >>%[3]s\n", "startxref", 4100},
+		{
+			"comment startxref and real one beyond read",
+			"trailer\n<< /Root 1 0 R /Size %[1]d %% startxref\n/Prev %010[2]d%[3]s >>\n", ">>\nstartxref", 4094,
+		},
+		{"same-line trailer with comment across read", "trailer << /Root 1 0 R /Size %[1]d /Prev %010[2]d%[3]s >> %% note\n", ">> %", 4088},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			content := pdfTailLinearizedTable(t, test.trailer, test.anchor, test.at)
+			format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.NoError(t, err)
+			require.Equal(t, "pdf", format.ID)
+		})
+	}
+	t.Run("startxref in trailer comment", func(t *testing.T) {
+		content := pdfTailLinearizedWithoutFinalRoot(t)
+		const padding = "/Prev 861                   /ID"
+		require.Equal(t, 1, bytes.Count(content, []byte(padding)))
+		content = bytes.Replace(content, []byte(padding), []byte("/Prev 861 % startxref\n     /ID"), 1)
+		format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+		require.NoError(t, err)
+		require.Equal(t, "pdf", format.ID)
+	})
 }
 
 // Readers accept spaces or tabs before the stream line ending. A stream that
@@ -541,5 +630,127 @@ func pdfTailLinearizedStreamWithTableMain() []byte {
 	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size 8 >>\nstartxref\n%d\n%%%%EOF\n", firstOffset)
 	content := output.Bytes()
 	copy(content[firstOffset:], firstWithPrev(mainOffset))
+	return content
+}
+
+// qpdf's default linearization omits /Root from the final trailer. The final
+// startxref selects the first-page table, whose own trailer carries /Root.
+func pdfTailLinearizedWithoutFinalRoot(t *testing.T) []byte {
+	t.Helper()
+	content, err := os.ReadFile("testdata/linearized.pdf")
+	require.NoError(t, err)
+	const finalSize = "/Size 7 /Root 3 0 R"
+	require.Equal(t, 1, bytes.Count(content, []byte(finalSize)))
+	// Pad with spaces to keep every byte offset unchanged.
+	return bytes.Replace(content, []byte(finalSize), []byte(fmt.Sprintf("%-*s", len(finalSize), "/Size 7")), 1)
+}
+
+// Office "Save as PDF" writes a hybrid-reference file. Its final update has an
+// empty table whose trailer links to the earlier table and an xref stream.
+func pdfTailHybridReference() []byte {
+	var output bytes.Buffer
+	output.WriteString("%PDF-1.5\n")
+	offsets := make([]int, 5)
+	for index, object := range []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>",
+	} {
+		offsets[index+1] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	offsets[4] = output.Len()
+	entries := make([]byte, 5*7)
+	putTestXRefEntry(entries, 0, 0, 0, 65_535)
+	for number := 1; number <= 4; number++ {
+		putTestXRefEntry(entries, number, 1, uint32(offsets[number]), 0) // #nosec G115 -- bounded synthetic fixture.
+	}
+	_, _ = fmt.Fprintf(&output, "4 0 obj\n<< /Type /XRef /Size 5 /W [1 4 2] /Length %d >>\nstream\n", len(entries))
+	output.Write(entries)
+	output.WriteString("\nendstream\nendobj\n")
+	table := output.Len()
+	output.WriteString("xref\n0 5\n0000000000 65535 f \n")
+	for number := 1; number <= 4; number++ {
+		_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offsets[number])
+	}
+	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", table)
+	update := output.Len()
+	_, _ = fmt.Fprintf(&output, "xref\n0 0\ntrailer\n<< /Size 5 /Root 1 0 R /Prev %d /XRefStm %d >>\nstartxref\n%d\n%%%%EOF\n",
+		table, offsets[4], update)
+	return output.Bytes()
+}
+
+// Build a one-page PDF whose table has count entries in two subsections. The
+// separator, such as blank lines or a comment, precedes the second subsection
+// and the trailer.
+func pdfTailTable(count int, separator string) []byte {
+	var output bytes.Buffer
+	output.WriteString("%PDF-1.4\n")
+	offsets := make([]int, 4)
+	for index, object := range []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>",
+	} {
+		offsets[index+1] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	table := output.Len()
+	_, _ = fmt.Fprintf(&output, "xref\n0 %d\n0000000000 65535 f \n", count-1)
+	for number := 1; number < count-1; number++ {
+		if number < len(offsets) {
+			_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offsets[number])
+		} else {
+			output.WriteString("0000000000 65535 f \n")
+		}
+	}
+	_, _ = fmt.Fprintf(&output, "%s%d 1\n0000000000 65535 f \n", separator, count-1)
+	_, _ = fmt.Fprintf(&output, "%strailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", separator, count, table)
+	return output.Bytes()
+}
+
+// Build a linearized layout whose first-page table trailer carries /Root. The
+// trailer format takes the size, the main table offset, and padding; padding
+// moves anchor to offset at from the first-page table, near the end of the
+// 4 KiB read. The final trailer, as qpdf writes it by default, has no /Root.
+func pdfTailLinearizedTable(t *testing.T, trailer, anchor string, at int) []byte {
+	t.Helper()
+	const header = "%PDF-1.4\n"
+	const linearization = "4 0 obj\n<< /Linearized 1 >>\nendobj\n"
+	const firstCount = 200
+	first := len(header + linearization)
+	size := 5 + firstCount
+	build := func(padding, mainOffset int) ([]byte, int) {
+		var output bytes.Buffer
+		output.WriteString(header + linearization)
+		_, _ = fmt.Fprintf(&output, "xref\n5 %d\n", firstCount)
+		for range firstCount {
+			output.WriteString("0000000000 65535 f \n")
+		}
+		_, _ = fmt.Fprintf(&output, trailer, size, mainOffset, strings.Repeat(" ", padding))
+		output.WriteString("startxref\n0\n%%EOF\n")
+		offsets := []int{0, 0, 0, 0, len(header)}
+		for index, object := range []string{
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>",
+		} {
+			offsets[index+1] = output.Len()
+			_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+		}
+		main := output.Len()
+		output.WriteString("xref\n0 5\n0000000000 65535 f \n")
+		for number := 1; number < 5; number++ {
+			_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offsets[number])
+		}
+		_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d >>\nstartxref\n%d\n%%%%EOF\n", size, first)
+		return output.Bytes(), main
+	}
+	content, _ := build(0, 0)
+	padding := at - bytes.Index(content[first:], []byte(anchor))
+	require.GreaterOrEqual(t, padding, 0)
+	_, main := build(padding, 0)
+	content, _ = build(padding, main)
+	require.Equal(t, at, bytes.Index(content[first:], []byte(anchor)))
 	return content
 }
