@@ -2804,12 +2804,19 @@ func FuzzExtractRejectsArithmeticRelativeDurationOperands(f *testing.F) {
 		"10 + 5", "100 + 25", "10 + 5 + 2", "10 - 5 - 2", "10 − 5 − 2", "10 — 5 — 2",
 		"1 000 + 5", "1'000 + 5",
 		"10 * 5 * 2", "10 × 5 × 2", "10 ÷ 5 ÷ 2", "10 / 5 / 2", "10 ⁄ 5 ⁄ 2",
-		"10 ± 5 + 2", "10 ∓ 5 + 2", "10 ^ 5 ^ 2",
+		"10 ± 5 + 2", "10 ∓ 5 + 2", "10 ^ 5 ^ 2", "10 + .5", "10 + negative 5",
 	} {
 		f.Add(operand)
 	}
+	f.Add("+")
+	f.Add("0\n* 0")
 	f.Fuzz(func(t *testing.T, operand string) {
-		if len(operand) == 0 || len(operand) > 64 || strings.Trim(operand, "0123456789 \t\r\n+-−–—*/⁄×÷±∓^xX_'’‘ʼ") != "" || !strings.ContainsAny(operand, "+-−–—*/⁄×÷±∓^xX") {
+		operand = strings.TrimSpace(operand)
+		if len(operand) == 0 || len(operand) > 64 || strings.ContainsAny(operand, "\r\n") || strings.Trim(operand, "0123456789 .\t+-−–—*/⁄×÷±∓^xX_'’‘ʼabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" || !strings.ContainsAny(operand, "+-−–—*/⁄×÷±∓^xX") {
+			t.Skip()
+		}
+		amount, _, _, ok := relativeDurationOperandParts(operand + " min.")
+		if !ok || amount[0] != 0 || amount[1] != len(operand) {
 			t.Skip()
 		}
 		text := "The deadline is 7 min. before " + operand + " min. The deposit is $7."
@@ -3727,6 +3734,20 @@ func TestExtractReviewUncertainRateAndArithmeticOperands(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExtractRejectsRelativeDurationWithUnsupportedOperands(t *testing.T) {
+	for _, text := range []string{
+		"The deadline is thirty minutes before 2 hours. The deposit is $7.",
+		"The deadline is thirty seconds before 2 hours. The deposit is $7.",
+		"The deadline is 7 min. before 10 + .5 min. The deposit is $7.",
+		"The deadline is 7 min. before 10 + negative 5 min. The deposit is $7.",
+	} {
+		got := Extract(text)
+		if len(got) != 1 || got[0].Text != "$7" || got[0].Clause != "The deposit is $7." {
+			t.Errorf("relative-duration operand leaked or hid the next assertion for %q: %+v", text, got)
+		}
 	}
 }
 

@@ -1222,6 +1222,7 @@ func normalizedDurationContinuation(prefix, suffix string) bool {
 }
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^(?:\s*[` + regexp.QuoteMeta(closingPunctuation) + `]+\s*|\s+)(after|before|prior\s+to)\s+`)
+var relativeDurationPrecedingConnectorRE = regexp.MustCompile(`(?i)\s+(after|before|prior\s+to)\s*$`)
 var relativeDurationClauseConnectorRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s*(after|before|prior\s+to)\s+`)
 var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `|minus|negative|plus|positive)\s+|(?:<=|>=|≤|≥|<|>)\s*|[+~≈−-]\s*)`)
 var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?|` + assertionPredicatePattern + `)\b`)
@@ -1301,6 +1302,40 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 	return ok && parsed.Kind == durationKind || unsupportedRelativeDurationOperand(operand, connector)
 }
 
+// A recognized right operand can still be part of a relative comparison when
+// its left-hand duration is too unsupported to enter the candidate set.
+func unsupportedRelativeDurationBeforeFigure(prefix string) bool {
+	loc := relativeDurationPrecedingConnectorRE.FindStringSubmatchIndex(prefix)
+	if loc == nil {
+		return false
+	}
+	left := strings.TrimSpace(prefix[:loc[0]])
+	for start := 0; start < len(left); {
+		if start == 0 {
+			if relativeDurationSuffixHasOnlyOperand(left[start:]) {
+				return true
+			}
+		} else {
+			previous, _ := utf8.DecodeLastRuneInString(left[:start])
+			if unicode.IsSpace(previous) || strings.ContainsRune(`([\"'‘’“”«»`, previous) {
+				if relativeDurationSuffixHasOnlyOperand(left[start:]) {
+					return true
+				}
+			}
+		}
+		_, size := utf8.DecodeRuneInString(left[start:])
+		start += size
+	}
+	return false
+}
+
+func relativeDurationSuffixHasOnlyOperand(s string) bool {
+	operand := trimRelativeDurationWrappers(s)
+	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
+	_, unit, _, ok := relativeDurationOperandParts(operand)
+	return ok && trimRelativeDurationWrappers(strings.TrimSpace(operand[unit[1]:])) == ""
+}
+
 const numericGroupingSeparatorChars = `_'’‘ʼ`
 
 // Arithmetic expressions stay attached to a relative-duration operand until
@@ -1310,7 +1345,7 @@ var relativeDurationArithmeticNonDashOperator = `(?:[+*×÷±∓^]|multiplied\s+
 var relativeDurationArithmeticDashOperator = `[\p{Pd}−]`
 var relativeDurationArithmeticOperator = `(?:` + relativeDurationArithmeticNonDashOperator + `|[/⁄]|` + relativeDurationArithmeticDashOperator + `)`
 var relativeDurationArithmeticGroupedNumber = `(?:[0-9]{1,3}(?:(?:[[:space:]]+|[` + numericGroupingSeparatorChars + `]|,\s*)[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:[[:space:]]+[0-9]+)+(?:\.[0-9]+)?|[0-9]+(?:(?:[,.][[:space:]]*|[[:space:]]+)[0-9]+)+)`
-var relativeDurationArithmeticNumber = `(?:[-+−]\s*)?(?:` + relativeDurationArithmeticGroupedNumber + `|` + number + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
+var relativeDurationArithmeticNumber = `(?:(?:minus|negative|plus|positive)\s+|[-+−]\s*)?(?:` + relativeDurationArithmeticGroupedNumber + `|(?:[0-9]+)?\.[0-9]+|` + number + `|(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\b)`
 var relativeDurationArithmeticAmountRE = regexp.MustCompile(`(?i)^(?:` +
 	`(?:` + relativeDurationArithmeticNumber + `)\s*` + relativeDurationArithmeticNonDashOperator + `\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))*` +
 	`|(?:` + relativeDurationArithmeticNumber + `)\s*[/⁄]\s*(?:` + relativeDurationArithmeticNumber + `)(?:\s*` + relativeDurationArithmeticOperator + `\s*(?:` + relativeDurationArithmeticNumber + `))+` +
@@ -2064,7 +2099,7 @@ func unsafeCandidates(s string, checks, cs []candidate) bool {
 		}
 	}
 	return slices.ContainsFunc(checks, func(c candidate) bool {
-		return c.priority > 0 && (c.f.Kind == durationKind && (numericRelativeDurationContinuation(s[:c.end], s[c.end:]) || unsupportedDurationAlternativeContinuation(strings.TrimPrefix(s[c.end:], "."))) || comparisonContinuationAfterRate(s[c.end:]) || compoundPrefixWithRates(s, c.start, checks, cs) || compoundSuffixBeforeDates(s, c.end, c.f, cs, checks))
+		return c.priority > 0 && (c.f.Kind == durationKind && (numericRelativeDurationContinuation(s[:c.end], s[c.end:]) || unsupportedRelativeDurationBeforeFigure(s[:c.start]) || unsupportedDurationAlternativeContinuation(strings.TrimPrefix(s[c.end:], "."))) || comparisonContinuationAfterRate(s[c.end:]) || compoundPrefixWithRates(s, c.start, checks, cs) || compoundSuffixBeforeDates(s, c.end, c.f, cs, checks))
 	})
 }
 
