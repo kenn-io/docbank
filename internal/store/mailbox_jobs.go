@@ -55,7 +55,7 @@ func normalizeMailboxSettings(s MailboxSettings) (MailboxSettings, error) {
 
 func validateMailboxLabelTagsTx(ctx context.Context, tx *sql.Tx, tags map[string]string) error {
 	for label, id := range tags {
-		if _, err := tagByIDTx(ctx, tx, id); err != nil {
+		if _, err := tagByIDQuery(ctx, tx, id); err != nil {
 			return fmt.Errorf("mailbox label %q: %w", label, err)
 		}
 	}

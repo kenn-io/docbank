@@ -477,6 +477,12 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg",
 				fakeHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
 			require.NoError(t, err)
+			tag, err := s.CreateTag(t.Context(), "imported")
+			require.NoError(t, err)
+			for _, id := range []int64{original.ID, image.ID, s.RootID()} {
+				_, err = s.AssignTag(t.Context(), tag.ID, id, UnconditionalRev)
+				require.NoError(t, err)
+			}
 			_, before, err := s.VaultChanges(t.Context(), "", 500)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
@@ -496,6 +502,7 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 				_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token, "failed", "", nil)
 			}
 			require.NoError(t, err)
+			assertTagAssignmentCounts(t, s)
 			changes, _, err := s.VaultChanges(t.Context(), before, 500)
 			require.NoError(t, err)
 			if outcome == "checkout-pinned" {

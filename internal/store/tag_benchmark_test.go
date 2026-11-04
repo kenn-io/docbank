@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +36,7 @@ func BenchmarkNodeTags(b *testing.B) {
 				for i := range definitions {
 					// Permute IDs so membership-index order differs from name order.
 					id := fmt.Sprintf("%08x-1111-4111-8111-111111111111", (i*7919)%definitions+1)
-					if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`,
+					if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name,assignment_count) VALUES(?,?,100)`,
 						id, fmt.Sprintf("tag-%04d", i)); err != nil {
 						return err
 					}
@@ -102,7 +103,8 @@ func BenchmarkTags(b *testing.B) {
 						}
 					}
 				}
-				return nil
+				_, err := tx.ExecContext(b.Context(), `UPDATE tags SET assignment_count=100`)
+				return err
 			}))
 			for _, offset := range []int{0, definitions - 50} {
 				b.Run(fmt.Sprintf("offset=%d", offset), func(b *testing.B) {
@@ -125,7 +127,7 @@ func BenchmarkTags(b *testing.B) {
 // BenchmarkTaggedNodes measures tag lookups, filtered searches, and bounded node
 // pages as the catalog grows. Creation and assignments are excluded from timing.
 func BenchmarkTaggedNodes(b *testing.B) {
-	for _, files := range []int{0, 100, 10000} {
+	for _, files := range []int{0, 100, 10000, 100000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
 			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)
@@ -150,10 +152,11 @@ func BenchmarkTaggedNodes(b *testing.B) {
 						return err
 					}
 				}
-				return nil
+				_, err := tx.ExecContext(b.Context(), `UPDATE tags SET assignment_count=? WHERE id=?`, files, tag.ID)
+				return err
 			}))
-			for _, mode := range []string{"lookup_id", "lookup_name", "assign_noop"} {
-				if mode == "assign_noop" && files == 0 {
+			for _, mode := range []string{"lookup_id", "lookup_name", "assign_noop", "batch_noop"} {
+				if (mode == "assign_noop" || mode == "batch_noop") && files == 0 {
 					continue
 				}
 				b.Run(mode, func(b *testing.B) {
@@ -173,6 +176,16 @@ func BenchmarkTaggedNodes(b *testing.B) {
 								b.Fatal("changed existing assignment")
 							}
 							got = change.Tag
+						case "batch_noop":
+							var receipt BatchTagReceiptV1
+							receipt, err = s.BatchTags(b.Context(), BatchTagRequest{
+								OperationID: uuid.New().String(), TagID: tag.ID, Assign: true,
+								Nodes: []BatchTagTarget{{NodeID: selected.ID, Revision: selected.Revision}},
+							})
+							if err == nil && receipt.Nodes[0].Changed {
+								b.Fatal("changed existing assignment")
+							}
+							got = Tag{ID: receipt.TagID, AssignmentCount: receipt.AssignmentCount}
 						}
 						if err != nil || got.ID != tag.ID || got.AssignmentCount != files {
 							b.Fatalf("tag=%+v err=%v", got, err)
@@ -195,6 +208,8 @@ func BenchmarkTaggedNodes(b *testing.B) {
 			if files != 0 {
 				_, err = s.db.ExecContext(b.Context(),
 					`INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, selected.ID, sparseTag.ID)
+				require.NoError(b, err)
+				_, err = s.db.ExecContext(b.Context(), `UPDATE tags SET assignment_count=1 WHERE id=?`, sparseTag.ID)
 				require.NoError(b, err)
 			}
 			for _, scope := range []struct {

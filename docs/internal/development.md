@@ -489,7 +489,7 @@ GRANT UPDATE(state, failure_code, updated_at)
 GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
     recorded_at, expires_at, active, released_at)
     ON documents.current_rendition_roots TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(name, revision) ON documents.tags TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(name, revision, assignment_count) ON documents.tags TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
 GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
@@ -1248,6 +1248,8 @@ backup or restore.
 Tag creation, assignment, rename and deletion use the same Store methods on
 both databases, including audited operations and path-based assignment. Tag
 pages retain byte-order sorting, current assignment counts and trash filtering.
+Definitions store exact assignment counts. Membership changes, purges, and
+metadata restores update counts in the same transaction.
 Bulk edits preserve revision fences, atomic changes and immutable replay
 receipts, including replay after a tag is deleted. A bulk preview reads the tag
 and selected nodes from one repeatable-read snapshot.

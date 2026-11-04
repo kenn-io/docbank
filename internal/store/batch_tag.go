@@ -105,7 +105,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 			return err
 		}
 
-		tag, err := tagByIDTx(ctx, tx, request.TagID)
+		tag, err := tagByIDQuery(ctx, tx, request.TagID)
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 		if err != nil {
 			return err
 		}
-		finalTag, err := tagByIDTx(ctx, tx, request.TagID)
+		finalTag, err := tagByIDQuery(ctx, tx, request.TagID)
 		if err != nil {
 			return err
 		}
@@ -158,7 +158,7 @@ func (s *Store) PreviewBatchTags(
 		return BatchTagPreview{}, fmt.Errorf("starting batch tag preview: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	tag, err := tagByIDTx(ctx, tx, tagID)
+	tag, err := tagByIDQuery(ctx, tx, tagID)
 	if err != nil {
 		return BatchTagPreview{}, err
 	}
@@ -323,7 +323,11 @@ func (s *Store) applyBatchTagsTx(
 		WHERE id IN (`+placeholders+`)`, append([]any{recordedAt}, anyArgs(changedIDs)...)...); err != nil {
 		return nil, fmt.Errorf("advancing batch tag nodes: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+$1 WHERE id=$2`, len(changedIDs), tag.ID); err != nil {
+	delta := len(changedIDs)
+	if !request.Assign {
+		delta = -delta
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+$1, assignment_count=assignment_count+$2 WHERE id=$3`, len(changedIDs), delta, tag.ID); err != nil {
 		return nil, fmt.Errorf("advancing batch tag: %w", err)
 	}
 	if s.postgresSchema != "" {

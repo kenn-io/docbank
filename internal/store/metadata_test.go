@@ -306,6 +306,7 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	importedTag, err := target.TagByID(ctx, metadataTagID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), importedTag.Revision)
+	require.Equal(t, 1, importedTag.AssignmentCount)
 
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
@@ -1483,7 +1484,7 @@ func seedMetadataRoundTrip(t *testing.T, s *Store) {
 				 VALUES('` + metadataIngestID + `','2026-01-08T00:00:00.000000000Z','filesystem','dropbox')`,
 			`INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime,supersedes)
 				 VALUES('` + provenanceID + `',10,'` + metadataIngestID + `','/source/report.txt','` + originalMTime + `',NULL)`,
-			`INSERT INTO tags(id,name,revision) VALUES('` + metadataTagID + `','important',7)`,
+			`INSERT INTO tags(id,name,revision,assignment_count) VALUES('` + metadataTagID + `','important',7,1)`,
 			`INSERT INTO node_tags(node_id,tag_id) VALUES(10,'` + metadataTagID + `')`,
 			`INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at)
 			 VALUES('` + metadataHashCurrent + `','plain',2,'ok',NULL,1,'line one\nline two','2026-01-13T00:00:00.000000000Z')`,

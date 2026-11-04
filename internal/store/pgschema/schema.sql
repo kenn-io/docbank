@@ -242,7 +242,8 @@ CREATE TABLE {{schema}}.photo_technical_metadata (
 CREATE TABLE {{schema}}.tags (
     id       TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     name     TEXT COLLATE "C" NOT NULL UNIQUE,
-    revision BIGINT NOT NULL DEFAULT 1
+    revision BIGINT NOT NULL DEFAULT 1,
+    assignment_count BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE {{schema}}.node_tags (
