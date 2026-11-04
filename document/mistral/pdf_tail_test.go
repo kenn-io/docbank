@@ -378,15 +378,29 @@ func TestDetectFormatPDFTableWithComments(t *testing.T) {
 	}
 }
 
-// A first-page trailer governs even when the bounded read ends before its
-// startxref, or when startxref appears in a comment inside it.
+// A first-page trailer governs even when the 4 KiB read ends before its
+// startxref or inside trailing text on its line, or when startxref appears in a
+// comment inside it. Each layout places an anchor at an offset from the table.
 func TestDetectFormatLinearizedTableTrailerBoundaries(t *testing.T) {
-	t.Run("startxref beyond read", func(t *testing.T) {
-		content := pdfTailLinearizedTable(t)
-		format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-		require.NoError(t, err)
-		require.Equal(t, "pdf", format.ID)
-	})
+	for _, test := range []struct {
+		name, trailer, anchor string
+		at                    int
+	}{
+		{"startxref crosses read", "trailer\n<< /Root 1 0 R /Size %[1]d /Prev %010[2]d%[3]s >>\n", "startxref", 4090},
+		{"startxref beyond read", "trailer\n<< /Root 1 0 R /Size %[1]d /Prev %010[2]d >>%[3]s\n", "startxref", 4100},
+		{
+			"comment startxref and real one beyond read",
+			"trailer\n<< /Root 1 0 R /Size %[1]d %% startxref\n/Prev %010[2]d%[3]s >>\n", ">>\nstartxref", 4094,
+		},
+		{"same-line trailer with comment across read", "trailer << /Root 1 0 R /Size %[1]d /Prev %010[2]d%[3]s >> %% note\n", ">> %", 4088},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			content := pdfTailLinearizedTable(t, test.trailer, test.anchor, test.at)
+			format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.NoError(t, err)
+			require.Equal(t, "pdf", format.ID)
+		})
+	}
 	t.Run("startxref in trailer comment", func(t *testing.T) {
 		content := pdfTailLinearizedWithoutFinalRoot(t)
 		const padding = "/Prev 861                   /ID"
@@ -695,25 +709,26 @@ func pdfTailTable(count int, separator string) []byte {
 	return output.Bytes()
 }
 
-// Build a linearized layout whose first-page table trailer carries /Root and
-// ends inside the 4 KiB read, while the startxref after it does not fit. The
-// final trailer, as qpdf writes it by default, has no /Root.
-func pdfTailLinearizedTable(t *testing.T) []byte {
+// Build a linearized layout whose first-page table trailer carries /Root. The
+// trailer format takes the size, the main table offset, and padding; padding
+// moves anchor to offset at from the first-page table, near the end of the
+// 4 KiB read. The final trailer, as qpdf writes it by default, has no /Root.
+func pdfTailLinearizedTable(t *testing.T, trailer, anchor string, at int) []byte {
 	t.Helper()
 	const header = "%PDF-1.4\n"
 	const linearization = "4 0 obj\n<< /Linearized 1 >>\nendobj\n"
 	const firstCount = 200
+	first := len(header + linearization)
 	size := 5 + firstCount
-	var build func(padding, mainOffset int) []byte
-	build = func(padding, mainOffset int) []byte {
+	build := func(padding, mainOffset int) ([]byte, int) {
 		var output bytes.Buffer
 		output.WriteString(header + linearization)
 		_, _ = fmt.Fprintf(&output, "xref\n5 %d\n", firstCount)
 		for range firstCount {
 			output.WriteString("0000000000 65535 f \n")
 		}
-		_, _ = fmt.Fprintf(&output, "trailer\n<< /Root 1 0 R /Size %d /Prev %010d%s >>\nstartxref\n0\n%%%%EOF\n",
-			size, mainOffset, strings.Repeat(" ", padding))
+		_, _ = fmt.Fprintf(&output, trailer, size, mainOffset, strings.Repeat(" ", padding))
+		output.WriteString("startxref\n0\n%%EOF\n")
 		offsets := []int{0, 0, 0, 0, len(header)}
 		for index, object := range []string{
 			"<< /Type /Catalog /Pages 2 0 R >>",
@@ -728,21 +743,14 @@ func pdfTailLinearizedTable(t *testing.T) []byte {
 		for number := 1; number < 5; number++ {
 			_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offsets[number])
 		}
-		_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d >>\nstartxref\n%d\n%%%%EOF\n", size, len(header+linearization))
-		content := output.Bytes()
-		if mainOffset == 0 {
-			return build(padding, main)
-		}
-		return content
+		_, _ = fmt.Fprintf(&output, "trailer\n<< /Size %d >>\nstartxref\n%d\n%%%%EOF\n", size, first)
+		return output.Bytes(), main
 	}
-	first := len(header + linearization)
-	content := build(0, 0)
-	// Place the first-page startxref across the end of the bounded read.
-	padding := 4090 - (bytes.Index(content[first:], []byte("startxref")))
-	require.Positive(t, padding)
-	content = build(padding, 0)
-	startXRef := first + bytes.Index(content[first:], []byte("startxref"))
-	require.Less(t, startXRef, first+4096)
-	require.Greater(t, startXRef+len("startxref"), first+4096)
+	content, _ := build(0, 0)
+	padding := at - bytes.Index(content[first:], []byte(anchor))
+	require.GreaterOrEqual(t, padding, 0)
+	_, main := build(padding, 0)
+	content, _ = build(padding, main)
+	require.Equal(t, at, bytes.Index(content[first:], []byte(anchor)))
 	return content
 }
