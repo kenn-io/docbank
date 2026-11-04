@@ -230,9 +230,7 @@ const resolveIngestFolderCandidatesSQL = resolveIngestCandidatesPrefix + resolve
 
 // resolveIngestCandidatesQueryTx returns an empty query when the blob has no versions.
 func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash string, parentID int64) (string, error) {
-	// Grow both indexed probes together until one population is exhausted.
-	// Their total work is bounded by the smaller population, even when both
-	// the destination and the content's version history are large.
+	// Both counts double together, so the probe costs at most the smaller side.
 	for limit := int64(16); ; limit *= 2 {
 		var copies, files int64
 		if err := tx.QueryRowContext(ctx, `SELECT

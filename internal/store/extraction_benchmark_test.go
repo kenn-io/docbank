@@ -16,9 +16,8 @@ import (
 func BenchmarkIngestMetadata(b *testing.B) {
 	const batch = 128
 	for _, mimeType := range []string{"application/octet-stream", "text/plain"} {
-		for _, tc := range ingestBenchmarkCases(0) {
-			existing := tc.existing
-			b.Run(fmt.Sprintf("%s/existing=%d/shared=%t/destination=%d", mimeType, existing, tc.shared, tc.destination), func(b *testing.B) {
+		for _, existing := range []int{0, 10000} {
+			b.Run(fmt.Sprintf("%s/existing=%d", mimeType, existing), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -26,9 +25,6 @@ func BenchmarkIngestMetadata(b *testing.B) {
 					s, err := Open(b.Context(), filepath.Join(dir, "docbank.db"))
 					require.NoError(b, err)
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-						if tc.shared {
-							return seedSharedIngestBenchmark(b.Context(), s, tx, existing, tc.destination, 8192, "application/octet-stream")
-						}
 						for i := range existing {
 							_, _, err := s.createFileTx(b.Context(), tx, s.RootID(),
 								fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1), 8192, "application/octet-stream")
@@ -44,12 +40,8 @@ func BenchmarkIngestMetadata(b *testing.B) {
 					b.StartTimer()
 					for i := range batch {
 						name := fmt.Sprintf("file-%04d", i)
-						hash := fmt.Sprintf("%064x", existing+i+1)
-						if tc.shared {
-							hash = fakeHash("a1")
-						}
 						_, added, err := s.IngestFileWithMembership(b.Context(), run, s.RootID(),
-							name, hash, 8192, mimeType, "/synthetic/"+name, "")
+							name, fmt.Sprintf("%064x", existing+i+1), 8192, mimeType, "/synthetic/"+name, "")
 						require.NoError(b, err)
 						require.True(b, added)
 					}

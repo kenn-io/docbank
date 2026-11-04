@@ -1,73 +1,60 @@
 package store
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-type ingestBenchmarkCase struct {
-	existing    int
-	shared      bool
-	destination int
-}
-
-func ingestBenchmarkCases(baselines ...int) []ingestBenchmarkCase {
-	var cases []ingestBenchmarkCase
-	for _, baseline := range baselines {
-		cases = append(cases, ingestBenchmarkCase{existing: baseline})
-	}
-	cases = append(cases,
-		ingestBenchmarkCase{existing: 1000},
-		ingestBenchmarkCase{existing: 10000},
-		ingestBenchmarkCase{existing: 1000, shared: true},
-		ingestBenchmarkCase{existing: 10000, shared: true},
-	)
+// ingestBenchmarkSizes adds a 100k-file folder when DOCBANK_INGEST_SCALE=1.
+func ingestBenchmarkSizes(sizes ...int) []int {
 	if os.Getenv("DOCBANK_INGEST_SCALE") == "1" {
-		cases = append(cases,
-			ingestBenchmarkCase{existing: 100000},
-			ingestBenchmarkCase{existing: 100000, shared: true},
-			ingestBenchmarkCase{existing: 1025, shared: true, destination: 100000},
-		)
+		sizes = append(sizes, 100000)
 	}
-	return cases
+	return sizes
 }
 
 // BenchmarkResolveIngestName isolates the work performed for every local add
-// and HTTP upload as the destination directory grows. Setup uses real file
-// authority but is excluded from timing.
+// and HTTP upload as the destination directory grows, with the incoming
+// content new or copied elsewhere. Setup uses real file authority but is
+// excluded from timing.
 func BenchmarkResolveIngestName(b *testing.B) {
-	for _, tc := range ingestBenchmarkCases(0, 100) {
-		if tc.shared {
-			continue
+	shared := strings.Repeat("f", 64)
+	for _, siblings := range ingestBenchmarkSizes(0, 100, 1000, 10000) {
+		for _, copies := range []int{0, 2000} {
+			b.Run(fmt.Sprintf("siblings=%d/copies=%d", siblings, copies), func(b *testing.B) {
+				s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
+				require.NoError(b, err)
+				b.Cleanup(func() { require.NoError(b, s.Close()) })
+				for i := range siblings {
+					_, err := s.CreateFile(b.Context(), s.RootID(), fmt.Sprintf("file-%06d.bin", i),
+						fmt.Sprintf("%064x", i+1), 4096, "application/octet-stream")
+					require.NoError(b, err)
+				}
+				elsewhere, err := s.Mkdir(b.Context(), s.RootID(), "elsewhere")
+				require.NoError(b, err)
+				for i := range copies {
+					_, err := s.CreateFile(b.Context(), elsewhere.ID, fmt.Sprintf("copy-%06d.bin", i),
+						shared, 4096, "application/octet-stream")
+					require.NoError(b, err)
+				}
+				tx, err := s.writeDB.BeginTx(b.Context(), nil)
+				require.NoError(b, err)
+				defer func() { require.NoError(b, tx.Rollback()) }()
+				b.ReportAllocs()
+				for b.Loop() {
+					name, _, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), "new.bin",
+						shared, "cli", "new.bin")
+					require.NoError(b, err)
+					require.False(b, skipped)
+					require.Equal(b, "new.bin", name)
+				}
+			})
 		}
-		siblings := tc.existing
-		b.Run(fmt.Sprintf("siblings=%d", siblings), func(b *testing.B) {
-			s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
-			require.NoError(b, err)
-			b.Cleanup(func() { require.NoError(b, s.Close()) })
-			for i := range siblings {
-				_, err := s.CreateFile(b.Context(), s.RootID(), fmt.Sprintf("file-%06d.bin", i),
-					fmt.Sprintf("%064x", i+1), 4096, "application/octet-stream")
-				require.NoError(b, err)
-			}
-			tx, err := s.writeDB.BeginTx(b.Context(), nil)
-			require.NoError(b, err)
-			defer func() { require.NoError(b, tx.Rollback()) }()
-			b.ReportAllocs()
-			for b.Loop() {
-				name, _, skipped, err := resolveIngestNameTx(b.Context(), tx, s.RootID(), "new.bin",
-					fmt.Sprintf("%064x", siblings+1), "cli", "new.bin")
-				require.NoError(b, err)
-				require.False(b, skipped)
-				require.Equal(b, "new.bin", name)
-			}
-		})
 	}
 }
 
@@ -116,24 +103,4 @@ func BenchmarkResolveIngestNameSharedContent(b *testing.B) {
 			}
 		})
 	}
-}
-
-// seedSharedIngestBenchmark puts repeated content outside the destination and
-// unrelated files inside it. Both document and photo imports use this shape.
-func seedSharedIngestBenchmark(ctx context.Context, s *Store, tx *sql.Tx, copies, destination int, size int64, mediaType string) error {
-	parent, err := s.mkdirTx(ctx, tx, s.RootID(), "elsewhere", nowRFC3339())
-	if err != nil {
-		return err
-	}
-	for i := range copies {
-		if _, _, err := s.createFileTx(ctx, tx, parent.ID, fmt.Sprintf("copy-%05d.bin", i), fakeHash("a1"), size, mediaType); err != nil {
-			return err
-		}
-	}
-	for i := range destination {
-		if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1000000), size, mediaType); err != nil {
-			return err
-		}
-	}
-	return nil
 }

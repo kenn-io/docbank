@@ -23,23 +23,11 @@ func subscribeWarm(b *testing.B, s *Store) func() {
 // catalog each iteration. It includes committed metadata transactions, but no
 // blob I/O; fixture creation and checkpointing are outside the timer.
 func BenchmarkPhotoImportMetadata(b *testing.B) {
-	for _, tc := range ingestBenchmarkCases(100) {
-		existing := tc.existing
-		batch := 32
-		if tc.shared {
-			// A later identical photo reuses the first asset and bypasses name resolution.
-			batch = 1
-		}
+	const batch = 32
+	for _, existing := range ingestBenchmarkSizes(100, 1000, 10000) {
 		for _, mode := range []struct{ edit, subscribed bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 			edit, subscribed := mode.edit, mode.subscribed
-			if tc.shared && edit {
-				continue
-			}
-			name := fmt.Sprintf("existing=%d/edit=%t/subscriber=%t", existing, edit, subscribed)
-			if tc.shared {
-				name += fmt.Sprintf("/shared=true/destination=%d", tc.destination)
-			}
-			b.Run(name, func(b *testing.B) {
+			b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%t", existing, edit, subscribed), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -50,9 +38,6 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 					require.NoError(b, err)
 					var prior []Node
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-						if tc.shared {
-							return seedSharedIngestBenchmark(b.Context(), s, tx, existing, tc.destination, 128, "image/jpeg")
-						}
 						for i := range existing {
 							name := fmt.Sprintf("photo-%05d.jpg", i)
 							receipt, _, _, err := s.ingestFileTx(b.Context(), tx, run, s.RootID(), name,
@@ -80,9 +65,6 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 							Name: name, Role: PhotoRoleImage, BlobHash: fmt.Sprintf("%064x", existing+i+1),
 							Size: 128, MediaType: "image/jpeg", OriginalPath: "/synthetic/" + name,
 						}}}
-						if tc.shared {
-							groups[i].Members[0].BlobHash = fakeHash("a1")
-						}
 					}
 					require.NoError(b, s.Checkpoint(b.Context()))
 					stop := func() {}
