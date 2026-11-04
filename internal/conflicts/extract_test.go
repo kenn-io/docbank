@@ -2668,6 +2668,7 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. prior to at least 10 min.",
 		"The deadline is 7 min. before no more than 10 min.",
 		"The deadline is 7 min. After ~10 min.",
+		"The deadline is thirty min. before 2 hours.",
 		"The deadline is 7 min. before 10 minutes and $5 is charged.",
 		"The deadline is 7 min. before a quarter of an hour.",
 		"The deadline is 7 min. before three quarters of an hour.",
@@ -3072,8 +3073,21 @@ func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
 			text: "The fee is $5/month higher than the previous rate.",
 		},
 		{
+			name: "possessive nominal comparison baseline is omitted",
+			text: "The fee is $5/month higher than last year's rate.",
+		},
+		{
+			name: "modified nominal comparison baseline is omitted",
+			text: "The fee is $5/month higher than the standard monthly rate.",
+		},
+		{
 			name: "independent assertion follows nominal comparison",
 			text: "The fee is $5/month higher than the standard rate. The deposit is $7.",
+			want: []string{"$7"},
+		},
+		{
+			name: "independent assertion follows possessive nominal comparison",
+			text: "The fee is $5/month higher than last year's rate. The deposit is $7.",
 			want: []string{"$7"},
 		},
 		{

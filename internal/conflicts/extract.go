@@ -1332,8 +1332,8 @@ func unsupportedRelativeDurationBeforeFigure(prefix string) bool {
 func relativeDurationSuffixHasOnlyOperand(s string) bool {
 	operand := trimRelativeDurationWrappers(s)
 	operand, _, _ = consumeRelativeDurationOperandQualifiers(operand)
-	_, unit, _, ok := relativeDurationOperandParts(operand)
-	return ok && trimRelativeDurationWrappers(strings.TrimSpace(operand[unit[1]:])) == ""
+	_, _, following, ok := relativeDurationOperandParts(operand)
+	return ok && trimRelativeDurationWrappers(strings.TrimSpace(following)) == ""
 }
 
 const numericGroupingSeparatorChars = `_'’‘ʼ`
@@ -2154,7 +2154,10 @@ func verbalComparisonWithNumericOrWordOperand(s string) bool {
 	return true
 }
 
-var nominalComparisonOperandRE = regexp.MustCompile(`(?i)^(?:(?:standard|previous|prior|current|base|normal|usual|regular|existing)\s+)?(?:rate|price|fee|cost|charge|amount|total|baseline)\b|^(?:normal|usual|regular)\b`)
+// A modified or possessive nominal still leaves a comparison baseline
+// unresolved; require it to end in a known baseline noun (or an established
+// standalone comparison term) to avoid treating arbitrary prose as an operand.
+var nominalComparisonOperandRE = regexp.MustCompile(`(?i)^(?:[\p{L}][\p{L}'’]*\s+)*(?:rates?|prices?|fees?|costs?|charges?|amounts?|totals?|baselines?)\b|^(?:normal|usual|regular)\b`)
 
 var comparativeRE = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:\s*(?:<=|>=|<|>|≤|≥)\s*|\s+(?:(?:less|more|greater|higher|lower)\s+than(?:\s+or\s+equal\s+to)?|up\s+to|after|before|prior\s+to)\s+(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)?)[\s(["'‘’“”«»]*$`)
 
