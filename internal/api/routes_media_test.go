@@ -368,8 +368,16 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 		{"input_count", rawInput(slices.Repeat([]string{strings.Repeat("a", 64)}, 65)), http.StatusUnprocessableEntity, "expected array length <= 64"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, tc.body)
-			require.Equal(t, tc.status, response.StatusCode, body)
+			encoded, err := json.Marshal(tc.body)
+			require.NoError(t, err)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/search", bytes.NewReader(encoded))
+			request.Header.Set("X-Api-Key", testAPIKey)
+			request.Header.Set("Content-Type", "application/json")
+			// Test body admission and validation independently of socket read deadlines.
+			response := httptest.NewRecorder()
+			catalog.Server.Handler().ServeHTTP(response, request)
+			body := response.Body.String()
+			require.Equal(t, tc.status, response.Code, body)
 			if tc.status == http.StatusOK {
 				var report api.DocumentSearchReport
 				require.NoError(t, json.Unmarshal([]byte(body), &report))
