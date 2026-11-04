@@ -1684,7 +1684,11 @@ func (service *Service) SearchModes(ctx context.Context, request SearchRequest) 
 	if err != nil {
 		return "", "", err
 	}
-	return prepared.requestedMode, prepared.mode, nil
+	actualMode := prepared.mode
+	if actualMode == retrieval.ModeAuto {
+		actualMode = retrieval.ModeLexical
+	}
+	return prepared.requestedMode, actualMode, nil
 }
 
 // ValidateSearch applies the same profile, query, mode, limit, and binding
