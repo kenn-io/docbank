@@ -22,7 +22,7 @@ import (
 var errUnsafeRewrite = errors.New("invalid_card: YAML aliases or merges cannot be rewritten safely")
 
 func unsafeYAML(n *yaml.Node) bool {
-	if n.Kind == yaml.AliasNode || n.Tag == "!!merge" {
+	if n.Kind == yaml.AliasNode || n.ShortTag() == "!!merge" {
 		return true
 	}
 	return slices.ContainsFunc(n.Content, unsafeYAML)

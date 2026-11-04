@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestRewriteLifecyclePreservesContent(t *testing.T) {
@@ -166,5 +169,63 @@ func TestApproveRejectsUnsafeYAMLBeforeConfirmation(t *testing.T) {
 	err := Approve(t.Context(), daemonconn.New(server.URL, "key"), n, func(Card, []string) (bool, error) { confirmed = true; return true, nil })
 	if err == nil || !strings.Contains(err.Error(), "aliases or merges") || confirmed {
 		t.Fatalf("unsafe YAML must be rejected before confirmation: err=%v confirmed=%v", err, confirmed)
+	}
+}
+
+func TestApproveRejectsInlineYAMLMergeBeforeConfirmation(t *testing.T) {
+	card, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cite := card.Citations[0]
+	data := []byte(fmt.Sprintf(`---
+docbank_answer_card: 1
+question: When is renewal?
+citations:
+  - <<: {version: %d, vault_uid: %s, node_id: %d,
+      content_version_id: %s, content_sha256: %s,
+      rendition_attachment_id: %s, build_id: %s,
+      rendition_sha256: %s, start: %d, end: %d}
+    quote: ""
+state: draft
+---
+Test answer.
+`, cite.Version, cite.VaultUID, cite.NodeID, cite.ContentVersionID, cite.ContentSHA256,
+		cite.RenditionAttachmentID, cite.BuildID, cite.RenditionSHA256, cite.Start, cite.End))
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("inline merge fixture must parse: %v", err)
+	}
+	digest := sha256.Sum256(data)
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/content") {
+			if r.Method == http.MethodPut {
+				writes++
+			}
+			t.Errorf("unexpected request before rejecting unsafe YAML: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(api.ContentVersionHeader, "00000000-0000-4000-8000-000000000003")
+		w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+		w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(data)))
+		w.Header().Set("Trailer", "Content-Digest")
+		_, _ = w.Write(data)
+		w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+	}))
+	defer server.Close()
+	n := api.Node{ID: 1, Kind: "file", MimeType: "text/plain", Size: int64(len(data)), BlobHash: hex.EncodeToString(digest[:]), CurrentVersionID: "00000000-0000-4000-8000-000000000003"}
+	confirmed := false
+	err = Approve(t.Context(), daemonconn.New(server.URL, "key"), n, func(Card, []string) (bool, error) { confirmed = true; return true, nil })
+	if err == nil || !strings.Contains(err.Error(), "aliases or merges") || confirmed || writes != 0 {
+		t.Fatalf("inline merge must be rejected before confirmation or writing: err=%v confirmed=%v writes=%d", err, confirmed, writes)
+	}
+}
+
+func TestUnsafeYAMLRecognizesCanonicalMergeTag(t *testing.T) {
+	merge := &yaml.Node{Kind: yaml.ScalarNode, Tag: "tag:yaml.org,2002:merge", Value: "<<"}
+	value := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	if !unsafeYAML(&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{merge, value}}) {
+		t.Fatal("canonical merge tag was not rejected")
 	}
 }
