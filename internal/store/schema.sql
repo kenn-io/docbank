@@ -438,6 +438,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS live_sibling_names
     ON nodes(parent_id, name) WHERE trashed_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS nodes_trash_parent ON nodes(trash_parent);
 CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
 -- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
 CREATE INDEX IF NOT EXISTS nodes_live_children ON nodes(parent_id, kind, name, trashed_at, id)
