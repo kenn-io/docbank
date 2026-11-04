@@ -50,7 +50,8 @@ The bound also survives when the clause ends at that date or a semicolon, as in
 `The fee is $5/hr. before 1 July 2026` and
 `The fee is $5/hr. before 1 July 2026;`. Parenthesized endpoints in a stated
 two-date interval remain an interval: `The wait is 7 days from (1 July 2026)
-until (31 July 2026).` retains both bounds.
+until (31 July 2026).` and `The wait is 7 days from (1 July 2026) and ending
+(31 July 2026).` retain both bounds.
 
 Each figure retains the extraction-accepted date spans as byte offsets in its
 normalized clause for same-package consumers. Consumers use these decisions
@@ -118,6 +119,9 @@ $5 is charged.`, and `The wait is 7 min. After twenty-one minutes customers
 pay $5.` keep both figures, even when the duration operand itself is rejected.
 `The wait is 7 min. After 10 minutes customers pay cash.` keeps the preceding
 `7 min` in its own clause even though the later predicate has no following amount.
+A main-clause assertion after a comma also stays separate from a temporal
+subordinate clause: `The wait is 7 min. Before 10 minutes elapse, customers pay
+cash.` keeps `7 min` in its own clause.
 An `and <duration> later` continuation also stays separate when the later
 assertion starts with its own subject and predicate or a typed figure. For
 example, `The wait is 7 min. and 1 000 minutes later the fee is $5.` and `The
@@ -132,17 +136,24 @@ minutes customers pay $5.` and `The wait is 7 min. After 1 00 minutes customers
 pay $5.` keep `7 min` and `$5`.
 The mixed separator form also preserves that later assertion: `The wait is 7
 min. After 1, 00 minutes customers pay $5.` keeps both figures.
+Closing wrappers and their surrounding whitespace do not split arithmetic
+continuations: `The wait is (7 min. ) + 3 min.` yields no figures. The same
+wrapper before an independent sentence preserves both assertions, as in `The
+wait is (7 min. ) The fee is $5.`
 Nominal phrases such as `shipping charges` or `shipping and handling charges`
 stay inside an approximate group:
 `The fees are about $5 and $10 shipping charges.` and `The fees are about 5%
 of $100 and $200 shipping charges.` yield no figures. The coordinated nominal
-form `The fees are about $5 and $10 shipping and handling charges.` and the
-percentage-base form `The fees are about 5% of $100 and $200 shipping and
-handling charges.` also yield no figures.
-The same rule covers the nominal continuations `fixed charges` and
-`sales taxes`, including a coordinated percentage base: `The fees are about $5
-and $10 fixed charges.`, `The fees are about $5 and $10 sales taxes.`, and
-`The fee is 5% of $100 and $200 fixed charges.` yield no figures.
+form `The fees are about $5 and $10 shipping and handling charges.` also yields
+no figures. Modified nominal continuations such as `fixed monthly charges`,
+`sales taxes`, and `customs duties` stay inside the same approximate group; for
+example, `The fees are about $5 and $10 fixed monthly charges.` and `The fees
+are about $5 and $10 customs duties.` yield no figures. In a percentage-base
+phrase, the rate remains while the nominal continuation operands are omitted:
+`The fee is 5% of $100 and $200 fixed charges.`, `The fee is 5% of $100 and
+$200 fixed monthly charges.`, `The fee is 5% of $100 and $200 sales taxes.`,
+`The fee is 5% of $100 and $200 customs duties.`, and `The fee is 5% of $100
+and $200 shipping and handling charges.` keep `5%` only.
 The same holds for grouped operands such as `After 1'000 minutes`, a
 parenthesized operand such as `and (an hour) later`, and a quoted typed figure
 such as `After 10 minutes, "$5" is charged.` Independent bounded assertions

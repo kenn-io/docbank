@@ -515,7 +515,9 @@ func TestExtractNominalBoundsPreserveIndependentAmounts(t *testing.T) {
 func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) {
 	for _, text := range []string{
 		"The fees are about $5 and $10 fixed charges.",
+		"The fees are about $5 and $10 fixed monthly charges.",
 		"The fees are about $5 and $10 sales taxes.",
+		"The fees are about $5 and $10 customs duties.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("nominal continuation exposed an exact amount in %q: %+v", text, got)
@@ -527,9 +529,16 @@ func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) 
 		t.Errorf("independent amount predicate was swallowed in %q: %+v", text, got)
 	}
 
-	text = "The fee is 5% of $100 and $200 fixed charges."
-	if got := Extract(text); len(got) != 1 || got[0].Text != "5%" {
-		t.Errorf("nominal percentage-base continuation exposed an amount in %q: %+v", text, got)
+	for _, text := range []string{
+		"The fee is 5% of $100 and $200 fixed charges.",
+		"The fee is 5% of $100 and $200 fixed monthly charges.",
+		"The fee is 5% of $100 and $200 sales taxes.",
+		"The fee is 5% of $100 and $200 customs duties.",
+		"The fee is 5% of $100 and $200 shipping and handling charges.",
+	} {
+		if got := Extract(text); len(got) != 1 || got[0].Text != "5%" {
+			t.Errorf("nominal percentage-base continuation exposed an amount in %q: %+v", text, got)
+		}
 	}
 }
 
@@ -2741,14 +2750,20 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 }
 
 func TestExtractSeparatesPredicateOnlyAssertionAfterRelativeDuration(t *testing.T) {
-	text := "The wait is 7 min. After 10 minutes customers pay cash."
-	got := Extract(text)
-	for _, figure := range got {
-		if figure.Text == "7 min" && figure.Clause == "The wait is 7 min." {
-			return
-		}
+	for _, text := range []string{
+		"The wait is 7 min. After 10 minutes customers pay cash.",
+		"The wait is 7 min. Before 10 minutes elapse, customers pay cash.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := Extract(text)
+			for _, figure := range got {
+				if figure.Text == "7 min" && figure.Clause == "The wait is 7 min." {
+					return
+				}
+			}
+			t.Fatalf("independent predicate-only sentence swallowed the duration assertion: %+v", got)
+		})
 	}
-	t.Fatalf("independent predicate-only sentence swallowed the duration assertion: %+v", got)
 }
 
 func TestExtractPreservesIndependentAssertionAfterUnsupportedQualifiedDurations(t *testing.T) {
@@ -2829,6 +2844,19 @@ func TestExtractRejectsUnsupportedDurationAlternativesAfterAbbreviation(t *testi
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("unsupported duration alternative retained an endpoint for %q: %+v", text, got)
 		}
+	}
+}
+
+func TestExtractRejectsWrappedDurationArithmeticAfterAbbreviation(t *testing.T) {
+	text := "The wait is (7 min. ) + 3 min."
+	if got := Extract(text); len(got) != 0 {
+		t.Fatalf("wrapped arithmetic retained a partial duration: %+v", got)
+	}
+
+	text = "The wait is (7 min. ) The fee is $5."
+	got := Extract(text)
+	if len(got) != 2 || got[0].Text != "7 min" || got[1].Text != "$5" || strings.Contains(got[0].Clause, "The fee") || !strings.Contains(got[1].Clause, "The fee") {
+		t.Fatalf("closing duration wrapper swallowed an independent sentence: %+v", got)
 	}
 }
 
@@ -4414,6 +4442,8 @@ func TestExtractReviewRateAndRelativeDateBounds(t *testing.T) {
 		{"The fee is $5/hr. from 1 July 2026 until 31 July 2026.", "$5", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The notice is 2 hr. from 1 July 2026 until 31 July 2026.", "2 hr", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The wait is 7 days from (1 July 2026) until (31 July 2026).", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
+		{"The wait is 7 days from (1 July 2026) and ending (31 July 2026).", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
+		{"The wait is 7 days from 1 July 2026 and ending 31 July 2026.", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)

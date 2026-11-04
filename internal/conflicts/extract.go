@@ -351,7 +351,7 @@ var uncertainDateSuffixRE = regexp.MustCompile(`(?i)^(?:[\s,()\[\]"'‘’“”
 // A trailing from-date anchors a lone duration unless it starts a stated interval.
 func relativeDate(s string, checks, selected []candidate, date candidate) bool {
 	bounded := slices.ContainsFunc(selected, func(end candidate) bool {
-		return end.f.Kind == dateKind && end.start >= date.end && (dateBoundConnectorRE.MatchString(s[date.end:end.start]) || coordinatedEndRE.MatchString(s[date.end:end.start]))
+		return end.f.Kind == dateKind && end.start >= date.end && dateIntervalConnector(s[date.end:end.start])
 	})
 	return slices.ContainsFunc(checks, func(prev candidate) bool {
 		if prev.f.Kind != durationKind || prev.end > date.start {
@@ -483,7 +483,11 @@ func unclassifiedLeadingPeriod(s string) bool {
 var assertionJoinRE = regexp.MustCompile(`(?i)^(?:[\s,]*(?:and|while|but)\b|\s*,)`)
 var subordinatePeriodRE = regexp.MustCompile(`(?i)(?:\bbecause\b|\bsince\b|\()\s*[\p{L}\p{N}.,:'’‘()-]+(?:\s+[\p{L}\p{N}.,:'’‘()-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
 var eligibleSubjectPeriodRE = regexp.MustCompile(`(?i)\bapplies?\s+to\s+[\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
-var coordinatedEndRE = regexp.MustCompile(`(?i)^\s+and\s+ending\s+$`)
+var coordinatedEndRE = regexp.MustCompile(`(?i)^\s*[)\]"'‘’“”»]*\s+and\s+ending\s+[(\["'‘’“”«]*\s*$`)
+
+func dateIntervalConnector(s string) bool {
+	return dateBoundConnectorRE.MatchString(s) || coordinatedEndRE.MatchString(s)
+}
 
 // Classify coordinated date phrases, retaining a terminal start-and-end interval.
 func coordinatedPeriodScope(s string, firstFigureEnd, lastDateEnd, dateCount int, firstDate, firstConnector string, c candidate) (bool, bool) {
@@ -492,7 +496,7 @@ func coordinatedPeriodScope(s string, firstFigureEnd, lastDateEnd, dateCount int
 	}
 	prefix := trimDateOpening(s[firstFigureEnd:c.start])
 	explicitInterval := dateCount == 1 && firstDate != "" && lastDateEnd >= 0 &&
-		slices.Contains(periodStartWords, firstConnector) && dateBoundConnectorRE.MatchString(s[lastDateEnd:c.start])
+		slices.Contains(periodStartWords, firstConnector) && dateIntervalConnector(s[lastDateEnd:c.start])
 	subordinatePeriod := subordinatePeriodRE.MatchString(prefix) && !explicitInterval
 	if subordinatePeriod || eligibleSubjectPeriodRE.MatchString(prefix) || leadingEventPeriodRE.MatchString(prefix) || coordinatedPredicateRE.MatchString(prefix) || strings.HasPrefix(strings.TrimSpace(prefix), ",") && predicatedPeriodRE.MatchString(prefix) || qualifiedPeriodRE.MatchString(prefix) || conditionalPeriodRE.MatchString(prefix) {
 		return true, false
@@ -1105,7 +1109,7 @@ func independentBoundAssertion(s string) bool {
 }
 
 func normalizedDurationContinuation(prefix, suffix string) bool {
-	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeContinuation(prefix, suffix) || numericRelativeDurationContinuation(prefix, suffix) || comparisonContinuationAfterRate(suffix) && !independentBoundAssertion(suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(suffix) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) && !independentBoundAssertion(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuationRE.MatchString(suffix))
+	return abbreviatedDurationBoundary(prefix, suffix) && (approximationSuffixRE.MatchString(suffix) && !independentApproxAssertion(suffix) || durationAlternativeContinuation(prefix, suffix) || numericRelativeDurationContinuation(prefix, suffix) || comparisonContinuationAfterRate(suffix) && !independentBoundAssertion(suffix) || uncertaintySuffixRE.MatchString(suffix) || durationArithmeticRE.MatchString(trimRelativeDurationOperandClosers(suffix)) || rateEnd(suffix) > 0 && !capitalArticleRE.MatchString(suffix) || calendarExclusionRE.MatchString(suffix) && !independentExclusionRE.MatchString(suffix) && !independentBoundAssertion(suffix) || postfixBound(suffix) && !independentBoundAssertion(suffix) || rateDateContinuationRE.MatchString(suffix))
 }
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^(?:\s*[` + regexp.QuoteMeta(closingPunctuation) + `]+\s*|\s+)(after|before|prior\s+to)\s+`)
@@ -1432,7 +1436,11 @@ func independentRelativeDurationAssertion(connector, following string) bool {
 		if relativeDurationConjunctionLeadRE.MatchString(following) {
 			return false
 		}
-		return independentDurationAssertion(following)
+		if independentDurationAssertion(following) {
+			return true
+		}
+		comma := strings.IndexByte(following, ',')
+		return comma >= 0 && independentDurationAssertion(following[comma+1:])
 	default:
 		return false
 	}
@@ -2190,7 +2198,7 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
-var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|fixed\s+charges?|sales\s+taxes?)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|fixed(?:\s+[\p{L}]+){0,2}\s+charges?|customs\s+dut(?:y|ies)|sales\s+taxes?)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {
