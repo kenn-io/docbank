@@ -483,7 +483,10 @@ func unclassifiedLeadingPeriod(s string) bool {
 var assertionJoinRE = regexp.MustCompile(`(?i)^(?:[\s,]*(?:and|while|but)\b|\s*,)`)
 var subordinatePeriodRE = regexp.MustCompile(`(?i)(?:\bbecause\b|\bsince\b|\()\s*[\p{L}\p{N}.,:'’‘()-]+(?:\s+[\p{L}\p{N}.,:'’‘()-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
 var eligibleSubjectPeriodRE = regexp.MustCompile(`(?i)\bapplies?\s+to\s+[\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)*\s+(?:` + periodPredicateWords + `)\s*$`)
-var coordinatedEndRE = regexp.MustCompile(`(?i)^\s*[)\]"'‘’“”»]*\s+and\s+ending\s+[(\["'‘’“”«]*\s*$`)
+
+const coordinatedEndConnectorPattern = `[)\]"'‘’“”»]*\s+and\s+ending\s+[(\["'‘’“”«]*`
+
+var coordinatedEndRE = regexp.MustCompile(`(?i)^\s*` + coordinatedEndConnectorPattern + `\s*$`)
 
 func dateIntervalConnector(s string) bool {
 	return dateBoundConnectorRE.MatchString(s) || coordinatedEndRE.MatchString(s)
@@ -1440,7 +1443,7 @@ func independentRelativeDurationAssertion(connector, following string) bool {
 			return true
 		}
 		comma := strings.IndexByte(following, ',')
-		return comma >= 0 && independentDurationAssertion(following[comma+1:])
+		return comma >= 0 && !relativeDurationConjunctionLeadRE.MatchString(following[comma+1:]) && independentDurationAssertion(following[comma+1:])
 	default:
 		return false
 	}
@@ -1482,7 +1485,7 @@ var nonPredicateFigurePrefixWords = map[string]struct{}{
 
 var durationAbbrevRE = regexp.MustCompile(`(?i)(?:\b|[0-9])(?:mins?|hrs?)\.$`)
 var rateDateOperandPattern = `(?:\(\s*` + dateRE.String() + `\s*\)|\[\s*` + dateRE.String() + `\s*\]|["'‘’“”«]\s*` + dateRE.String() + `\s*["'”’»]|` + dateRE.String() + `)`
-var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:\s+(?:until|till|through|to)\s+` + rateDateOperandPattern + `)?\s*(?:[.!?;:](?:\s|$)|$)`)
+var rateDateContinuationRE = regexp.MustCompile(`(?i)^\s+(?:` + strings.ReplaceAll(strings.Join(periodWords, "|"), " ", `\s+`) + `)\s+` + rateDateOperandPattern + `(?:(?:\s+(?:until|till|through|to)\s+|` + coordinatedEndConnectorPattern + `\s*)` + rateDateOperandPattern + `)?\s*(?:[.!?;:](?:\s|$)|$)`)
 var durationArithmeticRE = regexp.MustCompile(`(?i)^\s*(?:[+−*/⁄×÷±∓^\p{Pd}⁓⁻₋<>=≤≥]|out\s+of\b|(?:multiplied\s+by|divided\s+by|times|plus|minus|x)\b|and\s+(?:a\s+few|few|some|several)\s+|and\s+(?:a|an)\s+(?:` + approximation + `\s+` + number + `\b|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*[.,;!?]|(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\s*$)|and\s+(?:a\s+)?` + fractionWords + `s?\b|[(\[]\s*(?:[+−*/⁄×÷±∓^-]|(?:and|plus|minus|times|x|multiplied|divided)\b))`)
 var durationAlternativeRE = regexp.MustCompile(`(?i)^` + durationAlternativeBoundaryPattern + `(?:or|and|through|to|until|till)\s+[(\["'‘’“”«»]*\s*(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:[$€£¥]|(?:` + currencyCodes + `)\s*)?(?:` + number + `)\b`)
 var listRowRE = regexp.MustCompile(`^\s*(?:[-*+]\s+|[0-9]+[.)]\s+)`)
@@ -2198,7 +2201,7 @@ var typedFigureLeadRE = regexp.MustCompile(`^(?:` + moneyRE.String() + `|` + uni
 var currencySubunitRE = regexp.MustCompile(`(?i)^cents?\b`)
 var quantitySubjectRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|do|does|did|receive(?:s|d)?|` + assertionPredicatePattern + `)\b`)
 var quantitySubjectContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:excluding|excepting|including)\b`)
-var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|fixed(?:\s+[\p{L}]+){0,2}\s+charges?|customs\s+dut(?:y|ies)|sales\s+taxes?)\b`)
+var quantitySubjectNominalContinuationRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:[\p{L}]+ing(?:\s+and\s+[\p{L}]+ing)?\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|fixed(?:\s+[\p{L}]+){0,2}\s+(?:charges?|costs?|fees?|prices?|rates?|amounts?|totals?)|customs\s+dut(?:y|ies)|sales\s+taxes?|taxes?)\b`)
 
 func quantitySubjectAssertion(s string) bool {
 	if !quantitySubjectRE.MatchString(s) || quantitySubjectContinuationRE.MatchString(s) {

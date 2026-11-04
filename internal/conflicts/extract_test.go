@@ -516,7 +516,10 @@ func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) 
 	for _, text := range []string{
 		"The fees are about $5 and $10 fixed charges.",
 		"The fees are about $5 and $10 fixed monthly charges.",
+		"The fees are about $5 and $10 fixed costs.",
+		"The fees are about $5 and $10 fixed fees.",
 		"The fees are about $5 and $10 sales taxes.",
+		"The fees are about $5 and $10 taxes.",
 		"The fees are about $5 and $10 customs duties.",
 	} {
 		if got := Extract(text); len(got) != 0 {
@@ -532,7 +535,10 @@ func TestExtractSeparatesNounContinuationsFromAssertionPredicates(t *testing.T) 
 	for _, text := range []string{
 		"The fee is 5% of $100 and $200 fixed charges.",
 		"The fee is 5% of $100 and $200 fixed monthly charges.",
+		"The fee is 5% of $100 and $200 fixed costs.",
+		"The fee is 5% of $100 and $200 fixed fees.",
 		"The fee is 5% of $100 and $200 sales taxes.",
+		"The fee is 5% of $100 and $200 taxes.",
 		"The fee is 5% of $100 and $200 customs duties.",
 		"The fee is 5% of $100 and $200 shipping and handling charges.",
 	} {
@@ -2766,6 +2772,16 @@ func TestExtractSeparatesPredicateOnlyAssertionAfterRelativeDuration(t *testing.
 	}
 }
 
+func TestExtractDoesNotSplitRelativeDurationBeforeConjoinedAssertion(t *testing.T) {
+	text := "The deadline is 7 min. before 10 minutes have elapsed, and the monthly fee is $5."
+	got := Extract(text)
+	for _, figure := range got {
+		if figure.Text == "7 min" {
+			t.Fatalf("conjoined monthly fee was treated as an independent assertion: %+v", got)
+		}
+	}
+}
+
 func TestExtractPreservesIndependentAssertionAfterUnsupportedQualifiedDurations(t *testing.T) {
 	for _, text := range []string{
 		"The wait is 7 min. After about -10 minutes customers pay $5.",
@@ -4444,6 +4460,7 @@ func TestExtractReviewRateAndRelativeDateBounds(t *testing.T) {
 		{"The wait is 7 days from (1 July 2026) until (31 July 2026).", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The wait is 7 days from (1 July 2026) and ending (31 July 2026).", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
 		{"The wait is 7 days from 1 July 2026 and ending 31 July 2026.", "7 days", Period{From: "2026-07-01", To: "2026-07-31"}},
+		{"The fee is $5/hr. from 1 July 2026 and ending 31 July 2026.", "$5", Period{From: "2026-07-01", To: "2026-07-31"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)
