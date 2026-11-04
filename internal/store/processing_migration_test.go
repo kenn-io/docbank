@@ -103,7 +103,10 @@ func TestProviderFreeLexicalRebuildReplacesZeroSegmentMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, initial.ID, rebuilt.ID)
 	assert.Equal(t, 2, rebuilt.BuildCount)
-	assert.Equal(t, lexicalBuildDigest([]string{first.ID, second.ID}), rebuilt.BuildDigest)
+	assert.NotEqual(t, initial.ManifestDigest, rebuilt.ManifestDigest)
+	members, err := lexicalGenerationBuildIDsTx(ctx, s.db, rebuilt.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{first.ID, second.ID}, members)
 }
 
 // Mutation caught: hashing normalized text, omitting one legacy identity
@@ -379,6 +382,8 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 	).Scan(&firstAttachmentID, &firstAttachedAt))
 	assert.Equal(t, legacyMigrationTimestamp, completedAt)
 	assert.Equal(t, legacyMigrationTimestamp, firstAttachedAt)
+	head, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
 
 	second, err := s.CreateFile(
 		t.Context(), s.RootID(), "second.txt", hash, int64(len(text)), "text/plain",
@@ -388,6 +393,10 @@ func TestPostCutoverIdenticalReExtractionPreservesImmutableRecords(t *testing.T)
 		BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: ExtractionOK, Text: text,
 	}))
+
+	unchanged, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, head, unchanged, "identical re-extraction preserves the head")
 
 	var builds, attachments, heads, queued, cached int
 	for query, destination := range map[string]*int{
@@ -943,4 +952,69 @@ func TestPostCutoverExtractionLeavesOtherDocumentsToOpen(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.ActiveRendition(ctx, first.CurrentVersionID, report.ProfileFingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPostCutoverExtractionAppendsSearchSnapshot(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	s := newTestStore(t)
+	for _, name := range []string{"a", "b"} {
+		seedLegacyMigrationRow(t, s, name+".txt", name+"1", ExtractionResult{
+			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: name + "authority",
+		})
+	}
+	_, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	lease, err := s.AcquireLexicalGeneration(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lease.Release()) })
+	before, err := lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
+	require.NoError(t, err)
+	require.Len(t, before, 2)
+
+	fresh, err := s.CreateFile(ctx, s.RootID(), "c.txt", fakeHash("c1"), 10, "text/plain")
+	require.NoError(t, err)
+	extraction := ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "cauthority",
+	}
+	require.NoError(t, s.RecordExtraction(ctx, extraction))
+	hits, _, err := s.SearchPage(ctx, "cauthority", 20)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "/c.txt", hits[0].Path)
+	assert.Equal(t, SearchMatchContent, hits[0].Match)
+	buildIDs, err := lexicalBuildIDsTx(ctx, s.db,
+		`SELECT build_id FROM rendition_builds WHERE source_sha256=$1`, []any{fresh.BlobHash})
+	require.NoError(t, err)
+	require.Len(t, buildIDs, 1)
+	want := append(append([]string(nil), before...), buildIDs[0])
+	sort.Strings(want)
+	head, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	members, err := lexicalGenerationBuildIDsTx(ctx, s.db, head.ID)
+	require.NoError(t, err)
+	assert.Equal(t, want, members)
+	var count int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_stream_builds`).Scan(&count))
+	assert.Equal(t, len(want), count, "generations share one membership row per build")
+	members, err = lexicalGenerationBuildIDsTx(ctx, s.db, lease.Generation.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, members, "the reader keeps exactly its original documents")
+
+	require.NoError(t, lease.Release())
+	fresh, err = s.CreateFile(ctx, s.RootID(), "d.txt", fakeHash("d1"), 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: fresh.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "dauthority",
+	}))
+	head, err = s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 4, head.BuildCount)
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_stream_builds`).Scan(&count))
+	assert.Equal(t, 4, count, "later appends keep sharing the stream")
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_lexical_generations
+		WHERE generation_id=?`, lease.Generation.ID).Scan(&count))
+	assert.Zero(t, count, "the released snapshot is collected on the next publication")
 }

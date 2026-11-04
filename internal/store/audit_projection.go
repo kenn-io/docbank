@@ -30,6 +30,31 @@ const (
 	auditStateField     = "state"
 )
 
+// auditMoveAffectsTrashOriginTx walks historical children, including inherited
+// trash and roots outside the scope. Starting at children excludes the moved
+// node's own origin. UNION ends cycles.
+// Carrying the origin flag avoids a final nodes join that SQLite can turn into
+// a table scan.
+func auditMoveAffectsTrashOriginTx(
+	ctx context.Context, tx metadataQuerier, scopeID string, movedID int64,
+) (bool, error) {
+	var affects bool
+	err := tx.QueryRowContext(ctx, `WITH RECURSIVE descendants(id,known_origin) AS (
+		SELECT id,trash_name IS NOT NULL AND trash_parent IS NOT NULL FROM nodes
+		WHERE (parent_id=$1 AND trash_name IS NULL) OR (trash_parent=$1 AND trash_name IS NOT NULL)
+		UNION
+		SELECT n.id,n.trash_name IS NOT NULL AND n.trash_parent IS NOT NULL FROM descendants d JOIN nodes n
+			ON (n.parent_id=d.id AND n.trash_name IS NULL) OR (n.trash_parent=d.id AND n.trash_name IS NOT NULL)
+	) SELECT EXISTS(
+		SELECT 1 FROM descendants d WHERE d.known_origin
+			AND EXISTS(SELECT 1 FROM audit_memberships WHERE scope_id=$2 AND node_id=d.id)
+	)`, movedID, scopeID).Scan(&affects)
+	if err != nil {
+		return false, fmt.Errorf("checking audit trash-origin paths: %w", err)
+	}
+	return affects, nil
+}
+
 func currentAuditTopology(ctx context.Context, tx metadataQuerier) ([]audit.Record, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id,parent_id,name,kind,created_at,modified_at,
 		trashed_at,trash_parent,trash_name FROM nodes ORDER BY id`)

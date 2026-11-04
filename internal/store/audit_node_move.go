@@ -113,25 +113,11 @@ func (s *Store) prepareAuditedMove(
 		snapshot.priorSubtree = map[int64]Node{id: moved}
 		return snapshot, normalizedName, true, nil
 	}
-	scopeMembers, err := auditScopeMemberSetTx(ctx, tx, scopes[0].scopeID)
+	affectsTrashOrigin, err := auditMoveAffectsTrashOriginTx(ctx, tx, scopes[0].scopeID, id)
 	if err != nil {
 		return snapshot, "", false, err
 	}
-	topology, err := currentAuditTopology(ctx, tx)
-	if err != nil {
-		return snapshot, "", false, err
-	}
-	auditNodeID, err := positiveAuditNodeID(id)
-	if err != nil {
-		return snapshot, "", false, err
-	}
-	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-		topology, scopeMembers, map[uint64]bool{auditNodeID: true},
-	)
-	if err != nil {
-		return snapshot, "", false, err
-	}
-	if affectsTrashOrigin != 0 {
+	if affectsTrashOrigin {
 		return snapshot, "", false, fmt.Errorf(
 			"moving node %d would change retained trash-origin paths: %w",
 			id, ErrAuditMutationUnsupported,

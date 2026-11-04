@@ -561,10 +561,11 @@ GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vecto
     documents.rendition_units, documents.rendition_lexical_segments,
     documents.rendition_lexical_index, documents.rendition_lexical_heads,
     documents.rendition_lexical_generations, documents.rendition_lexical_generation_manifests,
+    documents.rendition_lexical_stream_builds,
     documents.text_searchable_versions, documents.extracted_text,
     documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.derivative_blob_purge_pending,
-    documents.rendition_lexical_generations, documents.rendition_lexical_generation_builds,
+    documents.rendition_lexical_generations, documents.rendition_lexical_stream_builds,
     documents.rendition_lexical_generation_manifests, documents.rendition_lexical_index
     TO docbank_runtime;
 GRANT UPDATE(generation_id) ON documents.rendition_lexical_heads TO docbank_runtime;
@@ -855,6 +856,12 @@ complete lexical manifest, then moves rendition and lexical heads together.
 A failed replacement leaves the old heads and waiting job intact. Successful
 replacement removes stale chunk-embedding heads and failures, and collects
 superseded lexical generations only when no root or reader still needs them.
+
+Lexical generations share an append-only stream of build membership. Each
+generation names the ordinals up to its fixed cutoff. Collection trims only the
+stream tail above every remaining generation's cutoff. The stored chain digest
+is vault-local; metadata export computes portable digests from the generation's
+members.
 
 Build reads, active rendition views and exact text resolution use repeatable-read
 snapshots. A purge committed during a read affects the next request. PostgreSQL
