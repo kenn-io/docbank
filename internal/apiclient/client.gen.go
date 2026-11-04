@@ -30706,6 +30706,8 @@ type DocumentRenditionIdentity = api.DocumentRenditionIdentity
 
 type DocumentSearchCoverage = api.DocumentSearchCoverage
 
+type DocumentSearchFence = api.DocumentSearchFence
+
 type DocumentSearchReport = api.DocumentSearchReport
 
 type DocumentSearchRequest = api.DocumentSearchRequest

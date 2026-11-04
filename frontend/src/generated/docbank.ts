@@ -2241,6 +2241,12 @@ export interface DocumentSearchCoverage {
   state: string;
 }
 
+export interface DocumentSearchFence {
+  /** @maxItems 4096 */
+  content_version_ids: string[];
+  vault_uid: string;
+}
+
 export interface DocumentSearchRerankingReceipt {
   /**
      * @minimum 0
@@ -2304,15 +2310,6 @@ export const DocumentSearchRequestMode = {
   hybrid: 'hybrid',
 } as const;
 
-export interface DocumentSourceFence {
-  /**
-     * @minItems 1
-     * @maxItems 4096
-     */
-  content_version_ids: string[];
-  vault_uid: string;
-}
-
 export interface DocumentSourceFenceFilters {
   /** @maxLength 255 */
   mime_type?: string;
@@ -2343,7 +2340,7 @@ export interface DocumentSearchRequest {
   binding_id?: string;
   content_first?: boolean;
   explain?: boolean;
-  fence?: DocumentSourceFence;
+  fence?: DocumentSearchFence;
   /**
      * @minimum 1
      * @maximum 100
@@ -2462,6 +2459,15 @@ export interface DocumentSimilarReport {
   source: DocumentSimilarSource;
   state: DocumentSimilarReportState;
   truncated: boolean;
+}
+
+export interface DocumentSourceFence {
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  content_version_ids: string[];
+  vault_uid: string;
 }
 
 export interface ProcessingSelector {
@@ -22031,7 +22037,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }), params.name);
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
