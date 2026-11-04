@@ -74,9 +74,10 @@ than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
 duration operands such as `7 days before thirty days` or
 `7 min. before thirty-five min.`; grouped numeric, fractional or spoken-decimal
 durations such as `7 min. before 1 000 minutes`, `7 min. before 1/2 hour`,
-`7 min. before half an hour`, or
-`7 min. before seven point five minutes`; rejected ranges such as
-`7 min. before 10-7 min.`; and wrapped bounds such as
+`7 min. before .5 hours`, `7 min. before half an hour`,
+`7 min. before seven point five minutes`, or signed operands such as
+`7 min. before negative 10 min.` and `7 min. before −10 min.`; rejected ranges
+such as `7 min. before 10-7 min.`; and wrapped bounds such as
 `7 min. before (about 10 min.)` or
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
 the connector, so `(7 days ) before (about 10 days)` remains one unsupported
@@ -90,6 +91,10 @@ customers pay $5.`, `The wait is 7 min. After 1 000 minutes customers pay
 $5.`, `The wait is 7 min. After seven point five minutes,
 $5 is charged.`, and `The wait is 7 min. After twenty-one minutes customers
 pay $5.` keep both figures, even when the duration operand itself is rejected.
+An `and <duration> later` continuation also stays separate when the later
+assertion starts with its own subject and predicate or a typed figure. For
+example, `The wait is 7 min. and 1 000 minutes later the fee is $5.` and `The
+wait is 7 min. and an hour later, $5 is charged.` keep `7 min` and `$5`.
 Closing wrappers after the duration do not hide the following assertion:
 `The wait is 7 min. After (10 minutes), $5 is charged.` also keeps both figures.
 A coordinated continuation does not start an independent assertion, even when
@@ -105,8 +110,9 @@ omission, including markers before a bound or inside a range. The suffixes
 by `exactly`, as in `almost exactly`, or `a total of` also omits the figure. An approximate component omits a
 compound duration joined by `and` or a comma, while an independently stated exact figure can remain.
 An unsupported numeric or verbal duration alternative such as `7 or 10 days`,
-`7 min. or an hour`, or `7 min. and thirty minutes` never becomes a partial
-exact value. Unsupported sign words such as `minus` and `negative`
+`7 min. or an hour`, `7 min. or .5 hours`, or `7 min. and thirty minutes`
+never becomes a partial exact value. Unsupported sign words such as `minus`
+and `negative`
 before a numeric figure or its bound never yield a positive value. Postfix
 bounds such as `7 days maximum` are omitted rather than treated as exact.
 Recognition never rewrites the quoted source text.
@@ -149,7 +155,9 @@ normalize as ordinary days.
 A slash rate such as `$5/month` or `$5/2 devices` retains the numerator and
 any recognized numeric denominator for later rate classification. A denominator
 must include a noun; a bare numeric divisor remains an unsupported fraction.
-Arithmetic following a rate still causes the whole clause to be omitted.
+Arithmetic following a rate still causes the whole clause to be omitted. A
+postfix bound on a rate also suppresses its denominator across wrapped
+whitespace, as in `$5 [maximum  ] per 2 devices`.
 Unsupported fractions and numerals grouped with spaces, comma-space, underscores or apostrophes
 never produce a smaller component value. A digit-bearing or all-uppercase identifier group after whitespace causes
 omission rather than retaining only the first group.

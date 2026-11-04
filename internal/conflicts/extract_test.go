@@ -2303,6 +2303,8 @@ func TestExtractRejectsPostfixBounds(t *testing.T) {
 	for _, text := range []string{
 		"The fee is $5 [maximum ] per 2 devices.",
 		"The fee is $5 (maximum ) per 2 devices.",
+		"The fee is $5 [maximum  ] per 2 devices.",
+		"The fee is $5 [maximum \t  ] per 2 devices.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("postfix bound with trailing wrapper whitespace exposed rate figures for %q: %+v", text, got)
@@ -2564,6 +2566,7 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. after 10 min.",
 		"The deadline is 7 min. before 10 min.",
 		"The deadline is 7 min. before 1 000 minutes.",
+		"The deadline is 7 min. before .5 hours.",
 		"The deadline is 7 min. before 1/2 hour.",
 		"The deadline is 7 min. before seven point five minutes.",
 		"The deadline is 7 min. prior to 10 min.",
@@ -2577,6 +2580,10 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. before a quarter of an hour.",
 		"The deadline is 7 min. before three quarters of an hour.",
 		"The deadline is 7 min. before one and a half hours.",
+		"The deadline is 7 min. before negative 10 min.",
+		"The deadline is 7 min. before minus 10 min.",
+		"The deadline is 7 min. before -10 min.",
+		"The deadline is 7 min. before −10 min.",
 	} {
 		if got := Extract(text); len(got) != 0 {
 			t.Errorf("relative duration comparison retained exact figures for %q: %+v", text, got)
@@ -2611,6 +2618,9 @@ func TestExtractKeepsIndependentAssertionAfterAbbreviatedDuration(t *testing.T) 
 		"The wait is 7 min. After twenty minutes customers pay $5.",
 		"The wait is 7 min. After thirty-five minutes customers pay $5.",
 		"The wait is 7 min. Before 10 minutes elapse, customers pay $5.",
+		"The wait is 7 min. and an hour later, $5 is charged.",
+		"The wait is 7 min. and 1 000 minutes later the fee is $5.",
+		"The wait is 7 min. and 1 000 minutes later, $5 is charged.",
 	} {
 		got := Extract(text)
 		foundWait, foundFee := false, false
@@ -2666,6 +2676,7 @@ func TestExtractRejectsUnsupportedDurationAlternativesAfterAbbreviation(t *testi
 	for _, text := range []string{
 		"The wait is 7 min. and thirty minutes.",
 		"The wait is 7 min. or thirty minutes.",
+		"The wait is 7 min. or .5 hours.",
 		"The wait is 7 min. or an hour.",
 		"The wait is 7 min. or a quarter of an hour.",
 		"The wait is 7 min. or one and a half hours.",

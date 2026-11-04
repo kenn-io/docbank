@@ -1106,7 +1106,7 @@ func normalizedDurationContinuation(prefix, suffix string) bool {
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^(?:\s*[` + regexp.QuoteMeta(closingPunctuation) + `]+\s*|\s+)(after|before|prior\s+to)\s+`)
 var relativeDurationClauseConnectorRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s*(after|before|prior\s+to)\s+`)
-var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈]\s*)`)
+var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `|minus|negative)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈−-]\s*)`)
 var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?)\b`)
 var relativeDurationConjunctionLeadRE = regexp.MustCompile(`(?i)^\s*[,;:]*\s*(?:and|or|but|while)\b`)
 
@@ -1153,6 +1153,7 @@ var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
 	regexp.MustCompile(`^[0-9]{1,3}(?:[[:space:]][0-9]{3})+`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
+	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
 	spokenDecimalNumberRE,
 	regexp.MustCompile(`(?i)^` + numRange),
 	numeralWordSequenceRE,
@@ -1163,10 +1164,14 @@ var durationWordUnitRE = regexp.MustCompile(`(?i)^\s+(?:(?:of\s+)?(?:a|an)\s+|of
 
 var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^\s+(and|or|through|to|until|till)\s+`)
 var durationLaterLeadRE = regexp.MustCompile(`(?i)^\s+(?:later|afterwards?|thereafter)\b`)
+var independentDurationLaterClauseLeadRE = regexp.MustCompile(`(?i)^\s*and\s+`)
 
 func durationAlternativeContinuation(prefix, suffix string) bool {
 	if strings.HasPrefix(suffix, ".") && !durationAbbrevRE.MatchString(prefix) && durationAbbrevRE.MatchString(prefix+".") {
 		suffix = suffix[1:]
+	}
+	if independentDurationAlternativeLaterAssertion(suffix) {
+		return false
 	}
 	return durationAlternativeRE.MatchString(suffix) || unsupportedDurationAlternativeContinuation(suffix)
 }
@@ -1188,7 +1193,7 @@ func unsupportedDurationAlternativeContinuation(suffix string) bool {
 	}
 	conjunction := strings.ToLower(suffix[lead[2]:lead[3]])
 	if conjunction == "and" {
-		if later := durationLaterLeadRE.FindStringIndex(following); later != nil && relativeDurationIndependentAssertionRE.MatchString(following[later[1]:]) {
+		if independentDurationLaterAssertion(following) {
 			return false
 		}
 	}
@@ -1204,6 +1209,28 @@ func unsupportedDurationAlternativeContinuation(suffix string) bool {
 	}
 	parsed, valid := parseUnit(operand[:match[1]], parts)
 	return !valid || parsed.Kind != durationKind
+}
+
+func independentDurationAlternativeLaterAssertion(suffix string) bool {
+	lead := unsupportedDurationAlternativeLeadRE.FindStringSubmatchIndex(suffix)
+	if lead == nil || !strings.EqualFold(suffix[lead[2]:lead[3]], "and") {
+		return false
+	}
+	operand := trimRelativeDurationWrappers(suffix[lead[1]:])
+	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
+		operand = trimRelativeDurationWrappers(operand[qualifier[1]:])
+	}
+	_, _, following, ok := relativeDurationOperandParts(operand)
+	return ok && independentDurationLaterAssertion(following)
+}
+
+func independentDurationLaterAssertion(following string) bool {
+	later := durationLaterLeadRE.FindStringIndex(following)
+	if later == nil {
+		return false
+	}
+	assertion := following[later[1]:]
+	return relativeDurationIndependentAssertionRE.MatchString(assertion) || independentTypedFigureAssertion(assertion)
 }
 
 func unsupportedRelativeDurationOperand(operand, connector string) bool {
@@ -1254,12 +1281,34 @@ func relativeDurationClauseOperand(s string) (connector, operand string, operand
 
 func independentUnsupportedRelativeDurationOperand(original string, offsets map[int]int, s string) (start, end int, ok bool) {
 	connector, operand, operandStart, ok := relativeDurationClauseOperand(s)
-	if !ok {
-		return 0, 0, false
-	}
-	amount, unit, following, ok := relativeDurationOperandParts(operand)
-	if !ok || !independentRelativeDurationAssertion(connector, following) {
-		return 0, 0, false
+	var amount, unit []int
+	var following string
+	if ok {
+		amount, unit, following, ok = relativeDurationOperandParts(operand)
+		if !ok || !independentRelativeDurationAssertion(connector, following) {
+			return 0, 0, false
+		}
+	} else {
+		lead := independentDurationLaterClauseLeadRE.FindStringIndex(s)
+		if lead == nil {
+			return 0, 0, false
+		}
+		operandStart = lead[1]
+		operand = s[operandStart:]
+		trimmed := trimRelativeDurationWrappers(operand)
+		operandStart += len(operand) - len(trimmed)
+		operand = trimmed
+		if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
+			operandStart += qualifier[1]
+			operand = operand[qualifier[1]:]
+			trimmed = trimRelativeDurationWrappers(operand)
+			operandStart += len(operand) - len(trimmed)
+			operand = trimmed
+		}
+		amount, unit, following, ok = relativeDurationOperandParts(operand)
+		if !ok || !independentDurationLaterAssertion(following) {
+			return 0, 0, false
+		}
 	}
 	if match := unitRE.FindStringSubmatchIndex(operand); match != nil && match[0] == 0 && match[1] == unit[1] {
 		parts := make([]string, len(match)/2)
@@ -1858,7 +1907,18 @@ func rateQualifierRateBoundary(s string, end int) int {
 	for end < len(s) {
 		r, size := utf8.DecodeRuneInString(s[end:])
 		if unicode.IsSpace(r) {
-			next := end + size
+			next := end
+			for next < len(s) {
+				r, size = utf8.DecodeRuneInString(s[next:])
+				if !unicode.IsSpace(r) {
+					break
+				}
+				next += size
+			}
+			if next == len(s) {
+				end = next
+				break
+			}
 			nextRune, _ := utf8.DecodeRuneInString(s[next:])
 			if !strings.ContainsRune(closingPunctuation, nextRune) {
 				break
