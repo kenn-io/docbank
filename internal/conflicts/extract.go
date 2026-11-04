@@ -96,6 +96,7 @@ const MaxClauseMatches = 64
 const andWord = "and"
 const dateKind = "date"
 const durationKind = "duration"
+const moneyKind = "money"
 const percentKind = "percent"
 const unsupportedNumericDigits = "⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉"
 
@@ -857,7 +858,7 @@ func punctuatedBound(prefix string) bool {
 }
 
 func parenthesizedMoney(f Figure, prefix, suffix string) bool {
-	if f.Kind != "money" || !strings.HasSuffix(strings.TrimSpace(prefix), "(") {
+	if f.Kind != moneyKind || !strings.HasSuffix(strings.TrimSpace(prefix), "(") {
 		return false
 	}
 	if n := rateEnd(suffix); n > 0 {
@@ -1526,8 +1527,47 @@ func unresolvedSpokenWordOperandChecks(s string) []candidate {
 			checks = appendUnresolvedWordOperandCheck(checks, check)
 		}
 	}
+	for _, check := range unqualifiedRateNumeratorChecks(s) {
+		checks = appendUnresolvedWordOperandCheck(checks, check)
+	}
 	for _, check := range unresolvedSpokenPercentageBaseChecks(s) {
 		checks = appendUnresolvedWordOperandCheck(checks, check)
+	}
+	return checks
+}
+
+var unresolvedCurrencyRatePrefixRE = regexp.MustCompile(`(?i)[$€£¥]|\b` + currencyCodes + `\s+`)
+
+func unqualifiedRateNumeratorChecks(s string) []candidate {
+	var checks []candidate
+	for _, prefix := range unresolvedCurrencyRatePrefixRE.FindAllStringIndex(s, -1) {
+		if check, ok := unresolvedCurrencyPrefixedOperandCheck(s[prefix[0]:], prefix[0]); ok {
+			checks = appendUnresolvedWordOperandCheck(checks, check)
+		}
+	}
+	for start, r := range s {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		if start > 0 {
+			previous, _ := utf8.DecodeLastRuneInString(s[:start])
+			if unicode.IsLetter(previous) || unicode.IsDigit(previous) || previous == '_' {
+				continue
+			}
+		}
+		amount := numeralWordSequenceRE.FindStringIndex(s[start:])
+		if amount == nil || amount[0] != 0 {
+			continue
+		}
+		unit := spokenMoneyUnitLeadRE.FindStringIndex(s[start+amount[1]:])
+		if unit == nil || unit[0] != 0 {
+			continue
+		}
+		end := amount[1] + unit[1]
+		if rateEnd(s[start+end:]) == 0 {
+			continue
+		}
+		checks = appendUnresolvedWordOperandCheck(checks, candidate{start, start + end, Figure{Kind: moneyKind}, 1})
 	}
 	return checks
 }
@@ -1571,7 +1611,7 @@ func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, boo
 		return candidate{start, start + amount[1] + unit[1], Figure{Kind: percentKind, Unit: percentKind}, 1}, true
 	}
 	if unit := spokenMoneyUnitLeadRE.FindStringIndex(operand[amount[1]:]); unit != nil && unit[0] == 0 {
-		return candidate{start, start + amount[1] + unit[1], Figure{Kind: "money"}, 1}, true
+		return candidate{start, start + amount[1] + unit[1], Figure{Kind: moneyKind}, 1}, true
 	}
 	return candidate{}, false
 }
@@ -1588,13 +1628,13 @@ func unresolvedCurrencyPrefixedOperandCheck(operand string, start int) (candidat
 	if amount != nil && amount[0] == 0 && !supportedWordAmount(operand[prefix[1]:prefix[1]+amount[1]]) {
 		end := prefix[1] + amount[1]
 		if rateEnd(operand[end:]) > 0 {
-			return candidate{start, start + end, Figure{Kind: "money"}, 1}, true
+			return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
 		}
 	}
 	if amount := leadingDecimalOperandRE.FindStringIndex(operand[prefix[1]:]); amount != nil && amount[0] == 0 {
 		end := prefix[1] + amount[1]
 		if rateEnd(operand[end:]) > 0 {
-			return candidate{start, start + end, Figure{Kind: "money"}, 1}, true
+			return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
 		}
 	}
 	return candidate{}, false
@@ -1797,6 +1837,7 @@ func independentTypedFigureAssertion(s string) bool {
 
 var directTypedFigureAssertionPrefixRE = regexp.MustCompile(`^\s*[,;:]?\s*(?:[\(\[\{\"'‘’“”«]\s*)*$`)
 var assertionPrefixWordRE = regexp.MustCompile(`(?i)[\p{L}\p{Nd}]+`)
+var coordinatedTypedAssertionLeadRE = regexp.MustCompile(`(?i)^\s*(?:and|but|while)\s+`)
 
 const assertionPredicatePattern = `(?:[\p{L}]+(?:s|ed|ing)|pay|paid|offsets?|cost|put|set|cut|hit|run)`
 
@@ -1820,9 +1861,8 @@ func rateDateContinuation(s string) bool {
 	}
 	if loc := rateDateCoordinatedPeriodRE.FindStringIndex(s); loc != nil {
 		assertion := strings.TrimSpace(s[loc[1]:])
-		if lead := independentFigureAssertionRE.FindStringIndex(assertion); lead != nil && lead[0] == 0 {
-			figure := figureAssertionRE.FindStringIndex(strings.TrimSpace(assertion[lead[1]:]))
-			if figure != nil && figure[0] == 0 {
+		if lead := coordinatedTypedAssertionLeadRE.FindStringIndex(assertion); lead != nil && lead[0] == 0 {
+			if independentTypedFigureAssertion(strings.TrimSpace(assertion[lead[1]:])) {
 				return true
 			}
 		}
@@ -2001,7 +2041,7 @@ func figureRelationEnd(s string, checks []candidate, c candidate, limit int) int
 func omitUncertainGroups(s string, checks, cs []candidate) []candidate {
 	var figures []candidate
 	for _, c := range checks {
-		if (c.f.Kind == dateKind || c.f.Kind == durationKind || c.f.Kind == "money" || c.f.Kind == percentKind || c.f.Kind == "count") && !rateContains(s, checks, c) && !percentageBaseContains(s, checks, c) {
+		if (c.f.Kind == dateKind || c.f.Kind == durationKind || c.f.Kind == moneyKind || c.f.Kind == percentKind || c.f.Kind == "count") && !rateContains(s, checks, c) && !percentageBaseContains(s, checks, c) {
 			figures = append(figures, c)
 		}
 	}
@@ -2244,7 +2284,7 @@ func unsafeCandidates(s string, checks, cs []candidate) bool {
 			if left.priority > 0 && right.priority > 0 && left.end < right.start && comparativeRE.MatchString(s[left.end:right.start]) {
 				return true
 			}
-			if left.f.Kind == "money" && right.f.Kind == "money" && left.end < right.start && strings.TrimSpace(s[left.end:right.start]) == "," && commaMoneyGroupRE.MatchString(s[right.start:right.end]) {
+			if left.f.Kind == moneyKind && right.f.Kind == moneyKind && left.end < right.start && strings.TrimSpace(s[left.end:right.start]) == "," && commaMoneyGroupRE.MatchString(s[right.start:right.end]) {
 				return true
 			}
 		}
@@ -2616,13 +2656,22 @@ func quantitySubjectAssertion(s string) bool {
 }
 
 var quantitySubjectTypedAmountPredicateLeadRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s+(?:costs?|charges?)\b\s+`)
+var quantitySubjectTypedAmountQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)`)
 
 func quantitySubjectTypedAmountPredicate(s string) bool {
 	lead := quantitySubjectTypedAmountPredicateLeadRE.FindStringIndex(s)
 	if lead == nil {
 		return false
 	}
-	amount := moneyRE.FindStringIndex(s[lead[1]:])
+	remainder := trimRelativeDurationWrappers(s[lead[1]:])
+	for {
+		qualifier := quantitySubjectTypedAmountQualifierRE.FindStringIndex(remainder)
+		if qualifier == nil || qualifier[0] != 0 || qualifier[1] == 0 {
+			break
+		}
+		remainder = trimRelativeDurationWrappers(remainder[qualifier[1]:])
+	}
+	amount := moneyRE.FindStringIndex(remainder)
 	return amount != nil && amount[0] == 0
 }
 
@@ -2757,7 +2806,7 @@ func compoundNumberSuffix(suffix string, f Figure) bool {
 		i = len(suffix)
 	}
 	r, _ = utf8.DecodeRuneInString(suffix)
-	return unicode.IsDigit(r) || numeralWord(suffix[:i]) || fractionSuffixRE.MatchString(suffix) || f.Kind == "money" && slices.Contains([]string{"m", "mn", "k"}, strings.ToLower(suffix[:i]))
+	return unicode.IsDigit(r) || numeralWord(suffix[:i]) || fractionSuffixRE.MatchString(suffix) || f.Kind == moneyKind && slices.Contains([]string{"m", "mn", "k"}, strings.ToLower(suffix[:i]))
 }
 
 func independentBoundedFigure(s string, prior Figure) bool {
@@ -2924,7 +2973,7 @@ func parseMoney(s string, p []string) (Figure, bool) {
 		unit = "rouble"
 	}
 	v, e, ok := numbers(num, 1)
-	return Figure{Kind: "money", Unit: unit, Value: v, EndValue: e}, ok
+	return Figure{Kind: moneyKind, Unit: unit, Value: v, EndValue: e}, ok
 }
 func parseUnit(_ string, p []string) (Figure, bool) {
 	num, unit := p[1], strings.ToLower(p[2])

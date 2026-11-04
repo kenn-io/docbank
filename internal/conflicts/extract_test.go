@@ -3114,6 +3114,16 @@ func TestExtractReviewNominalComparisonAndAssertionPredicates(t *testing.T) {
 			want: []string{"2 devices", "$10"},
 		},
 		{
+			name: "bounded cost predicate with typed amount ends approximate grouping",
+			text: "The plan includes about 30 devices and 2 devices cost at least $10.",
+			want: []string{"2 devices", "$10"},
+		},
+		{
+			name: "approximate charge predicate with typed amount ends approximate grouping",
+			text: "The plan includes about 30 users and 2 users charge approximately $10.",
+			want: []string{"2 users"},
+		},
+		{
 			name: "charge predicate with typed amount ends approximate grouping",
 			text: "The plan includes about 30 users and 2 users charge $10.",
 			want: []string{"2 users", "$10"},
@@ -4862,19 +4872,57 @@ func TestExtractReviewAbbreviatedRateDateContinuationAtClauseBoundaries(t *testi
 }
 
 func TestExtractReviewAbbreviatedRateDateDoesNotScopeCoordinatedAssertion(t *testing.T) {
-	text := "The fee is $5/hr. before 1 July 2026 and the deposit is $7."
-	got := Extract(text)
 	want := []string{"$5", "$7"}
-	if len(got) != len(want) {
-		t.Fatalf("Extract(%q) = %+v, want figures %v", text, got, want)
+	for _, text := range []string{
+		"The fee is $5/hr. before 1 July 2026 and the deposit is $7.",
+		"The fee is $5/hr. before 1 July 2026 and shipping costs $7.",
+		"The fee is $5/hr. before 1 July 2026 and $7 is deposited.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := Extract(text)
+			if len(got) != len(want) {
+				t.Fatalf("Extract(%q) = %+v, want figures %v", text, got, want)
+			}
+			for i, figure := range got {
+				if figure.Text != want[i] || figure.Period != (Period{}) {
+					t.Errorf("figure %d = %+v, want %q with unknown period", i, figure, want[i])
+				}
+				if string([]rune(text)[figure.Start:figure.End]) != want[i] {
+					t.Errorf("figure %d has invalid span: %+v", i, figure)
+				}
+			}
+		})
 	}
-	for i, figure := range got {
-		if figure.Text != want[i] || figure.Period != (Period{}) {
-			t.Errorf("figure %d = %+v, want %q with unknown period", i, figure, want[i])
-		}
-		if string([]rune(text)[figure.Start:figure.End]) != want[i] {
-			t.Errorf("figure %d has invalid span: %+v", i, figure)
-		}
+}
+
+func TestExtractReviewUnqualifiedUnsupportedRateNumeratorsSuppressDenominators(t *testing.T) {
+	for _, tt := range []struct {
+		name, text string
+		want       []string
+	}{
+		{"spoken money numerator", "The fee is thirty dollars per 2 devices.", nil},
+		{"leading-decimal numerator", "The fee is $.50 per 2 devices.", nil},
+		{"spoken money numerator before independent sentence", "The fee is thirty dollars per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"leading-decimal numerator before independent sentence", "The fee is $.50 per 2 devices. The deposit is $7.", []string{"$7"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Extract(tt.text)
+			var texts []string
+			for _, figure := range got {
+				texts = append(texts, figure.Text)
+				if figure.Text == "2 devices" {
+					t.Fatalf("unsupported rate numerator exposed its denominator: %+v", got)
+				}
+			}
+			if len(texts) != len(tt.want) {
+				t.Fatalf("Extract(%q) = %+v, want figures %v", tt.text, got, tt.want)
+			}
+			for i, want := range tt.want {
+				if texts[i] != want {
+					t.Errorf("figure %d = %q, want %q", i, texts[i], want)
+				}
+			}
+		})
 	}
 }
 

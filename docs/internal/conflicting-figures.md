@@ -280,6 +280,10 @@ normalize as ordinary days.
 A slash rate such as `$5/month` or `$5/2 devices` retains the numerator and
 any recognized numeric denominator for later rate classification. A denominator
 must include a noun; a bare numeric divisor remains an unsupported fraction.
+When a rate's numerator is unsupported, its denominator is not emitted as a
+standalone figure: `The fee is thirty dollars per 2 devices.` and
+`The fee is $.50 per 2 devices.` yield no figures. A later sentence remains
+eligible.
 Arithmetic following a rate still causes the whole clause to be omitted. A
 postfix bound on a rate also suppresses its denominator across wrapped
 whitespace, as in `$5 [maximum  ] per 2 devices`.
