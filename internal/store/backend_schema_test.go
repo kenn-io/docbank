@@ -46,6 +46,13 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	// PostgreSQL's transactional node counter implements SQLite's sqlite_sequence.
 	require.Contains(t, right, "node_allocation")
 	delete(right, "node_allocation")
+	// SQLite's released size lookup indexes zero-padded text; PostgreSQL can
+	// compare the integer directly. Both serve BrowserPhotoSizeCandidates.
+	const photoSizeIndex = "content_versions_photo_size"
+	assert.Equal(t, backendIndex{Columns: []string{"<expression>"}}, left["content_versions"].Indexes[photoSizeIndex])
+	assert.Equal(t, backendIndex{Columns: []string{"size"}}, right["content_versions"].Indexes[photoSizeIndex])
+	delete(left["content_versions"].Indexes, photoSizeIndex)
+	delete(right["content_versions"].Indexes, photoSizeIndex)
 	for table, reason := range sqliteOnlyBackendTables {
 		assert.Contains(t, left, table, "stale table exception: %s", reason)
 		assert.NotContains(t, right, table, "remove resolved table exception: %s", reason)

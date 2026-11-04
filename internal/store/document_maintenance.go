@@ -201,3 +201,11 @@ func (s *Store) refreshSourceMetadataPhotosTx(ctx context.Context, tx *sql.Tx, s
 	}
 	return nil
 }
+
+// refreshPhotoMemberTx mirrors membership insertion and reattachment effects.
+func (s *Store) refreshPhotoMemberTx(ctx context.Context, tx *sql.Tx, member PhotoFile) error {
+	if err := s.refreshPhotoTimelineTx(ctx, tx, member.NodeID); err != nil {
+		return err
+	}
+	return s.refreshPhotoAssetWorkTx(ctx, tx, member.AssetID)
+}

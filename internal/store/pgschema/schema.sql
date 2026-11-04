@@ -2404,3 +2404,17 @@ CREATE INDEX email_part_artifacts_blob ON {{schema}}.email_part_artifacts(blob_h
 CREATE INDEX email_attachments_generation ON {{schema}}.email_attachments(generation_id);
 CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_id)
     WHERE strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0;
+
+-- Local import receipts may be pruned only after physical cleanup is complete.
+CREATE TABLE {{schema}}.storage_operation_cleanup (
+    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE,
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    loose_hash TEXT COLLATE "C" NOT NULL DEFAULT '',
+    loose_encoding BIGINT NOT NULL DEFAULT 0,
+    pack_id TEXT COLLATE "C" NOT NULL DEFAULT '',
+    PRIMARY KEY (operation_id, store_id, loose_hash, loose_encoding, pack_id)
+);
+CREATE INDEX storage_operations_state ON {{schema}}.storage_operations(state,created_at,operation_id);
+CREATE INDEX storage_operations_retention ON {{schema}}.storage_operations(retention_until) WHERE retention_until IS NOT NULL;
+
+CREATE INDEX content_versions_photo_size ON {{schema}}.content_versions(size);
