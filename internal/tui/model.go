@@ -2538,7 +2538,9 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 			receipt := pending.receipt
 			receipt.RequestedMode = msg.report.RequestedMode
 			receipt.ActualMode = msg.report.ActualMode
-			receipt.DocumentCount = new(msg.report.Coverage.ScopedDocuments)
+			if msg.report.Coverage.State != "" && msg.report.Coverage.State != "unknown" {
+				receipt.DocumentCount = new(msg.report.Coverage.ScopedDocuments)
+			}
 			receipt.Truncated = msg.report.Truncated
 			receipt.Degradations = msg.report.Degradations
 			receipt.Coverage = map[string]any{"binding_required": msg.report.Coverage.BindingRequired,

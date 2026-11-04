@@ -1670,17 +1670,27 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	return report, nil
 }
 
-// ValidateSearch applies the same profile, query, mode, limit, and binding
-// semantics as Search without executing or widening a source-fenced search.
-func (service *Service) ValidateSearch(ctx context.Context, request SearchRequest) error {
+// SearchModes resolves the modes that Search will report without executing a
+// search or widening a source-fenced request.
+func (service *Service) SearchModes(ctx context.Context, request SearchRequest) (retrieval.Mode, retrieval.Mode, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return "", "", err
 	}
 	profile, ok := service.profiles[request.Profile]
 	if !ok {
-		return ErrProfileNotConfigured
+		return "", "", ErrProfileNotConfigured
 	}
-	_, err := service.prepareSearch(request, profile)
+	prepared, err := service.prepareSearch(request, profile)
+	if err != nil {
+		return "", "", err
+	}
+	return prepared.requestedMode, prepared.mode, nil
+}
+
+// ValidateSearch applies the same profile, query, mode, limit, and binding
+// semantics as Search without executing or widening a source-fenced search.
+func (service *Service) ValidateSearch(ctx context.Context, request SearchRequest) error {
+	_, _, err := service.SearchModes(ctx, request)
 	return err
 }
 

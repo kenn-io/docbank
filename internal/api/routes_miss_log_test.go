@@ -54,6 +54,24 @@ func TestMissLogListExcludesExpiredRecords(t *testing.T) {
 	require.Empty(t, page.Items, "an idle daemon hides its three-day-old record")
 }
 
+func TestDocumentSearchMissUsesKnownDocumentCounts(t *testing.T) {
+	t.Parallel()
+	allLive := api.DocumentSearchRequest{Scope: &api.DocumentSearchScope{Kind: "all_live"}}
+	unknown := api.DocumentSearchReport{Coverage: api.DocumentSearchCoverage{State: "unknown"}}
+	unknownMiss := api.DocumentSearchMiss("synthetic question", "private", allLive, unknown)
+	assert.Nil(t, unknownMiss.DocumentCount)
+
+	known := api.DocumentSearchReport{Coverage: api.DocumentSearchCoverage{ScopedDocuments: 3, State: "incomplete"}}
+	knownMiss := api.DocumentSearchMiss("synthetic question", "private", allLive, known)
+	require.NotNil(t, knownMiss.DocumentCount)
+	assert.Equal(t, 3, *knownMiss.DocumentCount)
+
+	emptyFence := api.DocumentSearchRequest{Fence: api.DocumentSearchFence{VaultUID: "synthetic-vault"}}
+	emptyFenceMiss := api.DocumentSearchMiss("synthetic question", "private", emptyFence, unknown)
+	require.NotNil(t, emptyFenceMiss.DocumentCount)
+	assert.Zero(t, *emptyFenceMiss.DocumentCount)
+}
+
 func TestMissLogDisabledRetentionKeepsHistoryVisible(t *testing.T) {
 	t.Parallel()
 	for _, days := range []int{0, 1} {

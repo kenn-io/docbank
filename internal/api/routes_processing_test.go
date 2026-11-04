@@ -1881,15 +1881,18 @@ func TestDocumentSearchAllLiveEmptyExplain(t *testing.T) {
 
 func TestDocumentSearchEmptyFenceReturnsEmptyReport(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	provider := newProcessingTestEmbeddingProvider(t)
+	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
 	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
-		"profile": "private", "query": "synthetic empty fence", "mode": "lexical",
+		"profile": "private", "query": "synthetic empty fence", "mode": "hybrid",
 		"fence": map[string]any{"vault_uid": catalog.VaultID(), "content_version_ids": []string{}},
 	})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var report api.DocumentSearchReport
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
-	assert.Equal(t, "lexical", report.RequestedMode)
+	assert.Equal(t, "hybrid", report.RequestedMode)
+	assert.Equal(t, "lexical", report.ActualMode)
 	assert.Empty(t, report.Results)
 	assert.Equal(t, "complete", report.Coverage.State)
 }

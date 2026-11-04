@@ -414,7 +414,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		OperationID: "validateDocumentSearch", Method: http.MethodPost,
 		Path: "/api/v1/search/validate", Summary: "Validate document-search semantics without executing a search",
 	}, func(ctx context.Context, input *searchValidationInput) (*searchValidationOutput, error) {
-		if err := validateDocumentSearch(ctx, d.Processing, input.Body); err != nil {
+		if _, _, err := validateDocumentSearch(ctx, d.Processing, input.Body); err != nil {
 			return nil, err
 		}
 		return &searchValidationOutput{Body: DocumentSearchValidation{Valid: true}}, nil
@@ -872,18 +872,18 @@ func resolveDocumentSourceFence(ctx context.Context, service *processing.Service
 	}, nil
 }
 
-func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) error {
+func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) (string, string, error) {
 	if service == nil {
-		return processingUnavailable()
+		return "", "", processingUnavailable()
 	}
-	err := service.ValidateSearch(ctx, processing.SearchRequest{Query: input.Query,
+	requested, actual, err := service.SearchModes(ctx, processing.SearchRequest{Query: input.Query,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
 		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank})
 	if err != nil {
-		return fromProcessingError(err)
+		return "", "", fromProcessingError(err)
 	}
-	return nil
+	return string(requested), string(actual), nil
 }
 
 func searchDocuments(ctx context.Context, service *processing.Service, st *store.Store, input DocumentSearchRequest) (DocumentSearchReport, error) {
@@ -897,21 +897,14 @@ func searchDocuments(ctx context.Context, service *processing.Service, st *store
 		if st == nil || input.Fence.VaultUID != st.VaultID() {
 			return DocumentSearchReport{}, fromProcessingError(processing.ErrForeignVault)
 		}
-		if err := validateDocumentSearch(ctx, service, DocumentSearchValidationRequest{Query: input.Query, Mode: input.Mode, Profile: input.Profile, Limit: input.Limit, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: input.ContentFirst}); err != nil {
+		requested, actual, err := validateDocumentSearch(ctx, service, DocumentSearchValidationRequest{Query: input.Query, Mode: input.Mode, Profile: input.Profile, Limit: input.Limit, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: input.ContentFirst})
+		if err != nil {
 			return DocumentSearchReport{}, err
-		}
-		mode := input.Mode
-		if mode == "" {
-			mode = "auto"
-		}
-		actual := mode
-		if mode == "auto" {
-			actual = "lexical"
 		}
 		if input.MediaSources != nil {
 			return DocumentSearchReport{}, fromProcessingError(processing.ErrMediaSearchInvalid)
 		}
-		report := DocumentSearchReport{RequestedMode: mode, ActualMode: actual, Coverage: DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []DocumentSearchResult{}, Trace: []DocumentSearchTrace{}}
+		report := DocumentSearchReport{RequestedMode: requested, ActualMode: actual, Coverage: DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []DocumentSearchResult{}, Trace: []DocumentSearchTrace{}}
 		if input.Rerank {
 			report.Reranking = &DocumentSearchRerankingReceipt{Outcome: "skipped"}
 		}

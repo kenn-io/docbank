@@ -110,15 +110,20 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 func DocumentSearchMiss(query, profile string, request DocumentSearchRequest, report DocumentSearchReport) misslog.Request {
 	receipt := misslog.Request{Query: query, Profile: profile, BindingID: request.BindingID,
 		RequestedMode: report.RequestedMode, ActualMode: report.ActualMode,
-		DocumentCount: new(report.Coverage.ScopedDocuments), Truncated: report.Truncated, Degradations: report.Degradations,
+		Truncated: report.Truncated, Degradations: report.Degradations,
 		Coverage: map[string]any{"binding_required": report.Coverage.BindingRequired, "scoped_documents": report.Coverage.ScopedDocuments,
 			"complete_documents": report.Coverage.CompleteDocuments, "state": report.Coverage.State}}
 	if request.Scope != nil {
 		receipt.Filters = misslog.ReceiptScope(request.Scope.Filters)
-	} else if len(request.Fence.ContentVersionIDs) > 0 {
+	}
+	if request.Scope == nil && (request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) > 0) {
+		receipt.DocumentCount = new(len(request.Fence.ContentVersionIDs))
+	} else if report.Coverage.State != "" && report.Coverage.State != "unknown" {
+		receipt.DocumentCount = new(report.Coverage.ScopedDocuments)
+	}
+	if request.Scope == nil && len(request.Fence.ContentVersionIDs) > 0 {
 		fingerprint, _ := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: request.Fence.VaultUID, ContentVersionIDs: request.Fence.ContentVersionIDs})
 		receipt.FenceFingerprint = fingerprint
-		receipt.DocumentCount = new(len(request.Fence.ContentVersionIDs))
 	}
 	if report.Reranking != nil {
 		receipt.Reranking = map[string]any{"outcome": report.Reranking.Outcome, "cause": report.Reranking.Cause, "candidate_count": report.Reranking.CandidateCount}

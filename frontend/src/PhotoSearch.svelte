@@ -47,7 +47,8 @@
     void pending?.then((outcome) => {
       if (!explicit || !text || !outcome) return;
       if (outcome.accepted) {
-        const fallback = Boolean(photos.fallbackReason);
+        const fallbackReason = photos.fallbackReason;
+        const fallback = Boolean(fallbackReason);
         const actualMode = fallback ? "lexical" : submitted.mode;
         const searchType = fallback || submitted.mode === "lexical" ? "text" : submitted.mode;
         reportSearch(session, searchType, outcome.empty);
@@ -58,6 +59,8 @@
               requested_mode: submitted.mode,
               actual_mode: actualMode,
               filters: { ...submitted.filters, syntax: submitted.syntax, corpus: "photos", hidden },
+              degradations: fallbackReason ? [fallbackReason] : [],
+              coverage: { coverage_incomplete: photos.coverageIncomplete },
               truncated: photos.truncated,
             },
             { session, signal: AbortSignal.timeout(1000) },

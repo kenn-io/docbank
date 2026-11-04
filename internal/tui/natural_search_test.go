@@ -70,8 +70,8 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "stale base excerpt")
 			fake.naturalSearch.RequestedMode = "hybrid"
 			fake.naturalSearch.ActualMode = "hybrid"
-			fake.naturalSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped", Cause: "empty candidates"}
 			fake.naturalRerankSearch = fake.naturalSearch
+			fake.naturalRerankSearch.Results = []api.DocumentSearchResult{}
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
@@ -85,7 +85,6 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			require.NotNil(t, rerank)
 			assert.Empty(t, fake.actions)
 			if replaced {
-				fake.naturalSearch.Reranking.Cause = "changed after acceptance"
 				model.requestID, model.reportSearchID = 8, 8
 				model.naturalSearchID = 4
 				base = model.loadNaturalSearch("another", model.requestID)()
@@ -104,9 +103,6 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			require.Len(t, fake.misses, 1)
 			require.Equal(t, "missing", fake.misses[0].Query)
 			require.Equal(t, "semantic", fake.misses[0].BindingID)
-			if replaced {
-				assert.Equal(t, "empty candidates", fake.misses[0].Reranking["cause"])
-			}
 		})
 	}
 }
@@ -144,6 +140,7 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			fake.profiles[0].RerankingAvailable = true
 			readme := fake.nodes["/README.txt"]
 			nonempty := naturalSearchReport(readme.ID, readme.CurrentVersionID, "excerpt")
+			nonempty.Coverage = api.DocumentSearchCoverage{State: "unknown"}
 			fake.naturalSearch, fake.naturalRerankSearch = nonempty, nonempty
 			wantRows := 0
 			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
@@ -177,6 +174,10 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			runModelCommand(t, model, cmd)
 			assert.Len(t, model.rows, wantRows)
 			assert.Equal(t, want, fake.actions)
+			if !baseEmpty {
+				require.Len(t, fake.misses, 1)
+				assert.Nil(t, fake.misses[0].DocumentCount)
+			}
 		})
 	}
 }

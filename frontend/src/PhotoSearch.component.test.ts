@@ -328,6 +328,7 @@ it.each([
             requested_mode: "semantic",
             actual_mode: fallback_reason ? "lexical" : "semantic",
             fallback_reason,
+            coverage_incomplete: true,
           }),
         ),
       ),
@@ -342,6 +343,18 @@ it.each([
     await fireEvent.submit(search.closest("form")!);
     await waitFor(() =>
       expect(searchOutcome).toHaveBeenCalledExactlyOnceWith("scoped", executed, true),
+    );
+    await waitFor(() =>
+      expect(generated.recordMiss).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          query: "sunset",
+          requested_mode: "semantic",
+          actual_mode: executed === "text" ? "lexical" : "semantic",
+          degradations: fallback_reason ? [fallback_reason] : [],
+          coverage: { coverage_incomplete: true },
+        }),
+        expect.objectContaining({ session: "scoped" }),
+      ),
     );
     photos.dispose();
   },
