@@ -501,21 +501,53 @@ func checkAuditTrashOriginMove(t *testing.T, openStore func(*testing.T) *Store) 
 	assert.Equal(t, work.ID, unchanged.ID)
 	projects, err = s.NodeByPath(ctx, "/Projects")
 	require.NoError(t, err)
-	var before, after bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &before))
+	var beforeNodes []Node
+	for _, id := range []int64{s.RootID(), projects.ID, work.ID, file.ID, sibling.ID, unrelated.ID} {
+		node, err := s.NodeByID(ctx, id)
+		require.NoError(t, err)
+		beforeNodes = append(beforeNodes, node)
+	}
+	beforeStatus, err := s.AuditStatus(ctx, nil)
+	require.NoError(t, err)
+	beforeRecords, err := loadInitialAuditRecords(ctx, s.db)
+	require.NoError(t, err)
+	var beforeTrashParent, afterTrashParent int64
+	var beforeTrashName, afterTrashName string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT trash_parent,trash_name FROM nodes WHERE id=$1`, file.ID).Scan(&beforeTrashParent, &beforeTrashName))
 	_, err = s.BatchMove(ctx, []BatchMoveRequest{
 		{NodeID: projects.ID, IfRevision: projects.Revision, DestinationPath: "/Renamed"},
 	})
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	require.ErrorContains(t, err, "trash-origin paths")
-	require.NoError(t, s.ExportMetadata(ctx, &after))
-	assert.Equal(t, before.String(), after.String(), "rejected batch move preserves tree, trash, and audit history")
-	results, err := s.BatchMove(ctx, []BatchMoveRequest{
-		{NodeID: unrelated.ID, IfRevision: unrelated.Revision, DestinationPath: "/Moved"},
-	})
+	for _, before := range beforeNodes {
+		after, err := s.NodeByID(ctx, before.ID)
+		require.NoError(t, err)
+		assert.Equal(t, before, after, "rejected batch move preserves node %d", before.ID)
+	}
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT trash_parent,trash_name FROM nodes WHERE id=$1`, file.ID).Scan(&afterTrashParent, &afterTrashName))
+	assert.Equal(t, beforeTrashParent, afterTrashParent)
+	assert.Equal(t, beforeTrashName, afterTrashName)
+	afterStatus, err := s.AuditStatus(ctx, nil)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "/Moved", results[0].Path)
+	assert.Equal(t, beforeStatus, afterStatus)
+	afterRecords, err := loadInitialAuditRecords(ctx, s.db)
+	require.NoError(t, err)
+	require.Len(t, afterRecords, len(beforeRecords))
+	for kind, group := range beforeRecords {
+		assert.ElementsMatch(t, group, afterRecords[kind], kind)
+	}
+	if s.postgresSchema == "" { // Batch-move staging uses SQLite SQL.
+		results, err := s.BatchMove(ctx, []BatchMoveRequest{
+			{NodeID: unrelated.ID, IfRevision: unrelated.Revision, DestinationPath: "/Moved"},
+		})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.Equal(t, "/Moved", results[0].Path)
+	} else {
+		_, path, err := s.Move(ctx, unrelated.ID, s.RootID(), "Moved", unrelated.Revision)
+		require.NoError(t, err)
+		assert.Equal(t, "/Moved", path)
+	}
 	movedFolder, err := s.NodeByPath(ctx, "/Moved")
 	require.NoError(t, err)
 	assert.Equal(t, unrelated.ID, movedFolder.ID)
