@@ -2812,7 +2812,7 @@ func FuzzExtractRejectsArithmeticRelativeDurationOperands(f *testing.F) {
 	f.Add("0\n* 0")
 	f.Fuzz(func(t *testing.T, operand string) {
 		operand = strings.TrimSpace(operand)
-		if len(operand) == 0 || len(operand) > 64 || strings.ContainsAny(operand, "\r\n") || strings.Trim(operand, "0123456789 .\t+-−–—*/⁄×÷±∓^xX_'’‘ʼabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" || !strings.ContainsAny(operand, "+-−–—*/⁄×÷±∓^xX") {
+		if len(operand) == 0 || len(operand) > 64 || strings.ContainsAny(operand, "\r\n") || strings.Trim(operand, "0123456789 .\t+-−–—*/⁄×÷±∓^_'’‘ʼabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" || !strings.ContainsAny(operand, "+-−–—*/⁄×÷±∓^xX") {
 			t.Skip()
 		}
 		amount, _, _, ok := relativeDurationOperandParts(operand + " min.")
