@@ -85,6 +85,7 @@
   let viewport = $state(960);
   const buildChunks = createPhotoChunks();
   let seekOffset = createPhotoSeek();
+  let seekStart = 0;
   const layout = $derived(buildChunks(groups, width, targetRowHeight, changedFrom));
   const chunks = $derived(layout.chunks);
   const totalHeight = $derived(
@@ -156,10 +157,15 @@
     if (initialized && container && container.scrollTop !== scrollTop)
       container.scrollTop = scrollTop;
   });
+  $effect.pre(() => {
+    // Retain relayouts while paging suspends the seek.
+    seekStart = Math.min(seekStart, layout.changedFrom);
+  });
   $effect(() => {
     if (!initialized || loading) return;
     if (seek) {
-      const offset = seekOffset(chunks, seek, !more, loadedItems, appendedFrom, layout.changedFrom);
+      const offset = seekOffset(chunks, seek, !more, loadedItems, appendedFrom, seekStart);
+      seekStart = Infinity;
       // Done once the month can sit at the top of the view, or the list ends.
       const done = !more || (offset !== undefined && offset + viewport <= totalHeight);
       // A loaded month scrolls now, so it still works when paging has failed.

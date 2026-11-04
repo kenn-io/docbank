@@ -3887,30 +3887,50 @@ it.each([0, 2])(
   },
 );
 
-it.each([false, true])(
-  "grows select-all IDs reactively unless authored targets own selection, targets=%s",
-  async (targets) => {
-    const photos = new Photos("scoped", vi.fn());
-    photos.items = [photo(1)];
-    photos.started = true;
-    photos.cursor = "next";
-    await photos.selectAllResults();
-    const selected = photos.selectedIDs;
-    if (targets) photos.authored.targets = [preparedPhoto(1)];
-    const fetcher = vi.fn().mockResolvedValue(response([photo(2)], "last"));
-    stubPhotoFetch(fetcher);
-    const sizes: number[] = [];
-    const stop = observeSelectionSize(photos, (size) => sizes.push(size));
-    await tick();
-    await photos.loadMore();
-    expect(photos.allResults).toBe(true);
-    expect(photos.selectsAll).toBe(!targets);
-    if (!targets) expect(photos.selectedIDs).toBe(selected);
-    expect([...photos.selectedIDs]).toEqual(targets ? ["photo-1"] : ["photo-1", "photo-2"]);
-    expect(photos.items).toHaveLength(2);
-    await tick();
-    expect(sizes.at(-1)).toBe(targets ? 1 : 2);
-    stop();
-    photos.dispose();
-  },
-);
+it.each([false, true])("grows backing select-all IDs while paging, targets=%s", async (targets) => {
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  photos.cursor = "next";
+  await photos.selectAllResults();
+  const selected = photos.selectedIDs;
+  if (targets) photos.authored.targets = [preparedPhoto(1)];
+  const fetcher = vi.fn().mockResolvedValue(response([photo(2)], "last"));
+  stubPhotoFetch(fetcher);
+  const sizes: number[] = [];
+  const stop = targets ? undefined : observeSelectionSize(photos, (size) => sizes.push(size));
+  await tick();
+  await photos.loadMore();
+  expect(photos.allResults).toBe(true);
+  expect(photos.selectsAll).toBe(!targets);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  if (!targets) expect(photos.selectedIDs).toBe(selected);
+  expect(photos.items).toHaveLength(2);
+  await tick();
+  if (!targets) expect(sizes.at(-1)).toBe(2);
+  stop?.();
+  photos.dispose();
+});
+
+it("keeps pages selected after Metadata closes and paging resumes", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.started = true;
+  photos.cursor = "next";
+  await photos.selectAllResults();
+  photos.authored.targets = [preparedPhoto(1)];
+  stubPhotoFetch(
+    vi
+      .fn()
+      .mockResolvedValueOnce(response([photo(2)], "last"))
+      .mockResolvedValueOnce(response([photo(3)])),
+  );
+
+  await photos.loadMore();
+  photos.authored.reset();
+  await photos.loadMore();
+
+  expect(photos.selectsAll).toBe(true);
+  expect([...photos.selectedIDs]).toEqual(["photo-1", "photo-2", "photo-3"]);
+  photos.dispose();
+});

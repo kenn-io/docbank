@@ -23,6 +23,45 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps a pending date jump aligned after density changes while loading", async () => {
+  const rows = [photo(1, "2025-07-01T12:00:00Z"), photo(2, "2025-06-01T12:00:00Z")];
+  const grouper = createPhotoGrouper();
+  const expanded = new Set<string>();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const onloadmore = vi.fn();
+  const view = render(PhotoGrid, {
+    ...grouper.sync(rows, "months", expanded),
+    loadedItems: rows,
+    cache,
+    selectedIDs: new Set<string>(),
+    targetRowHeight: 200,
+    loading: false,
+    more: true,
+    seek: "2025-06",
+    onselect: vi.fn(),
+    oncheck: vi.fn(),
+    onopen: vi.fn(),
+    onloadmore,
+  });
+  await waitFor(() => expect(onloadmore).toHaveBeenCalled());
+  expect(view.getByTestId("photo-scroll").scrollTop).toBe(256);
+
+  await view.rerender({ loading: true });
+  await view.rerender({ targetRowHeight: 100 });
+  const appended = [...rows, photo(3, "2025-05-01T12:00:00Z")];
+  await view.rerender({
+    ...grouper.sync(appended, "months", expanded, rows),
+    loadedItems: appended,
+    appendedFrom: rows,
+    loading: false,
+    more: false,
+  });
+
+  // July now occupies a 56px heading and a 100px row.
+  expect(view.getByTestId("photo-scroll").scrollTop).toBe(156);
+  await cache.dispose();
+});
+
 it("keeps mounted sections bounded while appending to 50,000 capture sessions", async () => {
   const rows = Array.from({ length: 100_000 }, (_, id) =>
     photo(id, new Date(Date.UTC(2025, 0, 1) - Math.floor(id / 2) * 5 * 3600_000).toISOString()),

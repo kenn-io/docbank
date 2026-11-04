@@ -875,7 +875,7 @@ export class Photos {
         const previous = this.rows;
         this.rows = previous.concat(added);
         this.appendedFrom = previous;
-        if (this.selectsAll) {
+        if (this.allResults) {
           // Photos owns this reactive set. Selection edits replace it.
           const selected = this.selection.selectedIDs;
           if (selected instanceof SvelteSet) {
