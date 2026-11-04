@@ -176,7 +176,7 @@ func TestMatchLiveRevalidation(t *testing.T) {
 	}
 }
 
-func TestMatcherCacheBoundsAndScope(t *testing.T) {
+func TestMatcherCacheBounds(t *testing.T) {
 	m := NewMatcher()
 	data := make([]byte, MaxBytes)
 	for i := range maxCacheBytes/MaxBytes + 1 {
@@ -185,15 +185,70 @@ func TestMatcherCacheBoundsAndScope(t *testing.T) {
 	if m.cached("vault-a/0") != nil || m.bytes > maxCacheBytes {
 		t.Fatal("cache byte limit not enforced")
 	}
-	if m.cached("vault-b/1") != nil {
-		t.Fatal("cache crossed vault boundary")
-	}
 	m = NewMatcher()
 	for i := range maxCachedVersions + 1 {
 		m.remember(strconv.Itoa(i), []byte{1})
 	}
 	if m.cached("0") != nil || len(m.entries) > maxCachedVersions {
 		t.Fatal("cache entry limit not enforced")
+	}
+}
+
+func TestMatcherCacheIsScopedByVault(t *testing.T) {
+	const (
+		vaultA      = "00000000-0000-4000-8000-000000000011"
+		vaultB      = "00000000-0000-4000-8000-000000000012"
+		cardVersion = "00000000-0000-4000-8000-000000000003"
+	)
+	m := NewMatcher()
+	for _, vault := range []string{vaultA, vaultB} {
+		raw := strings.Replace(sample, "00000000-0000-4000-8000-000000000001", vault, 1)
+		card, err := Parse([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data := []byte(strings.Replace(raw, "state: draft", "state: approved\napproved_hash: "+card.Hash(), 1))
+		digest := sha256.Sum256(data)
+		downloads := 0
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/v1/info":
+				_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": vault})
+			case "/api/v1/documents":
+				item := api.DocumentSummary{NodeID: 1, ContentVersionID: cardVersion, Path: "/answer-cards/card.md", Name: "card.md", MediaType: "text/markdown", Size: int64(len(data)), ModifiedAt: "2026-10-27T00:00:00Z"}
+				_ = json.NewEncoder(w).Encode(api.DocumentPage{PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250, Items: []api.DocumentSummary{item}})
+			case "/api/v1/versions/" + cardVersion + "/content":
+				downloads++
+				w.Header().Set(api.ContentVersionHeader, cardVersion)
+				w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+				w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(data)))
+				w.Header().Set("Trailer", "Content-Digest")
+				_, _ = w.Write(data)
+				w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+			case "/api/v1/nodes/1":
+				_ = json.NewEncoder(w).Encode(api.Node{ID: 1, Kind: "file", Path: "/answer-cards/card.md", CurrentVersionID: cardVersion, BlobHash: hex.EncodeToString(digest[:]), Size: int64(len(data))})
+			case "/api/v1/nodes/42":
+				cite := card.Citations[0]
+				_ = json.NewEncoder(w).Encode(api.Node{ID: 42, Kind: "file", CurrentVersionID: cite.ContentVersionID.String(), BlobHash: cite.ContentSHA256})
+			case "/api/v1/text-citations/resolve":
+				cite := card.Citations[0]
+				quoteDigest := sha256.Sum256([]byte(cite.Quote))
+				_ = json.NewEncoder(w).Encode(document.ResolvedTextCitation{Citation: cite.TextCitation(), Text: cite.Quote, TextBytes: len(cite.Quote), TextSHA256: hex.EncodeToString(quoteDigest[:])})
+			default:
+				t.Errorf("unexpected route %s", r.URL.Path)
+				http.Error(w, "unexpected route", http.StatusInternalServerError)
+			}
+		}))
+		c := daemonconn.New(s.URL, "synthetic-key")
+		got, err := m.Match(t.Context(), c, card.Question, "/answer-cards", 3)
+		s.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "matched" || len(got.Matches) != 1 || got.Matches[0].Card.ContentVersionID != cardVersion || downloads != 1 {
+			t.Fatalf("vault %s reused another vault's cached bytes: result=%+v downloads=%d", vault, got, downloads)
+		}
 	}
 }
 
