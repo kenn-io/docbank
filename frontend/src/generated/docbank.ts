@@ -10328,6 +10328,10 @@ export type UploadFileBody = {
   file: Blob | File;
 };
 
+export type GetContentVersionBytesHeaders = {
+Range?: string;
+};
+
 export type EnsureEmailMetadataBody = { [key: string]: unknown };
 
 export type Health200 = {
@@ -21818,16 +21822,31 @@ export const getGetContentVersionBytesUrl = (versionId: string,) => {
 }
 
 /**
- * Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed.
+ * Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed. Range selects a single byte window and returns 206 with Content-Range.
  * @summary Stream one immutable content version by stable ID
  */
-export const getContentVersionBytes = (versionId: string, options?: Parameters<typeof sessionResponse>[1]) => {
+export const getContentVersionBytes = (versionId: string,
+    headers?: GetContentVersionBytesHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
   {
     ...options,
-    method: 'GET'
-
+    method: 'GET',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}

@@ -7,12 +7,58 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 )
+
+type contentCountingWriter struct {
+	http.ResponseWriter
+
+	bytes *atomic.Int64
+}
+
+func (w contentCountingWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	w.bytes.Add(int64(n))
+	return n, err
+}
+
+func TestMCPOriginalContentTransfersOnlyWindow(t *testing.T) {
+	f := newNativeExportFixture(t)
+	original := strings.Repeat("synthetic window bytes", 1<<16)
+	selected := f.addFile(t, "window.bin", original[:1<<20])
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
+	t.Cleanup(daemon.Close)
+	var transferred atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/content") {
+			w = contentCountingWriter{w, &transferred}
+		}
+		daemon.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, ts.URL))
+	result := exportCall(t, server, "read_document_content", map[string]any{
+		"vault_id": f.catalog.VaultID(), "node_id": selected.NodeID,
+		"content_version_id": selected.VersionID, "blob_hash": selected.SHA256,
+		"size": selected.Size, "offset": selected.Size - (64 << 10), "max_bytes": 64 << 10,
+	})
+	encoded, ok := result["data_base64"].(string)
+	require.True(t, ok)
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	require.Equal(t, []byte(original[(1<<20)-(64<<10):1<<20]), data)
+	require.Less(t, transferred.Load(), int64(2*(64<<10)))
+}
 
 func TestMCPOriginalContent(t *testing.T) {
 	f := newNativeExportFixture(t)

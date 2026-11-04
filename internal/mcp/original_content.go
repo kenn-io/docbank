@@ -65,15 +65,18 @@ func readDocumentContent(ctx context.Context, lease *daemonLease, raw []byte) (o
 		if err := in.checkSelection(ctx, c); err != nil {
 			return originalContentOutput{}, err
 		}
-		stream, err := c.VersionContent(ctx, in.ContentVersionID.String())
-		if err != nil {
-			return originalContentOutput{}, err
+		var data []byte
+		if n := min(in.MaxBytes, in.Size-in.Offset); n > 0 {
+			stream, err := c.VersionContentRange(ctx, in.ContentVersionID.String(), in.Offset, in.Offset+n)
+			if err != nil {
+				return originalContentOutput{}, err
+			}
+			data, err = in.readChunk(stream)
+			if err != nil {
+				return originalContentOutput{}, err
+			}
 		}
-		data, err := in.readChunk(stream)
-		if err != nil {
-			return originalContentOutput{}, err
-		}
-		if err = in.checkSelection(ctx, c); err != nil {
+		if err := in.checkSelection(ctx, c); err != nil {
 			return originalContentOutput{}, err
 		}
 		next := in.Offset + int64(len(data))
@@ -117,18 +120,8 @@ func (in originalContentInput) readChunk(stream *daemonconn.ContentStream) (data
 	if stream.BlobHash != in.BlobHash || stream.Size != in.Size {
 		return nil, errors.New("original content stream does not match the selection")
 	}
-	// shortcut: The daemon serves whole originals, so each window reads the file.
-	// Keep this bounded; add daemon range reads if large-file use warrants it.
-	if _, err = io.CopyN(io.Discard, stream, in.Offset); err != nil {
-		return nil, err
-	}
 	data = make([]byte, min(in.MaxBytes, in.Size-in.Offset))
 	if _, err = io.ReadFull(stream, data); err != nil {
-		return nil, err
-	}
-	// Consume the bounded remainder before closing so the ownership-proven
-	// connection survives for the selection recheck and subsequent requests.
-	if _, err = io.CopyN(io.Discard, stream, in.Size-in.Offset-int64(len(data))); err != nil {
 		return nil, err
 	}
 	var extra [1]byte

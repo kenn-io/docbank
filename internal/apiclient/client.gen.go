@@ -15789,7 +15789,7 @@ func (c *Client) GetContentVersion(ctx context.Context, options *GetContentVersi
 }
 
 // GetContentVersionBytes Stream one immutable content version by stable ID
-func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResponse, error) {
+func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResult, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/content",
@@ -15802,7 +15802,7 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentVersionBytesResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentVersionBytesResult, error) {
 		switch resp.StatusCode {
 
 		case 200:
@@ -15815,7 +15815,19 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 				}
 			}
 
-			return target, nil
+			return &GetContentVersionBytesResult{Status200: target}, nil
+
+		case 206:
+
+			target := new(GetContentVersionBytesResponse206)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentVersionBytesResponse206", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &GetContentVersionBytesResult{Status206: target}, nil
 
 		default:
 
@@ -15829,7 +15841,7 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
 	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
+		return nil, c.acceptStream(resp, 200, 206)
 	}
 	return responseParser(ctx, resp)
 }
@@ -16243,6 +16255,12 @@ type GetDocumentRenditionResult struct {
 type UploadFileResult struct {
 	Status200 *UploadFileResponse
 	Status201 *UploadFileResponseJSON
+}
+
+// GetContentVersionBytesResult contains the decoded body for the returned success status.
+type GetContentVersionBytesResult struct {
+	Status200 *GetContentVersionBytesResponse
+	Status206 *GetContentVersionBytesResponse206
 }
 
 // GetEmailMetadataResult contains the decoded body for the returned success status.
@@ -26308,6 +26326,7 @@ func (o *GetContentVersionRequestOptions) GetHeader() (map[string]string, error)
 // GetContentVersionBytesRequestOptions is the options needed to make a request to GetContentVersionBytes.
 type GetContentVersionBytesRequestOptions struct {
 	PathParams *GetContentVersionBytesPath
+	Header     *GetContentVersionBytesHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -26333,7 +26352,13 @@ func (o *GetContentVersionBytesRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // GetEmailMetadataRequestOptions is the options needed to make a request to GetEmailMetadata.
@@ -26961,6 +26986,10 @@ type UploadFileHeaders struct {
 
 	// XDocbankBlobSize Expected raw file byte length
 	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
+}
+
+type GetContentVersionBytesHeaders struct {
+	Range *string `json:"Range,omitempty"`
 }
 
 type RevokeWebSignInPath struct {
@@ -29938,6 +29967,8 @@ type GetContentVersionResponse = api.ContentVersion
 type GetContentVersionErrorResponse = Error
 
 type GetContentVersionBytesResponse = runtime.File
+
+type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
 

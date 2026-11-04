@@ -565,7 +565,7 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 	if readErr != nil || verifyErr != nil || closeErr != nil || int64(len(data)) != rendition.Size {
 		return nil, NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
 	}
-	start, end, err := parseRenditionRange(requested, rendition.Size)
+	start, end, err := parseByteRange(requested, rendition.Size)
 	if err != nil {
 		return nil, NewError(http.StatusRequestedRangeNotSatisfiable, "invalid_rendition_range",
 			"rendition byte range is invalid or unsatisfiable")
@@ -597,7 +597,7 @@ func setRenditionHeaders(ctx huma.Context, rendition processing.Rendition) {
 	ctx.SetHeader(BlobSizeHeader, strconv.FormatInt(rendition.Size, 10))
 }
 
-func parseRenditionRange(value string, size int64) (int64, int64, error) {
+func parseByteRange(value string, size int64) (int64, int64, error) {
 	if size < 1 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
 		return 0, 0, errors.New("invalid rendition range")
 	}

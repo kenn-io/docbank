@@ -274,6 +274,40 @@ func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
 	assert.Contains(t, body, `"code":"not_file"`)
 }
 
+func TestContentVersionByteRanges(t *testing.T) {
+	t.Parallel()
+	for _, content := range []string{"raw original bytes", ""} {
+		t.Run(strconv.Itoa(len(content)), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			n := createFileWithChecksum(t, s, "range.txt", content)
+			path := "/api/v1/versions/" + n.CurrentVersionID + "/content"
+			for _, packed := range []bool{false, true} {
+				if packed {
+					_, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+					require.NoError(t, err)
+				}
+				if len(content) > 0 {
+					resp, body := get(t, ts, path, map[string]string{"Range": "bytes=3-8"})
+					require.Equal(t, http.StatusPartialContent, resp.StatusCode, body)
+					require.Equal(t, content[3:9], body)
+					require.Equal(t, fmt.Sprintf("bytes 3-8/%d", len(content)), resp.Header.Get("Content-Range"))
+					require.Equal(t, n.CurrentVersionID, resp.Header.Get(api.ContentVersionHeader))
+					require.Equal(t, n.BlobHash, resp.Header.Get(api.BlobHashHeader))
+					require.Equal(t, strconv.Itoa(len(content)), resp.Header.Get(api.BlobSizeHeader))
+					digest := sha256.Sum256([]byte(content[3:9]))
+					require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":", resp.Trailer.Get("Content-Digest"))
+				}
+				resp, body := get(t, ts, path, map[string]string{"Range": fmt.Sprintf("bytes=%d-", len(content))})
+				require.Equal(t, http.StatusRequestedRangeNotSatisfiable, resp.StatusCode, body)
+				require.Contains(t, body, `"code":"invalid_content_range"`)
+				resp, body = get(t, ts, path, nil)
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				require.Equal(t, content, body)
+			}
+		})
+	}
+}
+
 func createFileWithChecksum(t *testing.T, s *testStore, name, content string) store.Node {
 	t.Helper()
 	receipt, err := s.Blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))
