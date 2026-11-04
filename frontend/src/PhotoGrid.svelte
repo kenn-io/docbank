@@ -18,6 +18,8 @@
 
   let {
     groups,
+    changedFrom = 0,
+    appendedFrom,
     loadedItems,
     narrow = false,
     timeline,
@@ -46,6 +48,8 @@
     scrollTop = $bindable(0),
   }: {
     groups: PhotoGroup[];
+    changedFrom?: number;
+    appendedFrom?: PhotoGridRow[];
     loadedItems: PhotoGridRow[];
     narrow?: boolean;
     timeline?: CaptureDayFacet;
@@ -82,7 +86,7 @@
   let viewport = $state(960);
   const buildChunks = createPhotoChunks();
   let seekOffset = createPhotoSeek();
-  const chunks: PhotoChunk[] = $derived(buildChunks(groups, width, targetRowHeight));
+  const chunks: PhotoChunk[] = $derived(buildChunks(groups, width, targetRowHeight, changedFrom));
   const totalHeight = $derived(
     chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.layout.intrinsicHeight : 0,
   );
@@ -155,7 +159,7 @@
   $effect(() => {
     if (!initialized || loading) return;
     if (seek) {
-      const offset = seekOffset(chunks, seek, !more, loadedItems);
+      const offset = seekOffset(chunks, seek, !more, loadedItems, appendedFrom);
       // Done once the month can sit at the top of the view, or the list ends.
       const done = !more || (offset !== undefined && offset + viewport <= totalHeight);
       // A loaded month scrolls now, so it still works when paging has failed.

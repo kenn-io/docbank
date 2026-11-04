@@ -66,7 +66,6 @@
 <section
   class="photo-month"
   data-month={group.key}
-  data-chunk-offset={offset}
   style:height={`${layout.intrinsicHeight}px`}
   aria-label={group.label}
 >

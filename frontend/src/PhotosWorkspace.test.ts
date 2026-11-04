@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { createPhotoChunks, groupPhotos, ROW_HEIGHTS } from "./photoGrid.js";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import HiddenSetupModal from "./HiddenSetupModal.svelte";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
@@ -3711,11 +3712,15 @@ function railLibrary(
   return { photos, cache, pages, bodies };
 }
 
-// Virtual sections retain their absolute layout offset.
-function sectionTop(month: string) {
-  const section = document.querySelector<HTMLElement>(`[data-month="${month}"]`);
-  if (!section) throw new Error(`no section for ${month}`);
-  return Number(section.dataset.chunkOffset);
+function sectionTop(photos: Photos, month: string) {
+  const chunks = createPhotoChunks()(
+    groupPhotos(photos.items, photos.grouping),
+    1000,
+    ROW_HEIGHTS[photos.density],
+  );
+  const chunk = chunks.find((chunk) => chunk.group.key === month);
+  if (!chunk) throw new Error(`no chunk for ${month}`);
+  return chunk.offset;
 }
 
 it("pages a chosen year in until it arrives, with the query, count, and selection unchanged", async () => {
@@ -3727,7 +3732,7 @@ it("pages a chosen year in until it arrives, with the query, count, and selectio
   await fireEvent.click(within(rail).getByRole("button", { name: "2023, 60 photos" }));
   const scroll = screen.getByTestId("photo-scroll");
   await waitFor(() => expect(photos.seek).toBe(""));
-  expect(scroll.scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(scroll.scrollTop).toBe(Math.ceil(sectionTop(photos, "2023-06")));
   expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
   expect(bodies.every((body) => JSON.stringify(body.query) === query)).toBe(true);
   expect(screen.getByText("180 photos")).toBeTruthy();
@@ -3750,10 +3755,10 @@ it("repeats a completed date jump after a density change and an older-page appen
     await waitFor(() => expect(photos.loading).toBe(false));
     const scroll = screen.getByTestId("photo-scroll");
     const original = scroll.scrollTop;
-    expect(original).toBe(Math.ceil(sectionTop("2024-06")));
+    expect(original).toBe(Math.ceil(sectionTop(photos, "2024-06")));
 
     await act(() => photos.setDensity("compact"));
-    const resized = Math.ceil(sectionTop("2024-06"));
+    const resized = Math.ceil(sectionTop(photos, "2024-06"));
     expect(resized).toBeLessThan(original);
     // The denser layout reaches the paging threshold. Finish that page after layout changes.
     await waitFor(() => expect(finishPage).toBeTypeOf("function"));
@@ -3835,7 +3840,9 @@ it("keeps a jump pending through a paging failure and finishes it on Retry", asy
   pages.p2 = page;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(photos.seek).toBe(""));
-  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(
+    Math.ceil(sectionTop(photos, "2023-06")),
+  );
   photos.dispose();
   await cache.dispose();
 });
@@ -3864,7 +3871,9 @@ it("resumes a date jump after cancelling Hidden setup when its page finished dur
   modal.unmount();
   await waitFor(() => expect(photos.seek).toBe(""));
   expect(bodies.map((body) => body.cursor)).toEqual(["p2", "p3"]);
-  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(Math.ceil(sectionTop("2023-06")));
+  expect(screen.getByTestId("photo-scroll").scrollTop).toBe(
+    Math.ceil(sectionTop(photos, "2023-06")),
+  );
   photos.dispose();
   await cache.dispose();
 });

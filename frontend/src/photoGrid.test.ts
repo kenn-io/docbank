@@ -40,11 +40,14 @@ it("matches full grouping and exact layouts after shuffled pages and stack chang
     const rows: PhotoGridRow[] = [];
     const grouper = createPhotoGrouper(),
       expanded = new Set<string>();
+    let previous: PhotoGridRow[] | undefined;
     for (const [i, time] of times.entries()) {
       rows.push(photo(i, `2025-06-01T${time}Z`));
-      expect([...grouper.sync(rows.slice(), "sessions", expanded)]).toEqual(
+      const current = rows.slice();
+      expect(grouper.sync(current, "sessions", expanded, previous).groups).toEqual(
         groupPhotos(rows, "sessions"),
       );
+      previous = current;
     }
   }
   for (const grouping of ["months", "sessions", "flat", "relevance"] as const) {
@@ -55,6 +58,7 @@ it("matches full grouping and exact layouts after shuffled pages and stack chang
         build = createPhotoChunks();
       const rows: PhotoGridRow[] = [];
       let expanded = new Set<string>();
+      let previous: PhotoGridRow[] | undefined;
       for (let page = 0; page < 8; page++) {
         for (let i = 0; i < 17; i++) {
           const id = rows.length;
@@ -73,14 +77,16 @@ it("matches full grouping and exact layouts after shuffled pages and stack chang
         }
         if (page === 3) expanded = new Set(["photo-0"]);
         if (page === 6) expanded = new Set();
-        const groups = grouper.sync(rows.slice(), grouping, expanded);
+        const current = rows.slice();
+        const { groups, changedFrom } = grouper.sync(current, grouping, expanded, previous);
+        previous = current;
         const expected = groupPhotos(
           rows.filter((row) => !row.stack || expanded.has("photo-0") || row.asset_id === "photo-0"),
           grouping,
         );
         expect([...groups]).toEqual(expected);
         const width = page < 4 ? 997 : 816;
-        const chunks = build(groups, width, 173);
+        const chunks = build(groups, width, 173, changedFrom);
         let offset = 0;
         expect(chunks).toHaveLength(expected.length);
         for (const [i, group] of expected.entries()) {
@@ -97,7 +103,7 @@ it("matches full grouping and exact layouts after shuffled pages and stack chang
       }
       // An independent replacement buffer takes the rebuild path.
       const replaced = rows.slice().reverse();
-      expect([...grouper.sync(replaced, grouping, new Set(["photo-0"]))]).toEqual(
+      expect([...grouper.sync(replaced, grouping, new Set(["photo-0"])).groups]).toEqual(
         groupPhotos(replaced, grouping),
       );
     }
@@ -111,7 +117,13 @@ it.each(["months", "sessions", "flat", "relevance"] as const)(
     const grouper = createPhotoGrouper(),
       build = createPhotoChunks(),
       expanded = new Set<string>();
-    const first = build(grouper.sync(rows.slice(), grouping, expanded), 1000, 200);
+    const source = rows.slice();
+    const first = build(grouper.sync(source, grouping, expanded).groups, 1000, 200);
+    let slots = 0;
+    for (let i = 0; i < source.length; i++) {
+      const row = source[i];
+      Object.defineProperty(source, i, { get: () => (slots++, row) });
+    }
     let dates = 0,
       sizes = 0,
       finishedRows = 0;
@@ -147,7 +159,9 @@ it.each(["months", "sessions", "flat", "relevance"] as const)(
         photo(20_000 + i, grouping === "sessions" ? "2025-06-01T11:59:59Z" : undefined),
       ),
     );
-    const next = build(grouper.sync(rows.slice(), grouping, expanded), 1000, 200);
+    const grouped = grouper.sync(rows.slice(), grouping, expanded, source);
+    const next = build(grouped.groups, 1000, 200, grouped.changedFrom);
+    expect(slots).toBe(0);
     if (grouping === "months") expect(dates).toBe(0);
     expect(sizes).toBeLessThanOrEqual(4);
     expect(finishedRows).toBe(0);
@@ -164,7 +178,8 @@ it("touches only nearby sessions when one page spans years", () => {
   const grouper = createPhotoGrouper(),
     build = createPhotoChunks(),
     expanded = new Set<string>();
-  const first = grouper.sync(rows.slice(), "sessions", expanded);
+  const source = rows.slice();
+  const first = grouper.sync(source, "sessions", expanded).groups;
   build(first, 1000, 200);
   let reads = 0;
   for (const row of rows) {
@@ -184,8 +199,8 @@ it("touches only nearby sessions when one page spans years", () => {
     });
   }
   rows.push(photo(20_000, "2025-01-01T01:00:00Z"), photo(20_001, "1970-04-01T01:00:00Z"));
-  const next = grouper.sync(rows.slice(), "sessions", expanded);
-  build(next, 1000, 200);
+  const { groups: next, changedFrom } = grouper.sync(rows.slice(), "sessions", expanded, source);
+  build(next, 1000, 200, changedFrom);
   expect(reads).toBeLessThan(25);
   expect(next[1]).toBe(first[1]);
 });
@@ -197,9 +212,14 @@ it("appends older sessions without traversing the retained group prefix", () => 
   const grouper = createPhotoGrouper(),
     build = createPhotoChunks(),
     expanded = new Set<string>();
-  const groups = grouper.sync(rows.slice(), "sessions", expanded);
+  const source = rows.slice();
+  const groups = grouper.sync(source, "sessions", expanded).groups;
   const chunks = build(groups, 1000, 200);
   let reads = 0;
+  for (const chunk of chunks) {
+    const group = chunk.group;
+    Object.defineProperty(chunk, "group", { get: () => (reads++, group) });
+  }
   for (const group of groups) {
     const key = group.key;
     Object.defineProperty(group, "key", {
@@ -210,7 +230,8 @@ it("appends older sessions without traversing the retained group prefix", () => 
     });
   }
   rows.push(photo(20_000, "2000-01-01T00:00:00Z"));
-  const next = build(grouper.sync(rows.slice(), "sessions", expanded), 1000, 200);
+  const grouped = grouper.sync(rows.slice(), "sessions", expanded, source);
+  const next = build(grouped.groups, 1000, 200, grouped.changedFrom);
   expect(reads).toBeLessThan(10);
   expect(next[19_999]).toBe(chunks[19_999]);
   expect(next).toHaveLength(20_001);
@@ -569,28 +590,37 @@ it("keeps pending date jumps equal to a fresh scan after regrouping and stack ar
     build = createPhotoChunks(),
     seek = createPhotoSeek(),
     expanded = new Set<string>();
+  const source = rows.slice();
   expect(
     seek(
-      build(grouper.sync(rows.slice(), "months", expanded), 1000, 200),
+      build(grouper.sync(source, "months", expanded).groups, 1000, 200),
       "2024-01",
       false,
-      rows.slice(),
+      source,
     ),
   ).toBeUndefined();
-  let reads = 0;
+  let reads = 0,
+    slots = 0;
+  for (let i = 0; i < source.length; i++) {
+    const row = source[i];
+    Object.defineProperty(source, i, { get: () => (slots++, row) });
+  }
   for (const row of rows) {
     const capture = row.capture_time;
     Object.defineProperty(row, "capture_time", { get: () => (reads++, capture) });
   }
   rows.push(...Array.from({ length: 250 }, (_, i) => photo(20_000 + i, "2025-05-01T12:00:00Z")));
+  const grouped = grouper.sync(rows.slice(), "months", expanded, source);
   expect(
     seek(
-      build(grouper.sync(rows.slice(), "months", expanded), 1000, 200),
+      build(grouped.groups, 1000, 200, grouped.changedFrom),
       "2024-01",
       false,
       rows.slice(),
+      source,
     ),
   ).toBeUndefined();
+  expect(slots).toBe(0);
   expect(reads).toBeLessThan(100);
 
   for (const mode of ["months", "sessions"] as const) {
@@ -605,16 +635,20 @@ it("keeps pending date jumps equal to a fresh scan after regrouping and stack ar
       "2024-12-31T22:00:00Z",
       "2025-02-01T02:00:00Z",
     ];
+    let previous: PhotoGridRow[] | undefined;
     for (let page = 0; page < 12; page++) {
       const row = photo(page, dates[page % dates.length]);
       if (page < 2) row.stack = { asset_ids: ["photo-0", "photo-1"], representative_id: "photo-0" };
       rows.push(row);
-      const chunks = build(grouper.sync(rows.slice(), mode, expanded), 1000, 200);
+      const current = rows.slice();
+      const grouped = grouper.sync(current, mode, expanded, previous);
+      const chunks = build(grouped.groups, 1000, 200, grouped.changedFrom);
       for (const [i, month] of ["2025-02", "2025-01", "2024-12", "2025-03"].entries()) {
-        expect(seeks[i](chunks, month, page === 11, rows.slice())).toBe(
-          createPhotoSeek()(chunks, month, page === 11, rows.slice()),
+        expect(seeks[i](chunks, month, page === 11, current, previous)).toBe(
+          createPhotoSeek()(chunks, month, page === 11, current),
         );
       }
+      previous = current;
     }
   }
 });
@@ -625,21 +659,23 @@ it("keeps the first matching seek row when a later page reorders a session", () 
     build = createPhotoChunks(),
     seek = createPhotoSeek(),
     expanded = new Set<string>();
+  const source = rows.slice();
   expect(
     seek(
-      build(grouper.sync(rows.slice(), "sessions", expanded), 1000, 200),
+      build(grouper.sync(source, "sessions", expanded).groups, 1000, 200),
       "2025-01",
       false,
-      rows.slice(),
+      source,
     ),
   ).toBe(0);
   rows.push(...Array.from({ length: 20 }, (_, i) => photo(20 + i, "2025-01-01T01:00:00Z")));
   expect(
     seek(
-      build(grouper.sync(rows.slice(), "sessions", expanded), 1000, 200),
+      build(grouper.sync(rows.slice(), "sessions", expanded, source).groups, 1000, 200),
       "2025-01",
       false,
       rows.slice(),
+      source,
     ),
   ).toBe(0);
 });
@@ -655,7 +691,7 @@ it("resets a pending seek when stack collapse and paging arrive together", () =>
     seek = createPhotoSeek();
   expect(
     seek(
-      build(grouper.sync(rows, "months", new Set(["photo-0"])), 1000, 200),
+      build(grouper.sync(rows, "months", new Set(["photo-0"])).groups, 1000, 200),
       "2025-01",
       false,
       rows,
@@ -663,6 +699,11 @@ it("resets a pending seek when stack collapse and paging arrive together", () =>
   ).toBeGreaterThan(0);
   const appended = [...rows, photo(2, "2024-12-01T12:00:00Z")];
   expect(
-    seek(build(grouper.sync(appended, "months", new Set()), 1000, 200), "2025-01", false, appended),
+    seek(
+      build(grouper.sync(appended, "months", new Set()).groups, 1000, 200),
+      "2025-01",
+      false,
+      appended,
+    ),
   ).toBe(0);
 });

@@ -557,7 +557,7 @@
   let openIntent = $state("");
   let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
-  const listed = $derived(!!photoID && photos.items.some((item) => item.asset_id === photoID));
+  const listed = $derived(!!photoID && !!photos.rowByID(photoID));
   const membershipNote = $derived(
     photoID && fromGrid && !listed && !photos.loading
       ? "This photo is no longer in the refreshed result."
@@ -901,7 +901,7 @@
     );
   }
   const grouper = createPhotoGrouper();
-  const groups = $derived(
+  const grouped = $derived(
     grouper.sync(
       shown,
       photos.query.sort?.field === "relevance"
@@ -910,8 +910,10 @@
           ? "flat"
           : photos.grouping,
       photos.expandedStacks,
+      photos.appendedFrom,
     ),
   );
+  const groups = $derived(grouped.groups);
   const searchable = $derived(searchablePhotoView(albumID, mapMode));
   const activeFilters = $derived(activeFilterCount(photos.query.filters, datedPhotoFacets));
   const filtered = $derived(
@@ -1523,6 +1525,8 @@
                       bind:this={grid}
                       bind:scrollTop={photos.scrollTop}
                       {groups}
+                      changedFrom={grouped.changedFrom}
+                      appendedFrom={photos.appendedFrom}
                       loadedItems={shown}
                       narrow={narrow.current}
                       timeline={mapMode ? undefined : photos.timeline}

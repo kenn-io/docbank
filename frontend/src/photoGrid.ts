@@ -242,13 +242,15 @@ export function createPhotoGrouper() {
       rows: PhotoGridRow[],
       grouping: Grouping,
       nextExpanded: ReadonlySet<string>,
-    ): PhotoGroup[] {
+      appendedFrom?: PhotoGridRow[],
+    ): { groups: PhotoGroup[]; changedFrom: number } {
       const append =
         source !== undefined &&
         consumed <= rows.length &&
         mode === grouping &&
         expanded === nextExpanded &&
-        source.every((row, index) => row === rows[index]);
+        source === appendedFrom;
+      let changedFrom = append ? groups.length : 0;
       const added = (append ? rows.slice(consumed) : rows).filter(
         (row) => !stackHidden(row, nextExpanded),
       );
@@ -271,6 +273,7 @@ export function createPhotoGrouper() {
                 groups[i].key !== "undated" &&
                 (part.key === "undated" || groups[i].key.localeCompare(part.key) > 0),
             );
+            changedFrom = Math.min(changedFrom, index);
             if (old) {
               old.items.push(...part.items);
               const next = { ...old };
@@ -312,11 +315,12 @@ export function createPhotoGrouper() {
                 next.items = old.items;
               }
             }
+            changedFrom = Math.min(changedFrom, start);
             groups.splice(start, end - start, ...regrouped);
           }
         }
       }
-      return groups.slice();
+      return { groups: groups.slice(), changedFrom };
     },
   };
 }
@@ -369,17 +373,15 @@ export function createPhotoChunks() {
     PhotoGridRow[],
     { count: number; layout: ReturnType<typeof computeMonthLayout> }
   >();
-  return (groups: PhotoGroup[], containerWidth: number, targetRowHeight: number): PhotoChunk[] => {
+  return (
+    groups: PhotoGroup[],
+    containerWidth: number,
+    targetRowHeight: number,
+    changedFrom = 0,
+  ): PhotoChunk[] => {
     const reset = width !== containerWidth || height !== targetRowHeight;
     if (reset) cache = new WeakMap();
-    let start = 0;
-    if (!reset)
-      while (
-        start < chunks.length &&
-        start < groups.length &&
-        chunks[start].group === groups[start]
-      )
-        start++;
+    const start = reset ? 0 : changedFrom;
     let offset = start ? chunks[start - 1].offset + chunks[start - 1].layout.intrinsicHeight : 0;
     chunks.length = start;
     for (let i = start; i < groups.length; i++) {
@@ -436,7 +438,13 @@ export function createPhotoSeek() {
   let representatives = new Set<string>();
   let own: string | undefined, stack: string | undefined, older: string | undefined;
   let olderMonth = "";
-  return (chunks: PhotoChunk[], month: string, ended = false, loadedItems: PhotoGridRow[] = []) => {
+  return (
+    chunks: PhotoChunk[],
+    month: string,
+    ended = false,
+    loadedItems: PhotoGridRow[] = [],
+    appendedFrom?: PhotoGridRow[],
+  ) => {
     let start = 0;
     while (
       source &&
@@ -447,7 +455,7 @@ export function createPhotoSeek() {
       start++;
     const reset =
       !loadedSource ||
-      !loadedSource.every((row, index) => row === loadedItems[index]) ||
+      (loadedSource !== loadedItems && loadedSource !== appendedFrom) ||
       (source && start === 0 && source[0]?.group.items !== chunks[0]?.group.items) ||
       (consumed === loadedItems.length && start < (source?.length ?? 0)) ||
       consumed > loadedItems.length ||
