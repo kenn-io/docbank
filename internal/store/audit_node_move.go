@@ -126,12 +126,12 @@ func (s *Store) prepareAuditedMove(
 		return snapshot, "", false, err
 	}
 	affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-		topology, scopeMembers, auditNodeID,
+		topology, scopeMembers, map[uint64]bool{auditNodeID: true},
 	)
 	if err != nil {
 		return snapshot, "", false, err
 	}
-	if affectsTrashOrigin {
+	if affectsTrashOrigin != 0 {
 		return snapshot, "", false, fmt.Errorf(
 			"moving node %d would change retained trash-origin paths: %w",
 			id, ErrAuditMutationUnsupported,

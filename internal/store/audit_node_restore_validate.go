@@ -202,12 +202,12 @@ func (replay *auditedHistoryReplay) validateNodeRestoreTopology(
 	}
 	if !bytes.Equal(finalName, originName) {
 		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-			replay.topology, replay.memberSet, restoreRoot,
+			replay.topology, replay.memberSet, map[uint64]bool{restoreRoot: true},
 		)
 		if err != nil {
 			return replayedTopologyMutation{}, nil, err
 		}
-		if affectsTrashOrigin {
+		if affectsTrashOrigin != 0 {
 			return replayedTopologyMutation{}, nil, errors.New(
 				"node restore changes a retained trash-origin path without recording trash effects",
 			)

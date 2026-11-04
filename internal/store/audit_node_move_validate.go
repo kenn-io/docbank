@@ -176,12 +176,12 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 	}
 	for _, movedID := range movedIDs {
 		affectsTrashOrigin, err := auditMoveAffectsTrashOrigin(
-			replay.topology, replay.memberSet, movedID,
+			replay.topology, replay.memberSet, map[uint64]bool{movedID: true},
 		)
 		if err != nil {
 			return replayedTopologyMutation{}, err
 		}
-		if affectsTrashOrigin {
+		if affectsTrashOrigin != 0 {
 			return replayedTopologyMutation{}, errors.New(
 				"node move changes a retained trash-origin path without recording trash effects",
 			)
@@ -197,12 +197,13 @@ func (replay *auditedHistoryReplay) validateNodeMoveTopology(
 }
 
 func auditMoveAffectsTrashOrigin(
-	topology []audit.Record, memberSet map[uint64]bool, movedID uint64,
-) (bool, error) {
+	topology []audit.Record, memberSet map[uint64]bool, movedIDs map[uint64]bool,
+) (uint64, error) {
 	nodes, err := replayAuditTopology(topology)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
+	var affected uint64
 	for nodeID, node := range nodes {
 		if !memberSet[nodeID] || node.originParent == nil {
 			continue
@@ -210,20 +211,20 @@ func auditMoveAffectsTrashOrigin(
 		current := *node.originParent
 		seen := make(map[uint64]bool)
 		for {
-			if current == movedID {
-				return true, nil
+			if movedIDs[current] && (affected == 0 || current < affected) {
+				affected = current
 			}
 			if seen[current] {
-				return false, errors.New("audit trash-origin topology contains a cycle")
+				return 0, errors.New("audit trash-origin topology contains a cycle")
 			}
 			seen[current] = true
 			parent, ok := nodes[current]
 			if !ok {
-				return false, fmt.Errorf("audit trash origin references missing node %d", current)
+				return 0, fmt.Errorf("audit trash origin references missing node %d", current)
 			}
 			next, err := auditHistoricalParent(parent)
 			if err != nil {
-				return false, err
+				return 0, err
 			}
 			if next == nil {
 				break
@@ -231,7 +232,7 @@ func auditMoveAffectsTrashOrigin(
 			current = *next
 		}
 	}
-	return false, nil
+	return affected, nil
 }
 
 func auditHistoricalParent(node replayAuditTopologyNode) (*uint64, error) {
