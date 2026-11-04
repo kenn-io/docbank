@@ -19,6 +19,9 @@ func BenchmarkBatchMove(b *testing.B) {
 						continue
 					}
 					for _, noop := range []bool{false, true} {
+						if audited && noop {
+							continue
+						}
 						b.Run(fmt.Sprintf("depth=%d/moves=%d/vault=%d/audited=%t/noop=%t", depth, count, vault, audited, noop), func(b *testing.B) {
 							s, err := Open(b.Context(), filepath.Join(b.TempDir(), "docbank.db"))
 							require.NoError(b, err)
