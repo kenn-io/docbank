@@ -1782,8 +1782,8 @@ The version's `/content` route accepts a single byte `Range`. It returns
 `206` with `Content-Range`, or `416 invalid_content_range` for an invalid or
 unsatisfiable range. The version, hash, and size headers still identify the
 whole version. The `Content-Digest` trailer covers only the returned window.
-Clients verify each window's digest, then verify the assembled bytes against
-the selected version's size and SHA-256. Raw loose originals seek directly;
+MCP clients verify the assembled bytes against the selected version's size
+and SHA-256. Raw loose originals seek directly;
 compressed and packed windows still decode from the beginning up to the
 requested window.
 

@@ -10,35 +10,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
 
-type contentCountingWriter struct {
-	http.ResponseWriter
-
-	bytes *atomic.Int64
-}
-
-func (w contentCountingWriter) Write(data []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(data)
-	w.bytes.Add(int64(n))
-	return n, err
-}
-
 func TestMCPOriginalContentTransfersOnlyWindow(t *testing.T) {
 	for _, storage := range []string{"raw", "zstd", "packed"} {
 		t.Run(storage, func(t *testing.T) {
 			f := newNativeExportFixture(t)
+			f.contentBytes = make(chan int, 1)
 			if storage == "zstd" {
 				writer, err := blob.NewWithOptions(store.NewPackCatalog(f.catalog), filepath.Join(os.Getenv("DOCBANK_HOME"), "blobs"), blob.ManagedOptions())
 				require.NoError(t, err)
@@ -62,19 +47,7 @@ func TestMCPOriginalContentTransfersOnlyWindow(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 1, result.BlobsPacked)
 			}
-			cfg := config.Default()
-			cfg.Server.APIKey = "synthetic-export-key"
-			daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
-			t.Cleanup(daemon.Close)
-			var transferred atomic.Int64
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "/content") {
-					w = contentCountingWriter{w, &transferred}
-				}
-				daemon.Handler().ServeHTTP(w, r)
-			}))
-			t.Cleanup(ts.Close)
-			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, ts.URL))
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
 			result := exportCall(t, server, "read_document_content", map[string]any{
 				"vault_id": f.catalog.VaultID(), "node_id": selected.ID,
 				"content_version_id": selected.CurrentVersionID, "blob_hash": selected.BlobHash,
@@ -85,7 +58,7 @@ func TestMCPOriginalContentTransfersOnlyWindow(t *testing.T) {
 			data, err := base64.StdEncoding.DecodeString(encoded)
 			require.NoError(t, err)
 			require.Equal(t, []byte(original[(1<<20)-(64<<10):1<<20]), data)
-			require.Less(t, transferred.Load(), int64(2*(64<<10)))
+			require.Equal(t, 64<<10, <-f.contentBytes)
 		})
 	}
 }

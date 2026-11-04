@@ -166,12 +166,13 @@ func exportTestLease(t *testing.T, url string) *daemonLease {
 }
 
 type nativeExportFixture struct {
-	catalog    *store.Store
-	blobs      *blob.Store
-	worker     *exporter.Worker
-	connection *daemonconn.Connection
-	lease      *daemonLease
-	handler    http.Handler
+	catalog      *store.Store
+	blobs        *blob.Store
+	worker       *exporter.Worker
+	connection   *daemonconn.Connection
+	lease        *daemonLease
+	handler      http.Handler
+	contentBytes chan int
 }
 
 func newNativeExportFixture(t *testing.T) *nativeExportFixture {
@@ -193,12 +194,22 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 		Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: gate, Exports: worker,
 	})
 	t.Cleanup(daemon.Close)
-	handler := daemon.Handler()
-	httpServer := httptest.NewServer(handler)
+	fixture := &nativeExportFixture{catalog: catalog, blobs: blobs, worker: worker, handler: daemon.Handler()}
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fixture.contentBytes != nil && strings.HasSuffix(r.URL.Path, "/content") {
+			observed := &observedResponseWriter{ResponseWriter: w}
+			fixture.handler.ServeHTTP(observed, r)
+			fixture.contentBytes <- observed.bytes
+			return
+		}
+		fixture.handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(httpServer.Close)
 	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	return &nativeExportFixture{catalog, blobs, worker, connection, exportTestLease(t, httpServer.URL), handler}
+	fixture.connection = connection
+	fixture.lease = exportTestLease(t, httpServer.URL)
+	return fixture
 }
 
 func (f *nativeExportFixture) provenConnection(t *testing.T) *daemonconn.Connection {
