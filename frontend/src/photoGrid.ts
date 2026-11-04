@@ -378,7 +378,7 @@ export function createPhotoChunks() {
     containerWidth: number,
     targetRowHeight: number,
     changedFrom = 0,
-  ): PhotoChunk[] => {
+  ): { chunks: PhotoChunk[]; changedFrom: number } => {
     const reset = width !== containerWidth || height !== targetRowHeight;
     if (reset) cache = new WeakMap();
     const start = reset ? 0 : changedFrom;
@@ -404,7 +404,7 @@ export function createPhotoChunks() {
     }
     width = containerWidth;
     height = targetRowHeight;
-    return chunks.slice();
+    return { chunks: chunks.slice(), changedFrom: start };
   };
 }
 
@@ -444,15 +444,8 @@ export function createPhotoSeek() {
     ended = false,
     loadedItems: PhotoGridRow[] = [],
     appendedFrom?: PhotoGridRow[],
+    start = 0,
   ) => {
-    let start = 0;
-    while (
-      source &&
-      start < source.length &&
-      start < chunks.length &&
-      source[start] === chunks[start]
-    )
-      start++;
     const reset =
       !loadedSource ||
       (loadedSource !== loadedItems && loadedSource !== appendedFrom) ||

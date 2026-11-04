@@ -98,7 +98,7 @@ it("keeps loading pages while a date jump is pending", async () => {
 });
 
 it("restores an anchor moved into another group while its original group survives", async () => {
-  let laidOut: ReturnType<ReturnType<typeof createPhotoChunks>> = [];
+  let laidOut: ReturnType<ReturnType<typeof createPhotoChunks>>["chunks"] = [];
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
   ) {
@@ -133,12 +133,12 @@ it("restores an anchor moved into another group while its original group survive
   });
   await tick();
   await waitFor(() => expect(document.querySelector('[data-asset="photo-0"]')).toBeTruthy());
-  laidOut = createPhotoChunks()(groupPhotos(rows, "months"), 1000, 200);
+  laidOut = createPhotoChunks()(groupPhotos(rows, "months"), 1000, 200).chunks;
   const restore = view.component.preservePosition();
   const changed = rows.map((row, i) =>
     i === 0 ? { ...row, capture_time: "2025-05-01T12:00:00Z" } : row,
   );
-  laidOut = createPhotoChunks()(groupPhotos(changed, "months"), 1000, 200);
+  laidOut = createPhotoChunks()(groupPhotos(changed, "months"), 1000, 200).chunks;
   await view.rerender({ groups: groupPhotos(changed, "months"), loadedItems: changed });
   await restore();
   expect(view.getByTestId("photo-scroll").scrollTop).toBeGreaterThan(0);

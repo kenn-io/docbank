@@ -3713,7 +3713,7 @@ function railLibrary(
 }
 
 function sectionTop(photos: Photos, month: string) {
-  const chunks = createPhotoChunks()(
+  const { chunks } = createPhotoChunks()(
     groupPhotos(photos.items, photos.grouping),
     1000,
     ROW_HEIGHTS[photos.density],

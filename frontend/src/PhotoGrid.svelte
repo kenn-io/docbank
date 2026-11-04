@@ -8,7 +8,6 @@
     type PhotoGridRow,
     rowTop,
     createPhotoSeek,
-    type PhotoChunk,
     type PhotoGroup,
   } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -86,7 +85,8 @@
   let viewport = $state(960);
   const buildChunks = createPhotoChunks();
   let seekOffset = createPhotoSeek();
-  const chunks: PhotoChunk[] = $derived(buildChunks(groups, width, targetRowHeight, changedFrom));
+  const layout = $derived(buildChunks(groups, width, targetRowHeight, changedFrom));
+  const chunks = $derived(layout.chunks);
   const totalHeight = $derived(
     chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.layout.intrinsicHeight : 0,
   );
@@ -159,7 +159,7 @@
   $effect(() => {
     if (!initialized || loading) return;
     if (seek) {
-      const offset = seekOffset(chunks, seek, !more, loadedItems, appendedFrom);
+      const offset = seekOffset(chunks, seek, !more, loadedItems, appendedFrom, layout.changedFrom);
       // Done once the month can sit at the top of the view, or the list ends.
       const done = !more || (offset !== undefined && offset + viewport <= totalHeight);
       // A loaded month scrolls now, so it still works when paging has failed.
