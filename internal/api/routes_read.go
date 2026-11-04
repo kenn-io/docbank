@@ -133,6 +133,9 @@ func streamContentVersionRange(ctx context.Context, d Deps, version store.Conten
 		return nil, FromStoreError(err)
 	}
 	// Only raw loose candidates can seek without materializing the whole blob.
+	// Seekable compressed loose reads copy the whole decoded blob to a temp
+	// file, and packed reads buffer it whole. Streaming to the offset avoids
+	// that work and those writes for every window.
 	rawLoose := len(locations.Candidates) > 0
 	for _, location := range locations.Candidates {
 		rawLoose = rawLoose && location.Loose != nil && location.Loose.Encoding == packstore.LooseEncodingRaw
