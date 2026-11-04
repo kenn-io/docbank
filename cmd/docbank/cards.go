@@ -33,7 +33,7 @@ var cardsCheckCmd = &cobra.Command{
 		for _, row := range report.Items {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", row.State, strings.Join(strings.Fields(row.Reason), " "), row.Path)
 			for _, issue := range row.CitationIssues {
-				_, _ = fmt.Fprintf(w, "  citation %d\t%s\t%s\n", issue.Citation, strings.Join(strings.Fields(issue.Reason), " "), row.Path)
+				_, _ = fmt.Fprintf(w, "  citation %d\t%s\n", issue.Citation, strings.Join(strings.Fields(issue.Reason), " "))
 			}
 		}
 		return w.Flush()

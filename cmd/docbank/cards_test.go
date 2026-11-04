@@ -89,6 +89,12 @@ Test answer.
 	out, err = runCLI(t, "cards", "check", "--json")
 	require.NoError(t, err)
 	require.Contains(t, out, `"reason":"new_version"`)
+	table, err := runCLI(t, "cards", "check", "--deep", "--json=false")
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(table, "/answer-cards/card.md"))
+	require.Equal(t, 1, strings.Count(table, "/answer-cards/card.txt"))
+	require.Contains(t, table, "citation 0")
+	require.Contains(t, table, "new_version")
 }
 
 func TestCardsCheckInvalidCardHasSingleRow(t *testing.T) {
