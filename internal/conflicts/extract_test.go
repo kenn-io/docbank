@@ -4910,6 +4910,12 @@ func TestExtractReviewUnqualifiedUnsupportedRateNumeratorsSuppressDenominators(t
 		{"subunit spoken money numerator before independent sentence", "The fee is fifty cents per 2 devices. The deposit is $7.", []string{"$7"}},
 		{"numeric cents numerator", "The fee is 50 cents per 2 devices.", nil},
 		{"numeric cents numerator before independent sentence", "The fee is 50 cents per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"numeric seconds numerator", "The fee is 30 seconds per 2 days.", nil},
+		{"numeric seconds numerator before independent sentence", "The fee is 30 seconds per 2 days. The deposit is $7.", []string{"$7"}},
+		{"currency-prefixed signed numerator", "The fee is $-5 per 2 devices.", nil},
+		{"currency-prefixed signed numerator before independent sentence", "The fee is $-5 per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"normalized fraction slash numerator", "The fee is ½ dollar per 2 devices.", nil},
+		{"normalized fraction slash numerator before independent sentence", "The fee is ½ dollar per 2 devices. The deposit is $7.", []string{"$7"}},
 		{"fractional money numerator with of article", "The fee is a quarter of a dollar per 2 devices.", nil},
 		{"fractional money numerator with of article before independent sentence", "The fee is a quarter of a dollar per 2 devices. The deposit is $7.", []string{"$7"}},
 	} {
@@ -4946,6 +4952,32 @@ func TestExtractRejectsAlternativesWithUnsupportedLeadingDuration(t *testing.T) 
 			got := Extract(tt.text)
 			if len(got) != len(tt.want) {
 				t.Fatalf("unsupported duration alternative retained an exact operand or hid the following sentence: %+v", got)
+			}
+			for i, want := range tt.want {
+				if got[i].Text != want {
+					t.Errorf("figure %d = %q, want %q", i, got[i].Text, want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractRejectsAlternativesWithUnsupportedLeadingMoneyPercentAndCount(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want []string
+	}{
+		{"The fee is thirty dollars or $5.", nil},
+		{"The fee is thirty dollars or $5. The deposit is $7.", []string{"$7"}},
+		{"The rate is thirty percent or 5 percent.", nil},
+		{"The rate is thirty percent or 5 percent. The deposit is $7.", []string{"$7"}},
+		{"The plan includes thirty devices or 2 devices.", nil},
+		{"The plan includes thirty devices or 2 devices. The deposit is $7.", []string{"$7"}},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			got := Extract(tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("unsupported alternative retained an exact operand or hid the following sentence: %+v", got)
 			}
 			for i, want := range tt.want {
 				if got[i].Text != want {
@@ -6235,8 +6267,12 @@ func TestExtractSuppressesDenominatorAfterFractionalPercentageRate(t *testing.T)
 	for _, text := range []string{
 		"The rate is half a percent per 2 days.",
 		"The rate is half a percent per 2 days. The deposit is $7.",
+		"The rate is a quarter of a percent per 2 days.",
+		"The rate is a quarter of a percent per 2 days. The deposit is $7.",
 		"The rate is half a device per 2 days.",
 		"The rate is half a device per 2 days. The deposit is $7.",
+		"The rate is half of a device per 2 days.",
+		"The rate is half of a device per 2 days. The deposit is $7.",
 	} {
 		t.Run(text, func(t *testing.T) {
 			got := Extract(text)

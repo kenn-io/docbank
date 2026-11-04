@@ -1383,6 +1383,7 @@ var adjacentDurationWordUnitRE = regexp.MustCompile(`(?i)^(?:seconds?|secs?|minu
 const durationAlternativeBoundaryPattern = `(?:\s+[\)\]\"'‘’”»]*\s*|[\)\]\"'‘’”»]+\s+)`
 
 var unsupportedDurationAlternativeLeadRE = regexp.MustCompile(`(?i)^` + durationAlternativeBoundaryPattern + `(and|or|through|to|until|till)\s+`)
+var unsupportedValueAlternativeLeadRE = regexp.MustCompile(`(?i)^` + durationAlternativeBoundaryPattern + `or\s+`)
 var durationLaterLeadRE = regexp.MustCompile(`(?i)^\s+(?:later|afterwards?|thereafter)\b`)
 var independentDurationLaterClauseLeadRE = regexp.MustCompile(`(?i)^\s*and\s+`)
 
@@ -1508,6 +1509,16 @@ func relativeDurationOperandParts(operand string) (amount, unit []int, following
 	return nil, nil, "", false
 }
 
+func supportedRelativeDurationOperand(operand string, unit []int) bool {
+	match := unitRE.FindStringSubmatchIndex(operand)
+	if match == nil || match[0] != 0 || match[1] != unit[1] {
+		return false
+	}
+	parts := unitRE.FindStringSubmatch(operand[:unit[1]])
+	parsed, ok := parseUnit(operand[:unit[1]], parts)
+	return ok && parsed.Kind == durationKind
+}
+
 var (
 	unsupportedWordOperandLeadRE        = regexp.MustCompile(`(?i)\b(?:` + approximation + `)\b|(?:` + rateBoundPrefix + `)|(?:<=|>=|≤|≥|<|>)|[~≈]`)
 	unsupportedWordOperandScaffoldingRE = regexp.MustCompile(`(?i)^(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the)\s+`)
@@ -1516,10 +1527,10 @@ var (
 	spokenMoneyUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
 	spokenFractionalMoneyUnitLeadRE     = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+|of\s+(?:a|an)\s+)?(?:dollars?|euros?|pounds?|yuan|yen|roubles?|rubles?|` + currencyCodes + `)\b`)
 	spokenCentsUnitLeadRE               = regexp.MustCompile(`(?i)^\s+cents?\b`)
-	spokenFractionalCountUnitLeadRE     = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
-	spokenFractionalPercentUnitLeadRE   = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+)?(?:percentage\s+points?|percent|per\s+cent)\b`)
-	unresolvedFractionalOperandAmountRE = regexp.MustCompile(`(?i)^(?:(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?|(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?|[0-9]+\s*/\s*[0-9]+|(?:a\s+)?` + fractionWords + `s?)\b`)
-	unresolvedCentsAmountRE             = regexp.MustCompile(`(?i)^(?:` + numRange + `|` + numeralWordAtom + `(?:[-\s]+(?:and\s+)?` + numeralWordAtom + `)*)\b`)
+	spokenFractionalCountUnitLeadRE     = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+|of\s+(?:a|an)\s+)?(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
+	spokenFractionalPercentUnitLeadRE   = regexp.MustCompile(`(?i)^\s+(?:(?:a|an)\s+|of\s+(?:a|an)\s+)?(?:percentage\s+points?|percent|per\s+cent)\b`)
+	unresolvedFractionalOperandAmountRE = regexp.MustCompile(`(?i)^(?:(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?|(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?|[0-9]+\s*[/⁄]\s*[0-9]+|(?:a\s+)?` + fractionWords + `s?)\b`)
+	unresolvedNumeralAmountRE           = regexp.MustCompile(`(?i)^(?:` + numRange + `|` + numeralWordAtom + `(?:[-\s]+(?:and\s+)?` + numeralWordAtom + `)*)\b`)
 	spokenCountUnitLeadRE               = regexp.MustCompile(`(?i)^\s+(?:(?:free|paid|additional|extra)\s+)?` + countUnitPattern + `\b`)
 	spokenPercentUnitLeadRE             = regexp.MustCompile(`(?i)^(?:\s+(?:percentage\s+points?|percent|per\s+cent)\b|\s*%)`)
 	spokenPercentageBaseLeadRE          = regexp.MustCompile(`(?i)^[\s.()\[\]"'‘’“”«»]*(?:of|on)\s+(?:(?:the|a|an)\s+)?[\s.()\[\]"'‘’“”«»]*`)
@@ -1537,10 +1548,7 @@ func unresolvedSpokenWordOperandChecks(s string) []candidate {
 			checks = appendUnresolvedWordOperandCheck(checks, check)
 		}
 	}
-	for _, check := range unresolvedDurationAlternativeChecks(s) {
-		checks = appendUnresolvedWordOperandCheck(checks, check)
-	}
-	for _, check := range unqualifiedRateNumeratorChecks(s) {
+	for _, check := range unresolvedRateAndAlternativeOperandChecks(s) {
 		checks = appendUnresolvedWordOperandCheck(checks, check)
 	}
 	for _, check := range unresolvedSpokenPercentageBaseChecks(s) {
@@ -1549,34 +1557,9 @@ func unresolvedSpokenWordOperandChecks(s string) []candidate {
 	return checks
 }
 
-func unresolvedDurationAlternativeChecks(s string) []candidate {
-	var checks []candidate
-	for start, r := range s {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
-			continue
-		}
-		if start > 0 {
-			previous, _ := utf8.DecodeLastRuneInString(s[:start])
-			if unicode.IsLetter(previous) || unicode.IsDigit(previous) || previous == '_' {
-				continue
-			}
-		}
-		amount, unit, _, ok := relativeDurationOperandParts(s[start:])
-		if !ok || supportedWordAmount(s[start+amount[0]:start+amount[1]]) {
-			continue
-		}
-		end := start + unit[1]
-		if !durationAlternativeContinuation(s[:end], s[end:]) {
-			continue
-		}
-		checks = appendUnresolvedWordOperandCheck(checks, candidate{start + amount[0], end, Figure{Kind: durationKind}, 1})
-	}
-	return checks
-}
-
 var unresolvedCurrencyRatePrefixRE = regexp.MustCompile(`(?i)[$€£¥]|\b` + currencyCodes + `\s+`)
 
-func unqualifiedRateNumeratorChecks(s string) []candidate {
+func unresolvedRateAndAlternativeOperandChecks(s string) []candidate {
 	var checks []candidate
 	var supportedRateNumerators [][]int
 	for _, re := range []*regexp.Regexp{moneyRE, unitRE, countRE} {
@@ -1602,10 +1585,18 @@ func unqualifiedRateNumeratorChecks(s string) []candidate {
 			}
 		}
 		check, ok := unresolvedSpokenWordOperandCheck(s[start:], start)
-		if !ok || rateEnd(s[check.end:]) == 0 {
+		if !ok {
 			continue
 		}
-		if slices.ContainsFunc(supportedRateNumerators, func(span []int) bool {
+		rateNumerator := rateEnd(s[check.end:]) > 0
+		alternative := unsupportedValueAlternativeLeadRE.MatchString(s[check.end:])
+		if check.f.Kind == durationKind {
+			alternative = durationAlternativeContinuation(s[:check.end], s[check.end:])
+		}
+		if !rateNumerator && !alternative {
+			continue
+		}
+		if rateNumerator && slices.ContainsFunc(supportedRateNumerators, func(span []int) bool {
 			return span[0] <= check.start && check.end <= span[1]
 		}) {
 			continue
@@ -1647,7 +1638,7 @@ func unresolvedSpokenWordOperandCheck(operand string, start int) (candidate, boo
 		return check, true
 	}
 	if amount, unit, _, ok := relativeDurationOperandParts(operand); ok {
-		if !supportedWordAmount(operand[amount[0]:amount[1]]) {
+		if !supportedWordAmount(operand[amount[0]:amount[1]]) || !supportedRelativeDurationOperand(operand, unit) {
 			return candidate{start + amount[0], start + unit[1], Figure{Kind: durationKind}, 1}, true
 		}
 		return candidate{}, false
@@ -1689,7 +1680,7 @@ func unresolvedFractionalOperandCheck(operand string, start int, unitLead *regex
 }
 
 func unresolvedCentsMoneyOperandCheck(operand string, start int) (candidate, bool) {
-	amount := unresolvedCentsAmountRE.FindStringIndex(operand)
+	amount := unresolvedNumeralAmountRE.FindStringIndex(operand)
 	if amount == nil || amount[0] != 0 {
 		return candidate{}, false
 	}
@@ -1709,15 +1700,17 @@ func unresolvedCurrencyPrefixedOperandCheck(operand string, start int) (candidat
 	if prefix == nil {
 		return candidate{}, false
 	}
-	amount := numeralWordSequenceRE.FindStringIndex(operand[prefix[1]:])
-	if amount != nil && amount[0] == 0 && !supportedWordAmount(operand[prefix[1]:prefix[1]+amount[1]]) {
-		end := prefix[1] + amount[1]
+	value := operand[prefix[1]:]
+	value, qualifierBytes, signedStart := consumeRelativeDurationOperandQualifiers(value)
+	amount := unresolvedNumeralAmountRE.FindStringIndex(value)
+	if amount != nil && amount[0] == 0 && (signedStart >= 0 || !supportedWordAmount(value[:amount[1]])) {
+		end := prefix[1] + qualifierBytes + amount[1]
 		if rateEnd(operand[end:]) > 0 {
 			return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
 		}
 	}
-	if amount := leadingDecimalOperandRE.FindStringIndex(operand[prefix[1]:]); amount != nil && amount[0] == 0 {
-		end := prefix[1] + amount[1]
+	if amount := leadingDecimalOperandRE.FindStringIndex(value); amount != nil && amount[0] == 0 {
+		end := prefix[1] + qualifierBytes + amount[1]
 		if rateEnd(operand[end:]) > 0 {
 			return candidate{start, start + end, Figure{Kind: moneyKind}, 1}, true
 		}
