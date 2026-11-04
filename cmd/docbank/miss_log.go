@@ -11,7 +11,6 @@ func newMissLogCmd() *cobra.Command {
 	command := &cobra.Command{Use: "miss-log", Short: "Manage private search misses through the daemon", GroupID: groupSearch,
 		Long: `Record empty searches only after opting in with [miss_log] enabled = true.
 The log contains private query text.
-List prints JSON; delete and purge remove current records.
 Management uses the master daemon credential even when recording is off.`}
 	var limit, offset int
 	list := &cobra.Command{Use: missLogListCommand, Short: "List private miss receipts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

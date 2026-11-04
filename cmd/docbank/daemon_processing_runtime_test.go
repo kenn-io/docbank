@@ -600,7 +600,7 @@ func TestDaemonEPUBAndPlaintextProcessing(t *testing.T) {
 			}
 			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 				Query: "needle", Mode: "lexical", Profile: profileName, Limit: 10,
-				Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}},
+				Fence: api.DocumentSearchFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}},
 			})
 			require.NoError(t, err)
 			if mode == "over units" {

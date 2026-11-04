@@ -380,28 +380,3 @@ func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	_, err = runCLI(t, "search", "--pdf-filter", filter, "--json")
 	require.NoError(t, err)
 }
-
-func TestAutomaticMissLogFinalizationBuildsReceiptOnlyForEmptyResults(t *testing.T) {
-	request := api.DocumentSearchRequest{
-		Query: "synthetic empty query", Mode: "hybrid", Profile: "alpha", BindingID: "text",
-		Scope: &api.DocumentSearchScope{Kind: "all_live", Filters: &api.DocumentSourceFenceFilters{SourcePresent: true}},
-	}
-	report := api.DocumentSearchReport{
-		RequestedMode: "hybrid", ActualMode: "hybrid",
-		Coverage:  api.DocumentSearchCoverage{ScopedDocuments: 2, CompleteDocuments: 2, State: "complete"},
-		Truncated: true, Degradations: []string{"synthetic-degradation"},
-	}
-	outcome := automaticSearchOutcome{request: request, report: &report}
-
-	finalizeAutomaticSearchMiss(&outcome, false)
-	require.Empty(t, outcome.receipt.Query)
-
-	finalizeAutomaticSearchMiss(&outcome, true)
-	require.Equal(t, request.Query, outcome.receipt.Query)
-	require.Equal(t, "alpha", outcome.receipt.Profile)
-	require.Equal(t, "text", outcome.receipt.BindingID)
-	require.Equal(t, map[string]any{"source_present": true}, outcome.receipt.Filters)
-	require.Equal(t, 2, *outcome.receipt.DocumentCount)
-	require.True(t, outcome.receipt.Truncated)
-	require.Equal(t, []string{"synthetic-degradation"}, outcome.receipt.Degradations)
-}

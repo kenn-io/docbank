@@ -2149,20 +2149,6 @@
       }
       const mapped = naturalSearchRequest(mode, profile);
       if (!mapped) throw new Error(`${mode} search requires an embedding binding.`);
-      const nameReport = await generated.search(
-        { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
-        { session, signal: controller.signal },
-      );
-      if (request !== generation || session !== webSession || controller.signal.aborted) return;
-      if ((nameReport.tag_id ?? "") !== requestedTagID)
-        throw new Error("Search results did not honor the selected tag filter.");
-      const nameRows: Row[] = nameReport.hits
-        .filter((hit) => hit.match === "name")
-        .map((hit) => ({
-          node: hit.node,
-          path: hit.path,
-          match: hit.match,
-        }));
       const baseRequest: generated.DocumentSearchRequest = {
         query,
         mode: mapped.mode,
@@ -2187,6 +2173,20 @@
         nodes,
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      const nameReport = await generated.search(
+        { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
+        { session, signal: controller.signal },
+      );
+      if (request !== generation || session !== webSession || controller.signal.aborted) return;
+      if ((nameReport.tag_id ?? "") !== requestedTagID)
+        throw new Error("Search results did not honor the selected tag filter.");
+      const nameRows: Row[] = nameReport.hits
+        .filter((hit) => hit.match === "name")
+        .map((hit) => ({
+          node: hit.node,
+          path: hit.path,
+          match: hit.match,
+        }));
       const withNames = (processingRows: Row[]): Row[] => [
         ...processingRows,
         ...nameRows.filter((row) => !processingRows.some((other) => other.node.id === row.node.id)),

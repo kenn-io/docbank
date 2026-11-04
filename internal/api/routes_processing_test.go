@@ -1879,6 +1879,21 @@ func TestDocumentSearchAllLiveEmptyExplain(t *testing.T) {
 	}
 }
 
+func TestDocumentSearchEmptyFenceReturnsEmptyReport(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+		"profile": "private", "query": "synthetic empty fence", "mode": "lexical",
+		"fence": map[string]any{"vault_uid": catalog.VaultID(), "content_version_ids": []string{}},
+	})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var report api.DocumentSearchReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	assert.Equal(t, "lexical", report.RequestedMode)
+	assert.Empty(t, report.Results)
+	assert.Equal(t, "complete", report.Coverage.State)
+}
+
 func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
@@ -1890,7 +1905,7 @@ func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 			if scope == "all_live" {
 				request.Scope = &api.DocumentSearchScope{Kind: "all_live"}
 			} else {
-				request.Fence = api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
+				request.Fence = api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
 			}
 			report, err := client.SearchDocuments(t.Context(), request)
 			require.NoError(t, err)

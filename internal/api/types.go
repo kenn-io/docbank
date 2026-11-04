@@ -218,6 +218,17 @@ type DocumentSourceFence struct {
 	ContentVersionIDs []string `json:"content_version_ids" minItems:"1" maxItems:"4096" uniqueItems:"true"`
 }
 
+// DocumentSearchFence allows an empty version list to describe an empty source set.
+type DocumentSearchFence struct {
+	VaultUID          string   `json:"vault_uid" format:"uuid"`
+	ContentVersionIDs []string `json:"content_version_ids" maxItems:"4096" uniqueItems:"true"`
+}
+
+// DocumentSearchFenceFromSourceFence converts a source fence for document search.
+func DocumentSearchFenceFromSourceFence(fence DocumentSourceFence) DocumentSearchFence {
+	return DocumentSearchFence(fence)
+}
+
 type CoverageClass struct {
 	Name                      string `json:"name"`
 	Required                  bool   `json:"required"`
@@ -252,7 +263,7 @@ type DocumentSearchRequest struct {
 	Limit        int                  `json:"limit,omitzero" minimum:"1" maximum:"100"`
 	Profile      string               `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 	BindingID    string               `json:"binding_id,omitzero" maxLength:"128"`
-	Fence        DocumentSourceFence  `json:"fence,omitzero"`
+	Fence        DocumentSearchFence  `json:"fence,omitzero"`
 
 	Explain      bool `json:"explain,omitzero"`
 	Rerank       bool `json:"rerank,omitzero"`

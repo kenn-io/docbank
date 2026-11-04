@@ -499,7 +499,7 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		if callErr != nil {
 			return documentSearchResponse{}, callErr
 		}
-		request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
+		request.Fence = api.DocumentSearchFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
 		report, callErr = searchResolvedDocuments(ctx, c, request)
 	}
 	if callErr != nil {

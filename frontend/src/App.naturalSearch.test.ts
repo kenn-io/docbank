@@ -103,6 +103,7 @@ interface HarnessOptions {
   rerankNode?: ReturnType<typeof node>;
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
+  onBaseSearch?: () => void;
   snapshotRows?: SnapshotRow[];
 }
 
@@ -245,6 +246,7 @@ function installHarness(options: HarnessOptions) {
     if (url === "/api/v1/search" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       postBodies.push(body);
+      if (!body.rerank) options.onBaseSearch?.();
       if (options.baseSearchStatus)
         return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
@@ -275,8 +277,10 @@ function installHarness(options: HarnessOptions) {
       if (options.legacyPending && legacyCalls === 1) return legacyPending;
       if (options.legacySearchStatus)
         return new Response("legacy search failure", { status: options.legacySearchStatus });
+      const tagSearch =
+        typeof options.tagSearch === "function" ? options.tagSearch() : options.tagSearch;
       return json(
-        options.tagSearch ?? {
+        tagSearch ?? {
           hits: [],
           limit: 1000,
           truncated: false,
@@ -390,6 +394,51 @@ it.each([
     expect(harness.misses).toHaveLength(0);
   },
 );
+
+it("rechecks name matches after processing can make a file stale", async () => {
+  const file = node(2, "retired.txt", baseVersion);
+  const liveFiles: (ReturnType<typeof node> | Node)[] = [file];
+  const emptyReport = report("hybrid", []);
+  emptyReport.coverage.scoped_documents = 0;
+  emptyReport.coverage.complete_documents = 0;
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: liveFiles,
+    baseReport: emptyReport,
+    tagSearch: () => ({
+      hits: liveFiles.map((node) => ({ node, path: node.path, match: "name" })),
+      limit: 1000,
+      truncated: false,
+    }),
+    onBaseSearch: () => liveFiles.splice(0),
+  });
+  render(App);
+  await screen.findByRole("combobox", { name: "Search syntax: Plain words" });
+  await submitSearch("retired");
+  await screen.findByText("No documents match the current filter.");
+
+  const searchCalls = harness.fetchMock.mock.calls
+    .filter(([url]) => {
+      const value = String(url);
+      return (
+        value === "/api/v1/search" ||
+        (value.startsWith("/api/v1/search?") &&
+          new URL(value, "https://example.com").searchParams.get("q") === "retired")
+      );
+    })
+    .map(([url, init]) => (String(url) === "/api/v1/search" ? "POST" : (init?.method ?? "GET")));
+  expect(searchCalls.indexOf("POST")).toBeGreaterThanOrEqual(0);
+  expect(searchCalls.lastIndexOf("GET")).toBeGreaterThan(searchCalls.indexOf("POST"));
+  expect(screen.queryByRole("cell", { name: file.path })).toBeNull();
+});
 
 it("keeps names and text on GET without a processing profile", async () => {
   const file = node(2, "existing.txt", baseVersion);
@@ -1136,7 +1185,7 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(2);
+  ).toBe(1);
   expect(failure).not.toHaveBeenCalled();
 });
 
@@ -1191,7 +1240,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
     files: [file],
     baseReport: report("hybrid", []),
     baseSearchStatus: 500,
-    legacyFailureAfter: 1,
+    legacyFailureAfter: 0,
     tagSearch: {
       hits: [{ node: file, path: file.path, match: "name" }],
       limit: 1000,
@@ -1207,7 +1256,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(2);
+  ).toBe(1);
   expect(failure).toHaveBeenCalledExactlyOnceWith("short-lived", "search", expect.any(Error));
 });
 
@@ -1234,7 +1283,7 @@ it("does not fall back to GET after a processing 401", async () => {
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
-  ).toBe(1);
+  ).toBe(0);
 });
 
 it("ignores an aborted natural search completion", async () => {
@@ -1265,10 +1314,10 @@ it("ignores an aborted natural search completion", async () => {
   const nameRequests = harness.fetchMock.mock.calls.filter(([input]) =>
     String(input).startsWith("/api/v1/search?"),
   );
-  expect(nameRequests).toHaveLength(2);
+  expect(nameRequests).toHaveLength(1);
   expect(
     nameRequests.map(([url]) => new URL(String(url), "https://example.com").searchParams.get("q")),
-  ).toEqual(["old query", "new query"]);
+  ).toEqual(["new query"]);
 });
 
 it("shows why natural search controls could not load", async () => {
@@ -1314,7 +1363,7 @@ it.each([500, 401])(
       expect(screen.queryByText("unavailable excerpt")).toBeNull();
       expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
     }
-    expect(harness.legacyCalls()).toBe(1);
+    expect(harness.legacyCalls()).toBe(status === 401 ? 0 : 1);
     expect(screen.queryByText(/Natural-language search unavailable/)).toBeNull();
   },
 );

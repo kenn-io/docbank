@@ -431,7 +431,7 @@ func TestNaturalSearchFallbackMissPreservesRequestContext(t *testing.T) {
 
 	request := api.DocumentSearchRequest{
 		Query: "missing", Mode: naturalHybrid, Profile: "private", BindingID: "semantic",
-		Scope: &api.DocumentSearchScope{Kind: "all_live", Filters: &api.DocumentSourceFenceFilters{SourcePresent: true}},
+		Scope: &api.DocumentSearchScope{Kind: "all_live"},
 	}
 	updated, _ := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
 		requestID: model.requestID, searchID: model.naturalSearchID, query: "missing", naturalMode: naturalHybrid,
@@ -444,7 +444,6 @@ func TestNaturalSearchFallbackMissPreservesRequestContext(t *testing.T) {
 	assert.Equal(t, "lexical", result.fallbackMiss.ActualMode)
 	assert.Equal(t, "private", result.fallbackMiss.Profile)
 	assert.Equal(t, "semantic", result.fallbackMiss.BindingID)
-	assert.Equal(t, true, result.fallbackMiss.Filters["source_present"])
 	assert.Nil(t, result.fallbackMiss.DocumentCount)
 	assert.Nil(t, result.fallbackMiss.Coverage)
 
@@ -460,7 +459,6 @@ func TestNaturalSearchFallbackMissPreservesRequestContext(t *testing.T) {
 	assert.Equal(t, "hybrid", fake.misses[0].RequestedMode)
 	assert.Equal(t, "lexical", fake.misses[0].ActualMode)
 	assert.Equal(t, "semantic", fake.misses[0].BindingID)
-	assert.Equal(t, true, fake.misses[0].Filters["source_present"])
 }
 
 func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {

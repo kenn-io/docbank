@@ -1896,7 +1896,7 @@ func (m Model) loadProcessingSearch(requestID uint64, query string) tea.Cmd {
 		}
 		report, err := backend.SearchDocuments(ctx, api.DocumentSearchRequest{
 			Query: query, Mode: "auto", Limit: maxProcessingSearchItems, Profile: plan.Selector.Profile,
-			Fence: api.DocumentSourceFence{
+			Fence: api.DocumentSearchFence{
 				VaultUID: plan.VaultUID, ContentVersionIDs: []string{plan.Selector.ContentVersionID},
 			}, Explain: true,
 		})
