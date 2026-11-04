@@ -321,7 +321,7 @@ func TestPhotoExportInputCaptureBoundsKeywordsWithoutWaitingForWriter(t *testing
 	defer func() { _ = tags.Rollback() }()
 	for index := range 1001 {
 		id := uuid.New().String()
-		_, err = tags.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`, id, fmt.Sprintf("tag-%04d", index))
+		_, err = tags.ExecContext(ctx, `INSERT INTO tags(id,name,assignment_count) VALUES(?,?,1)`, id, fmt.Sprintf("tag-%04d", index))
 		require.NoError(t, err)
 		_, err = tags.ExecContext(ctx, `INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, n.ID, id)
 		require.NoError(t, err)

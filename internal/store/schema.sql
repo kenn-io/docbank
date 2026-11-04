@@ -1940,7 +1940,8 @@ END;
 CREATE TABLE IF NOT EXISTS tags (
     id       TEXT PRIMARY KEY NOT NULL,
     name     TEXT NOT NULL UNIQUE,
-    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    assignment_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS node_tags (

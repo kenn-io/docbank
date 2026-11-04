@@ -16,10 +16,16 @@ func TestMailboxTransferAtomicPublicationAndConcurrentRetry(t *testing.T) {
 	run, err := s.BeginIngest(ctx, "mailbox", "Synthetic EML transfer")
 	require.NoError(t, err)
 	p := MailboxTransferPublication{Owner: "one", Run: run, Request: MailboxTransferRequest{ArchiveID: "external-synthetic", Reference: "message-1", SHA256: fakeHash("00"), Size: 1, Settings: "settings-v1", DestinationID: s.RootID(), Name: "message.eml"}, Email: f.publication}
+	tag, err := s.CreateTag(ctx, "mail")
+	require.NoError(t, err)
+	p.Location = &MailboxLocation{Labels: []string{"mail"}}
+	p.LabelTags = map[string]string{"mail": tag.ID}
 	source, err := emailVersion(ctx, s.db, f.publication.ContentVersionID)
 	require.NoError(t, err)
 	p.Request.SHA256 = source.BlobHash
 	p.Request.Size = source.Size
+	p.Location.EMLSHA256 = source.BlobHash
+	p.Location.EMLSize = source.Size
 	var before int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&before))
 	_, err = s.db.ExecContext(t.Context(), `CREATE TRIGGER fail_mailbox_receipt BEFORE INSERT ON mailbox_transfer_receipts BEGIN SELECT RAISE(ABORT,'synthetic rollback between message and receipt'); END`)
@@ -29,6 +35,7 @@ func TestMailboxTransferAtomicPublicationAndConcurrentRetry(t *testing.T) {
 	var after int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM nodes`).Scan(&after))
 	require.Equal(t, before, after)
+	assertTagAssignmentCounts(t, s)
 	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_mailbox_receipt`)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
@@ -42,6 +49,7 @@ func TestMailboxTransferAtomicPublicationAndConcurrentRetry(t *testing.T) {
 		require.NoError(t, errs[i])
 		require.Equal(t, results[0], results[i])
 	}
+	assertTagAssignmentCounts(t, s)
 	receipt := results[0]
 	require.NotEmpty(t, receipt.EmailAttachmentID)
 	require.NotEmpty(t, receipt.DocumentPublicationID)
@@ -56,9 +64,11 @@ func TestMailboxTransferAtomicPublicationAndConcurrentRetry(t *testing.T) {
 	again, err := restored.PublishMailboxTransfer(ctx, p)
 	require.NoError(t, err)
 	require.Equal(t, receipt, again)
+	assertTagAssignmentCounts(t, restored)
 	p.Request.Reference = "message-2"
 	second, err := s.PublishMailboxTransfer(ctx, p)
 	require.NoError(t, err)
 	require.NotEqual(t, receipt.Target.NodeID, second.Target.NodeID)
 	require.Equal(t, receipt.Target.SHA256, second.Target.SHA256)
+	assertTagAssignmentCounts(t, s)
 }

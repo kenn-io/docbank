@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -386,4 +388,139 @@ func TestTagNameValidation(t *testing.T) {
 			require.ErrorIs(t, err, ErrInvalidTag)
 		})
 	}
+}
+
+func TestTagLookupDoesNotScanAssignments(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	tag, err := s.CreateTag(t.Context(), "records")
+	require.NoError(t, err)
+	plan := explainQueryPlan(t, s, tagByIDSQL, tag.ID)
+	require.NotContains(t, plan, "node_tags")
+}
+
+// Compare every public definition view with the actual membership rows.
+func assertTagAssignmentCounts(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := t.Context()
+	tags, _, err := s.Tags(ctx, 1000, 0)
+	require.NoError(t, err)
+	for _, tag := range tags {
+		var count int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_tags WHERE tag_id=$1`, tag.ID).Scan(&count))
+		require.Equal(t, count, tag.AssignmentCount, tag.Name)
+		byID, err := s.TagByID(ctx, tag.ID)
+		require.NoError(t, err)
+		require.Equal(t, tag, byID)
+		byName, err := s.TagByName(ctx, tag.Name)
+		require.NoError(t, err)
+		require.Equal(t, tag, byName)
+	}
+	var ids []int64
+	require.NoError(t, queryRows(ctx, s.db, `SELECT id FROM nodes`, nil, func(rows *sql.Rows) error {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+		return nil
+	}))
+	for _, id := range ids {
+		page, _, err := s.NodeTags(ctx, id, 1000, 0)
+		require.NoError(t, err)
+		for _, tag := range page {
+			require.Contains(t, tags, tag)
+		}
+	}
+}
+
+func checkTagAssignmentCountsStayExact(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	parent, err := s.Mkdir(ctx, s.RootID(), "set")
+	require.NoError(t, err)
+	one, err := s.Mkdir(ctx, parent.ID, "one")
+	require.NoError(t, err)
+	two, err := s.Mkdir(ctx, parent.ID, "two")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "records")
+	require.NoError(t, err)
+	other, err := s.CreateTag(ctx, "other")
+	require.NoError(t, err)
+	assertTagAssignmentCounts(t, s)
+	for range 2 {
+		change, err := s.AssignTag(ctx, tag.ID, one.ID, UnconditionalRev)
+		require.NoError(t, err)
+		require.Equal(t, 1, change.Tag.AssignmentCount)
+		assertTagAssignmentCounts(t, s)
+	}
+	for range 2 {
+		change, err := s.AssignTagPath(ctx, tag.ID, "/set/two")
+		require.NoError(t, err)
+		require.Equal(t, 2, change.Tag.AssignmentCount)
+		assertTagAssignmentCounts(t, s)
+	}
+	for range 2 {
+		change, err := s.UnassignTag(ctx, tag.ID, one.ID, UnconditionalRev)
+		require.NoError(t, err)
+		require.Equal(t, 1, change.Tag.AssignmentCount)
+		assertTagAssignmentCounts(t, s)
+	}
+	for range 2 {
+		change, err := s.UnassignTagPath(ctx, tag.ID, "/set/two")
+		require.NoError(t, err)
+		require.Zero(t, change.Tag.AssignmentCount)
+		assertTagAssignmentCounts(t, s)
+	}
+	_, err = s.AssignTag(ctx, tag.ID, two.ID, UnconditionalRev)
+	require.NoError(t, err)
+	assertTagAssignmentCounts(t, s)
+	for _, assign := range []bool{true, true, false, false, true} {
+		targets := make([]BatchTagTarget, 0, 3)
+		for _, id := range []int64{parent.ID, one.ID, two.ID} {
+			node, err := s.NodeByID(ctx, id)
+			require.NoError(t, err)
+			targets = append(targets, BatchTagTarget{NodeID: id, Revision: node.Revision})
+		}
+		// Keep one target already unassigned for a mixed removal.
+		if !assign {
+			_, err = s.UnassignTag(ctx, tag.ID, parent.ID, UnconditionalRev)
+			require.NoError(t, err)
+			current, err := s.NodeByID(ctx, parent.ID)
+			require.NoError(t, err)
+			targets[0].Revision = current.Revision
+			assertTagAssignmentCounts(t, s)
+		}
+		receipt, err := s.BatchTags(ctx, BatchTagRequest{OperationID: uuid.New().String(), TagID: tag.ID, Assign: assign, Nodes: targets})
+		require.NoError(t, err)
+		want := 0
+		if assign {
+			want = 3
+		}
+		require.Equal(t, want, receipt.AssignmentCount)
+		assertTagAssignmentCounts(t, s)
+	}
+	for _, id := range []int64{one.ID, two.ID, s.RootID()} {
+		_, err = s.AssignTag(ctx, other.ID, id, UnconditionalRev)
+		require.NoError(t, err)
+		assertTagAssignmentCounts(t, s)
+	}
+	_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
+	require.NoError(t, err)
+	assertTagAssignmentCounts(t, s)
+	before, err := s.TagByID(ctx, tag.ID)
+	require.NoError(t, err)
+	require.Equal(t, 3, before.AssignmentCount)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	assertTagAssignmentCounts(t, s)
+	after, err := s.TagByID(ctx, tag.ID)
+	require.NoError(t, err)
+	require.Zero(t, after.AssignmentCount)
+	require.Equal(t, before.Revision+1, after.Revision)
+	deleted, err := s.DeleteTag(ctx, other.ID, UnconditionalRev)
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted.AssignmentCount)
+	assertTagAssignmentCounts(t, s)
 }

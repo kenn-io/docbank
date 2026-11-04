@@ -164,6 +164,7 @@ func TestPhotoAuthoredBatchKeywordsUndoAndRestore(t *testing.T) {
 	request := PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: []string{asset.ID}}), Patch: PhotoAuthoredPatch{Rating: new(4)}, Keywords: []PhotoKeywordEdit{{tag.ID, true}}}
 	receipt, err := s.EditPhotoAuthoredBatch(ctx, request)
 	require.NoError(t, err)
+	assertTagAssignmentCounts(t, s)
 	require.Len(t, receipt.After, 2)
 	require.Len(t, receipt.Keywords, 2)
 	require.Len(t, receipt.KeywordNodes, 2)
@@ -174,8 +175,10 @@ func TestPhotoAuthoredBatchKeywordsUndoAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	assertTagAssignmentCounts(t, restored)
 	undo, err := restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.NoError(t, err)
+	assertTagAssignmentCounts(t, restored)
 	require.Len(t, undo.Keywords, 2)
 	for _, before := range receipt.Before {
 		file, err := photoFileByIDQuery(ctx, restored.db, before.FileID)
@@ -192,6 +195,7 @@ func TestPhotoAuthoredBatchKeywordsUndoAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
+	assertTagAssignmentCounts(t, s)
 	for _, file := range receipt.After {
 		current, err := photoFileByIDQuery(ctx, s.db, file.FileID)
 		require.NoError(t, err)
@@ -539,6 +543,7 @@ func TestPhotoKeywordEditNoop(t *testing.T) {
 	currentTag, err := s.TagByID(ctx, tag.ID)
 	require.NoError(t, err)
 	require.Equal(t, beforeTag.Revision, currentTag.Revision)
+	assertTagAssignmentCounts(t, s)
 }
 
 func TestPhotoKeywordUndo(t *testing.T) {

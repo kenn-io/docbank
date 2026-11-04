@@ -949,6 +949,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkTagLifecycleAndNodeRevisions(t, newPostgresQueryStore)
 		}},
+		{"TagAssignmentCountsStayExact", func(t *testing.T) {
+			t.Helper()
+			checkTagAssignmentCountsStayExact(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTagAssignmentCountsStayExact(t, newPostgresQueryStore)
+		}},
 		{"TagPagesKeepAssignmentCounts", func(t *testing.T) {
 			t.Helper()
 			checkTagPagesKeepAssignmentCounts(t, newTestStore)

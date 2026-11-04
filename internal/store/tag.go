@@ -109,14 +109,16 @@ func (s *Store) TagByID(ctx context.Context, id string) (Tag, error) {
 	return tagByIDQuery(ctx, s.db, id)
 }
 
+const tagByIDSQL = `
+		SELECT t.id, t.name, t.revision,
+		       t.assignment_count
+		FROM tags t WHERE t.id = $1`
+
 func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, error) {
 	if err := validateUUIDv4(id); err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
-	tag, err := scanTag(queryer.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision,
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
-		FROM tags t WHERE t.id = $1`, id))
+	tag, err := scanTag(queryer.QueryRowContext(ctx, tagByIDSQL, id))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
@@ -125,20 +127,16 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 
 // TagByName returns the tag whose normalized name exactly matches name.
 func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
-	return tagByNameQuery(ctx, s.db, name, true)
+	return tagByNameQuery(ctx, s.db, name)
 }
 
-func tagByNameQuery(ctx context.Context, queryer rowQuerier, name string, countAssignments bool) (Tag, error) {
+func tagByNameQuery(ctx context.Context, queryer rowQuerier, name string) (Tag, error) {
 	name, err := NormalizeTagName(name)
 	if err != nil {
 		return Tag{}, err
 	}
-	count := "0"
-	if countAssignments {
-		count = "(SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)"
-	}
 	tag, err := scanTag(queryer.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision, `+count+`
+		SELECT t.id, t.name, t.revision, t.assignment_count
 		FROM tags t WHERE t.name = $1`, name))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
@@ -160,13 +158,13 @@ func (e *TagResolutionError) Error() string {
 }
 func (e *TagResolutionError) Unwrap() error { return e.Err }
 
-// ResolveWatchTag resolves a configured watch tag name without counting assignments.
+// ResolveWatchTag resolves a configured watch tag name.
 func (s *Store) ResolveWatchTag(ctx context.Context, name string) (Tag, error) {
 	return resolveWatchTagQuery(ctx, s.db, name)
 }
 
 func resolveWatchTagQuery(ctx context.Context, queryer rowQuerier, name string) (Tag, error) {
-	tag, err := tagByNameQuery(ctx, queryer, name, false)
+	tag, err := tagByNameQuery(ctx, queryer, name)
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidTag) {
 		return Tag{}, &TagResolutionError{Name: name, Err: err}
 	}
@@ -178,14 +176,13 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	// Count assignments only for the selected page, using the tag index.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH page AS (
-		  SELECT id, name, revision FROM tags ORDER BY name, id LIMIT $1 OFFSET $2
+		  SELECT id, name, revision, assignment_count FROM tags ORDER BY name, id LIMIT $1 OFFSET $2
 		), totals AS (SELECT COUNT(*) AS total FROM tags)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = page.id)
+		       COALESCE(page.assignment_count, 0)
 		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags: %w", err)
@@ -477,7 +474,8 @@ func (s *Store) changeTagAssignmentTx(
 			result.Tag.AssignmentCount--
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE tags SET revision = revision + 1 WHERE id = $1`, tagID,
+			`UPDATE tags SET revision = revision + 1, assignment_count = assignment_count + $1 WHERE id = $2`,
+			result.Tag.AssignmentCount-tag.AssignmentCount, tagID,
 		); err != nil {
 			return TagAssignmentChange{}, fmt.Errorf(
 				"advancing tag %s after assignment change: %w", tagID, err,
@@ -517,17 +515,16 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	// Count assignments after pagination, not for tags discarded by the sort.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH target AS (SELECT id FROM nodes WHERE id = $1),
 		page AS (
-		  SELECT t.id, t.name, t.revision
+		  SELECT t.id, t.name, t.revision, t.assignment_count
 		  FROM tags t JOIN node_tags nt ON nt.tag_id = t.id
 		  WHERE nt.node_id = $2 ORDER BY t.name, t.id LIMIT $3 OFFSET $4
 		), totals AS (SELECT COUNT(*) AS total FROM node_tags WHERE node_id = $5)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = page.id)
+		       COALESCE(page.assignment_count, 0)
 		FROM target CROSS JOIN totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
 		nodeID, nodeID, limit, offset, nodeID)
 	if err != nil {
@@ -664,17 +661,7 @@ func (s *Store) taggedNodes(
 }
 
 func tagByIDTx(ctx context.Context, tx *sql.Tx, id string) (Tag, error) {
-	if err := validateUUIDv4(id); err != nil {
-		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
-	}
-	tag, err := scanTag(tx.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision,
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
-		FROM tags t WHERE t.id = $1`, id))
-	if err != nil {
-		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
-	}
-	return tag, nil
+	return tagByIDQuery(ctx, tx, id)
 }
 
 func checkTagRevision(tag Tag, expected int64) error {

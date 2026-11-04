@@ -608,10 +608,11 @@ func (s *Store) trashEmpty(
 			  UNION ALL
 			  SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id = d.id
 			)
-			UPDATE tags SET revision = revision + 1
-			WHERE id IN (
-			  SELECT nt.tag_id FROM node_tags nt JOIN doomed d ON d.id = nt.node_id
-			)`, selectionArgs...); err != nil {
+			UPDATE tags SET revision = revision + 1, assignment_count = assignment_count - gone.n
+			FROM (
+			  SELECT nt.tag_id, COUNT(*) AS n FROM doomed d JOIN node_tags nt ON nt.node_id = d.id
+			  GROUP BY nt.tag_id
+			) gone WHERE tags.id = gone.tag_id`, selectionArgs...); err != nil {
 			return fmt.Errorf("advancing tags affected by trash empty: %w", err)
 		}
 		if err := s.beforeContentVersionDeletionTx(ctx, tx, versionIDs); err != nil {

@@ -992,6 +992,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE tags SET assignment_count=(SELECT COUNT(*) FROM node_tags WHERE tag_id=tags.id)`); err != nil {
+			return fmt.Errorf("restoring tag assignment counts: %w", err)
+		}
 		if err := stampImportedAuditEventSequencesTx(ctx, tx); err != nil {
 			return err
 		}
