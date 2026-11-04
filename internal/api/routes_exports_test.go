@@ -122,10 +122,10 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 	case <-paused.interrupted:
 	case <-time.After(10 * time.Second):
 		close(release)
-		<-maintenanceDone
+		maintenanceErr := <-maintenanceDone
 		<-revoked
-		<-finished
-		t.Fatal("revocation did not interrupt active export while maintenance blocked durable cancellation")
+		t.Fatalf("revocation did not interrupt active export while maintenance blocked durable cancellation; maintenance returned %v, export returned %v",
+			maintenanceErr, <-finished)
 	}
 	// The old five-second timeout must not abandon the durable mutation.
 	select {

@@ -157,8 +157,7 @@ func TestProcessorCancellationDoesNotWaitForSpoolReservation(t *testing.T) {
 	case processErr = <-done:
 	case <-time.After(5 * time.Second):
 		releaseLock()
-		<-done
-		t.Fatal("Process waited for the spool reservation after cancellation")
+		t.Fatalf("Process waited for the spool reservation after cancellation; it returned %v after the lock was released", <-done)
 	}
 	releaseLock()
 	require.ErrorIs(t, processErr, context.Canceled)

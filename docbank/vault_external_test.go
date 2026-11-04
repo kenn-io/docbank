@@ -988,7 +988,7 @@ func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
 			defer func() {
 				cancel()
 				if !joined {
-					<-done
+					t.Logf("StartProcessing returned %v after the wait failed", <-done)
 				}
 			}()
 			var jobID string
