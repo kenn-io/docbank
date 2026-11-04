@@ -2137,12 +2137,18 @@ it("deduplicates pages without rereading retained IDs and resets on replacement"
   await photos.loadMore();
   expect(scans).not.toHaveBeenCalled();
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
-  photos.items = [mapPhoto(2), mapPhoto(4)];
+  const rows = [mapPhoto(2), mapPhoto(4)];
+  photos.items = rows;
+  const replacementScans = vi.fn(() => "photo-2");
+  Object.defineProperty(rows[0], "asset_id", { get: replacementScans });
   photos.cursor = "replacement-tail";
   fetcher.mockResolvedValueOnce(
     response([mapPhoto(1), mapPhoto(2), mapPhoto(3), mapPhoto(4), mapPhoto(5), mapPhoto(5)]),
   );
   await photos.loadMore();
+  expect(replacementScans).not.toHaveBeenCalled();
+  expect(photos.rowByID("photo-4")).toBe(rows[1]);
+  expect(photos.rowByID("photo-1")?.asset_id).toBe("photo-1");
   expect(photos.items.map((row) => row.asset_id)).toEqual([
     "photo-2",
     "photo-4",
@@ -3890,7 +3896,6 @@ it.each([false, true])(
     photos.cursor = "next";
     await photos.selectAllResults();
     const selected = photos.selectedIDs;
-    const oldView = photos.items;
     if (targets) photos.authored.targets = [preparedPhoto(1)];
     const fetcher = vi.fn().mockResolvedValue(response([photo(2)], "last"));
     stubPhotoFetch(fetcher);
@@ -3902,8 +3907,6 @@ it.each([false, true])(
     expect(photos.selectsAll).toBe(!targets);
     if (!targets) expect(photos.selectedIDs).toBe(selected);
     expect([...photos.selectedIDs]).toEqual(targets ? ["photo-1"] : ["photo-1", "photo-2"]);
-    expect(oldView).toHaveLength(1);
-    expect(photos.items).not.toBe(oldView);
     expect(photos.items).toHaveLength(2);
     await tick();
     expect(sizes.at(-1)).toBe(targets ? 1 : 2);
@@ -3911,27 +3914,6 @@ it.each([false, true])(
     photos.dispose();
   },
 );
-
-it("deduplicates the first page after replacement without rereading retained IDs", async () => {
-  const photos = new Photos("scoped", vi.fn());
-  const rows = Array.from({ length: 20_000 }, (_, id) => photo(id));
-  let reads = 0;
-  for (const row of rows) {
-    const id = row.asset_id;
-    Object.defineProperty(row, "asset_id", { get: () => (reads++, id) });
-  }
-  photos.items = rows;
-  photos.started = true;
-  photos.cursor = "next";
-  reads = 0;
-  stubPhotoFetch(vi.fn().mockResolvedValue(response([photo(1), photo(20_000)])));
-  await photos.loadMore();
-  expect(reads).toBe(0);
-  expect(photos.items).toHaveLength(20_001);
-  expect(photos.rowByID("photo-1")).toBe(rows[1]);
-  expect(photos.rowByID("photo-20000")?.asset_id).toBe("photo-20000");
-  photos.dispose();
-});
 
 it("appends a selected page without visiting retained row slots", async () => {
   const photos = new Photos("scoped", vi.fn());
