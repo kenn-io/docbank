@@ -24,12 +24,13 @@ func subscribeWarm(b *testing.B, s *Store) func() {
 // blob I/O; fixture creation and checkpointing are outside the timer.
 func BenchmarkPhotoImportMetadata(b *testing.B) {
 	type ingestCase struct {
-		existing int
-		shared   bool
+		existing    int
+		shared      bool
+		destination int
 	}
-	cases := []ingestCase{{100, false}, {1000, false}, {10000, false}, {1000, true}, {10000, true}}
+	cases := []ingestCase{{100, false, 0}, {1000, false, 0}, {10000, false, 0}, {1000, true, 0}, {10000, true, 0}}
 	if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
-		cases = append(cases, ingestCase{100000, false}, ingestCase{100000, true})
+		cases = append(cases, ingestCase{100000, false, 0}, ingestCase{100000, true, 0}, ingestCase{1025, true, 100000})
 	}
 	for _, tc := range cases {
 		existing := tc.existing
@@ -43,7 +44,11 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 			if tc.shared && edit {
 				continue
 			}
-			b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%t/shared=%t", existing, edit, subscribed, tc.shared), func(b *testing.B) {
+			name := fmt.Sprintf("existing=%d/edit=%t/subscriber=%t", existing, edit, subscribed)
+			if tc.shared {
+				name += fmt.Sprintf("/shared=true/destination=%d", tc.destination)
+			}
+			b.Run(name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -54,31 +59,19 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 					require.NoError(b, err)
 					var prior []Node
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-						parentID := s.RootID()
 						if tc.shared {
-							parent, err := s.mkdirTx(b.Context(), tx, s.RootID(), "elsewhere", nowRFC3339())
-							if err != nil {
-								return err
-							}
-							parentID = parent.ID
+							return seedSharedIngestBenchmark(b.Context(), s, tx, existing, tc.destination, 128, "image/jpeg")
 						}
 						for i := range existing {
 							name := fmt.Sprintf("photo-%05d.jpg", i)
-							hash := fmt.Sprintf("%064x", i+1)
-							if tc.shared {
-								hash = fakeHash("a1")
+							receipt, _, _, err := s.ingestFileTx(b.Context(), tx, run, s.RootID(), name,
+								fmt.Sprintf("%064x", i+1), 128, "image/jpeg", "/synthetic/"+name, "",
+								ingestFileOptions{observeMembership: true})
+							if err != nil {
+								return err
 							}
-							if edit && i >= existing-batch {
-								receipt, _, _, err := s.ingestFileTx(b.Context(), tx, run, parentID, name,
-									hash, 128, "image/jpeg", "/synthetic/"+name, "", ingestFileOptions{observeMembership: true})
-								if err != nil {
-									return err
-								}
+							if i >= existing-batch {
 								prior = append(prior, receipt.Node)
-							} else {
-								if _, _, err := s.createFileTx(b.Context(), tx, parentID, name, hash, 128, "image/jpeg"); err != nil {
-									return err
-								}
 							}
 						}
 						return nil

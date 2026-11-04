@@ -11,32 +11,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIngestCandidatesUseBlobIndex(t *testing.T) {
+func TestIngestCandidatesUseSmallerPopulation(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		for copies := 0; copies <= ingestBlobProbeCap+1; copies++ {
-			if copies > 0 {
-				if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%d", copies), fakeHash("a1"), 1, "text/plain"); err != nil {
+	for _, tc := range []struct {
+		copies, files int
+		blobFirst     bool
+	}{
+		{0, 10, true},
+		{1024, 10, false},
+		{1025, 10, false},
+		{1025, 100000, true},
+		{100000, 10, false},
+	} {
+		t.Run(fmt.Sprintf("copies=%d/files=%d", tc.copies, tc.files), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				elsewhere, err := s.mkdirTx(ctx, tx, s.RootID(), "elsewhere", nowRFC3339())
+				if err != nil {
 					return err
 				}
-			}
-			if copies != 0 && copies != ingestBlobProbeCap && copies != ingestBlobProbeCap+1 {
-				continue
-			}
-			query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"))
-			require.NoError(t, err)
-			plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
-			if copies <= ingestBlobProbeCap {
-				assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
-				assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
-			} else {
-				assert.Contains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
-			}
-		}
-		return nil
-	}))
+				for i := range tc.copies {
+					if _, _, err := s.createFileTx(ctx, tx, elsewhere.ID, fmt.Sprintf("copy-%d", i), fakeHash("a1"), 1, "text/plain"); err != nil {
+						return err
+					}
+				}
+				for i := range tc.files {
+					if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%d", i), fakeHash("b2"), 1, "text/plain"); err != nil {
+						return err
+					}
+				}
+				prior, _, err := s.createFileTx(ctx, tx, s.RootID(), "report (2).txt", fakeHash("a1"), 1, "text/plain")
+				if err != nil {
+					return err
+				}
+				if _, _, err := s.createFileTx(ctx, tx, s.RootID(), "other.txt", fakeHash("b2"), 1, "text/plain"); err != nil {
+					return err
+				}
+				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
+				require.NoError(t, err)
+				plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
+				if tc.blobFirst {
+					assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
+					assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+				} else {
+					assert.Contains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+				}
+				name, id, skipped, err := resolveIngestNameTx(ctx, tx, s.RootID(), "report.txt", fakeHash("a1"), "cli", "report.txt")
+				require.NoError(t, err)
+				assert.True(t, skipped)
+				assert.Equal(t, prior.ID, id)
+				assert.Empty(t, name)
+				name, id, skipped, err = resolveIngestNameTx(ctx, tx, s.RootID(), "other.txt", fakeHash("a1"), "cli", "other.txt")
+				require.NoError(t, err)
+				assert.False(t, skipped)
+				assert.Zero(t, id)
+				assert.Equal(t, "other (2).txt", name)
+				return nil
+			}))
+		})
+	}
 }
 
 func TestIngestFileIdempotency(t *testing.T) {

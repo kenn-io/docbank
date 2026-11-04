@@ -210,8 +210,6 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	return inserted == 1, nil
 }
 
-const ingestBlobProbeCap = 1024
-
 const resolveIngestCandidatesPrefix = `SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
 		 LEFT JOIN provenance AS p ON p.node_id = n.id
 		   AND NOT EXISTS (
@@ -230,19 +228,30 @@ const resolveIngestCandidatesSuffix = `candidate.parent_id = $2 AND candidate.tr
 const resolveIngestCandidatesSQL = resolveIngestCandidatesPrefix + "+" + resolveIngestCandidatesSuffix
 const resolveIngestFolderCandidatesSQL = resolveIngestCandidatesPrefix + resolveIngestCandidatesSuffix
 
-func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash string) (string, error) {
-	var copies int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
-		SELECT 1 FROM content_versions WHERE blob_hash = $1 LIMIT $2
-	)`, blobHash, ingestBlobProbeCap+1).Scan(&copies); err != nil {
-		return "", fmt.Errorf("counting ingest content versions: %w", err)
+func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash string, parentID int64) (string, error) {
+	// Grow both indexed probes together until one population is exhausted.
+	// Their total work is bounded by the smaller population, even when both
+	// the destination and the content's version history are large.
+	for limit := int64(16); ; limit *= 2 {
+		var copies, files int64
+		if err := tx.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM (
+				SELECT 1 FROM content_versions WHERE blob_hash = $1 LIMIT $2
+			) AS versions),
+			(SELECT COUNT(*) FROM (
+				SELECT 1 FROM nodes WHERE parent_id = $3 AND kind = 'file'
+				AND trashed_at IS NULL LIMIT $2
+			) AS children)`, blobHash, limit, parentID).Scan(&copies, &files); err != nil {
+			return "", fmt.Errorf("probing ingest candidate populations: %w", err)
+		}
+		if copies < limit || files < limit {
+			if copies <= files {
+				// Unary + makes SQLite seek by blob without ANALYZE statistics.
+				return resolveIngestCandidatesSQL, nil
+			}
+			return resolveIngestFolderCandidatesSQL, nil
+		}
 	}
-	// Unary + makes SQLite seek by blob without ANALYZE statistics. For widely
-	// shared content, walking the destination avoids scanning unrelated copies.
-	if copies > ingestBlobProbeCap {
-		return resolveIngestFolderCandidatesSQL, nil
-	}
-	return resolveIngestCandidatesSQL, nil
 }
 
 // resolveIngestNameTx applies the import idempotency rule: a live suffix
@@ -257,7 +266,7 @@ func resolveIngestNameTx(
 	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
-	candidateQuery, err := resolveIngestCandidatesQueryTx(ctx, tx, blobHash)
+	candidateQuery, err := resolveIngestCandidatesQueryTx(ctx, tx, blobHash, parentID)
 	if err != nil {
 		return "", 0, false, err
 	}

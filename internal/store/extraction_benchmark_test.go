@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -17,16 +18,17 @@ func BenchmarkIngestMetadata(b *testing.B) {
 	const batch = 128
 	for _, mimeType := range []string{"application/octet-stream", "text/plain"} {
 		type ingestCase struct {
-			existing int
-			shared   bool
+			existing    int
+			shared      bool
+			destination int
 		}
-		cases := []ingestCase{{0, false}, {1000, false}, {10000, false}, {1000, true}, {10000, true}}
+		cases := []ingestCase{{0, false, 0}, {1000, false, 0}, {10000, false, 0}, {1000, true, 0}, {10000, true, 0}}
 		if os.Getenv("DOCBANK_INGEST_SCALE") != "" {
-			cases = append(cases, ingestCase{100000, false}, ingestCase{100000, true})
+			cases = append(cases, ingestCase{100000, false, 0}, ingestCase{100000, true, 0}, ingestCase{1025, true, 100000})
 		}
 		for _, tc := range cases {
 			existing := tc.existing
-			b.Run(fmt.Sprintf("%s/existing=%d/shared=%t", mimeType, existing, tc.shared), func(b *testing.B) {
+			b.Run(fmt.Sprintf("%s/existing=%d/shared=%t/destination=%d", mimeType, existing, tc.shared, tc.destination), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					b.StopTimer()
@@ -34,21 +36,12 @@ func BenchmarkIngestMetadata(b *testing.B) {
 					s, err := Open(b.Context(), filepath.Join(dir, "docbank.db"))
 					require.NoError(b, err)
 					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
-						parentID := s.RootID()
 						if tc.shared {
-							parent, err := s.mkdirTx(b.Context(), tx, s.RootID(), "elsewhere", nowRFC3339())
-							if err != nil {
-								return err
-							}
-							parentID = parent.ID
+							return seedSharedIngestBenchmark(b.Context(), s, tx, existing, tc.destination, 8192, "application/octet-stream")
 						}
 						for i := range existing {
-							hash := fmt.Sprintf("%064x", i+1)
-							if tc.shared {
-								hash = fakeHash("a1")
-							}
-							_, _, err := s.createFileTx(b.Context(), tx, parentID,
-								fmt.Sprintf("seed-%05d.bin", i), hash, 8192, "application/octet-stream")
+							_, _, err := s.createFileTx(b.Context(), tx, s.RootID(),
+								fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1), 8192, "application/octet-stream")
 							if err != nil {
 								return err
 							}
@@ -141,4 +134,24 @@ func BenchmarkSeedTextExtractionQueue(b *testing.B) {
 			})
 		}
 	}
+}
+
+// seedSharedIngestBenchmark puts repeated content outside the destination and
+// unrelated files inside it. Both document and photo imports use this shape.
+func seedSharedIngestBenchmark(ctx context.Context, s *Store, tx *sql.Tx, copies, destination int, size int64, mediaType string) error {
+	parent, err := s.mkdirTx(ctx, tx, s.RootID(), "elsewhere", nowRFC3339())
+	if err != nil {
+		return err
+	}
+	for i := range copies {
+		if _, _, err := s.createFileTx(ctx, tx, parent.ID, fmt.Sprintf("copy-%05d.bin", i), fakeHash("a1"), size, mediaType); err != nil {
+			return err
+		}
+	}
+	for i := range destination {
+		if _, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1000000), size, mediaType); err != nil {
+			return err
+		}
+	}
+	return nil
 }
