@@ -309,10 +309,10 @@ func TestTermReportSelectedRequestContract(t *testing.T) {
 	encodedID, err := json.Marshal(id)
 	require.NoError(t, err)
 	selected := `"selected_documents":{"documents":[` + string(encodedID) + `]}`
+	// The count limit precedes identity validation; zero values keep the body small.
 	largeIDs := make([]report.Identity, 50001)
 	collections := make([]string, 50001)
-	for i := range largeIDs {
-		largeIDs[i] = report.Identity{NodeID: int64(i + 1), VersionID: fmt.Sprintf("20000000-0000-4000-8000-%012d", i+1), SHA256: strings.Repeat("a", 64)}
+	for i := range collections {
 		collections[i] = fmt.Sprintf("c%d", i)
 	}
 	largeJSON, err := json.Marshal(largeIDs)
