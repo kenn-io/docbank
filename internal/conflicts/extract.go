@@ -2153,6 +2153,7 @@ var rateFractionRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)
 var rateRE = regexp.MustCompile(`(?i)^\.?(?:\s*/\s*|\s+(?:per|each|an|a)\s+)[(\["'‘’“”]?\s*(?:(?:` + approximation + `(?:\s+(?:exactly|a\s+total\s+of|to\s+be|equal\s+to|at|a|the))?\s+|[~≈]\s*)[(\["'‘’“”]?\s*)?(?:(?:` + rateBoundPrefix + `)\s+|(?:<=|>=|≤|≥|<|>)\s*)?(?:((?:` + numRange + `))\s+)?(?:(?:business|working|calendar|free|paid|additional|extra)\s+)?(percentage\s+points?|per\s+cent|[\p{L}][\p{L}\p{Nd}]*)`)
 
 func boundedRateRange(s string) bool {
+	s = s[rateNumeratorQuotePrefix(s):]
 	loc := rateRE.FindStringSubmatchIndex(s)
 	if loc == nil || loc[2] < 0 || !rateBoundLeadRE.MatchString(s) {
 		return false
@@ -2162,6 +2163,7 @@ func boundedRateRange(s string) bool {
 }
 
 func approximateRate(s string) bool {
+	s = s[rateNumeratorQuotePrefix(s):]
 	if rateApproximationRE.MatchString(s) {
 		return true
 	}
@@ -2226,6 +2228,8 @@ func rateQualifierRateBoundary(s string, end int) int {
 }
 
 func rateEnd(s string) int {
+	quotePrefix := rateNumeratorQuotePrefix(s)
+	s = s[quotePrefix:]
 	qualifierPrefix := rateApproximationBoundary(s)
 	if qualifierPrefix == 0 {
 		qualifierPrefix = postfixBoundRateBoundary(s)
@@ -2285,7 +2289,18 @@ func rateEnd(s string) int {
 	if strings.HasPrefix(s[end:], ".") && durationAbbrevRE.MatchString(s[:end+1]) {
 		end++
 	}
-	return qualifierPrefix + end
+	return quotePrefix + qualifierPrefix + end
+}
+
+func rateNumeratorQuotePrefix(s string) int {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !strings.ContainsRune(`"'’”»`, r) {
+			return i
+		}
+		i += size
+	}
+	return len(s)
 }
 
 // A stated end date is not an unsupported numeric range endpoint.

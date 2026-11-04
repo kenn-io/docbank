@@ -5536,6 +5536,8 @@ func TestExtractApproximateRateDoesNotExposeDenominator(t *testing.T) {
 	}{
 		{"The fee is $5 approximately per 2 devices.", nil},
 		{"The fee is $5 approximately per 2 devices, and the deposit is $7.", []string{"$7"}},
+		{`The service fee is "$5" a month (approximately).`, nil},
+		{`The service fee is "$5" a month (approximately), and the deposit is $7.`, []string{"$7"}},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			got := Extract(tt.text)
