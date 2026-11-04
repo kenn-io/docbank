@@ -165,7 +165,7 @@ var validityCmd = &cobra.Command{
 		if validityJSON {
 			return json.MarshalWrite(cmd.OutOrStdout(), view)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (as of %s)\n", view.Node.Path, view.State, view.AsOf)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (as of %s)\n", view.Node.Path, humanValidityState(view.State), view.AsOf)
 		if err != nil {
 			return fmt.Errorf("writing document validity: %w", err)
 		}
@@ -191,6 +191,13 @@ var validityCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func humanValidityState(state string) string {
+	if document.ValidityState(state) == document.ValidityNotYetEffective {
+		return "not yet effective"
+	}
+	return state
 }
 
 func init() {

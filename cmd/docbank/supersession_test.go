@@ -111,6 +111,32 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 	assert.Equal(t, []string{"GET /api/v1/nodes/42", "GET /api/v1/nodes/42/validity"}, requests)
 }
 
+func TestValidityHumanOutputUsesNaturalStateLabel(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/nodes/42":
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Path: "/future.txt", Revision: 1}))
+		case "GET /api/v1/nodes/42/validity":
+			assert.NoError(t, json.MarshalWrite(w, api.NodeValidity{
+				Node: api.Node{ID: 42, Path: "/future.txt", Revision: 1}, State: "not_yet_effective", AsOf: "2025-06-01",
+			}))
+		default:
+			http.Error(w, r.URL.Path, http.StatusNotFound)
+		}
+	})
+
+	out, err := runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01")
+	require.NoError(t, err)
+	assert.Equal(t, "/future.txt: not yet effective (as of 2025-06-01)\n", out)
+
+	out, err = runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01", "--json")
+	require.NoError(t, err)
+	var view api.NodeValidity
+	require.NoError(t, json.Unmarshal([]byte(out), &view))
+	assert.Equal(t, "not_yet_effective", view.State)
+}
+
 func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {
 	var requests []string
 	var requestBodies []map[string]string

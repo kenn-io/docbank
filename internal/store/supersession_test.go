@@ -116,6 +116,7 @@ func TestSupersessionDegreeAndTrash(t *testing.T) {
 				change, err := s.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, new(""))
 				if i == 16 {
 					require.ErrorIs(t, err, ErrInvalidSupersession)
+					require.ErrorContains(t, err, "Too many direct links")
 					after, err := s.NodeByID(ctx, predecessor.ID)
 					require.NoError(t, err)
 					require.Equal(t, predecessor.Revision, after.Revision)
@@ -171,6 +172,7 @@ func TestSupersessionNodeBudget(t *testing.T) {
 
 	_, err = s.PutSupersession(ctx, nodes[4096].ID, parent.ID, change.Node.Revision, new(""))
 	require.ErrorIs(t, err, ErrInvalidSupersession)
+	require.ErrorContains(t, err, "Too many linked files")
 	after, err := s.NodeByID(ctx, parent.ID)
 	require.NoError(t, err)
 	require.Equal(t, change.Node.Revision, after.Revision)
