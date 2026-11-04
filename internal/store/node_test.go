@@ -11,6 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDirectoryChildrenPageUsesLiveChildIndex(t *testing.T) {
+	t.Parallel()
+	for _, driver := range walkTestDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			plan := explainQueryPlan(t, s, directoryChildrenPageIDsSQL, s.RootID(), 1000, 0)
+			assert.Contains(t, plan, "USING COVERING INDEX nodes_live_children")
+			assert.NotContains(t, plan, "TEMP B-TREE")
+
+			plan = explainQueryPlan(t, s, directoryChildrenCountSQL, s.RootID())
+			assert.Contains(t, plan, "USING COVERING INDEX nodes_live_children")
+			assert.NotContains(t, plan, "TEMP B-TREE")
+		})
+	}
+}
+
 func TestNodeViewPinsNodeAndPathAcrossConcurrentTrash(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
