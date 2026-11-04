@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/secretref"
 )
 
@@ -98,14 +99,14 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 		if configured.Runtime == nil {
 			continue
 		}
-		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil {
+		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil && !config.ManagedEmbedding(configured) {
 			return embeddingRuntimeBundle{}, errors.New("embedding credential binding is not configured")
 		}
 		modelInput, err := cfg.EmbeddingModelInput(name)
 		if err != nil {
 			return embeddingRuntimeBundle{}, err
 		}
-		descriptor := configuredEmbeddingDescriptor(configured, modelInput)
+		descriptor := config.EmbeddingDescriptor(configured, modelInput)
 		var provider document.EmbeddingProvider
 		var classify func(error) (processing.EmbeddingProviderFailure, time.Duration)
 		switch configured.Runtime.AdapterContract {
@@ -123,6 +124,16 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 			}
 			classify = classifyBridgeEmbeddingError
 		case openAIEmbeddingAdapter:
+			if config.ManagedEmbedding(configured) {
+				profile, profileErr := config.ManagedEmbeddingProfile(configured, localEmbeddingOrigin)
+				if profileErr != nil {
+					return bundle, profileErr
+				}
+				descriptor = profile.Descriptor
+				provider, err = openaicompat.New(profile, nil, &http.Client{})
+				classify = classifyOpenAIEmbeddingError
+				break
+			}
 			var resolver openaicompat.SecretResolver = secrets
 			binding := configured.CredentialBinding
 			if configured.Embedder != nil {
@@ -246,6 +257,14 @@ func executableProcessingProfiles(cfg config.Config,
 					ModelRevision:      runtime.ModelRevision,
 				}
 			}
+			if config.ManagedEmbedding(bindingConfig) {
+				disclosure := configured.EmbeddingDisclosures[binding.Name]
+				disclosure.Endpoint = "managed://kit-embed/" + bindingConfig.Runtime.ServerMode
+				if bindingConfig.Runtime.ServerMode == "" {
+					disclosure.Endpoint = "managed://kit-embed/auto"
+				}
+				configured.EmbeddingDisclosures[binding.Name] = disclosure
+			}
 			if binding.InputKind == document.EmbeddingInputRenditionChunk {
 				tokenizer := configuredEmbeddingTokenizer(binding.Chunk.Tokenizer + "@" + binding.Chunk.TokenizerRevision)
 				if tokenizer == nil {
@@ -260,25 +279,6 @@ func executableProcessingProfiles(cfg config.Config,
 		}
 	}
 	return profiles, nil
-}
-
-func configuredEmbeddingDescriptor(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) document.EmbeddingDescriptor {
-	runtime := profile.Runtime
-	modes := []document.ModelInputMode{modelInput.Document.Mode}
-	supportsQuery := runtime.AdapterContract == bridgeEmbeddingAdapterV2 || runtime.AdapterContract == openAIEmbeddingAdapter ||
-		(runtime.AdapterContract == voyageEmbeddingAdapter && profile.InputKind == string(document.EmbeddingInputRenditionChunk))
-	if supportsQuery && modelInput.Query.Mode != modelInput.Document.Mode {
-		modes = append(modes, modelInput.Query.Mode)
-	}
-	return document.EmbeddingDescriptor{ID: profile.DescriptorID,
-		ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: strings.Repeat("0", 64),
-		TrustBoundary: document.EmbeddingTrustBoundary(profile.TrustBoundary), Model: profile.Model,
-		ModelRevision: runtime.ModelRevision, Dimension: profile.Dimensions, Metric: profile.Metric,
-		Normalization: profile.Normalization, ScalarEncoding: profile.ScalarEncoding,
-		DocumentFormatter: profile.DocumentFormatter, QueryFormatter: profile.QueryFormatter,
-		InputKinds:      []document.EmbeddingInputKind{document.EmbeddingInputKind(profile.InputKind)},
-		CompatibilityID: profile.CompatibilityID, SupportsTextQuery: supportsQuery,
-		ModelInput: modelInput, SupportedRequestModes: modes}
 }
 
 func finalizeOpenAIEmbeddingDescriptor(profile openaicompat.Profile) (document.EmbeddingDescriptor, openaicompat.Profile, error) {
@@ -320,7 +320,7 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 func voyageRuntimeProfile(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) voyage.EmbeddingProfile {
 	return voyage.EmbeddingProfile{Mode: voyage.EmbeddingModeText, DeploymentEpoch: profile.Runtime.DeploymentEpoch,
 		Endpoint: profile.Runtime.Endpoint, EgressPolicy: providerEgressPolicy(profile.Runtime.ProviderEgressConfig),
-		Descriptor: configuredEmbeddingDescriptor(profile, modelInput), ModelInput: modelInput, SecretBinding: profile.CredentialBinding,
+		Descriptor: config.EmbeddingDescriptor(profile, modelInput), ModelInput: modelInput, SecretBinding: profile.CredentialBinding,
 		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxRetries: 1,
 		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes,
 		MaxRequestBytes: profile.Runtime.MaxRequestBytes, MaxResponseBytes: profile.MaxResponseBytes}
@@ -425,6 +425,32 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 		return processing.EmbeddingProviderTransient, delay
 	}
 	return processing.EmbeddingProviderPermanent, 0
+}
+
+func localEmbeddingOrigin(ctx context.Context) (string, error) {
+	opts := embedlocal.Options{SkipOllama: true}
+	origin, err := embedlocal.Endpoint(ctx, opts)
+	if err == nil {
+		return strings.TrimSuffix(origin, "/v1"), nil
+	}
+	if !errors.Is(err, embedlocal.ErrNotFound) {
+		return "", fmt.Errorf("discover local embeddings: %w", err)
+	}
+	dir, err := embedlocal.DefaultDir()
+	if err != nil {
+		return "", fmt.Errorf("find local embeddings directory: %w", err)
+	}
+	// No Confirm: Kit may reuse installed files, but cannot download here.
+	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir})
+	if err != nil {
+		return "", fmt.Errorf("reuse local embeddings installation: %w", err)
+	}
+	opts.DataDir, opts.Executable = installation.DataDir, installation.Executable
+	origin, err = embedlocal.Endpoint(ctx, opts)
+	if err != nil {
+		return "", fmt.Errorf("start local embeddings: %w", err)
+	}
+	return strings.TrimSuffix(origin, "/v1"), nil
 }
 
 func classifyBridgeEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {

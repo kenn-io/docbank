@@ -157,6 +157,10 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	require.True(t, discoverOptions(true).Accept(rec, info))
 	rec.Metadata[metaProtocolVersion] = "94" // Before source_present filtering.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-filter daemons must not silently ignore source_present")
+	rec.Metadata[metaProtocolVersion] = "115" // Before local text setup.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without local text setup must be replaced")
+	rec.Metadata[metaProtocolVersion] = "116" // Reserved by another incompatible daemon contract.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "protocol 116 daemons must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")

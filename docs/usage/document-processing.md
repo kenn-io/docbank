@@ -19,9 +19,21 @@ The daemon exposes only profiles it can execute:
 docbank processing profiles
 ```
 
-The default configuration has no processing profiles. Configure a processing
-profile, the retrieval profile it references, and any rendition or embedding
-profiles it references, then use a profile name listed by this command.
+## Set up local text search
+
+```bash
+docbank processing local --server local
+```
+
+The command previews the built-in `local-text` profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. It builds a separate `local-text` index with Nomic v1.5 (`nomic-embed-text`) and the plaintext extractor. PDF, Office, vision, and image embeddings need their configured providers.
+
+Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background and resumes after a daemon restart. Revoking processing consent stops provider calls.
+
+Both `--server auto` and `--server local` use the shared per-user `kennembed` server. Discovery uses its per-user runtime record. When the server or model is missing, the command downloads them from Kit's shared installation and prints the download size first. An already installed server downloads nothing. The daemon's changing loopback port keeps the same consent grant.
+
+Cancellation before apply and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server before apply; API apply requires a ready server. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. Setup restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
+
+For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:
 

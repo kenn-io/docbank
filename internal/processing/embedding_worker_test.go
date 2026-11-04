@@ -2199,7 +2199,7 @@ func (x photoSearchFixture) alternate(t *testing.T, consent, indexed bool) (*Ser
 		require.NoError(t, err)
 		version, err := f.catalog.ContentVersionByID(t.Context(), rows.Items[0].ContentVersionID)
 		require.NoError(t, err)
-		_, err = two.runEmbeddings(t.Context(), version, alternateProfile, two.principal, two.scope, "", nil)
+		_, err = two.runEmbeddings(t.Context(), version, alternateProfile, two.principal, two.scope, "", nil, processingRunOptions{})
 		require.NoError(t, err)
 
 		_, alternateIDs, err := document.CanonicalProfile(alternate)
@@ -2258,7 +2258,7 @@ func TestSearchPhotosRanksAndFiltersSupportedQueries(t *testing.T) {
 		require.NoError(t, err)
 		version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
 		require.NoError(t, err)
-		_, err = service.runEmbeddings(t.Context(), version, service.profiles["images"], service.principal, service.scope, "", nil)
+		_, err = service.runEmbeddings(t.Context(), version, service.profiles["images"], service.principal, service.scope, "", nil, processingRunOptions{})
 		require.NoError(t, err)
 	}
 	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
