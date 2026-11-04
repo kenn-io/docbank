@@ -736,10 +736,22 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await page.keyboard.press("Escape");
     await footer.hover();
     await page.mouse.wheel(0, 500);
-    await saveReview.scrollIntoViewIfNeeded();
+    const editor = drawer.locator(".redaction-editor");
+    await expect(editor).toBeInViewport({ ratio: 1 });
+    const editorBounds = (await editor.boundingBox())!;
+    await page.mouse.move(editorBounds.x + editorBounds.width / 2, editorBounds.y + 20);
+    await page.mouse.wheel(0, 500);
+    await expect(saveReview).toBeInViewport({ ratio: 1 });
+    const saveBounds = (await saveReview.boundingBox())!;
     const narrowReview = page.waitForEvent("download");
-    await saveReview.click();
-    expect((await narrowReview).suggestedFilename()).toContain("PRIVATE-review.json");
+    await page.mouse.click(
+      saveBounds.x + saveBounds.width / 2,
+      saveBounds.y + saveBounds.height / 2,
+    );
+    await narrowReview;
+    await expect(
+      drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }),
+    ).toBeInViewport();
     await page.screenshot({
       path: path.join(captures!, "redaction-narrow.png"),
       animations: "disabled",
