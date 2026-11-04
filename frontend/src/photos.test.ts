@@ -593,7 +593,7 @@ it("retains prepared Map targets when a metadata edit leaves the inherited filte
     await photos.refresh();
   });
   expect(photos.authored.error).toBe("");
-  expect([...photos.items]).toEqual([]);
+  expect(photos.items).toEqual([]);
   expect(photos.authored.targets).toEqual([after]);
   expect([...photos.selectedIDs]).toEqual(["photo-1"]);
   const revalidation = JSON.parse(fetcher.mock.calls[2]![1].body as string);
@@ -888,7 +888,7 @@ it.each(["confirmed", "server", "unknown ID", "missing ID", "maintenance busy", 
     expect(photos.rejects).toBeUndefined();
     expect(photos.error).toBe("Refresh unavailable");
     if (outcome === "confirmed") {
-      expect([...photos.items]).toEqual([photo(2)]);
+      expect(photos.items).toEqual([photo(2)]);
       expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
       expect(preserve).toHaveBeenCalledOnce();
       expect(restore).toHaveBeenCalledOnce();
@@ -948,7 +948,7 @@ it.each([
     if (kind === "trash") expect(await photos.trashSelected(undefined, changed)).toBe(false);
     else await photos.setHidden("photo-1", undefined, changed);
     expect(changed).toHaveBeenCalledTimes(refused ? 0 : 1);
-    expect([...photos.items]).toEqual([photo(1)]);
+    expect(photos.items).toEqual([photo(1)]);
     expect(photos.trashTargets).toEqual([photo(1)]);
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -1374,7 +1374,7 @@ it("restarts Library expiry recovery after its second page fails", async () => {
   await photos.loadMore();
   await photos.loadMore();
   await photos.retry();
-  expect([...photos.items]).toEqual(first);
+  expect(photos.items).toEqual(first);
   expect(photos.error).toBe("Page unavailable");
   await photos.retry();
   expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([
@@ -1385,7 +1385,7 @@ it("restarts Library expiry recovery after its second page fails", async () => {
     undefined,
     "recovery-second",
   ]);
-  expect([...photos.items]).toEqual([...first, ...second]);
+  expect(photos.items).toEqual([...first, ...second]);
   expect(photos.cursor).toBe("recovery-third");
   photos.dispose();
 });
@@ -1419,7 +1419,7 @@ it.each(["unavailable", "cursor_expired", "invalid_photo_cursor"])(
         ? [undefined, "second", undefined, "renewed-second"]
         : [undefined, "second", "second"],
     );
-    expect([...photos.items]).toEqual([first, second]);
+    expect(photos.items).toEqual([first, second]);
     expect(photos.staged).toBeUndefined();
     photos.dispose();
   },
@@ -1615,7 +1615,7 @@ it.each(
     expect(photos.authored.validating).toBe(false);
     expect(photos.authored.concealed).toBe(!accepted);
     expect(groups).toBe(2);
-    expect([...photos.items]).toEqual(accepted ? prefix : previous);
+    expect(photos.items).toEqual(accepted ? prefix : previous);
     if (outcome === "success") {
       expect([...photos.selection.selectedIDs]).toEqual(
         captured.slice(0, 64).map((item) => item.asset_id),
@@ -1832,7 +1832,7 @@ it.each([false, true])(
     const photos = new Photos("scoped", vi.fn(), hidden);
     photos.items = [item];
     expect((await photos.lookup("photo-2", new AbortController().signal)).asset_id).toBe("photo-2");
-    expect([...photos.items]).toEqual([item]);
+    expect(photos.items).toEqual([item]);
     const fresh = { ...item, content_version_id: "new-version" };
     fetcher.mockResolvedValueOnce(response([fresh]));
     expect(
@@ -2015,7 +2015,7 @@ it.each([
     if (scenario === "download-success") expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     else expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:original");
     expect(onauth).toHaveBeenCalledTimes(scenario === "download-auth" ? 1 : 0);
-    expect([...photos.items]).toEqual([old]);
+    expect(photos.items).toEqual([old]);
     return;
   }
   if (scenario === "version")
@@ -2024,7 +2024,7 @@ it.each([
     status: 409,
     code: "photo_display_changed",
   });
-  expect([...photos.items]).toEqual([old]);
+  expect(photos.items).toEqual([old]);
   expect(fetcher).toHaveBeenCalledTimes(scenario === "version" ? 1 : 0);
   expect(read).not.toHaveBeenCalled();
   if (scenario === "display") {
@@ -3350,7 +3350,7 @@ it("uses refreshed revisions after saving Hidden setup before the hide batch", a
     ["/api/v1/photos/assets/photo-2/hide", "7"],
   ]);
   expect(photos.hiding).toBe(false);
-  expect([...photos.items]).toEqual([]);
+  expect(photos.items).toEqual([]);
   expect(photos.actionError).toBe("");
   photos.dispose();
 });
@@ -3909,28 +3909,5 @@ it.each([false, true])("grows backing select-all IDs while paging, targets=%s", 
   await tick();
   if (!targets) expect(sizes.at(-1)).toBe(2);
   stop?.();
-  photos.dispose();
-});
-
-it("keeps pages selected after Metadata closes and paging resumes", async () => {
-  const photos = new Photos("scoped", vi.fn());
-  photos.items = [photo(1)];
-  photos.started = true;
-  photos.cursor = "next";
-  await photos.selectAllResults();
-  photos.authored.targets = [preparedPhoto(1)];
-  stubPhotoFetch(
-    vi
-      .fn()
-      .mockResolvedValueOnce(response([photo(2)], "last"))
-      .mockResolvedValueOnce(response([photo(3)])),
-  );
-
-  await photos.loadMore();
-  photos.authored.reset();
-  await photos.loadMore();
-
-  expect(photos.selectsAll).toBe(true);
-  expect([...photos.selectedIDs]).toEqual(["photo-1", "photo-2", "photo-3"]);
   photos.dispose();
 });

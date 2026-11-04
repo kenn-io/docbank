@@ -377,7 +377,8 @@ it("scans only appended rows and recomputes replacements", async () => {
   const marker = mocks.marker.mock.results[0]!.value;
   const position = vi.spyOn(marker, "getLatLng");
   mocks.map.project.mockClear();
-  await view.rerender({ items: props.items.concat(second), appendedFrom: props.items });
+  const appended = [first, second];
+  await view.rerender({ items: appended, appendedFrom: props.items });
   expect(mocks.map.project).toHaveBeenCalledTimes(1);
   expect(position).not.toHaveBeenCalled();
   frame();
@@ -385,7 +386,7 @@ it("scans only appended rows and recomputes replacements", async () => {
   expect(props.onvisible).toHaveBeenLastCalledWith([first, second]);
   mocks.map.project.mockClear();
   const replacement = { ...first, latitude: 3 };
-  await view.rerender({ items: [replacement, third, second] });
+  await view.rerender({ items: [replacement, third, second], appendedFrom: undefined });
   expect(mocks.map.project).toHaveBeenCalledTimes(3);
   expect(position).toHaveBeenCalledOnce();
   expect(props.onvisible).toHaveBeenLastCalledWith([third, second]);
@@ -396,7 +397,7 @@ it("keeps unfinished marker batches when another page appends", async () => {
   const { view } = setup(items);
   frame();
   expect(mocks.marker).toHaveBeenCalledTimes(200);
-  await view.rerender({ items: items.concat(mapPhoto(251)), appendedFrom: items });
+  await view.rerender({ items: [...items, mapPhoto(251)], appendedFrom: items });
   frame();
   expect(mocks.marker).toHaveBeenCalledTimes(251);
   expect(mocks.frames.size).toBe(0);
