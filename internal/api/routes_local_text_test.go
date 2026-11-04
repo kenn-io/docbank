@@ -54,7 +54,7 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	var plan api.LocalTextPlan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
 	require.Equal(t, "this vault and new imports", plan.Scope)
-	require.Equal(t, "builds the separate local-text index; embeds inputs it is missing", plan.VectorEffect)
+	require.Equal(t, "local-text (separate; adds missing content)", plan.VectorEffect)
 	require.Len(t, plan.Flow, 3)
 	require.Equal(t, "query_embedding", plan.Flow[2].Capability)
 	request := api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint}
