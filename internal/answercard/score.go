@@ -65,6 +65,21 @@ func scoreTokens(s string) (map[string]bool, []string) {
 			}
 			break
 		}
+		// Keep scientific notation as one numeric expression. Otherwise 1e5
+		// is collected as the unrelated runs "1" and "5", which can collide
+		// with a differently ordered quantity such as 5e1.
+		if i+1 < len(r) && (r[i+1] == 'e' || r[i+1] == 'E') {
+			exponent := i + 2
+			if exponent < len(r) && strings.ContainsRune("+-−", r[exponent]) {
+				exponent++
+			}
+			if exponent < len(r) && unicode.IsDigit(r[exponent]) {
+				i = exponent
+				for i+1 < len(r) && unicode.IsDigit(r[i+1]) {
+					i++
+				}
+			}
+		}
 		numbers = append(numbers, strings.ReplaceAll(string(r[start:i+1]), "−", "-"))
 	}
 	slices.Sort(numbers)
