@@ -660,6 +660,33 @@ it("resumes a pending timeline seek without reading unchanged chunks or photos",
   }
 });
 
+it("stops a loaded month seek at its first visible match, including after paging", () => {
+  const source = [photo(0, "2025-07-01")];
+  const items = source.concat(Array.from({ length: 20_000 }, (_, i) => photo(i + 1, "2025-06-01")));
+  const grouper = createPhotoGrouper(),
+    build = createPhotoChunks(),
+    seek = createPhotoSeek(),
+    expanded = new Set<string>();
+  const first = build(grouper.sync(source, "months", expanded).groups, 1000, 200).chunks;
+  expect(seek(first, "2025-06", false, source)).toBeUndefined();
+  const grouped = grouper.sync(items, "months", expanded, source);
+  const next = build(grouped.groups, 1000, 200, grouped.changedFrom);
+  let reads = 0;
+  for (const item of items) {
+    const capture = item.capture_time,
+      id = item.asset_id;
+    Object.defineProperty(item, "capture_time", { get: () => (reads++, capture) });
+    Object.defineProperty(item, "asset_id", { get: () => (reads++, id) });
+  }
+  expect(seekOffset(next.chunks, "2025-06", false, items)).toBe(next.chunks[1].offset);
+  expect(reads).toBeLessThan(20);
+  reads = 0;
+  expect(seek(next.chunks, "2025-06", false, items, source, next.changedFrom)).toBe(
+    next.chunks[1].offset,
+  );
+  expect(reads).toBeLessThan(20);
+});
+
 it("keeps pending date jumps equal to a fresh scan after regrouping and stack arrivals", () => {
   for (const mode of ["months", "sessions", "reordered sessions", "stack collapse"] as const) {
     const rows: PhotoGridRow[] = [];

@@ -450,7 +450,7 @@ export function createPhotoSeek() {
   type Location = { scan: Scan; index: number };
   let locations = new Map<string, Location>();
   let representatives = new Set<string>();
-  let own: string | undefined, stack: string | undefined, older: string | undefined;
+  let stack: string | undefined, older: string | undefined;
   let olderMonth = "";
   return (
     chunks: PhotoChunk[],
@@ -471,7 +471,7 @@ export function createPhotoSeek() {
       scanned = new WeakMap();
       locations = new Map();
       representatives = new Set();
-      own = stack = older = undefined;
+      stack = older = undefined;
       olderMonth = "";
       consumed = 0;
     }
@@ -488,6 +488,8 @@ export function createPhotoSeek() {
         : a;
     };
     if (reset) start = 0;
+    let nextStack: string | undefined, nextOlder: string | undefined;
+    let nextOlderMonth = "";
     for (let c = start; c < chunks.length; c++) {
       const chunk = chunks[c],
         items = chunk.group.items;
@@ -495,10 +497,34 @@ export function createPhotoSeek() {
       let scan = scanned.get(items);
       if (!scan) scanned.set(items, (scan = { chunk, count: 0 }));
       scan.chunk = chunk;
-      // Regrouping can move an earlier candidate. Update positions before comparing them.
-      for (let i = scan.count; i < items.length; i++)
-        locations.set(items[i].asset_id, { scan, index: i });
+      for (let i = scan.count; i < items.length; i++) {
+        const item = items[i],
+          found = photoMonth(item);
+        if (found === month) {
+          // A resolved seek needs no resume state. The next call starts a fresh scan.
+          loadedSource = undefined;
+          const row = layoutRow(chunk, i);
+          if (row)
+            return row === chunk.layout.rows[0]
+              ? chunk.offset
+              : rowTop(chunk, row) - STICKY_HEADER_HEIGHT;
+        }
+        const id = item.asset_id;
+        locations.set(id, { scan, index: i });
+        if (found && found <= month && found > nextOlderMonth) {
+          nextOlder = id;
+          nextOlderMonth = found;
+        }
+        if (!nextStack && representatives.has(id)) nextStack = id;
+      }
+      scan.count = items.length;
     }
+    // Regrouping can move retained candidates. Compare after updating their positions.
+    if (nextOlder && nextOlderMonth >= olderMonth) {
+      older = nextOlderMonth > olderMonth ? nextOlder : earlier(older, nextOlder);
+      olderMonth = nextOlderMonth;
+    }
+    if (nextStack) stack = earlier(stack, nextStack);
     for (let i = consumed; i < loadedItems.length; i++) {
       const row = loadedItems[i];
       if (!row.stack || photoMonth(row) !== month) continue;
@@ -507,26 +533,7 @@ export function createPhotoSeek() {
       if (locations.has(id)) stack = earlier(stack, id);
     }
     consumed = loadedItems.length;
-    for (let c = start; c < chunks.length; c++) {
-      const chunk = chunks[c],
-        items = chunk.group.items;
-      if (!chunk.group.year) continue;
-      const scan = scanned.get(items)!;
-      const count = scan.count;
-      for (let i = count; i < items.length; i++) {
-        const row = items[i],
-          found = photoMonth(row),
-          id = row.asset_id;
-        if (found === month) own = earlier(own, id);
-        if (found && found <= month && found >= olderMonth) {
-          older = found > olderMonth ? id : earlier(older, id);
-          olderMonth = found;
-        }
-        if (representatives.has(id)) stack = earlier(stack, id);
-      }
-      scan.count = items.length;
-    }
-    const id = own ?? stack ?? (ended ? older : undefined);
+    const id = stack ?? (ended ? older : undefined);
     if (!id) return;
     const { scan, index } = locations.get(id)!;
     const chunk = scan.chunk;
