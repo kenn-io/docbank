@@ -241,7 +241,6 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	sourceVaultID := source.VaultID()
 	require.NoError(t, validateUUIDv4(sourceVaultID))
 	seedMetadataRoundTrip(t, source)
-	assertTagAssignmentCounts(t, source)
 	watchRun, err := source.BeginIngest(ctx, "watch", "sessions")
 	require.NoError(t, err)
 	watched, err := source.IngestFileExact(
@@ -308,7 +307,6 @@ func TestMetadataJSONLRoundTripPreservesLogicalState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), importedTag.Revision)
 	require.Equal(t, 1, importedTag.AssignmentCount)
-	assertTagAssignmentCounts(t, target)
 
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))

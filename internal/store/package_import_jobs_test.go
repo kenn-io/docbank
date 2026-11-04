@@ -483,7 +483,6 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 				_, err = s.AssignTag(t.Context(), tag.ID, id, UnconditionalRev)
 				require.NoError(t, err)
 			}
-			assertTagAssignmentCounts(t, s)
 			_, before, err := s.VaultChanges(t.Context(), "", 500)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)

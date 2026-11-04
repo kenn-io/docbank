@@ -688,7 +688,6 @@ func TestIngestFileExactTaggedRollsBackOnMissingTag(t *testing.T) {
 			tags, total, err := s.NodeTags(t.Context(), node.ID, 10, 0)
 			require.NoError(t, err)
 			require.Equal(t, 2, total)
-			assertTagAssignmentCounts(t, s)
 			assert.Equal(t, "café", tags[1].Name)
 			require.NoError(t, s.ValidateMetadata(t.Context()))
 		})

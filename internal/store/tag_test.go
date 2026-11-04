@@ -390,7 +390,7 @@ func TestTagNameValidation(t *testing.T) {
 	}
 }
 
-func TestTagLookupDoesNotScanAssignments(t *testing.T) {
+func TestTagByIDDoesNotScanAssignments(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	tag, err := s.CreateTag(t.Context(), "records")
