@@ -177,7 +177,7 @@ func auditScopeHistoryPageTx(
 	page.Items, err = auditHistoryEventsTx(ctx, tx, auditScopeHistoryPageSQL,
 		auditScopeHistoryCursorPageSQL, scopeID, limit, cursor.sequence, cursor.ordinal, cursor.eventID)
 	if err != nil {
-		return AuditScopeEventPage{}, err
+		return AuditScopeEventPage{}, fmt.Errorf("listing audit scope %s history: %w", scopeID, err)
 	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
@@ -290,7 +290,7 @@ func auditHistoryPageTx(
 	page.Items, err = auditHistoryEventsTx(ctx, tx, auditNodeHistoryPageSQL,
 		auditNodeHistoryCursorPageSQL, node.ID, limit, cursor.sequence, cursor.ordinal, cursor.eventID)
 	if err != nil {
-		return AuditEventPage{}, err
+		return AuditEventPage{}, fmt.Errorf("listing audit history for node %d: %w", node.ID, err)
 	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
@@ -795,7 +795,7 @@ func auditHistoryEventsTx(
 	}
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing audit history: %w", err)
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	items := make([]AuditEvent, 0, limit+1)
@@ -812,7 +812,7 @@ func auditHistoryEventsTx(
 		items = append(items, event)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing audit history: %w", err)
+		return nil, err
 	}
 	return items, nil
 }

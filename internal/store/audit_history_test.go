@@ -1,12 +1,26 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAuditHistoryListingErrorsIdentifyTarget(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedInitialAuditAuthority(t, s, s.RootID())
+	_, err := s.db.ExecContext(t.Context(), `UPDATE audit_records SET record_json='invalid' WHERE kind='event'`)
+	require.NoError(t, err)
+
+	_, err = s.AuditHistory(t.Context(), s.RootID(), 1, "")
+	require.ErrorContains(t, err, fmt.Sprintf("listing audit history for node %d", s.RootID()))
+	_, err = s.AuditScopeHistory(t.Context(), testAuditScopeID, 1, "")
+	require.ErrorContains(t, err, "listing audit scope "+testAuditScopeID+" history")
+}
 
 func TestAuditHistoryPagesCanonicalNodeEvents(t *testing.T) {
 	t.Parallel()
