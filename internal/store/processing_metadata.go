@@ -684,7 +684,7 @@ func restoreLexicalGenerationTx(
 		return fmt.Errorf("restored lexical generation %s has a different immutable manifest",
 			value.GenerationID)
 	}
-	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, value.BuildIDs, value.GenerationID, value.BuiltAt); err != nil {
+	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, value.BuildIDs, segments, value.GenerationID, value.BuiltAt); err != nil {
 		return fmt.Errorf("restoring lexical generation %s: %w", value.GenerationID, err)
 	}
 	if value.Headed {

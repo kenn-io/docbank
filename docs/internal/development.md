@@ -851,6 +851,12 @@ A failed replacement leaves the old heads and waiting job intact. Successful
 replacement removes stale chunk-embedding heads and failures, and collects
 superseded lexical generations only when no root or reader still needs them.
 
+Lexical generations share an append-only stream of build membership. Each
+generation names the ordinals up to its fixed cutoff. Collection trims only the
+stream tail above every remaining generation's cutoff. The stored chain digest
+is vault-local; metadata export computes portable digests from the generation's
+members.
+
 Build reads, active rendition views and exact text resolution use repeatable-read
 snapshots. A purge committed during a read affects the next request. PostgreSQL
 stores the relational lexical projection and manifests; SQLite additionally

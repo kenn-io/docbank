@@ -818,7 +818,7 @@ func stageLegacyLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs, rows)
 }
 
 func compareLegacyServingCompatibilityTx(

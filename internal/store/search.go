@@ -1296,11 +1296,15 @@ func (s *Store) StageLexicalGenerationWithRoot(
 func stageLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 ) (LexicalGeneration, error) {
+	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
 	buildIDs, err := lexicalCatalogBuildIDsTx(ctx, tx)
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
 }
 
 func stageLexicalGenerationExcludingTx(
@@ -1326,12 +1330,13 @@ func stageLexicalGenerationExcludingTx(
 		return LexicalGeneration{}, nil
 	}
 	generationID := lexicalReplacementGenerationID(segments, buildIDs)
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
 }
 
 func stageLexicalGenerationRowsTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 	buildIDs []string,
+	segments []lexicalManifestRow,
 ) (LexicalGeneration, error) {
 	stored, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
 	if err == nil {
@@ -1340,7 +1345,7 @@ func stageLexicalGenerationRowsTx(
 	if !errors.Is(err, ErrNotFound) {
 		return LexicalGeneration{}, err
 	}
-	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, generationID, nowRFC3339()); err != nil {
+	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, segments, generationID, nowRFC3339()); err != nil {
 		return LexicalGeneration{}, err
 	}
 	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
@@ -1381,13 +1386,14 @@ func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation Lexic
 
 // extendLexicalStreamTx shares indexing and ordered membership for staging and append.
 // A supplied generation ID preserves full-stage and metadata restore identities.
-func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, generationID, builtAt string) (LexicalGeneration, error) {
+func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, rows []lexicalManifestRow, generationID, builtAt string) (LexicalGeneration, error) {
+	byBuild := make(map[string][]lexicalManifestRow)
+	for _, row := range rows {
+		byBuild[row.buildID] = append(byBuild[row.buildID], row)
+	}
 	generation := from
 	for _, buildID := range buildIDs {
-		segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
+		segments := byBuild[buildID]
 		if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
 			return LexicalGeneration{}, err
 		}
@@ -1443,7 +1449,15 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 	if tip > head.BuildCount {
 		return LexicalGeneration{}, ErrNotFound
 	}
-	return extendLexicalStreamTx(ctx, tx, streamID, head, added, "", nowRFC3339())
+	var segments []lexicalManifestRow
+	for _, buildID := range added {
+		rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
+		if err != nil {
+			return LexicalGeneration{}, err
+		}
+		segments = append(segments, rows...)
+	}
+	return extendLexicalStreamTx(ctx, tx, streamID, head, added, segments, "", nowRFC3339())
 }
 
 // dropLexicalGenerationTx trims only the tail no retained generation can read.
