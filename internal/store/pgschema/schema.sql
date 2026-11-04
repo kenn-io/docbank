@@ -2404,5 +2404,3 @@ CREATE INDEX email_part_artifacts_blob ON {{schema}}.email_part_artifacts(blob_h
 CREATE INDEX email_attachments_generation ON {{schema}}.email_attachments(generation_id);
 CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_id)
     WHERE strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0;
-
-CREATE INDEX rendition_lexical_generation_builds_build ON {{schema}}.rendition_lexical_generation_builds(build_id);
