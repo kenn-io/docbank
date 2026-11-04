@@ -18,8 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"uuid"
 
+	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
 	querypkg "go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"

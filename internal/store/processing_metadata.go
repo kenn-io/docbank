@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-	"uuid"
 
+	"github.com/google/uuid"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
