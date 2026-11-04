@@ -118,7 +118,7 @@ func exportAuditRecords(ctx context.Context, tx metadataQuerier, write metadataW
 		  WHEN 'scope_chain_entry' THEN 7
 		  WHEN 'allocation_entry' THEN 8
 		  ELSE 99 END,
-		COALESCE(operation_sequence,0),COALESCE(scope_id,''),
+		CASE WHEN kind='event' THEN 0 ELSE COALESCE(operation_sequence,0) END,COALESCE(scope_id,''),
 		COALESCE(entry_count,0),COALESCE(event_ordinal,0),digest`)
 	if err != nil {
 		return fmt.Errorf("exporting audit records: %w", err)
@@ -509,6 +509,17 @@ func sortAuditRecordsByCanonicalIdentity(
 	})
 	for index := range items {
 		records[index] = items[index].record
+	}
+	return nil
+}
+
+func stampImportedAuditEventSequencesTx(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `UPDATE audit_records SET operation_sequence=(
+		SELECT m.operation_sequence FROM audit_records m
+		WHERE m.kind='canonical_mutation' AND m.operation_id=audit_records.operation_id)
+		WHERE kind='event'`)
+	if err != nil {
+		return fmt.Errorf("stamping imported audit event sequences: %w", err)
 	}
 	return nil
 }

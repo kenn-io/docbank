@@ -41,7 +41,7 @@ func checkAuditAdvancementPostgres(t *testing.T) {
 				continue
 			}
 			switch record.record.Kind {
-			case "scope_chain_entry": // The native advancement helper builds this.
+			case auditEventField, "scope_chain_entry": // Mutation insertion and scope advancement supply these.
 				continue
 			case "allocation_entry":
 				allocation = record
