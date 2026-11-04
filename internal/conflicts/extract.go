@@ -1107,8 +1107,8 @@ func normalizedDurationContinuation(prefix, suffix string) bool {
 
 var relativeDurationConnectorRE = regexp.MustCompile(`(?i)^(?:\s*[` + regexp.QuoteMeta(closingPunctuation) + `]+\s*|\s+)(after|before|prior\s+to)\s+`)
 var relativeDurationClauseConnectorRE = regexp.MustCompile(`(?i)^\s*[` + regexp.QuoteMeta(closingPunctuation) + `]*\s*(after|before|prior\s+to)\s+`)
-var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `|minus|negative)\s+|(?:<=|>=|≤|≥|<|>)\s*|[~≈−-]\s*)`)
-var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?)\b`)
+var relativeDurationOperandQualifierRE = regexp.MustCompile(`(?i)^(?:(?:` + approximation + `|` + rateBoundPrefix + `|minus|negative|plus|positive)\s+|(?:<=|>=|≤|≥|<|>)\s*|[+~≈−-]\s*)`)
+var relativeDurationIndependentAssertionRE = regexp.MustCompile(`(?i)^\s*(?:[,;:]\s*)?(?:(?:the|a|an|this|that|these|those|my|your|our|their)\s+)?[\p{L}][\p{L}\p{N}-]*(?:\s+[\p{L}][\p{L}\p{N}-]*)*\s+(?:is|are|was|were|has|have|had|will\s+be|will|would|can|could|may|might|must|do|does|did|costs?|receive(?:s|d)?|increase(?:s|d)?|decrease(?:s|d)?|rises?|falls?|changes?|` + assertionPredicatePattern + `)\b`)
 var relativeDurationConjunctionLeadRE = regexp.MustCompile(`(?i)^\s*[,;:]*\s*(?:and|or|but|while)\b`)
 
 func abbreviatedDurationBoundary(prefix, suffix string) bool {
@@ -1152,7 +1152,7 @@ func numericRelativeDurationContinuation(prefix, suffix string) bool {
 var relativeDurationAmountREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(?:` + numeralWordAtom + `)(?:[-\s]+(?:and\s+)?(?:` + numeralWordAtom + `))*\s+and\s+(?:a\s+)?` + fractionWords + `s?\b`),
 	regexp.MustCompile(`(?i)^(?:[0-9]+|` + numeralWordAtom + `)[-\s]+` + fractionWords + `s?\b`),
-	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|['‘’_]|,\s*)[0-9]{3})+`),
+	regexp.MustCompile(`^[0-9]{1,3}(?:(?:[[:space:]]+|['‘’_]|,\s*)[0-9]{3})+(?:\.[0-9]+)?`),
 	regexp.MustCompile(`^[0-9]+\s*/\s*[0-9]+`),
 	regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+`),
 	spokenDecimalNumberRE,
@@ -1296,7 +1296,7 @@ func relativeDurationClauseOperand(s string) (connector, operand string, operand
 	operandStart += len(operand) - len(trimmed)
 	operand = trimmed
 	if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
-		if negativeDurationSign(operand[:qualifier[1]]) {
+		if signedDurationOperand(operand[:qualifier[1]]) {
 			signedOperandStart = operandStart
 		}
 		operandStart += qualifier[1]
@@ -1308,9 +1308,9 @@ func relativeDurationClauseOperand(s string) (connector, operand string, operand
 	return connector, operand, operandStart, signedOperandStart, true
 }
 
-func negativeDurationSign(s string) bool {
+func signedDurationOperand(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "minus", "negative", "-", "−":
+	case "minus", "negative", "-", "−", "plus", "positive", "+":
 		return true
 	default:
 		return false
@@ -1337,6 +1337,9 @@ func independentUnsupportedRelativeDurationOperand(original string, offsets map[
 		operandStart += len(operand) - len(trimmed)
 		operand = trimmed
 		if qualifier := relativeDurationOperandQualifierRE.FindStringIndex(operand); qualifier != nil && qualifier[0] == 0 {
+			if signedDurationOperand(operand[:qualifier[1]]) {
+				signedOperandStart = operandStart
+			}
 			operandStart += qualifier[1]
 			operand = operand[qualifier[1]:]
 			trimmed = trimRelativeDurationWrappers(operand)
@@ -1407,7 +1410,10 @@ func independentTypedFigureAssertion(s string) bool {
 
 var directTypedFigureAssertionPrefixRE = regexp.MustCompile(`^\s*[,;:]?\s*(?:[\(\[\{\"'‘’“”«]\s*)*$`)
 var assertionPrefixWordRE = regexp.MustCompile(`(?i)[\p{L}\p{Nd}]+`)
-var assertionPredicateRE = regexp.MustCompile(`(?i)^(?:[\p{L}]+(?:s|ed|ing)|pay|cost|put|set|cut|hit|run)$`)
+
+const assertionPredicatePattern = `(?:[\p{L}]+(?:s|ed|ing)|pay|cost|put|set|cut|hit|run)`
+
+var assertionPredicateRE = regexp.MustCompile(`(?i)^` + assertionPredicatePattern + `$`)
 var nonPredicateFigurePrefixWords = map[string]struct{}{
 	"about": {}, "additional": {}, "after": {}, "and": {}, "an": {}, "a": {}, "at": {}, "before": {}, "but": {},
 	"each": {}, "every": {}, "extra": {}, "few": {}, "following": {}, "for": {}, "from": {}, "further": {}, "in": {},

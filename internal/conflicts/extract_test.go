@@ -572,6 +572,51 @@ func FuzzExtractRejectsQualifiedAbbreviatedRelativeDurationComparisons(f *testin
 	})
 }
 
+func FuzzExtractRejectsSignedAndGroupedRelativeDurationComparisons(f *testing.F) {
+	connectors := []string{"after", "before", "prior to", "After", "Before", "Prior to"}
+	signs := []string{"", "+", "-", "−", "negative ", "minus "}
+	operands := []string{"10 minutes", "1 000.5 minutes", "1'000 minutes"}
+	for connector := range connectors {
+		for sign := range signs {
+			for operand := range operands {
+				f.Add(uint8(connector), uint8(sign), uint8(operand))
+			}
+		}
+	}
+	f.Fuzz(func(t *testing.T, connectorChoice, signChoice, operandChoice uint8) {
+		text := "The deadline is 7 min. " + connectors[int(connectorChoice)%len(connectors)] + " " + signs[int(signChoice)%len(signs)] + operands[int(operandChoice)%len(operands)] + "."
+		if got := Extract(text); len(got) != 0 {
+			t.Fatalf("signed or grouped relative-duration comparison retained exact figures for %q: %+v", text, got)
+		}
+	})
+}
+
+func FuzzExtractKeepsIndependentAssertionsAfterRelativeDuration(f *testing.F) {
+	starts := []string{"After ", "and "}
+	operands := []string{"negative 10 minutes", "−10 minutes", "+10 minutes", "1 000.5 minutes", "1'000 minutes"}
+	for start := range starts {
+		for operand := range operands {
+			f.Add(uint8(start), uint8(operand))
+		}
+	}
+	f.Fuzz(func(t *testing.T, startChoice, operandChoice uint8) {
+		start := starts[int(startChoice)%len(starts)]
+		continuation := " customers pay $5."
+		if start == "and " {
+			continuation = " later the fee is $5."
+		}
+		text := "The wait is 7 min. " + start + operands[int(operandChoice)%len(operands)] + continuation
+		foundWait, foundFee := false, false
+		for _, figure := range Extract(text) {
+			foundWait = foundWait || figure.Text == "7 min" && figure.Clause == "The wait is 7 min."
+			foundFee = foundFee || figure.Text == "$5"
+		}
+		if !foundWait || !foundFee {
+			t.Fatalf("independent assertion was lost after relative duration in %q", text)
+		}
+	})
+}
+
 func FuzzExtractRejectsWrappedRelativeDurationComparisons(f *testing.F) {
 	connectors := []string{"after", "before", "prior to", "After", "Before", "Prior to"}
 	qualifiers := []string{"about ", "approximately ", "at least ", "no more than ", "~"}
@@ -2566,6 +2611,8 @@ func TestExtractRejectsAbbreviatedRelativeDurationComparisons(t *testing.T) {
 		"The deadline is 7 min. after 10 min.",
 		"The deadline is 7 min. before 10 min.",
 		"The deadline is 7 min. before 1 000 minutes.",
+		"The deadline is 7 min. before +10 minutes.",
+		"The deadline is 7 min. before 1 000.5 minutes.",
 		"The deadline is 7 min. before .5 hours.",
 		"The deadline is 7 min. before 1/2 hour.",
 		"The deadline is 7 min. before seven point five minutes.",
@@ -2648,6 +2695,8 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 		"The wait is 7 min. After twenty-one minutes, $5 is charged.",
 		"The wait is 7 min. After 10⁶ minutes customers pay $5.",
 		"The wait is 7 min. After 10⁶ minutes, $5 is charged.",
+		"The wait is 7 min. and negative 10 minutes later the fee is $5.",
+		"The wait is 7 min. After 1 000.5 minutes customers pay $5.",
 	} {
 		t.Run(text, func(t *testing.T) {
 			got := Extract(text)
@@ -2661,6 +2710,17 @@ func TestExtractKeepsIndependentAssertionsAfterUnsupportedRelativeDurationOperan
 			}
 		})
 	}
+}
+
+func TestExtractSeparatesPredicateOnlyAssertionAfterRelativeDuration(t *testing.T) {
+	text := "The wait is 7 min. After 10 minutes customers pay cash."
+	got := Extract(text)
+	for _, figure := range got {
+		if figure.Text == "7 min" && figure.Clause == "The wait is 7 min." {
+			return
+		}
+	}
+	t.Fatalf("independent predicate-only sentence swallowed the duration assertion: %+v", got)
 }
 
 func TestExtractRejectsCoordinatedRelativeDurationContinuations(t *testing.T) {

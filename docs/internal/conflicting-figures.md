@@ -73,12 +73,14 @@ fraction-word operands such as `$5/month higher than thirty`, `$5/month greater
 than thirty dollars`, or `$5/month higher than half a dollar`; spelled-out
 duration operands such as `7 days before thirty days` or
 `7 min. before thirty-five min.`; grouped numeric, fractional or spoken-decimal
-durations such as `7 min. before 1 000 minutes`, `7 min. before 1/2 hour`,
+durations such as `7 min. before 1 000 minutes`,
+`7 min. before 1 000.5 minutes`, `7 min. before 1/2 hour`,
 `7 min. before 1'000 minutes`, `7 min. before 1_000 minutes`,
 `7 min. before 1, 000 minutes`, or `7 min. before 1  000 minutes`,
 `7 min. before .5 hours`, `7 min. before half an hour`,
 `7 min. before seven point five minutes`, or signed operands such as
-`7 min. before negative 10 min.` and `7 min. before −10 min.`; rejected ranges
+`7 min. before +10 min.`, `7 min. before negative 10 min.`, and
+`7 min. before −10 min.`; rejected ranges
 such as `7 min. before 10-7 min.`; and wrapped bounds such as
 `7 min. before (about 10 min.)` or
 `(7 days) before (about 10 days)`. Spaces before a closing wrapper do not hide
@@ -93,6 +95,8 @@ customers pay $5.`, `The wait is 7 min. After 1 000 minutes customers pay
 $5.`, `The wait is 7 min. After seven point five minutes,
 $5 is charged.`, and `The wait is 7 min. After twenty-one minutes customers
 pay $5.` keep both figures, even when the duration operand itself is rejected.
+`The wait is 7 min. After 10 minutes customers pay cash.` keeps the preceding
+`7 min` in its own clause even though the later predicate has no following amount.
 An `and <duration> later` continuation also stays separate when the later
 assertion starts with its own subject and predicate or a typed figure. For
 example, `The wait is 7 min. and 1 000 minutes later the fee is $5.` and `The
