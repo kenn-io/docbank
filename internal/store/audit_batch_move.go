@@ -42,25 +42,17 @@ func (s *Store) prepareAuditedBatchMove(
 			return nil, unsupportedAuditedNodeMutation(nodeID)
 		}
 	}
-	topology, err := currentAuditTopology(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	movedIDs := make(map[uint64]bool, len(plan.movedIDs))
 	for _, nodeID := range plan.movedIDs {
-		auditNodeID, err := positiveAuditNodeID(nodeID)
+		affectsTrashOrigin, err := auditMoveAffectsTrashOriginTx(ctx, tx, scopes[0].scopeID, nodeID)
 		if err != nil {
 			return nil, err
 		}
-		movedIDs[auditNodeID] = true
-	}
-	affected, err := auditMoveAffectsTrashOrigin(topology, members, movedIDs)
-	if err != nil {
-		return nil, err
-	}
-	if affected != 0 {
-		return nil, fmt.Errorf("moving node %d would change retained trash-origin paths: %w",
-			affected, ErrAuditMutationUnsupported)
+		if affectsTrashOrigin {
+			return nil, fmt.Errorf(
+				"moving node %d would change retained trash-origin paths: %w",
+				nodeID, ErrAuditMutationUnsupported,
+			)
+		}
 	}
 	operationID, err := newUUIDv4()
 	if err != nil {

@@ -233,6 +233,7 @@ func auditMoveAffectsTrashOrigin(
 	return affected, nil
 }
 
+// auditHistoricalParent's live SQL counterpart is auditMoveAffectsTrashOriginTx.
 func auditHistoricalParent(node replayAuditTopologyNode) (*uint64, error) {
 	originValue, err := auditField(node.record, auditOriginField)
 	if err != nil {

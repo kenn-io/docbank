@@ -665,6 +665,13 @@ var backendSuites = []backendSuite{
 		{"StorageWritersSeparateSchemas", nil, checkStorageWritersSeparateSchemasPostgres},
 	}},
 	{name: "audit", postgres: "native operations", scope: "Canonical records, status, history, head advancement and transactional node allocation.", scenarios: []backendScenario{
+		{"AuditTrashOriginMove", func(t *testing.T) {
+			t.Helper()
+			checkAuditTrashOriginMove(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAuditTrashOriginMove(t, newPostgresQueryStore)
+		}},
 		{"AuditHistory", nil, checkAuditHistoryPostgres},
 		{"AuditHistorySnapshot", nil, checkAuditHistorySnapshotPostgres},
 		{"AuditRecords", nil, checkAuditRecordsPostgres},
