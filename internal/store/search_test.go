@@ -2380,6 +2380,45 @@ func lexicalSearchReplacementBuild(
 	return build, node.CurrentVersionID
 }
 
+func TestSeedTextExtractionQueueSettledWithoutWriter(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("a1"), 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "second.txt", fakeHash("b2"), 20, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "scan.pdf", fakeHash("c3"), 30, "application/pdf")
+	require.NoError(t, err)
+	for _, hash := range []string{first.BlobHash, second.BlobHash} {
+		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+			BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: ExtractionOK, Text: "synthetic text",
+		}))
+	}
+	lock := holdTestSQLiteWriter(t, s)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+	require.NoError(t, lock.Rollback())
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM text_searchable_versions WHERE version_id=?`, first.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+	rows, err := s.db.QueryContext(ctx, `SELECT version_id FROM text_searchable_versions ORDER BY version_id`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var restored []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		restored = append(restored, id)
+	}
+	require.NoError(t, rows.Err())
+	require.ElementsMatch(t, []string{first.CurrentVersionID, second.CurrentVersionID}, restored)
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+}
+
 func TestPendingAndFailedTextExtractions(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -81,3 +81,39 @@ func BenchmarkRebuildTextExtractionState(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkSeedTextExtractionQueue(b *testing.B) {
+	for _, settled := range []bool{true, false} {
+		for _, versions := range []int{1_000, 10_000, 100_000} {
+			b.Run(fmt.Sprintf("settled=%t/versions=%d", settled, versions), func(b *testing.B) {
+				ctx := b.Context()
+				s := newTestStore(b)
+				first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("a1"), 20, "text/plain")
+				require.NoError(b, err)
+				require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					return bulkBenchmarkFileVersionsTx(ctx, tx, first, first.ID, versions-1)
+				}))
+				require.NoError(b, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+				if settled {
+					require.NoError(b, s.RecordExtraction(ctx, ExtractionResult{
+						BlobHash: first.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+						Status: ExtractionOK, Text: "synthetic text",
+					}))
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					require.NoError(b, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+				}
+				var searchable, queued int
+				require.NoError(b, s.db.QueryRowContext(ctx, `SELECT count(*) FROM text_searchable_versions`).Scan(&searchable))
+				require.NoError(b, s.db.QueryRowContext(ctx, `SELECT count(*) FROM text_extraction_queue`).Scan(&queued))
+				require.Equal(b, versions, searchable)
+				if settled {
+					require.Zero(b, queued)
+				} else {
+					require.Equal(b, 1, queued)
+				}
+			})
+		}
+	}
+}
