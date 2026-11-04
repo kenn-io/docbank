@@ -30,7 +30,9 @@ compared as exact values. Standalone intervals such as `1 July 2026 through
 31 July 2026`, `1 July 2026 until 31 July 2026`, and
 `1 July 2026 till 31 July 2026` also omit both endpoints, including
 `From 1 July 2026 to 31 July 2026` when no other figure appears in the clause.
-Explicit period bounds remain usable, as in
+Percentage bases remain operands for this scope check: `The fee is 5% of $100
+until 1 July 2026.` keeps the end bound on `5%`. Explicit period bounds remain
+usable, as in
 `From 1 July 2026 through 31 July 2026, the fee is $5`, which retains `$5`
 with both bounds. A file's modification date is a separate source property
 and is not inferred by this package.
@@ -293,7 +295,10 @@ devices`. Supported word amounts such as `five dollars per month` retain their
 stated period. Unresolved fractional and subunit money operands such as `half a
 dollar per 2 devices` and `fifty cents per 2 devices` also suppress the
 denominator, while supported ranges such as `five-ten dollars per month` retain
-their stated period. A later sentence remains eligible.
+their stated period. Fractional percentage and count operands such as `half a
+percent per 2 days` and `half a device per 2 days` suppress their denominators.
+Supported word ranges such as `between five and ten dollars per month` remain
+eligible rate numerators. A later sentence remains eligible.
 Arithmetic following a rate still causes the whole clause to be omitted. A
 postfix bound on a rate also suppresses its denominator across wrapped
 whitespace, as in `$5 [maximum  ] per 2 devices`.

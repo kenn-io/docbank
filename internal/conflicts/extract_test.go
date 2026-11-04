@@ -4908,6 +4908,8 @@ func TestExtractReviewUnqualifiedUnsupportedRateNumeratorsSuppressDenominators(t
 		{"leading-decimal numerator before independent sentence", "The fee is $.50 per 2 devices. The deposit is $7.", []string{"$7"}},
 		{"fractional spoken money numerator before independent sentence", "The fee is half a dollar per 2 devices. The deposit is $7.", []string{"$7"}},
 		{"subunit spoken money numerator before independent sentence", "The fee is fifty cents per 2 devices. The deposit is $7.", []string{"$7"}},
+		{"numeric cents numerator", "The fee is 50 cents per 2 devices.", nil},
+		{"numeric cents numerator before independent sentence", "The fee is 50 cents per 2 devices. The deposit is $7.", []string{"$7"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Extract(tt.text)
@@ -6194,6 +6196,45 @@ func TestExtractOmitsBareFeeOperandsAfterPercentageBase(t *testing.T) {
 	got := Extract(text)
 	if len(got) != 1 || got[0].Text != "5%" || got[0].Period != (Period{}) {
 		t.Fatalf("nominal fee operands escaped the percentage-base group: %+v", got)
+	}
+}
+
+func TestExtractPreservesSupportedWordRangeRateNumerator(t *testing.T) {
+	text := "The fee is between five and ten dollars per month."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "between five and ten dollars" || got[0].Period != (Period{}) {
+		t.Fatalf("supported word-number range rate was lost or altered: %+v", got)
+	}
+}
+
+func TestExtractSuppressesDenominatorAfterFractionalPercentageRate(t *testing.T) {
+	for _, text := range []string{
+		"The rate is half a percent per 2 days.",
+		"The rate is half a percent per 2 days. The deposit is $7.",
+		"The rate is half a device per 2 days.",
+		"The rate is half a device per 2 days. The deposit is $7.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := Extract(text)
+			want := 0
+			if strings.Contains(text, "The deposit") {
+				want = 1
+			}
+			if len(got) != want {
+				t.Fatalf("fractional rate exposed its denominator or lost the following assertion: %+v", got)
+			}
+			if want == 1 && (got[0].Text != "$7" || got[0].Clause != "The deposit is $7.") {
+				t.Fatalf("following assertion was altered by the unresolved rate: %+v", got)
+			}
+		})
+	}
+}
+
+func TestExtractPercentageBaseKeepsTrailingDateBound(t *testing.T) {
+	text := "The fee is 5% of $100 until 1 July 2026."
+	got := Extract(text)
+	if len(got) != 1 || got[0].Text != "5%" || got[0].Period != (Period{To: "2026-07-01"}) {
+		t.Fatalf("percentage base cleared the explicit trailing date bound: %+v", got)
 	}
 }
 
