@@ -940,7 +940,7 @@ func validateAuditEventSequences(records map[string][]storedAuditRecord) error {
 	for _, event := range records[auditEventField] {
 		sequence, ok := sequences[*event.index.operationID]
 		if !ok || event.index.operationSequence == nil || *event.index.operationSequence != sequence {
-			return fmt.Errorf("audit event %s operation sequence does not match canonical mutation", event.digest)
+			return fmt.Errorf("audit event %s sequence number does not match its operation record", event.digest)
 		}
 	}
 	return nil
