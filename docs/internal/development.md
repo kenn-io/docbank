@@ -860,6 +860,9 @@ runtime role may insert them; cleanup may delete them, but no update grant
 permits rewriting evidence. Job staging creates retention roots in the same
 transaction. Publication validates the source, retained policy, consent and
 complete lexical manifest, then moves rendition and lexical heads together.
+The final lexical generation is staged in that publication transaction, so a
+concurrent text extraction or rendition cannot invalidate its manifest before
+the head flip. Retained staged builds resume publication against current heads.
 A failed replacement leaves the old heads and waiting job intact. Successful
 replacement removes stale chunk-embedding heads and failures, and collects
 superseded lexical generations only when no root or reader still needs them.
