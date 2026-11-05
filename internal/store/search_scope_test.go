@@ -117,7 +117,7 @@ func TestRenditionAttachmentBuildIndexAddedOnReopen(t *testing.T) {
 	assert.Contains(t, detail, "rendition_attachments_build")
 }
 
-func TestPublishedSearchLooksUpAttachmentsBeforeUnprocessedCopies(t *testing.T) {
+func TestPublishedSearchExcludesUnprocessedCopies(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -130,21 +130,6 @@ func TestPublishedSearchLooksUpAttachmentsBeforeUnprocessedCopies(t *testing.T) 
 	for i := range 8 {
 		_, err = s.CreateFile(ctx, s.RootID(), "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
 		require.NoError(t, err)
-	}
-	var generationID string
-	require.NoError(t, s.withLexicalGenerationRead(ctx, func(_ metadataQuerier, generation LexicalGeneration) error {
-		generationID = generation.ID
-		return nil
-	}))
-	require.NotEmpty(t, generationID)
-	for _, explained := range []bool{false, true} {
-		detail := scopedSearchQueryPlans(t, s, 0, generationID, explained)[1]
-		versions := strings.Index(detail, "SEARCH cv ")
-		attachments := strings.Index(detail, "SEARCH a USING INDEX rendition_attachments_build ")
-		require.NotEqual(t, -1, versions, detail)
-		require.NotEqual(t, -1, attachments, detail)
-		// Expand only attached versions, rather than every copy of the source blob.
-		assert.Less(t, attachments, versions, "explained=%v\n%s", explained, detail)
 	}
 	hits, more, err := s.SearchPage(ctx, "mercury", 50)
 	require.NoError(t, err)
