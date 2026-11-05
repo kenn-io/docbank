@@ -69,6 +69,64 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  document.querySelector('meta[name="docbank-base-path"]')?.remove();
+});
+
+it.each(["", "/archive"])("downloads report CSV and bundles under mount %s", async (basePath) => {
+  const meta = document.createElement("meta");
+  meta.name = "docbank-base-path";
+  meta.content = basePath;
+  document.head.append(meta);
+  const formats: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (
+      init?.method === "GET" &&
+      (path.startsWith(`${basePath}/api/v1/collections?`) ||
+        path.startsWith(`${basePath}/api/v1/search-exports?`))
+    )
+      return json({ items: [], total: 0 });
+    if (init?.method === "POST" && path === `${basePath}/api/v1/search-exports`)
+      return json(oldSummary);
+    if (
+      init?.method === "POST" &&
+      path === `${basePath}/api/v1/search-exports/${oldSummary.id}/download`
+    ) {
+      const { format } = JSON.parse(String(init.body));
+      formats.push(format);
+      return json({ url: `/api/daemon/web-download/file?ticket=${format}-ticket` });
+    }
+    throw new Error(`Unexpected request: ${init?.method} ${path}`);
+  });
+  const clicked: (string | null)[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push(this.getAttribute("href"));
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  const csv = await screen.findByRole("button", { name: "Download CSV" });
+  await waitFor(() => expect(csv.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(csv);
+  await waitFor(() =>
+    expect(clicked).toEqual([`${basePath}/api/daemon/web-download/file?ticket=csv-ticket`]),
+  );
+  const bundle = screen.getByRole("button", { name: "Download evidence ZIP" });
+  await waitFor(() => expect(bundle.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(bundle);
+  await waitFor(() =>
+    expect(clicked).toEqual([
+      `${basePath}/api/daemon/web-download/file?ticket=csv-ticket`,
+      `${basePath}/api/daemon/web-download/file?ticket=bundle-ticket`,
+    ]),
+  );
+  expect(formats).toEqual(["csv", "bundle"]);
 });
 
 it("merges continued date evidence into one document card and retains its choice", async () => {

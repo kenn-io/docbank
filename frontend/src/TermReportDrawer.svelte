@@ -33,6 +33,7 @@
     TermReportHistory,
   } from "./generated/docbank.js";
   import { formatDate } from "./format.js";
+  import { webURL } from "./web-path.js";
 
   interface Props {
     session: string;
@@ -423,7 +424,7 @@
     try {
       const ticket = await api.issueTermReportDownload(active.id, { format }, { session });
       const link = document.createElement("a");
-      link.href = ticket.url;
+      link.href = webURL(ticket.url);
       document.body.append(link);
       link.click();
       link.remove();
