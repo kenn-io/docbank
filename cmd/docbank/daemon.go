@@ -333,10 +333,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return err
 	}
-	sourceProfiles := make(map[string]document.ProcessingProfileV1, len(processingProfiles))
-	for name, profile := range processingProfiles {
-		sourceProfiles[name] = profile.Profile
-	}
 	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
 		candidate, err := localTextCandidate(baseConfig, mode, name)
 		if err != nil {
@@ -356,8 +352,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			name = ""
 		}
 		selected, candidate, err := candidateProfiles(choice.Server, name)
-		_, executable := processingProfiles[choice.Profile]
-		if err == nil && (configured && !executable || selected[choice.Profile].RenditionProvider == nil) {
+		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
 		}
 		if err == nil {
@@ -414,7 +409,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	tracker := api.NewActivityTracker()
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
-		Compatible: compatible, SourceProfiles: sourceProfiles,
+		Compatible:    compatible,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
 		Save: func(name, mode string) error {

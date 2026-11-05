@@ -57,7 +57,7 @@ func localTextCandidate(cfg config.Config, mode, name string) (config.Config, er
 		if !ok {
 			return cfg, processing.ErrProfileNotConfigured
 		}
-		bindings := make(map[string]config.EmbeddingProfileConfig)
+		textBindings := 0
 		for _, binding := range recipe.Embeddings {
 			p, err := cfg.EmbeddingProfile(binding)
 			if err != nil {
@@ -70,12 +70,12 @@ func localTextCandidate(cfg config.Config, mode, name string) (config.Config, er
 			if err != nil {
 				return cfg, processing.ErrProfileNotConfigured
 			}
-			bindings[binding] = p
+			candidate.EmbeddingProfiles[binding] = p
+			textBindings++
 		}
-		if len(bindings) == 0 {
+		if textBindings == 0 {
 			return cfg, processing.ErrProfileNotConfigured
 		}
-		maps.Copy(candidate.EmbeddingProfiles, bindings)
 		candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{name: recipe}
 		return candidate, nil
 	}

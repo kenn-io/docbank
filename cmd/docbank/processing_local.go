@@ -19,7 +19,6 @@ import (
 func newProcessingLocalCommand() *cobra.Command {
 	var server string
 	cmd := &cobra.Command{Use: "local", Short: "Set up vault-wide text indexing", Args: cobra.NoArgs,
-		Long:    "Move an indexed Nomic profile to the shared local server, keeping its extractor, chunks, and vectors. Existing indexes from other models require rebuilding.",
 		Example: "  docbank processing local --server local",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if server != "auto" && server != "local" {

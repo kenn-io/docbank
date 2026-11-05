@@ -40,16 +40,15 @@ type LocalTextPlan struct {
 // LocalTextSetup builds a private service for the reviewed profile. Activation
 // happens on daemon restart, so all consumers keep one effective identity.
 type LocalTextSetup struct {
-	Service        *Service
-	Candidate      func(mode, name string) (*Service, error)
-	Compatible     []string
-	SourceProfiles map[string]document.ProcessingProfileV1
-	Selected       string
-	Startup        func(context.Context, bool, string) error
-	Save           func(string, string) error
-	ActivityBegin  func()
-	ActivityEnd    func()
-	mu             sync.Mutex
+	Service       *Service
+	Candidate     func(mode, name string) (*Service, error)
+	Compatible    []string
+	Selected      string
+	Startup       func(context.Context, bool, string) error
+	Save          func(string, string) error
+	ActivityBegin func()
+	ActivityEnd   func()
+	mu            sync.Mutex
 	// mu also guards the skip cache during the daemon's final idle check.
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
@@ -59,9 +58,6 @@ type LocalTextSetup struct {
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
 	name, effect := "", "Build local index"
 	names := slices.Sorted(maps.Keys(setup.Service.profiles))
-	if slices.Contains(setup.Compatible, setup.Selected) {
-		names = append([]string{setup.Selected}, slices.DeleteFunc(names, func(n string) bool { return n == setup.Selected })...)
-	}
 	for _, candidate := range names {
 		indexed, err := setup.indexedText(ctx, candidate)
 		if err != nil {
@@ -114,31 +110,19 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 
 func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool, error) {
 	active := setup.Service.profiles[name]
-	authorities := []string{active.record.Fingerprint}
-	if source, ok := setup.SourceProfiles[name]; ok {
-		_, fingerprints, err := document.CanonicalProfile(source)
-		if err != nil {
-			return false, err
-		}
-		if fingerprints.Profile != active.record.Fingerprint {
-			authorities = append(authorities, fingerprints.Profile)
-		}
-	}
 	for _, binding := range active.portable.Embeddings {
 		if binding.InputKind != document.EmbeddingInputRenditionChunk {
 			continue
 		}
-		for _, authority := range authorities {
-			coverage, err := setup.Service.catalog.RevalidateSearchCandidates(ctx, nil, store.SearchOptions{VectorSpaceID: active.vectorSpaces[binding.Name]}, authority, binding.Name)
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return false, err
-			}
-			if coverage.Coverage != nil && coverage.Coverage.CompleteDocuments > 0 {
-				return true, nil
-			}
+		coverage, err := setup.Service.catalog.RevalidateSearchCandidates(ctx, nil, store.SearchOptions{VectorSpaceID: active.vectorSpaces[binding.Name]}, active.record.Fingerprint, binding.Name)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if coverage.Coverage != nil && coverage.Coverage.CompleteDocuments > 0 {
+			return true, nil
 		}
 	}
 	return false, nil
