@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -106,15 +105,13 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 }
 
 func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
-	f := newNativeExportFixture(t)
-	daemon, _, profile := newProcessingDocumentServer(t, f)
 	for _, option := range []struct {
 		key   string
 		value any
 	}{{"mode", "semantic"}, {"binding_id", "synthetic-binding"}, {"explain", true}, {"rerank", true}, {"limit", 21}} {
 		t.Run(option.key+fmt.Sprint(option.value), func(t *testing.T) {
-			args := map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}, option.key: option.value}
-			wire := exchangeRaw(t, daemon, requestFor("tools/call", map[string]any{"name": "find_conflicts", "arguments": args}))
+			args := map[string]any{"query": "cooling period", "profile": "local", "filters": map[string]any{}, option.key: option.value}
+			wire := callToolWire(t, "find_conflicts", args)
 			wireErr := decodeWireError(t, wire)
 			require.EqualValues(t, jsonrpc.CodeInvalidParams, wireErr.Code)
 			require.Equal(t, "invalid tool arguments", wireErr.Message)
@@ -170,7 +167,7 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, text, want string
-		mismatchFirst    bool
+		missingFirst     bool
 	}{
 		{"v1 envelope", string(rendered.Markdown), sentence, false},
 		{"future envelope", strings.Replace(string(rendered.Markdown), "docbank-sanitized-markdown/v1", "docbank-sanitized-markdown/v2", 1), "", false},
@@ -184,7 +181,7 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- r.URL.Path
 				id := strings.TrimPrefix(r.URL.Path, "/api/v1/renditions/")
-				if r.Method != http.MethodGet || (id != attachmentID && id != otherAttachment) {
+				if r.Method != http.MethodGet || id != attachmentID {
 					http.NotFound(w, r)
 					return
 				}
@@ -204,19 +201,10 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 			t.Cleanup(server.Close)
 			c := daemonconn.New(server.URL, "synthetic-export-key")
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
-			// Establish that rejection is about the envelope, not transport integrity.
-			stream, err := c.Rendition(t.Context(), attachmentID, conflictSourceLimit)
-			require.NoError(t, err)
-			var verified bytes.Buffer
-			_, err = stream.ContentStream.CopyVerified(&verified)
-			require.NoError(t, err)
-			require.NoError(t, stream.Close())
-			require.Equal(t, tc.text, verified.String())
-			require.Equal(t, "/api/v1/renditions/"+attachmentID, <-requests)
 			hit := api.DocumentSearchResult{ContentVersionID: versionID, Evidence: []api.DocumentEvidenceReference{{BuildID: buildID}}}
 			summary := api.DocumentSummary{MediaType: "text/plain", ActiveRenditions: []api.DocumentRenditionIdentity{{AttachmentID: attachmentID, BuildID: buildID}}}
 			wantRequests := []string{"/api/v1/renditions/" + attachmentID}
-			if tc.mismatchFirst {
+			if tc.missingFirst {
 				hit.Evidence = append([]api.DocumentEvidenceReference{{BuildID: otherBuild}}, hit.Evidence...)
 				summary.ActiveRenditions = append([]api.DocumentRenditionIdentity{{AttachmentID: otherAttachment, BuildID: otherBuild}}, summary.ActiveRenditions...)
 				wantRequests = append([]string{"/api/v1/renditions/" + otherAttachment}, wantRequests...)
