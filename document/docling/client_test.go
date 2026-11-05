@@ -353,8 +353,7 @@ func TestClientTotalTimeoutInterruptsBlockedUpload(t *testing.T) {
 			assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
 		default:
 			require.NoError(t, upload.Close())
-			<-done
-			t.Fatal("Client.Render did not interrupt the blocked upload")
+			t.Fatalf("Client.Render did not interrupt the blocked upload; it returned %v after the upload closed", <-done)
 		}
 	})
 }

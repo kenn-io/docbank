@@ -438,7 +438,7 @@ func TestPushWatchUploadsEqualLengthEditsWithRestoredMtime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() { cancel(); t.Logf("push.Run returned %v", <-done) })
 	select {
 	case outcome := <-events:
 		require.Equal(t, "added", outcome)
@@ -964,7 +964,7 @@ func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 		}
 	}
 	cancel()
-	<-done
+	require.ErrorIs(t, <-done, context.Canceled)
 }
 
 // TestPushWatchAsksTheDaemonAfterAnUncertainUpload covers A -> B committed with
@@ -1015,7 +1015,7 @@ func TestPushWatchAsksTheDaemonAfterAnUncertainUpload(t *testing.T) {
 	assert.Equal(t, "updated", <-events, "the daemon holds the second version, so the first must be uploaded again")
 	assert.Equal(t, "first", readNode(t, f, node.ID))
 	cancel()
-	<-done
+	require.ErrorIs(t, <-done, context.Canceled)
 }
 
 func TestPushWatchSeesTrashAndPurgeAfterStartup(t *testing.T) {
@@ -1057,7 +1057,7 @@ func TestPushWatchSeesTrashAndPurgeAfterStartup(t *testing.T) {
 	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "added", <-events, "a purged document's file is imported again")
 	cancel()
-	<-done
+	require.ErrorIs(t, <-done, context.Canceled)
 }
 
 func TestPushWatchSurvivesAnOutageAtStartup(t *testing.T) {
@@ -1098,7 +1098,7 @@ func TestPushWatchCaptureOnChangeReachesFolderScanner(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
-	defer func() { cancel(); <-done }()
+	defer func() { cancel(); t.Logf("push.Run returned %v", <-done) }()
 	select {
 	case outcome := <-events:
 		require.Equal(t, "added", outcome)

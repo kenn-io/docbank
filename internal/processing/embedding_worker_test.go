@@ -1408,8 +1408,7 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolin
 	select {
 	case err := <-revoked:
 		cancel()
-		<-done
-		t.Fatalf("revocation crossed authorized provider boundary: %v", err)
+		t.Fatalf("revocation crossed authorized provider boundary: %v; worker returned %v", err, <-done)
 	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
 	}
 	close(proceed)
@@ -1417,8 +1416,7 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolin
 	select {
 	case err := <-revoked:
 		cancel()
-		<-done
-		t.Fatalf("revocation crossed active provider call: %v", err)
+		t.Fatalf("revocation crossed active provider call: %v; worker returned %v", err, <-done)
 	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the active provider call keeps revocation blocked
 	}
 	cancel()
@@ -1826,8 +1824,8 @@ func TestEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t *testing.T) {
 }
 func TestEmbeddingWorkerBoundsStorageRetries(t *testing.T) {
 	t.Parallel()
-	for _, recover := range []bool{false, true} {
-		t.Run(strconv.FormatBool(recover), func(t *testing.T) {
+	for _, withRecovery := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withRecovery), func(t *testing.T) {
 			fixture := newEmbeddingWorkerFixture(t)
 			worker := fixture.worker(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -1835,7 +1833,7 @@ func TestEmbeddingWorkerBoundsStorageRetries(t *testing.T) {
 			calls, waits := 0, 0
 			fixture.catalog.reconcileError = func() error {
 				calls++
-				if !recover || calls == 1 {
+				if !withRecovery || calls == 1 {
 					return errors.New("synthetic storage outage")
 				}
 				cancel()
@@ -1849,7 +1847,7 @@ func TestEmbeddingWorkerBoundsStorageRetries(t *testing.T) {
 				return nil
 			}
 			err := worker.Run(ctx)
-			if recover {
+			if withRecovery {
 				require.ErrorIs(t, err, context.Canceled)
 				require.Equal(t, 2, calls)
 				require.Equal(t, 1, waits)
