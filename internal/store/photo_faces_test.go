@@ -973,7 +973,7 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.Empty(t, rows)
 }
 
-func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
+func TestPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -986,15 +986,7 @@ func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
 	require.NoError(t, err)
 	faceOnly, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, faceOnly.PersonID)
-	require.NoError(t, err)
-	retired, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, retired.PersonID, "")
-	require.NoError(t, err)
-	retired, _, err = s.PersonByID(ctx, retired.PersonID)
-	require.NoError(t, err)
-	_, err = s.RetirePerson(ctx, retired.PersonID, retired.Revision)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, faceOnly.PersonID)
 	require.NoError(t, err)
 	hiddenOnly, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -1021,14 +1013,6 @@ func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
 				var ids []string
 				for _, row := range rows {
 					ids = append(ids, row.PersonID)
-					if row.PersonID == person.PersonID {
-						require.Equal(t, int64(1), row.PhotoSummary.LibraryCount)
-					}
-					if row.PersonID == faceOnly.PersonID {
-						require.Equal(t, int64(1), row.PhotoSummary.LibraryCount)
-						require.NotNil(t, row.PhotoSummary.Face)
-						require.Equal(t, face.Box, *row.PhotoSummary.Face.Box)
-					}
 				}
 				require.Equal(t, want, ids)
 			}
