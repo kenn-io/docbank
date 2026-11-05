@@ -91,6 +91,33 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 	}
 }
 
+func TestRenderPageRangeMapsTablesOnlyWithinSelection(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
+	pages := PageRange{First: 51, Last: 51}
+	content := rangeContent([]int64{51}, pageText("selected page", 51))
+	content["tables"] = []any{
+		map[string]any{
+			"prov": []any{map[string]any{"page_no": 51}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "selected cell"}}}},
+		},
+		map[string]any{
+			"prov": []any{map[string]any{"page_no": 50}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "outside cell"}}}},
+		},
+	}
+	result, err := renderRange(t, fixture, pages, "success", rangeResponse("# fallback\n", content))
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
+	require.Len(t, result.Evidence.Units, 1)
+	assert.Equal(t, int64(51), result.Evidence.Units[0].Locator.Start)
+	assert.Equal(t, int64(51), result.Evidence.Units[0].Locator.End)
+	assert.Equal(t, "selected page\n\n| selected cell |\n| --- |", result.Evidence.Units[0].Text)
+	assert.Contains(t, result.Evidence.Omissions, document.SourceEvidenceOmissionV1{
+		Kind: document.EvidenceOmissionField, Field: "tables", Reason: "Docling structured content is not mapped",
+	})
+	assertRangeMarker(t, result.Evidence, pages)
+}
+
 func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 	selected := PageRange{First: 51, Last: 52}
 	ignoredRange := make([]int64, 0, 52)

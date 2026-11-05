@@ -748,15 +748,22 @@ type doclingTable struct {
 }
 
 type doclingCell struct {
-	Text string `json:"text"`
+	Text string      `json:"text"`
+	Ref  *doclingRef `json:"ref"`
 }
 
 // markdown renders the table grid as a GitHub-flavored Markdown table, with
 // the first row as its header like Docling's own Markdown. Docling repeats a
 // spanning cell's text in every grid position it covers, so the output stays
 // proportional to the grid it received. It reports false when the grid is
-// missing for nonblank cells or is not rectangular.
+// missing for nonblank cells, is not rectangular, or contains rich cells.
 func (table doclingTable) markdown() (string, bool) {
+	rich := func(cells []doclingCell) bool {
+		return slices.ContainsFunc(cells, func(cell doclingCell) bool { return cell.Ref != nil })
+	}
+	if rich(table.Data.TableCells) || slices.ContainsFunc(table.Data.Grid, rich) {
+		return "", false
+	}
 	nonblank := func(cells []doclingCell) bool {
 		return slices.ContainsFunc(cells, func(cell doclingCell) bool { return strings.TrimSpace(cell.Text) != "" })
 	}
@@ -764,28 +771,17 @@ func (table doclingTable) markdown() (string, bool) {
 	if !slices.ContainsFunc(grid, nonblank) {
 		return "", !nonblank(table.Data.TableCells)
 	}
-	var text strings.Builder
+	rows := make([][]string, len(grid))
 	for index, row := range grid {
 		if len(row) != len(grid[0]) {
 			return "", false
 		}
-		if index != 0 {
-			text.WriteByte('\n')
-		}
-		text.WriteByte('|')
-		for _, cell := range row {
-			text.WriteByte(' ')
-			text.WriteString(strings.ReplaceAll(strings.Join(strings.Fields(cell.Text), " "), "|", `\|`))
-			text.WriteString(" |")
-		}
-		if index == 0 {
-			text.WriteString("\n|")
-			for range row {
-				text.WriteString(" --- |")
-			}
+		rows[index] = make([]string, len(row))
+		for column, cell := range row {
+			rows[index][column] = strings.Join(strings.Fields(cell.Text), " ")
 		}
 	}
-	return text.String(), true
+	return document.MarkdownTable(rows), true
 }
 
 // doclingPageTexts builds the page registry contiguous from first and assigns
@@ -827,7 +823,7 @@ func doclingPageTexts(
 		if _, ok := pages[page]; !ok {
 			return nil, nil, 0, false
 		}
-		pages[page] = append(pages[page], pageItem{text: text.Text, after: index, table: -1})
+		pages[page] = append(pages[page], pageItem{text: text.Text, after: index, ordinal: -1})
 		hasMappedText = true
 	}
 	unmappedTables := 0
@@ -842,13 +838,13 @@ func doclingPageTexts(
 			unmappedTables++
 			continue
 		}
-		pages[page] = append(pages[page], pageItem{text: text, after: anchors[index], table: index})
+		pages[page] = append(pages[page], pageItem{text: text, after: anchors[index].after, ordinal: anchors[index].ordinal})
 		hasMappedText = true
 	}
 	texts := make(map[int64][]string, len(pages))
 	for page, items := range pages {
 		slices.SortFunc(items, func(left, right pageItem) int {
-			return cmp.Or(cmp.Compare(left.after, right.after), cmp.Compare(left.table, right.table))
+			return cmp.Or(cmp.Compare(left.after, right.after), cmp.Compare(left.ordinal, right.ordinal))
 		})
 		for _, item := range items {
 			texts[page] = append(texts[page], item.text)
@@ -858,10 +854,11 @@ func doclingPageTexts(
 }
 
 // pageItem orders a page's texts by their index and puts each table after the
-// text it follows; table is -1 for texts.
+// text it follows. Tables sharing an anchor follow visit order; ordinal is -1
+// for texts.
 type pageItem struct {
-	text         string
-	after, table int
+	text           string
+	after, ordinal int
 }
 
 // singlePage returns the one page every provenance entry names.
@@ -877,23 +874,51 @@ func singlePage(provenance []doclingProvenance) (int64, bool) {
 	return provenance[0].PageNo, true
 }
 
+// tableAnchor places a table after a text index and orders tables at that index.
+type tableAnchor struct {
+	after, ordinal int
+}
+
 // tableAnchors walks Docling's reading order from the body, then the
-// furniture, and returns for each table the index of the last text visited
-// before it: -1 before any text, or len(Texts) when no walk reaches it. Each
-// reference is visited once, so cyclic or repeated references end the walk.
-func (wire *doclingDocument) tableAnchors() []int {
-	anchors := make([]int, len(wire.Tables))
-	for index := range anchors {
-		anchors[index] = len(wire.Texts)
+// furniture. Unreached tables follow all visited items in collection order.
+// Each canonical reference is visited once, including cyclic references.
+func (wire *doclingDocument) tableAnchors() []tableAnchor {
+	type node struct {
+		children    []doclingRef
+		text, table int
 	}
-	reached := make([]bool, len(wire.Tables))
+	nodes := map[string]node{
+		"#/body":      {children: wire.Body.Children, text: -1, table: -1},
+		"#/furniture": {children: wire.Furniture.Children, text: -1, table: -1},
+	}
+	for index, text := range wire.Texts {
+		nodes["#/texts/"+strconv.Itoa(index)] = node{children: text.Children, text: index, table: -1}
+	}
+	for index, table := range wire.Tables {
+		nodes["#/tables/"+strconv.Itoa(index)] = node{children: table.Children, text: -1, table: index}
+	}
+	for _, collection := range []struct {
+		name  string
+		items []doclingItem
+	}{
+		{"groups", wire.Groups}, {"pictures", wire.Pictures},
+		{"key_value_items", wire.KeyValueItems}, {"form_items", wire.FormItems},
+	} {
+		for index, item := range collection.items {
+			nodes["#/"+collection.name+"/"+strconv.Itoa(index)] = node{children: item.Children, text: -1, table: -1}
+		}
+	}
+	anchors := make([]tableAnchor, len(wire.Tables))
+	for index := range anchors {
+		anchors[index] = tableAnchor{after: len(wire.Texts), ordinal: len(nodes) + index}
+	}
 	visited := make(map[string]struct{})
-	last := -1
+	last, ordinal := -1, 0
 	stack := []string{"#/furniture", "#/body"}
 	for len(stack) != 0 {
 		ref := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		children, collection, index, ok := wire.resolve(ref)
+		node, ok := nodes[ref]
 		if !ok {
 			continue
 		}
@@ -901,67 +926,18 @@ func (wire *doclingDocument) tableAnchors() []int {
 			continue
 		}
 		visited[ref] = struct{}{}
-		switch collection {
-		case "texts":
-			last = index
-		case "tables":
-			if !reached[index] {
-				anchors[index], reached[index] = last, true
-			}
+		if node.text >= 0 {
+			last = node.text
 		}
-		for _, child := range slices.Backward(children) {
+		if node.table >= 0 {
+			anchors[node.table] = tableAnchor{after: last, ordinal: ordinal}
+		}
+		ordinal++
+		for _, child := range slices.Backward(node.children) {
 			stack = append(stack, child.Ref)
 		}
 	}
 	return anchors
-}
-
-// resolve returns the children of one JSON-pointer reference such as
-// "#/texts/3", or false when it names no item of the document.
-func (wire *doclingDocument) resolve(ref string) ([]doclingRef, string, int, bool) {
-	switch ref {
-	case "#/body":
-		return wire.Body.Children, "body", 0, true
-	case "#/furniture":
-		return wire.Furniture.Children, "furniture", 0, true
-	}
-	path, ok := strings.CutPrefix(ref, "#/")
-	if !ok {
-		return nil, "", 0, false
-	}
-	collection, position, ok := strings.Cut(path, "/")
-	index, err := strconv.Atoi(position)
-	if !ok || err != nil || index < 0 || strconv.Itoa(index) != position {
-		return nil, "", 0, false
-	}
-	items := func(values []doclingItem) ([]doclingRef, string, int, bool) {
-		if index >= len(values) {
-			return nil, "", 0, false
-		}
-		return values[index].Children, collection, index, true
-	}
-	switch collection {
-	case "texts":
-		if index >= len(wire.Texts) {
-			return nil, "", 0, false
-		}
-		return wire.Texts[index].Children, collection, index, true
-	case "tables":
-		if index >= len(wire.Tables) {
-			return nil, "", 0, false
-		}
-		return wire.Tables[index].Children, collection, index, true
-	case "groups":
-		return items(wire.Groups)
-	case "pictures":
-		return items(wire.Pictures)
-	case "key_value_items":
-		return items(wire.KeyValueItems)
-	case "form_items":
-		return items(wire.FormItems)
-	default:
-		return nil, "", 0, false
-	}
 }
 
 func supportedDoclingMajor(version string) bool {
