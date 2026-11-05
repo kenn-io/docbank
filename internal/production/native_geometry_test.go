@@ -37,6 +37,43 @@ func (p *geometryPages) Next(context.Context) (pdfproduction.PageArtifact, error
 	return result, nil
 }
 
+func TestNativeGeometryPipelineControlIdentities(t *testing.T) {
+	runtime := redactiontest.PageRuntime(t)
+	data, err := os.ReadFile("testdata/native-geometry-control.pdf")
+	require.NoError(t, err)
+	source := document.PageSource{
+		VersionID: "00000000-0000-4000-8000-000000000001",
+		SHA256:    "b893b95a5aae351d7447d7f662826eaff664fc8738d04125df25590a92d3aeaf",
+		Size:      1618,
+	}
+	inspection, err := runtime.Inspect(t.Context(), data, source, "application/pdf")
+	require.NoError(t, err)
+	prep, err := PrepareNativePDF(t.Context(), NativePreparationInput{
+		PDF: pdfproduction.Source{Reader: bytes.NewReader(data), SHA256: source.SHA256,
+			Size: source.Size, StagingDirectory: t.TempDir()},
+		Inspection: inspection,
+		// Tool binary hashes vary by deployment; hold this input fixed to pin the observations.
+		PageRuntimeFingerprint: strings.Repeat("b", 64),
+	})
+	require.NoError(t, err)
+	// Captured with the pre-projection admission checks at 68c35c195. This synthetic
+	// four-rotation crop was already accepted; its stored geometry must not drift.
+	wantFrames := []string{
+		"6d1e1fd88ba70cf18c71a9615cd7f1d2565b9008e74a1ee950a4c59385839809",
+		"8682720c1d45223310f8e0ab480d9561622b3e8191860d7cd344e83c10af2082",
+		"9b1296010714b3007fce478106a393e37fe6f03ea7d3db5bbfa157048232150a",
+		"61aebfd6ac81395f388a5d77b59157918d0d7c50ee779122de5c839f5ba7b4dd",
+	}
+	require.Len(t, prep.Frames, len(wantFrames))
+	for i, frame := range prep.Frames {
+		_, digest, err := document.MarshalPageFrameV1(frame)
+		require.NoError(t, err)
+		require.Equal(t, wantFrames[i], digest, "page %d", i+1)
+	}
+	require.Equal(t, "92084e9a003f9fd40cd95946a0d38c7dd2d9e80a90dd9a76bac0feee0e1a7cde", prep.EvidenceSHA256)
+	require.Equal(t, "acc947c72f05d58881077b76c04494e5ad46ebccfe91b8048b36cb4d682790ee", prep.Map.SHA256)
+}
+
 func TestNativeGeometryPipeline(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
 	for index, fixture := range redactiontest.GeometryFixtures(t) {
