@@ -8,7 +8,7 @@ import (
 // MissingProcessingTargetsAfter excludes published work at the selected
 // profile, including after daemon restart. Failed jobs remain eligible.
 func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, after string, bindings, imageBindings, limit int) ([]DocumentSummary, error) {
-	if bindings < 1 || imageBindings < 0 || imageBindings > bindings || limit < 1 || limit > 1000 {
+	if bindings < 1 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid processing backfill bounds")
 	}
 	query := `WITH RECURSIVE live(id) AS (

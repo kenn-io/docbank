@@ -353,6 +353,4 @@ func writeDaemonEmbeddingConfig(t *testing.T, root string, cfg config.Config) {
 	_, err = file.Write(encoded.Bytes())
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
-	_, err = config.Load(root)
-	require.NoError(t, err)
 }

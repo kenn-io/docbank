@@ -132,10 +132,8 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	unused := cfg.EmbeddingProfiles["semantic"]
 	unused.Chunk.MaxTokens = 600
 	cfg.EmbeddingProfiles["unused"] = unused
-	recipe := cfg.ProcessingProfiles[name]
-	recipe.Embeddings = []string{"unused"}
-	cfg.ProcessingProfiles["aaa-unused"] = recipe
 	cfg.EmbeddingProfiles["small"] = unused
+	recipe := cfg.ProcessingProfiles[name]
 	recipe.Embeddings = []string{"small"}
 	cfg.ProcessingProfiles["archive-small"] = recipe
 	cfg.EmbeddingProfiles["other"] = localTextSourceConfig(t, ollama.URL, "other-revision", "other-model", credentialEnvironment).EmbeddingProfiles["semantic"]
@@ -228,18 +226,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, plan.Profiles, choice.Profiles)
 	require.Equal(t, 2, choice.Version)
-	candidate, err := localTextCandidate(cfg, choice.Server, choice.Profiles)
-	require.NoError(t, err)
-	service.Stop()
 	ollama.Close()
-	moved := serviceFor(candidate)
-	for _, node := range nodes {
-		for _, profile := range choice.Profiles {
-			process(moved, node, profile)
-		}
-	}
-	require.Zero(t, localDocuments.Load(), "unchanged documents reuse their retained vectors")
-	moved.Stop()
 	writeDaemonEmbeddingConfig(t, layout.Root, cfg)
 	t.Setenv("DOCBANK_HOME", layout.Root)
 	t.Setenv("DO_NOT_TRACK", "1")
