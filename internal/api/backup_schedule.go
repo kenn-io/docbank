@@ -40,7 +40,7 @@ func startBackupSchedule(d Deps) error {
 	if d.Jobs == nil {
 		return nil
 	}
-	err := d.Jobs.Start("backup:scheduled", func(ctx context.Context) error {
+	err := d.Jobs.StartWorker("backup:scheduled", func(ctx context.Context) error {
 		return RunBackupSchedule(ctx, d)
 	})
 	if errors.Is(err, jobs.ErrDuplicate) || errors.Is(err, jobs.ErrClosed) {
@@ -127,6 +127,9 @@ func runBackupSchedule(ctx context.Context, d Deps, schedule *backupSchedule) er
 		jobs.ReportBusy(ctx, true)
 		deadline, attempted, err := schedule.capture(ctx, d, d.Logger, cfg, captureDue)
 		jobs.ReportBusy(ctx, false)
+		if attempted {
+			jobs.ReportFound(ctx)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -192,6 +195,9 @@ func waitBackupDeadline(ctx context.Context, deadline time.Time, now func() time
 }
 
 func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
+	// runBackupSchedule reports each capture with jobs.ReportFound.
+	settle, resume := jobs.Park(ctx, false)
+	defer resume()
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -200,6 +206,8 @@ func waitBackupSchedule(ctx context.Context, delay time.Duration, wake <-chan st
 	case <-wake:
 		return nil
 	case <-timer.C:
+		return nil
+	case <-settle:
 		return nil
 	}
 }

@@ -68,7 +68,8 @@ func (r PlacementRunner) Start(
 	if supervisor == nil {
 		return errors.New("placement runner requires a job supervisor")
 	}
-	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
+	// A worker job lets Supervisor.Settle wait until the operation finishes.
+	return supervisor.StartWorker("storage:"+operationID, func(ctx context.Context) error {
 		delay := r.RetryDelay
 		if delay <= 0 {
 			delay = time.Second

@@ -26,7 +26,7 @@ func startPageRuntime(ctx context.Context, cfg config.Config, supervisor *jobs.S
 	if err != nil {
 		return nil, err
 	}
-	if err := supervisor.Start("pages:render", worker.Run); err != nil {
+	if err := supervisor.StartWorker("pages:render", worker.Run); err != nil {
 		return nil, err
 	}
 	return engine, nil

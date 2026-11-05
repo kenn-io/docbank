@@ -40,12 +40,18 @@ type Driver interface {
 }
 
 // OpenOptions carries the connection semantics required by a Docbank or Kit
-// operation. BusyTimeout zero selects the adapter's five-second default.
+// operation. BusyTimeout zero selects the adapter's five-second default;
+// NoBusyWait makes a locked database fail at once.
 type OpenOptions struct {
 	Access          AccessMode
 	TransactionMode TransactionMode
 	BusyTimeout     time.Duration
 }
+
+// NoBusyWait is a BusyTimeout that disables SQLite's busy handler, so a
+// statement that meets a lock reports SQLITE_BUSY without sleeping. Tests use
+// it to produce lock contention without waiting on the wall clock.
+const NoBusyWait time.Duration = -1
 
 // Validate rejects a missing or incomplete driver before any vault path is
 // created or locked.

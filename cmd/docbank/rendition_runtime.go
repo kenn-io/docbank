@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
@@ -327,8 +328,14 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 		return mistral.Profile{}, err
 	}
 	return mistral.Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
-		SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), Timeout: runtime.RequestTimeout.Std()}, nil
+		SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), Timeout: runtime.RequestTimeout.Std(),
+		MaxRetryDelay: mistralMaxRetryDelay}, nil
 }
+
+// mistralMaxRetryDelay caps the Mistral client's wait between HTTP retries.
+// Zero keeps the client default. In-process tests set one nanosecond so a
+// transient failure is retried without waiting on the real clock.
+var mistralMaxRetryDelay time.Duration
 
 func configureVision(cfg config.Config, name string, registered map[string]registeredRenditionProvider) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure

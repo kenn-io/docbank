@@ -84,31 +84,27 @@ func (w *Worker) Run(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	// found records whether any scan since the last wait processed work.
+	found := false
 	for {
 		processed, err := w.ScanOnce(ctx)
 		if err != nil {
 			return err
 		}
+		found = found || processed > 0
 		if processed == batchSize {
 			continue
 		}
-		if !w.wait(ctx) {
+		if !w.idle(ctx, found) {
 			return nil
 		}
+		found = false
 	}
 }
 
-func (w *Worker) wait(ctx context.Context) bool {
-	timer := time.NewTimer(w.interval)
-	select {
-	case <-ctx.Done():
-		if !timer.Stop() {
-			<-timer.C
-		}
-		return false
-	case <-timer.C:
-		return true
-	}
+// idle waits for the next scan and reports false once ctx ends.
+func (w *Worker) idle(ctx context.Context, found bool) bool {
+	return jobs.Idle(ctx, w.interval, found) == nil
 }
 
 // ScanOnce processes one bounded batch and returns the number attempted.

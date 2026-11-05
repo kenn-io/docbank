@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -78,6 +79,9 @@ type IndexWorker struct {
 
 	mu       sync.Mutex
 	inflight map[string]*indexBuildCall
+	// rebuilt records that a scan started an index rebuild since Run last
+	// waited between scans.
+	rebuilt atomic.Bool
 }
 
 func NewIndexWorker(config IndexWorkerConfig) (*IndexWorker, error) {
@@ -422,22 +426,20 @@ func (worker *IndexWorker) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		delay := worker.idleDelay
 		if err != nil {
 			failures++
 			if worker.retryable == nil || !worker.retryable(err) || failures >= 3 {
 				return err
 			}
-			delay = min(worker.idleDelay*time.Duration(1<<(failures-1)), 30*time.Second)
-		} else {
-			failures = 0
+			delay := min(worker.idleDelay*time.Duration(1<<(failures-1)), 30*time.Second)
+			if err := jobs.Wait(ctx, delay); err != nil {
+				return err
+			}
+			continue
 		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		failures = 0
+		if err := jobs.Idle(ctx, worker.idleDelay, worker.rebuilt.Swap(false)); err != nil {
+			return err
 		}
 	}
 }
@@ -490,6 +492,7 @@ func (worker *IndexWorker) refresh(ctx context.Context, space string) error {
 	}
 	jobs.ReportBusy(ctx, true)
 	defer jobs.ReportBusy(ctx, false)
+	worker.rebuilt.Store(true)
 	_, err = worker.Rebuild(ctx, space)
 	return err
 }

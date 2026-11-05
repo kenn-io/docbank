@@ -230,6 +230,9 @@ func (s *Service) RunWorker(ctx context.Context) error {
 	jobs.ReportBusy(ctx, false)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	// found records whether the worker ran a job, or met work it could not
+	// claim yet, since it last waited.
+	found := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -244,16 +247,23 @@ func (s *Service) RunWorker(ctx context.Context) error {
 				}
 				logger.ErrorContext(ctx, "mailbox job failed", "job", j.ID, "error", err)
 			}
+			found = true
 			continue
 		}
 		if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrMailboxLimit) && !s.Store.RenditionJobErrorRetryable(err) {
 			return err
 		}
+		found = found || !errors.Is(err, store.ErrNotFound)
+		settle, resume := jobs.Park(ctx, found)
 		select {
 		case <-ctx.Done():
+			resume()
 			return ctx.Err()
 		case <-ticker.C:
+		case <-settle:
 		}
+		resume()
+		found = false
 	}
 }
 func (s *Service) runCancelableJob(ctx context.Context, j store.MailboxJob) error {

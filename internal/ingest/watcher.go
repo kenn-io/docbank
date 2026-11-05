@@ -320,6 +320,15 @@ type Watcher struct {
 	newNotifications func(string, exclusions) (watchNotificationSource, error)
 	notifications    watchNotificationSource
 	notificationErr  error
+	// worked records that a scan changed the vault since the worker last
+	// parked between scans.
+	worked bool
+}
+
+// reportWork marks the job busy and records that this scan did work.
+func (w *Watcher) reportWork(ctx context.Context) {
+	jobs.ReportBusy(ctx, true)
+	w.worked = true
 }
 
 // NewWatcher validates the non-filesystem portion of one watched inbox.
@@ -456,32 +465,49 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			w.notifications = nil
 		}
 	}()
+	reconcile := func() error {
+		if source == nil {
+			enroll()
+		}
+		hints := watchScanHints{Reconcile: true}
+		if source != nil {
+			hints.Dirty = source.Drain().Dirty
+		}
+		return scan(hints)
+	}
 	for {
 		var wake <-chan struct{}
 		var failures <-chan error
 		if source != nil {
 			wake, failures = source.Wake(), source.Errors()
 		}
+		// Settle can ask for a reconciliation scan before the next tick.
+		settle, resume := jobs.Park(ctx, w.worked)
 		select {
 		case <-ctx.Done():
+			resume()
 			return ctx.Err()
 		case <-ticker.C:
-			if source == nil {
-				enroll()
+			resume()
+			w.worked = false
+			if err := reconcile(); err != nil {
+				return err
 			}
-			hints := watchScanHints{Reconcile: true}
-			if source != nil {
-				hints.Dirty = source.Drain().Dirty
-			}
-			if err := scan(hints); err != nil {
+		case <-settle:
+			resume()
+			w.worked = false
+			if err := reconcile(); err != nil {
 				return err
 			}
 		case <-wake:
+			resume()
+			w.worked = false
 			hints := source.Drain()
 			if err := scan(hints); err != nil {
 				return err
 			}
 		case err := <-failures:
+			// Not a scan, so the next park keeps the work already recorded.
 			disable(err)
 		}
 	}
@@ -1076,7 +1102,7 @@ func (w *Watcher) reconcileSourcePresence(ctx context.Context, inventory *watchI
 	if err != nil || !changed {
 		return err
 	}
-	jobs.ReportBusy(ctx, true)
+	w.reportWork(ctx)
 	defer jobs.ReportBusy(ctx, false)
 	return w.mutate(ctx, func() error {
 		return w.ing.Store.ReconcileWatchSourcePresence(ctx, w.config.Name, presence, w.now())
@@ -1500,7 +1526,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 			return nil
 		}
-		jobs.ReportBusy(ctx, true)
+		w.reportWork(ctx)
 		defer jobs.ReportBusy(ctx, false)
 		if w.process != nil {
 			err = w.process(ctx, rel, &observation, source.open)

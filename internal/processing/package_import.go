@@ -89,6 +89,8 @@ func NewPackageImportWorker(cfg PackageImportConfig) (*PackageImportWorker, erro
 func (w *PackageImportWorker) Run(ctx context.Context) error {
 	jobs.ReportBusy(ctx, false)
 	delay := w.cfg.IdleDelay
+	// found records whether any job since the last idle wait was processed.
+	found := false
 	for {
 		more, err := w.ProcessOnce(ctx)
 		if err != nil && ctx.Err() != nil {
@@ -96,12 +98,18 @@ func (w *PackageImportWorker) Run(ctx context.Context) error {
 		}
 		if err == nil {
 			delay = w.cfg.IdleDelay
+			found = found || more
 		}
 		if err != nil || !more {
-			select {
-			case <-ctx.Done():
+			var waitErr error
+			if err != nil {
+				waitErr = jobs.Wait(ctx, delay)
+			} else {
+				waitErr = jobs.Idle(ctx, delay, found)
+				found = false
+			}
+			if waitErr != nil {
 				return ctx.Err()
-			case <-time.After(delay):
 			}
 		}
 		if err != nil {
