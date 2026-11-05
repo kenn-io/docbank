@@ -759,11 +759,11 @@ func TestPDFiumCloseKeepsBackingLeaseUntilScavengeCompletes(t *testing.T) {
 
 func TestPDFiumSequentialEnginesReuseBacking(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		// The second engine waits on the backing token until its deadline, so
-		// the token must belong to this bubble for that wait to use fake time.
-		process := wasmBacking
-		wasmBacking = newBackingManager(process.capacity)
-		t.Cleanup(func() { wasmBacking = process })
+		// The token must belong to this bubble for the wait to use fake time.
+		// Reuse the process backing instead of keeping a second allocation live.
+		token := wasmBacking.token
+		wasmBacking.token = make(chan struct{}, 1)
+		t.Cleanup(func() { wasmBacking.token = token })
 		first, err := NewPDFium(qualificationRecipe())
 		require.NoError(t, err)
 		defer func() { require.NoError(t, first.Close()) }()

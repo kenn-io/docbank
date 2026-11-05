@@ -371,11 +371,11 @@ func TestVerifyEvidenceCarriesOnePageDeadline(t *testing.T) {
 
 func TestCanceledEngineAcquireDoesNotWaitForActivePage(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		// The engine's waits must belong to this bubble, so use a backing
-		// manager created inside it.
-		process := wasmBacking
-		wasmBacking = newBackingManager(process.capacity)
-		t.Cleanup(func() { wasmBacking = process })
+		// The wait must belong to this bubble; keep the process backing so
+		// the test does not retain a second 512 MiB allocation.
+		token := wasmBacking.token
+		wasmBacking.token = make(chan struct{}, 1)
+		t.Cleanup(func() { wasmBacking.token = token })
 		recipe := qualificationRecipe()
 		engine, err := NewPDFium(recipe)
 		require.NoError(t, err)
