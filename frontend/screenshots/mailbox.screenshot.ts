@@ -162,22 +162,28 @@ test.describe("mailbox import screenshot", () => {
     const body = page.frameLocator('iframe[title^="Email HTML body"]');
     await expect(body.getByRole("heading", { name: "Project update" })).toBeVisible();
     await page.setViewportSize({ width: 860, height: 1500 });
-    await reader.screenshot({
+    // The reader scrolls inside the preview's fixed-height tab area, so the
+    // shots capture that area as a reader sees it.
+    const preview = page.locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`);
+    await preview.screenshot({
       path: path.join(output, "web-email-reader.png"),
       animations: "disabled",
     });
     await reader.getByRole("button", { name: "Show raw headers", exact: true }).click();
-    await expect(reader.getByLabel("Raw email headers")).toContainText("review@example.test");
-    await reader.screenshot({
+    const rawHeaders = reader.getByLabel("Raw email headers");
+    await expect(rawHeaders).toContainText("review@example.test");
+    await rawHeaders.scrollIntoViewIfNeeded();
+    await preview.screenshot({
       path: path.join(output, "web-email-headers.png"),
       animations: "disabled",
     });
     await page.getByRole("tab", { name: "Attachments", exact: true }).click();
     const attachments = page.getByRole("region", { name: "Attachments" });
     await expect(attachments.getByRole("button", { name: "project.csv" })).toBeVisible();
-    await page
-      .locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`)
-      .screenshot({ path: path.join(output, "web-email-attachments.png"), animations: "disabled" });
+    await preview.screenshot({
+      path: path.join(output, "web-email-attachments.png"),
+      animations: "disabled",
+    });
     await writeFile(
       path.join(output, "mailbox-proof.json"),
       JSON.stringify({ job, occurrences }, null, 2) + "\n",
