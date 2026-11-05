@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +20,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const descendantReady = "descendant-ready"
+
 var (
 	mode           = "echo"
 	networkAddress string
@@ -33,20 +36,10 @@ type echoResponse struct {
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--descendant" {
-		if mode == "file-descendant-exit" {
-			if err := os.WriteFile("/work/descendant-ready", []byte("ready"), 0o600); err != nil {
-				os.Exit(6)
-			}
-			for {
-				time.Sleep(time.Hour)
-			}
-		}
-		if _, err := fmt.Fprintln(os.Stdout, "descendant-ready"); err != nil || os.Stdout.Sync() != nil {
+		if _, err := fmt.Fprintln(os.Stdout, descendantReady); err != nil {
 			os.Exit(6)
 		}
-		for {
-			time.Sleep(time.Hour)
-		}
+		blockUntilKilled()
 	}
 	if os.Getenv("DOCBANK_SANDBOX_WARMUP") == "1" {
 		if err := runWarmup(); err != nil {
@@ -203,9 +196,7 @@ func main() {
 		}
 		fmt.Print("spawned")
 		_ = os.Stdout.Sync()
-		for {
-			time.Sleep(time.Hour)
-		}
+		blockUntilKilled()
 	case "overflow":
 		block := make([]byte, 32<<10)
 		for {
@@ -222,13 +213,19 @@ func main() {
 			os.Exit(5)
 		}
 	case "file-descendant-exit":
+		ready, readyWriter, err := os.Pipe()
+		if err != nil {
+			os.Exit(3)
+		}
 		command := exec.Command("/proc/self/exe", "--descendant")
-		command.Stdout = io.Discard
+		command.Stdout = readyWriter
 		command.Stderr = io.Discard
 		if err := command.Start(); err != nil {
 			os.Exit(3)
 		}
-		if err := waitForFile("/work/descendant-ready"); err != nil {
+		_ = readyWriter.Close()
+		line, err := bufio.NewReader(ready).ReadString('\n')
+		if err != nil || line != descendantReady+"\n" {
 			os.Exit(4)
 		}
 		if err := os.WriteFile("/work/"+outputName, []byte("supervised output"), 0o600); err != nil {
@@ -478,13 +475,14 @@ func verifyCallerBoundary() error {
 	return nil
 }
 
-func waitForFile(path string) error {
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
-		time.Sleep(10 * time.Millisecond)
+// blockUntilKilled parks the process on a pipe nobody writes to, so it runs
+// until the sandbox kills it.
+func blockUntilKilled() {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		os.Exit(6)
 	}
-	return fmt.Errorf("timed out waiting for %s", path)
+	_, _ = reader.Read(make([]byte, 1))
+	_ = writer.Close()
+	os.Exit(6)
 }

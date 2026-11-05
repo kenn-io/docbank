@@ -1,31 +1,36 @@
 package providerutil
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
-	"time"
 )
 
+// managedCommandReady is the line the blocking helper prints once it runs.
+const managedCommandReady = "managed-command-helper-ready"
+
 func TestManagedCommandStopsOnCancellation(t *testing.T) {
-	if mode, marker := managedCommandHelperArguments(); mode != "" {
-		runManagedCommandHelper(mode, marker)
+	if mode := managedCommandHelperMode(); mode != "" {
+		runManagedCommandHelper(mode)
 		return
 	}
 
-	directory := t.TempDir()
-	marker := filepath.Join(directory, "heartbeat")
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	stdinReader, stdinWriter := testPipe(t)
+	stdoutReader, stdoutWriter := testPipe(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	command := exec.CommandContext(ctx, executable,
-		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "process", marker)
+		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "block")
+	command.Stdin = stdinReader
+	command.Stdout = stdoutWriter
 	managed, err := NewManagedCommand(command)
 	if err != nil {
 		t.Fatal(err)
@@ -33,73 +38,76 @@ func TestManagedCommandStopsOnCancellation(t *testing.T) {
 	runResult := make(chan error, 1)
 	go func() { runResult <- managed.Run() }()
 
-	waitForFile(t, marker)
+	waitForHelperReady(t, stdoutReader, runResult)
+	// The running helper now holds its own copy of stdin. Dropping ours
+	// leaves the helper as the only reader.
+	if err := stdinReader.Close(); err != nil {
+		t.Fatal(err)
+	}
 	cancel()
-	select {
-	case err := <-runResult:
-		if err == nil {
-			t.Fatal("canceled managed command succeeded")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("managed command did not stop after cancellation")
+	if err := <-runResult; err == nil {
+		t.Fatal("canceled managed command succeeded")
 	}
-
-	before, err := os.Stat(marker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(150 * time.Millisecond) //nolint:kennlint // sleeptest: checks that the canceled helper subprocess stopped writing its heartbeat
-	after, err := os.Stat(marker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Size() != before.Size() {
-		t.Fatalf("process remained alive after cancellation: heartbeat grew from %d to %d bytes",
-			before.Size(), after.Size())
+	// The helper blocks reading stdin until it is killed. A write succeeds
+	// only while some process still holds the read end open.
+	if _, err := stdinWriter.WriteString("x"); err == nil {
+		t.Fatal("process remained alive after cancellation: its stdin is still open")
 	}
 }
 
-func managedCommandHelperArguments() (string, string) {
+func managedCommandHelperMode() string {
 	for index, argument := range os.Args {
-		if argument == "--" && index+2 < len(os.Args) {
-			return os.Args[index+1], os.Args[index+2]
+		if argument == "--" && index+1 < len(os.Args) {
+			return os.Args[index+1]
 		}
 	}
-	return "", ""
+	return ""
 }
 
-func runManagedCommandHelper(mode, marker string) {
+func runManagedCommandHelper(mode string) {
 	switch mode {
-	case "process":
-		file, err := os.OpenFile(marker, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
+	case "block":
+		if _, err := fmt.Fprintln(os.Stdout, managedCommandReady); err != nil {
 			os.Exit(2)
 		}
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := file.WriteString("x"); err != nil {
-				_ = file.Close()
-				os.Exit(2)
-			}
-			time.Sleep(10 * time.Millisecond) //nolint:kennlint // sleeptest: heartbeat interval in the helper subprocess
-		}
-		if err := file.Close(); err != nil {
-			os.Exit(2)
-		}
+		// Run until the test closes stdin or the managed command kills us.
+		_, _ = io.Copy(io.Discard, os.Stdin)
 	default:
 		_, _ = fmt.Fprintln(os.Stderr, "unknown managed-command helper mode")
 		os.Exit(2)
 	}
 }
 
-func waitForFile(t *testing.T, path string) {
+// waitForHelperReady blocks until the helper reports that it is running. It
+// fails the test instead if the command finishes first.
+func waitForHelperReady(t *testing.T, stdout io.Reader, finished <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if information, err := os.Stat(path); err == nil && information.Size() > 0 {
-			return
+	ready := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			if scanner.Text() == managedCommandReady {
+				close(ready)
+				return
+			}
 		}
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // sleeptest: polls a file written by the helper subprocess
+	}()
+	select {
+	case <-ready:
+	case err := <-finished:
+		t.Fatalf("helper process finished before reporting readiness: %v", err)
 	}
-	t.Fatalf("timed out waiting for %s", filepath.Base(path))
+}
+
+func testPipe(t *testing.T) (*os.File, *os.File) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = writer.Close()
+		_ = reader.Close()
+	})
+	return reader, writer
 }

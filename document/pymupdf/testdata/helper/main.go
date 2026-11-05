@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 const (
@@ -63,13 +63,13 @@ func main() {
 		os.Exit(7)
 	}
 	if mode == "wait" {
-		time.Sleep(10 * time.Second)
+		waitUntilKilled(source)
 	}
 	if mode == "unbounded-output" {
 		chunk := []byte(strings.Repeat("x", 32<<10))
 		for {
 			if _, writeErr := os.Stdout.Write(chunk); writeErr != nil {
-				time.Sleep(10 * time.Second)
+				blockUntilKilled()
 			}
 		}
 	}
@@ -149,4 +149,35 @@ func main() {
 func fail(message string) {
 	_, _ = fmt.Fprintln(os.Stderr, message)
 	os.Exit(7)
+}
+
+// readyMarker starts the PDF comment line that carries the test's listener
+// address.
+const readyMarker = "\n%docbank-ready "
+
+// waitUntilKilled connects to the test's listener named in the PDF, which
+// tells the test the child is running, and then runs until it is killed.
+func waitUntilKilled(source []byte) {
+	_, after, found := strings.Cut(string(source), readyMarker)
+	address, _, complete := strings.Cut(after, "\n")
+	if !found || !complete {
+		fail("wait mode needs a ready address")
+	}
+	connection, err := net.Dial("tcp", address)
+	if err != nil {
+		fail("connect to ready address")
+	}
+	_, _ = io.Copy(io.Discard, connection)
+	fail("ready connection closed")
+}
+
+// blockUntilKilled parks the child on a pipe nobody writes to.
+func blockUntilKilled() {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		fail("create blocking pipe")
+	}
+	_, _ = reader.Read(make([]byte, 1))
+	_ = writer.Close()
+	fail("blocking pipe returned")
 }

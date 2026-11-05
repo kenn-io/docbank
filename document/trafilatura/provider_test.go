@@ -218,11 +218,14 @@ func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 	t.Run("unbounded stdout stops promptly", func(t *testing.T) {
 		provider := newTestProvider(t, helperExecutable(t, "unbounded-output"), 10*time.Second, 1024)
 		upload := newTestUpload(testHTML, "article.html", "text/html")
-		started := time.Now()
-		_, err := provider.Render(t.Context(), upload,
-			testAuthorization(provider.Descriptor(), upload.Metadata()))
-		assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
-		assert.Less(t, time.Since(started), time.Second)
+		synctest.Test(t, func(t *testing.T) {
+			started := time.Now()
+			_, err := provider.Render(t.Context(), upload,
+				testAuthorization(provider.Descriptor(), upload.Metadata()))
+			assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
+			// Fake time advances only if Render waits for the child timeout.
+			assert.Zero(t, time.Since(started))
+		})
 	})
 	t.Run("private stderr", func(t *testing.T) {
 		provider := newTestProvider(t, helperExecutable(t, "failure"), time.Second, 1<<20)
@@ -237,11 +240,18 @@ func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 
 func TestProviderEnforcesTimeoutCancellationAndExpiry(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "wait"), 20*time.Millisecond, 1<<20) //nolint:kennlint // deadlinetest: the waiting child must reach its deadline and return a capacity error
+		const timeout = 20 * time.Millisecond
+		executable := helperExecutable(t, "wait")
 		upload := newTestUpload(testHTML, "article.html", "text/html")
-		_, err := provider.Render(t.Context(), upload,
-			testAuthorization(provider.Descriptor(), upload.Metadata()))
-		assertProviderCode(t, err, document.RenditionErrorCapacity)
+		synctest.Test(t, func(t *testing.T) {
+			provider := newTestProvider(t, executable, timeout, 1<<20)
+			started := time.Now()
+			_, err := provider.Render(t.Context(), upload,
+				testAuthorization(provider.Descriptor(), upload.Metadata()))
+			assertProviderCode(t, err, document.RenditionErrorCapacity)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Equal(t, timeout, time.Since(started))
+		})
 	})
 	t.Run("cancellation", func(t *testing.T) {
 		provider := newTestProvider(t, helperExecutable(t, "wait"), time.Second, 1<<20)
@@ -254,12 +264,24 @@ func TestProviderEnforcesTimeoutCancellationAndExpiry(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 	})
 	t.Run("expired after child", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "slow-complete"), time.Second, 1<<20)
+		profile := testProfile(t, helperExecutable(t, "complete"), time.Second, 1<<20)
 		upload := newTestUpload(testHTML, "article.html", "text/html")
 		synctest.Test(t, func(t *testing.T) {
+			// The child would complete only after the authorization expires.
+			profile.Runner = &recordingRunner{identity: testRunnerIdentity,
+				run: func(ctx context.Context, request IsolatedRunRequest) (IsolatedRunResult, error) {
+					select {
+					case <-ctx.Done():
+						return isolatedResult(testRunnerIdentity, request, nil), ctx.Err()
+					case <-time.After(40 * time.Millisecond):
+					}
+					return defaultRun(ctx, testRunnerIdentity, request)
+				}}
+			provider, err := New(profile)
+			require.NoError(t, err)
 			authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
 			authorization.ExpiresAt = time.Now().UTC().Add(15 * time.Millisecond).Format(providerutil.TimestampForm)
-			_, err := provider.Render(t.Context(), upload, authorization)
+			_, err = provider.Render(t.Context(), upload, authorization)
 			assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
 		})
 	})

@@ -55,9 +55,7 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 		pin       string
 		addr      string
 		secret    string
-		stallBody bool
 		abortBody bool
-		timeout   time.Duration
 		wantAuth  bool
 	}{
 		{name: "verified", state: capselfhosted.ProbeVerified, body: `{"data":{}}`, wantAuth: true},
@@ -68,7 +66,8 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 		{name: "tls_verification_failed", state: capselfhosted.ProbeTLSVerificationFailed, root: false},
 		{name: "credential_missing", state: capselfhosted.ProbeCredentialMissing, secret: "missing"},
 		{name: "provider_rate_limited", state: capselfhosted.ProbeProviderRateLimited, code: http.StatusTooManyRequests},
-		{name: "provider_timeout", state: capselfhosted.ProbeProviderUnavailable, stallBody: true, timeout: 10 * time.Millisecond}, //nolint:kennlint // deadlinetest: the stalled response must expire so the probe reports provider unavailability
+		// TestProbeTimeoutAtBodyEOF covers a stalled body that outlives the
+		// probe deadline, on the fake clock of a synctest bubble.
 		{name: "provider_body_error", state: capselfhosted.ProbeProviderUnavailable, abortBody: true},
 		{name: "contract_mismatch_status", state: capselfhosted.ProbeContractMismatch, code: http.StatusPaymentRequired},
 		{name: "contract_mismatch_body", state: capselfhosted.ProbeContractMismatch, body: `{"data":[]}`},
@@ -94,21 +93,6 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 				}
 				if test.code != 0 {
 					w.WriteHeader(test.code)
-					return
-				}
-				if test.stallBody {
-					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`{"data":`))
-					if err := http.NewResponseController(w).Flush(); err != nil {
-						// On a slow runner the probe deadline can pass while the server
-						// still counts this connection as new. The subtest then ends and
-						// server.Close closes the connection under this handler.
-						if !errors.Is(err, net.ErrClosed) {
-							t.Errorf("flush response: %v", err)
-						}
-						return
-					}
-					<-r.Context().Done()
 					return
 				}
 				if test.abortBody {
@@ -147,17 +131,13 @@ func TestProbeClassifiesRegisteredDeployment(t *testing.T) {
 			if test.secret != "" {
 				secret = capSecrets{err: errors.New("credential environment variable is unavailable")}
 			}
-			probeTimeout := test.timeout
-			if probeTimeout == 0 {
-				probeTimeout = time.Minute
-			}
 			client, err := capselfhosted.NewClient(capselfhosted.Deployment{
 				Origin: "https://example.com:" + strconv.FormatUint(port, 10),
 				Egress: providerhttp.EgressPolicy{Scheme: "https", Host: "example.com", Port: uint16(port),
 					AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
 					ProxyMode:    providerhttp.ProxyDisabled,
 					TLS:          providerhttp.TLSPolicy{RootCAs: rootCAs, SPKISHA256: []string{pin}}},
-				CredentialBinding: "credential:cap", DeploymentRevision: "v-synthetic", ProbeTimeout: probeTimeout,
+				CredentialBinding: "credential:cap", DeploymentRevision: "v-synthetic", ProbeTimeout: time.Minute,
 			}, secret, resolver)
 			require.NoError(t, err)
 			evidence, err := client.Probe(t.Context())

@@ -795,25 +795,28 @@ func TestBridgeContractClassifiesArtifactReadTimeout(t *testing.T) {
 
 func TestBridgeContractPreservesCredentialFailuresAndStripsAmbientCookies(t *testing.T) {
 	t.Run("credential failure", func(t *testing.T) {
-		fixture := newBridgeFixture(t)
-		resolver := secretResolverFunc(func(context.Context, string) (string, error) {
-			return "", errors.New("synthetic resolver failure")
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newBridgeFixture(t)
+			resolver := secretResolverFunc(func(context.Context, string) (string, error) {
+				return "", errors.New("synthetic resolver failure")
+			})
+			client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor,
+				resolver, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					t.Fatal("request reached transport after credential failure")
+					return nil, errors.New("unreachable test transport")
+				})})
+			baseline := runtime.NumGoroutine()
+			for range 10 {
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				var providerError *document.RenditionProviderError
+				require.ErrorAs(t, err, &providerError)
+				assert.Equal(t, document.RenditionErrorAuthentication, providerError.Code())
+			}
+			// Every goroutine the failed renders started has exited or is
+			// blocked; a blocked one would also fail the bubble at its end.
+			synctest.Wait()
+			assert.LessOrEqual(t, runtime.NumGoroutine(), baseline+2)
 		})
-		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor,
-			resolver, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-				t.Fatal("request reached transport after credential failure")
-				return nil, errors.New("unreachable test transport")
-			})})
-		baseline := runtime.NumGoroutine()
-		for range 10 {
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			var providerError *document.RenditionProviderError
-			require.ErrorAs(t, err, &providerError)
-			assert.Equal(t, document.RenditionErrorAuthentication, providerError.Code())
-		}
-		require.Eventually(t, func() bool {
-			return runtime.NumGoroutine() <= baseline+2
-		}, time.Second, 10*time.Millisecond)
 	})
 
 	t.Run("ambient cookie jar", func(t *testing.T) {

@@ -22,6 +22,48 @@ env:
   GOFLAGS: -trimpath
 
 jobs:
+  email-pdf-memory-proof:
+    name: Email PDF memory proof
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - name: Prepare pinned renderer without changing host policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/email-proof/fonts" "$RUNNER_TEMP/email-proof/bin"
+          cd "$RUNNER_TEMP/email-proof"
+          kit-download https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.34/linux64/chrome-linux64.zip chrome.zip
+          echo 'ae8736ac28bc69278551500f219fc749575648263c43ec5990749eff43b9fcf8  chrome.zip' | sha256sum -c -
+          python3 -m zipfile -e chrome.zip .
+          chmod +x chrome-linux64/chrome chrome-linux64/chrome_crashpad_handler
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf fonts/
+          if ! command -v bwrap >/dev/null; then
+            kit-retry 3 5 apt-get download bubblewrap
+            dpkg-deb -x bubblewrap_*.deb bubblewrap
+            cp bubblewrap/usr/bin/bwrap bin/
+          fi
+          echo "$RUNNER_TEMP/email-proof/bin" >> "$GITHUB_PATH"
+          systemctl --user show --property=ControlGroup --value
+      - name: Run real Chromium memory proof
+        shell: bash
+        env:
+          DOCBANK_EMAILPDF_TEST_BUNDLE: ${{ runner.temp }}/email-proof/chrome-linux64
+          DOCBANK_EMAILPDF_TEST_FONTS: ${{ runner.temp }}/email-proof/fonts
+          DOCBANK_EMAILPDF_TEST_WORKER: ${{ runner.temp }}/email-proof/docbank
+        run: |
+          set -euo pipefail
+          go build -tags fts5 -o "$DOCBANK_EMAILPDF_TEST_WORKER" ./cmd/docbank
+          go test -tags fts5 -v ./document/emailpdf/ -run '^TestRuntimeRealLimits$/^chromium-memory-pressure$' -count=1
+
   changes:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04

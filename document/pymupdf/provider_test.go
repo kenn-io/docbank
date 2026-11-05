@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -192,15 +194,11 @@ func TestProviderTerminatesChildThatNeverStopsOversizedOutput(t *testing.T) {
 
 func TestProviderEnforcesTimeoutAndCancellation(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "wait"), 20*time.Millisecond, 1<<20) //nolint:kennlint // deadlinetest: the waiting child must reach its deadline and be terminated
-		upload := newTestUpload(testPDF(2))
-		started := time.Now()
-		_, err := provider.Render(t.Context(), upload,
-			testAuthorization(provider.Descriptor(), upload.Metadata()))
+		// The profile timeout ends before the authorization expires.
+		provider := newTestProvider(t, helperExecutable(t, "wait"), time.Minute, 1<<20)
+		err := renderUntilDeadlineExpires(t, provider)
 		assertProviderCode(t, err, document.RenditionErrorTransient)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-		// Leave room for process startup and cleanup, but stop before the helper's ten-second wait.
-		assert.Less(t, time.Since(started), 5*time.Second)
 	})
 	t.Run("cancellation", func(t *testing.T) {
 		provider := newTestProvider(t, helperExecutable(t, "wait"), time.Second, 1<<20)
@@ -213,15 +211,111 @@ func TestProviderEnforcesTimeoutAndCancellation(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 	t.Run("authorization expiry", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "wait"), time.Second, 1<<20)
-		upload := newTestUpload(testPDF(2))
-		authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
-		authorization.ExpiresAt = time.Now().UTC().Add(20 * time.Millisecond).Format(timestampForm)
-		_, err := provider.Render(t.Context(), upload, authorization)
+		// The authorization expires before the profile timeout ends.
+		provider := newTestProvider(t, helperExecutable(t, "wait"), MaxTimeout, 1<<20)
+		err := renderUntilDeadlineExpires(t, provider)
 		assertProviderCode(t, err, document.RenditionErrorPolicyRejected)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }
+
+func TestProviderDeadlineIsEarlierOfTimeoutAndExpiry(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout time.Duration
+		expiry  time.Duration
+		want    document.RenditionErrorCode
+	}{
+		{name: "timeout", timeout: time.Minute, expiry: 2 * time.Minute, want: document.RenditionErrorTransient},
+		{name: "authorization expiry", timeout: 2 * time.Minute, expiry: time.Minute, want: document.RenditionErrorPolicyRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := newTestProvider(t, helperExecutable(t, "wait"), test.timeout, 1<<20)
+			upload := newTestUpload(testPDF(2))
+			synctest.Test(t, func(t *testing.T) {
+				var armed time.Time
+				provider.withDeadline = func(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+					armed = deadline
+					// Report the deadline as already expired so Render stops
+					// before it launches a child.
+					expired := newExpiringContext(parent)
+					expired.expire()
+					return expired, func() {}
+				}
+				authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
+				authorization.ExpiresAt = time.Now().UTC().Add(test.expiry).Format(timestampForm)
+				started := time.Now()
+				_, err := provider.Render(t.Context(), upload, authorization)
+				assertProviderCode(t, err, test.want)
+				assert.Equal(t, started.Add(min(test.timeout, test.expiry)).UTC(), armed.UTC())
+			})
+		})
+	}
+}
+
+// renderUntilDeadlineExpires runs the waiting helper and expires the
+// operation deadline once the helper reports that it is running. It checks
+// that the helper was terminated and returns Render's error.
+func renderUntilDeadlineExpires(t *testing.T, provider *Provider) error {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	deadline := newExpiringContext(t.Context())
+	provider.withDeadline = func(context.Context, time.Time) (context.Context, context.CancelFunc) {
+		return deadline, func() {}
+	}
+	upload := newTestUpload(readyPDF(2, listener.Addr().String()))
+	finished := make(chan error, 1)
+	go func() {
+		_, renderErr := provider.Render(t.Context(), upload,
+			testAuthorization(provider.Descriptor(), upload.Metadata()))
+		finished <- renderErr
+	}()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if connection, acceptErr := listener.Accept(); acceptErr == nil {
+			accepted <- connection
+		}
+	}()
+	var connection net.Conn
+	select {
+	case connection = <-accepted:
+		t.Cleanup(func() { _ = connection.Close() })
+	case err := <-finished:
+		t.Fatalf("Render finished before the helper was running: %v", err)
+	}
+	deadline.expire()
+	renderErr := <-finished
+	_, err = connection.Read(make([]byte, 1))
+	require.Error(t, err, "the helper must be terminated when the deadline expires")
+	return renderErr
+}
+
+// expiringContext reports an expired deadline once the test calls expire.
+type expiringContext struct {
+	context.Context
+
+	done chan struct{}
+	once sync.Once
+}
+
+func newExpiringContext(parent context.Context) *expiringContext {
+	return &expiringContext{Context: parent, done: make(chan struct{})}
+}
+
+func (ctx *expiringContext) Done() <-chan struct{} { return ctx.done }
+
+func (ctx *expiringContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (ctx *expiringContext) expire() { ctx.once.Do(func() { close(ctx.done) }) }
 
 func TestProviderRejectsCancellationObservedAfterLargeChildResponse(t *testing.T) {
 	const pages = 20_000
@@ -396,6 +490,15 @@ func testAuthorization(
 }
 
 func testPDF(pageCount int) []byte {
+	return testPDFWithComment(pageCount, "synthetic")
+}
+
+// readyPDF carries the listener address the waiting helper connects to.
+func readyPDF(pageCount int, address string) []byte {
+	return testPDFWithComment(pageCount, "docbank-ready "+address)
+}
+
+func testPDFWithComment(pageCount int, comment string) []byte {
 	objects := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", pdfPageReferences(pageCount), pageCount),
@@ -404,7 +507,7 @@ func testPDF(pageCount int) []byte {
 		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate %d >>", page*90))
 	}
 	var output bytes.Buffer
-	_, _ = output.WriteString("%PDF-1.4\n%synthetic\n")
+	_, _ = output.WriteString("%PDF-1.4\n%" + comment + "\n")
 	offsets := make([]int, len(objects))
 	for index, object := range objects {
 		offsets[index] = output.Len()

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -86,6 +87,40 @@ func newServerClient(t *testing.T, server *httptest.Server, policy voyage.Policy
 		clone.URL.Host = target.Host
 		return transport.RoundTrip(clone)
 	})}
+	client, err := voyage.NewClient(policy, config)
+	require.NoError(t, err)
+	return client
+}
+
+// handlerTransport serves requests with handler in memory. Unlike a loopback
+// server, it lets a synctest bubble go idle, so retry backoff and attempt
+// deadlines run on fake time. Like a real transport, it returns the request
+// context's error when the context ends before the handler responds.
+func handlerTransport(handler http.Handler) http.RoundTripper {
+	return roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		served := make(chan struct{})
+		go func() {
+			defer close(served)
+			handler.ServeHTTP(recorder, request)
+		}()
+		select {
+		case <-served:
+			return recorder.Result(), nil
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+	})
+}
+
+// newHandlerClient builds a client whose requests run handler in memory; see
+// handlerTransport.
+func newHandlerClient(t *testing.T, handler http.Handler, policy voyage.Policy, config voyage.ClientConfig) *voyage.Client {
+	t.Helper()
+	if config.APIKey == "" {
+		config.APIKey = "synthetic-key"
+	}
+	config.HTTPClient = &http.Client{Transport: handlerTransport(handler)}
 	client, err := voyage.NewClient(policy, config)
 	require.NoError(t, err)
 	return client
@@ -402,27 +437,30 @@ func TestResponseValidationRejectsMalformedVectors(t *testing.T) {
 		{name: "duplicate keys", body: modelResponseJSON(`[{"embedding":` + vectorJSON() + `,"index":0,"index":0}]`)},
 		{name: "nan", body: modelResponseJSON(`[{"embedding":` + strings.Replace(vectorJSON(), "[0.25", "[NaN", 1) + `,"index":0}]`)},
 	}
+	// The synthetic manifest is dated today, which a bubble's clock precedes.
+	authorizations := fullAuthorizations(t, policy)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var calls atomic.Int32
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, tt.body)
-			}))
-			defer server.Close()
-			client := newServerClient(t, server, policy, voyage.ClientConfig{MaxRetries: 3, RetryBaseDelay: time.Millisecond})
-			png := mediaInput(t, mediatest.PNG(2, 2, nil))
-			if tt.name == "duplicate index" {
-				_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}, {Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
-				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-			} else {
-				_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
-				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-				assert.False(t, voyage.IsRetryable(err))
-				assert.Equal(t, 2, voyage.MetricsFromError(err).Requests, "malformed responses are retried once")
-			}
-			assert.Equal(t, int32(2), calls.Load())
+			// The malformed-response retry backs off on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				client := newHandlerClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, tt.body)
+				}), policy, voyage.ClientConfig{MaxRetries: 3})
+				png := mediaInput(t, mediatest.PNG(2, 2, nil))
+				if tt.name == "duplicate index" {
+					_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}, {Parts: []voyage.Part{{Media: png}}}}, authorizations)
+					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+				} else {
+					_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, authorizations)
+					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+					assert.False(t, voyage.IsRetryable(err))
+					assert.Equal(t, 2, voyage.MetricsFromError(err).Requests, "malformed responses are retried once")
+				}
+				assert.Equal(t, int32(2), calls.Load())
+			})
 		})
 	}
 }
@@ -451,23 +489,25 @@ func zeroVectorJSON() string {
 func TestRequestAndResponseLimitsFailBoundedly(t *testing.T) {
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Media: media.DefaultPolicy(), MaxRequestBytes: 2048, MaxResponseBytes: 64, MaxBatchItems: 2})
 	require.NoError(t, err)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeVectors(t, w, [][]float32{unitVector(0, 1)}, 1)
-	}))
-	defer server.Close()
-	client := newServerClient(t, server, policy, voyage.ClientConfig{})
+	// The synthetic manifest is dated today, which a bubble's clock precedes.
 	authorizations := fullAuthorizations(t, policy)
-	small := mediaInput(t, mediatest.WebP(2, 2))
+	// The oversized response is retried once, with backoff on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		client := newHandlerClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			writeVectors(t, w, [][]float32{unitVector(0, 1)}, 1)
+		}), policy, voyage.ClientConfig{})
+		small := mediaInput(t, mediatest.WebP(2, 2))
 
-	_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Text: strings.Repeat("x", 4096)}, {Media: small}}}}, authorizations)
-	require.ErrorIs(t, err, voyage.ErrBatchTooLarge, "estimated request size exceeds the policy limit")
+		_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Text: strings.Repeat("x", 4096)}, {Media: small}}}}, authorizations)
+		require.ErrorIs(t, err, voyage.ErrBatchTooLarge, "estimated request size exceeds the policy limit")
 
-	_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: small}}}, {Parts: []voyage.Part{{Media: small}}}, {Parts: []voyage.Part{{Media: small}}}}, authorizations)
-	require.ErrorIs(t, err, voyage.ErrBatchTooLarge, "batch exceeds the policy item limit")
+		_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: small}}}, {Parts: []voyage.Part{{Media: small}}}, {Parts: []voyage.Part{{Media: small}}}}, authorizations)
+		require.ErrorIs(t, err, voyage.ErrBatchTooLarge, "batch exceeds the policy item limit")
 
-	_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: small}}}}, authorizations)
-	require.ErrorIs(t, err, voyage.ErrMalformedResponse, "oversized responses are refused")
-	require.False(t, voyage.IsRetryable(err))
+		_, err = client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: small}}}}, authorizations)
+		require.ErrorIs(t, err, voyage.ErrMalformedResponse, "oversized responses are refused")
+		require.False(t, voyage.IsRetryable(err))
+	})
 }
 
 func TestHTTPFailureClassificationRetryAndSanitization(t *testing.T) {
@@ -494,40 +534,43 @@ func TestHTTPFailureClassificationRetryAndSanitization(t *testing.T) {
 		{name: "server error exhausted", statuses: []int{500, 502, 503}, want: voyage.ErrTransientResponse, wantCalls: 3, retryable: true},
 		{name: "unexpected 2xx", statuses: []int{204}, want: voyage.ErrMalformedResponse, wantCalls: 2},
 	}
+	// The synthetic manifest is dated today, which a bubble's clock precedes.
+	authorizations := fullAuthorizations(t, policy)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var calls atomic.Int32
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				call := calls.Add(1)
-				status := tt.statuses[min(int(call)-1, len(tt.statuses)-1)]
-				if tt.retryAfter != "" {
-					w.Header().Set("Retry-After", tt.retryAfter)
-				}
-				if status == 200 {
-					writeVectors(t, w, [][]float32{unitVector(0, 1)}, 1)
+			// Retry backoff runs on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				client := newHandlerClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					call := calls.Add(1)
+					status := tt.statuses[min(int(call)-1, len(tt.statuses)-1)]
+					if tt.retryAfter != "" {
+						w.Header().Set("Retry-After", tt.retryAfter)
+					}
+					if status == 200 {
+						writeVectors(t, w, [][]float32{unitVector(0, 1)}, 1)
+						return
+					}
+					w.WriteHeader(status)
+					_, _ = io.WriteString(w, tt.body)
+				}), policy, voyage.ClientConfig{MaxRetries: 3})
+				png := mediaInput(t, mediatest.PNG(2, 2, nil))
+				result, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, authorizations)
+				assert.Equal(t, tt.wantCalls, calls.Load())
+				if tt.want == nil {
+					require.NoError(t, err)
+					assert.Equal(t, int(tt.wantCalls)-1, result.Metrics.Retries)
 					return
 				}
-				w.WriteHeader(status)
-				_, _ = io.WriteString(w, tt.body)
-			}))
-			defer server.Close()
-			client := newServerClient(t, server, policy, voyage.ClientConfig{MaxRetries: 3, RetryBaseDelay: time.Millisecond})
-			png := mediaInput(t, mediatest.PNG(2, 2, nil))
-			result, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
-			assert.Equal(t, tt.wantCalls, calls.Load())
-			if tt.want == nil {
-				require.NoError(t, err)
-				assert.Equal(t, int(tt.wantCalls)-1, result.Metrics.Retries)
-				return
-			}
-			require.ErrorIs(t, err, tt.want)
-			assert.Equal(t, tt.retryable, voyage.IsRetryable(err))
-			assert.NotContains(t, err.Error(), "secret-token-echo", "provider bodies never reach error strings")
-			assert.NotContains(t, err.Error(), "bad model")
-			assert.Equal(t, int(tt.wantCalls), voyage.MetricsFromError(err).Requests)
-			var providerErr *voyage.ProviderError
-			require.ErrorAs(t, err, &providerErr)
-			assert.Equal(t, tt.statuses[len(tt.statuses)-1], providerErr.StatusCode)
+				require.ErrorIs(t, err, tt.want)
+				assert.Equal(t, tt.retryable, voyage.IsRetryable(err))
+				assert.NotContains(t, err.Error(), "secret-token-echo", "provider bodies never reach error strings")
+				assert.NotContains(t, err.Error(), "bad model")
+				assert.Equal(t, int(tt.wantCalls), voyage.MetricsFromError(err).Requests)
+				var providerErr *voyage.ProviderError
+				require.ErrorAs(t, err, &providerErr)
+				assert.Equal(t, tt.statuses[len(tt.statuses)-1], providerErr.StatusCode)
+			})
 		})
 	}
 }
@@ -568,8 +611,7 @@ func TestHTTPFailureClassificationDoesNotDependOnBodyReadability(t *testing.T) {
 				}, nil
 			})
 			client, err := voyage.NewClient(policy, voyage.ClientConfig{
-				APIKey: "synthetic-key", MaxRetries: 3, RetryBaseDelay: time.Millisecond,
-				HTTPClient: &http.Client{Transport: transport},
+				APIKey: "synthetic-key", MaxRetries: 3, HTTPClient: &http.Client{Transport: transport},
 			})
 			require.NoError(t, err)
 			png := mediaInput(t, mediatest.PNG(2, 2, nil))
@@ -605,49 +647,48 @@ func TestRetryAfterHeaderDrivesDelayAndIsExposed(t *testing.T) {
 
 func TestTimeoutAndCancellation(t *testing.T) {
 	policy := testPolicy(t)
-	release := make(chan struct{})
-	defer close(release)
-	// Each subtest gets its own server so a late request from one can't signal the other.
-	newServer := func(arrived chan<- struct{}) *httptest.Server {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The handler holds each request until its context ends, so only the
+	// attempt deadline or the caller's cancellation can finish it.
+	held := func(arrived chan<- struct{}) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if arrived != nil {
-				select {
-				case arrived <- struct{}{}:
-				default:
-				}
+				arrived <- struct{}{}
 			}
-			select {
-			case <-release:
-			case <-r.Context().Done():
-			}
+			<-r.Context().Done()
 			w.WriteHeader(http.StatusInternalServerError)
-		}))
-		t.Cleanup(server.Close)
-		return server
+		})
 	}
 	png := mediaInput(t, mediatest.PNG(2, 2, nil))
+	// The synthetic manifest is dated today, which a bubble's clock precedes.
+	authorizations := fullAuthorizations(t, policy)
 
 	t.Run("per attempt timeout is transient", func(t *testing.T) {
-		client := newServerClient(t, newServer(nil), policy, voyage.ClientConfig{Timeout: 50 * time.Millisecond, MaxRetries: 1}) //nolint:kennlint // deadlinetest: the held real HTTP response must expire and be classified as transient
-		_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
-		require.ErrorIs(t, err, voyage.ErrTransientResponse)
-		assert.True(t, voyage.IsRetryable(err))
+		// The attempt deadline expires on fake time.
+		synctest.Test(t, func(t *testing.T) {
+			client := newHandlerClient(t, held(nil), policy, voyage.ClientConfig{Timeout: time.Minute, MaxRetries: 1})
+			started := time.Now()
+			_, err := client.EmbedDocuments(t.Context(), []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, authorizations)
+			require.ErrorIs(t, err, voyage.ErrTransientResponse)
+			assert.True(t, voyage.IsRetryable(err))
+			assert.Equal(t, time.Minute, time.Since(started), "the attempt ends at its deadline")
+		})
 	})
 	t.Run("caller cancellation is reported unchanged", func(t *testing.T) {
-		inFlight := make(chan struct{}, 1)
-		client := newServerClient(t, newServer(inFlight), policy, voyage.ClientConfig{Timeout: time.Minute, MaxRetries: 3})
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go func() {
-			select {
-			case <-inFlight:
+		synctest.Test(t, func(t *testing.T) {
+			inFlight := make(chan struct{})
+			client := newHandlerClient(t, held(inFlight), policy, voyage.ClientConfig{Timeout: time.Minute, MaxRetries: 3})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go func() {
+				<-inFlight
 				cancel()
-			case <-ctx.Done():
-			}
-		}()
-		_, err := client.EmbedDocuments(ctx, []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, fullAuthorizations(t, policy))
-		require.ErrorIs(t, err, context.Canceled)
-		assert.False(t, voyage.IsRetryable(err))
+			}()
+			started := time.Now()
+			_, err := client.EmbedDocuments(ctx, []voyage.Input{{Parts: []voyage.Part{{Media: png}}}}, authorizations)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.False(t, voyage.IsRetryable(err))
+			assert.Zero(t, time.Since(started), "cancellation does not wait for the attempt deadline")
+		})
 	})
 }
 
