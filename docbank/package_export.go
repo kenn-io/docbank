@@ -33,7 +33,9 @@ type PackageExportReceipt struct {
 // the hashes and counts bound to those exact bytes. No bytes reach destination
 // until the staged archive has passed the same verifier used by daemon exports.
 func (v *Vault) ExportPackage(ctx context.Context, request PackageExportRequest, destination io.Writer) (_ PackageExportReceipt, retErr error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackageExportReceipt{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackageExportReceipt{}, ErrClosed

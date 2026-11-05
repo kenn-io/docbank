@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -33,46 +34,52 @@ import (
 
 func TestVaultCloseDrainsProcessingMutationBeforeCancel(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	vault, err := New(t.Context(), Config{Root: root})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	ctx, cancel := context.WithCancel(t.Context())
-	stopWorkers := vault.processingCancel
-	vault.processingCancel = func() { stopWorkers(); cancel() }
-	entered, proceed := make(chan struct{}), make(chan struct{})
-	mutationDone := make(chan error, 1)
-	vault.startProcessingWorker(ctx, func(ctx context.Context) error {
-		err := (embeddedMutationGate{vault: vault}).MutateContext(ctx, func() error {
-			close(entered)
-			<-proceed
-			_, err := vault.metadata.EnsureDir(ctx, vault.metadata.RootID(), "shutdown-committed")
-			return err
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		vault, err := New(t.Context(), Config{Root: root})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		ctx, cancel := context.WithCancel(t.Context())
+		stopWorkers := vault.processingCancel
+		vault.processingCancel = func() { stopWorkers(); cancel() }
+		entered, proceed := make(chan struct{}), make(chan struct{})
+		mutationDone := make(chan error, 1)
+		vault.startProcessingWorker(ctx, func(ctx context.Context) error {
+			err := (embeddedMutationGate{vault: vault}).MutateContext(ctx, func() error {
+				close(entered)
+				<-proceed
+				_, err := vault.metadata.EnsureDir(ctx, vault.metadata.RootID(), "shutdown-committed")
+				return err
+			})
+			mutationDone <- err
+			<-ctx.Done()
+			return ctx.Err()
 		})
-		mutationDone <- err
-		<-ctx.Done()
-		return ctx.Err()
-	})
-	<-entered
-	closed := make(chan error, 1)
-	go func() { closed <- vault.Close() }()
-	// Observe Close excluding new public operations before completing the mutation.
-	assert.Eventually(t, func() bool {
+		<-entered
+		closed := make(chan error, 1)
+		go func() { closed <- vault.Close() }()
+		// Close waits for the admitted mutation. Before it finishes, Close must
+		// already exclude new public operations.
+		synctest.Wait()
 		if vault.lifecycle.TryRLock() {
 			vault.lifecycle.RUnlock()
-			return false
+			require.FailNow(t, "Close admitted public operations while a mutation was still running")
 		}
-		return true
-	}, time.Second, time.Millisecond)
-	close(proceed)
-	require.NoError(t, <-mutationDone)
-	require.NoError(t, <-closed)
+		select {
+		case err := <-closed:
+			require.FailNow(t, "Close returned before the admitted mutation finished", "error: %v", err)
+		default:
+		}
+		close(proceed)
+		require.NoError(t, <-mutationDone)
+		require.NoError(t, <-closed)
 
-	reopened, err := New(t.Context(), Config{Root: root})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
-	_, err = reopened.Stat(t.Context(), "/shutdown-committed")
-	require.NoError(t, err)
+		reopened, err := New(t.Context(), Config{Root: root})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+		_, err = reopened.Stat(t.Context(), "/shutdown-committed")
+		require.NoError(t, err)
+	})
 }
 
 func TestEmbeddedCoverageMappingPreservesRebuildCounters(t *testing.T) {
@@ -368,110 +375,104 @@ func TestVaultEnsureSourceMetadataRejectsUnknownVersion(t *testing.T) {
 
 func TestVaultEnsureSourceMetadataWaitsForActiveMutation(t *testing.T) {
 	t.Parallel()
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
 
-	source := []byte("source metadata bytes")
-	receipt, err := vault.Create(t.Context(), "/source.bin", bytes.NewReader(source), CreateOptions{
-		MediaType: "application/octet-stream", Expected: contentIdentity(source),
-	})
-	require.NoError(t, err)
-
-	mutationActive := make(chan struct{})
-	releaseMutation := make(chan struct{})
-	vault.testAfterWriteCommit = func() {
-		close(mutationActive)
-		<-releaseMutation
-	}
-	putDone := make(chan error, 1)
-	go func() {
-		other := []byte("other bytes")
-		_, putErr := vault.Put(t.Context(), "/other.bin", bytes.NewReader(other), PutOptions{
-			MediaType: "application/octet-stream", Expected: new(contentIdentity(other)),
+		source := []byte("source metadata bytes")
+		receipt, err := vault.Create(t.Context(), "/source.bin", bytes.NewReader(source), CreateOptions{
+			MediaType: "application/octet-stream", Expected: contentIdentity(source),
 		})
-		putDone <- putErr
-	}()
-	<-mutationActive
+		require.NoError(t, err)
 
-	ensureDone := make(chan error, 1)
-	go func() {
-		_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
-		ensureDone <- ensureErr
-	}()
-	timer := time.NewTimer(100 * time.Millisecond) //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the paused write commit keeps source metadata blocked
-	var earlyErr error
-	returnedEarly := false
-	select {
-	case earlyErr = <-ensureDone:
-		returnedEarly = true
-	case <-timer.C:
-	}
-	if !timer.Stop() {
+		mutationActive := make(chan struct{})
+		releaseMutation := make(chan struct{})
+		vault.testAfterWriteCommit = func() {
+			close(mutationActive)
+			<-releaseMutation
+		}
+		putDone := make(chan error, 1)
+		go func() {
+			other := []byte("other bytes")
+			_, putErr := vault.Put(t.Context(), "/other.bin", bytes.NewReader(other), PutOptions{
+				MediaType: "application/octet-stream", Expected: new(contentIdentity(other)),
+			})
+			putDone <- putErr
+		}()
+		<-mutationActive
+
+		ensureDone := make(chan error, 1)
+		go func() {
+			_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+			ensureDone <- ensureErr
+		}()
+		// Wait until source metadata is blocked; the paused write commit holds the mutation.
+		synctest.Wait()
+		var earlyErr error
+		returnedEarly := false
 		select {
-		case <-timer.C:
+		case earlyErr = <-ensureDone:
+			returnedEarly = true
 		default:
 		}
-	}
-	close(releaseMutation)
-	require.NoError(t, <-putDone)
-	require.False(t, returnedEarly,
-		"source metadata processing returned during an active mutation: %v", earlyErr)
-	require.NoError(t, <-ensureDone)
+		close(releaseMutation)
+		require.NoError(t, <-putDone)
+		require.False(t, returnedEarly,
+			"source metadata processing returned during an active mutation: %v", earlyErr)
+		require.NoError(t, <-ensureDone)
+	})
 }
 
 func TestVaultEnsureSourceMetadataHoldsMutationThroughFinalRead(t *testing.T) {
 	t.Parallel()
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
 
-	source := []byte("source metadata bytes")
-	receipt, err := vault.Create(t.Context(), "/source.bin", bytes.NewReader(source), CreateOptions{
-		MediaType: "application/octet-stream", Expected: contentIdentity(source),
-	})
-	require.NoError(t, err)
-
-	metadataPublished := make(chan struct{})
-	releaseEnsure := make(chan struct{})
-	vault.testAfterSourceMetadataPublication = func() {
-		close(metadataPublished)
-		<-releaseEnsure
-	}
-	ensureDone := make(chan error, 1)
-	go func() {
-		_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
-		ensureDone <- ensureErr
-	}()
-	<-metadataPublished
-
-	putDone := make(chan error, 1)
-	go func() {
-		other := []byte("other bytes")
-		_, putErr := vault.Put(t.Context(), "/other.bin", bytes.NewReader(other), PutOptions{
-			MediaType: "application/octet-stream", Expected: new(contentIdentity(other)),
+		source := []byte("source metadata bytes")
+		receipt, err := vault.Create(t.Context(), "/source.bin", bytes.NewReader(source), CreateOptions{
+			MediaType: "application/octet-stream", Expected: contentIdentity(source),
 		})
-		putDone <- putErr
-	}()
-	timer := time.NewTimer(100 * time.Millisecond) //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the paused metadata publication keeps the put blocked
-	var earlyErr error
-	returnedEarly := false
-	select {
-	case earlyErr = <-putDone:
-		returnedEarly = true
-	case <-timer.C:
-	}
-	if !timer.Stop() {
+		require.NoError(t, err)
+
+		metadataPublished := make(chan struct{})
+		releaseEnsure := make(chan struct{})
+		vault.testAfterSourceMetadataPublication = func() {
+			close(metadataPublished)
+			<-releaseEnsure
+		}
+		ensureDone := make(chan error, 1)
+		go func() {
+			_, ensureErr := vault.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+			ensureDone <- ensureErr
+		}()
+		<-metadataPublished
+
+		putDone := make(chan error, 1)
+		go func() {
+			other := []byte("other bytes")
+			_, putErr := vault.Put(t.Context(), "/other.bin", bytes.NewReader(other), PutOptions{
+				MediaType: "application/octet-stream", Expected: new(contentIdentity(other)),
+			})
+			putDone <- putErr
+		}()
+		// Wait until the put is blocked; the paused metadata publication holds the mutation.
+		synctest.Wait()
+		var earlyErr error
+		returnedEarly := false
 		select {
-		case <-timer.C:
+		case earlyErr = <-putDone:
+			returnedEarly = true
 		default:
 		}
-	}
-	close(releaseEnsure)
-	require.NoError(t, <-ensureDone)
-	require.False(t, returnedEarly,
-		"content write returned before source metadata's final read: %v", earlyErr)
-	require.NoError(t, <-putDone)
+		close(releaseEnsure)
+		require.NoError(t, <-ensureDone)
+		require.False(t, returnedEarly,
+			"content write returned before source metadata's final read: %v", earlyErr)
+		require.NoError(t, <-putDone)
+	})
 }
 
 func TestVaultOpensVerifiedVisualPreviewForExactVersion(t *testing.T) {

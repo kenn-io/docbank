@@ -1,10 +1,9 @@
 package store
 
 import (
-	"context"
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,22 +12,28 @@ import (
 
 func TestEmailDocumentsReleaseUsesRetryingBegin(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	f := newEmailFixture(t, s, "source.eml")
-	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
-	require.NoError(t, err)
-	receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
-	require.NoError(t, err)
-	lock := holdTestSQLiteWriter(t, s)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
-	}()
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: Keep the writer held beyond the driver's busy timeout so release needs a retry.
-	require.NoError(t, lock.Rollback())
-	require.NoError(t, <-done)
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		f := newEmailFixture(t, s, "source.eml")
+		view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+		require.NoError(t, err)
+		receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
+		require.NoError(t, err)
+		lock := holdTestSQLiteWriter(t, s)
+		done := make(chan error, 1)
+		go func() {
+			done <- s.RemoveEmailDocumentPublication(t.Context(), receipt.OperationID, receipt.RequestDigest)
+		}()
+		// The release's BEGIN has failed busy; only a retry can finish it.
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("release returned while the writer lock was held: %v", err)
+		default:
+		}
+		require.NoError(t, lock.Rollback())
+		require.NoError(t, <-done)
+	})
 }
 
 func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation string) document.EmailDocumentPublicationRequest {

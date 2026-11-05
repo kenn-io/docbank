@@ -174,21 +174,18 @@ func checkStorageWriterAdmissionPostgres(t *testing.T) {
 			t.Cleanup(func() { unblock(); cancelWait(); <-secondDone })
 			// Observe actual database admission, not a scheduling delay. Without
 			// the writer lock the callback reads the old revision immediately.
-			early := false
-			require.Eventually(t, func() bool {
+			// PostgreSQL has no notification for a lock waiter, so ask until
+			// pg_locks reports one; ctx only bounds a broken test.
+			for waiting := false; !waiting; {
 				select {
 				case <-read:
-					early = true
-					return true
+					t.Fatal("second writer read before the first transaction ended")
 				default:
 				}
-				var waiting bool
-				err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+				require.NoError(t, s.db.QueryRowContext(ctx, `SELECT EXISTS (
 					SELECT 1 FROM pg_catalog.pg_locks WHERE locktype='advisory' AND NOT granted
-					AND database=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()))`).Scan(&waiting)
-				return err == nil && waiting
-			}, 5*time.Second, 10*time.Millisecond)
-			require.False(t, early, "second writer read before the first transaction ended")
+					AND database=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()))`).Scan(&waiting))
+			}
 			if outcome == "cancel waiter" {
 				cancelWait()
 				<-secondDone

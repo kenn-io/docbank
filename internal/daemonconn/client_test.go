@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
+	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -69,6 +71,23 @@ func (r countedReader) Read(p []byte) (int, error) {
 // mismatched-key path — see TestWrongAPIKeyIsRejected).
 func newClient(t *testing.T, clientKey string) (*daemonconn.Connection, *store.Store) {
 	t.Helper()
+	c, s, _ := newTrackedClient(t, clientKey, nil)
+	return c, s
+}
+
+// serverRequests counts the API requests a test server is still handling.
+type serverRequests struct{ active sync.WaitGroup }
+
+// waitIdle blocks until every request the server has started has returned,
+// including requests the client already abandoned.
+func (r *serverRequests) waitIdle() { r.active.Wait() }
+
+// newTrackedClient is newClient with a way to wait for the server to finish
+// its requests. configure, when set, adjusts the server's dependencies.
+func newTrackedClient(
+	t *testing.T, clientKey string, configure func(*api.Deps),
+) (*daemonconn.Connection, *store.Store, *serverRequests) {
+	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
@@ -81,14 +100,24 @@ func newClient(t *testing.T, clientKey string) (*daemonconn.Connection, *store.S
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
-	srv := api.NewServer(api.Deps{
+	deps := api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg,
 		EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
-	})
+	}
+	if configure != nil {
+		configure(&deps)
+	}
+	srv := api.NewServer(deps)
 	t.Cleanup(srv.Close)
-	ts := httptest.NewServer(srv.Handler())
+	requests := &serverRequests{}
+	handler := srv.Handler()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.active.Add(1)
+		defer requests.active.Done()
+		handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(ts.Close)
-	return daemonconn.New(ts.URL, clientKey), s
+	return daemonconn.New(ts.URL, clientKey), s, requests
 }
 
 func TestRoundTrip(t *testing.T) {
@@ -690,7 +719,7 @@ func TestMkdirPathValidatesRequestAndReceipt(t *testing.T) {
 }
 
 func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
-	c, _ := newClient(t, serverKey)
+	c, _, requests := newTrackedClient(t, serverKey, nil)
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	_, err := c.API().InitBackupRepository(t.Context(), &apiclient.InitBackupRepositoryRequestOptions{Body: &apiclient.InitBackupRepositoryBody{Repo: new(repoPath)}})
 
@@ -725,13 +754,10 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 
 	repo, err := backup.Open(repoPath)
 	require.NoError(t, err)
-	var lock *backup.RepoLock
-	var lockErr error
-	require.Eventually(t, func() bool {
-		lock, lockErr = repo.AcquireExclusiveLock("test", false)
-		return lockErr == nil
-	}, 5*time.Second, 10*time.Millisecond,
-		"server-side cancellation must release the repository lock")
+	// The cancelled backup has unwound once its handler returns.
+	requests.waitIdle()
+	lock, err := repo.AcquireExclusiveLock("test", false)
+	require.NoError(t, err, "server-side cancellation must release the repository lock")
 	t.Cleanup(func() { _ = lock.Release() })
 	// The daemon may finish before it receives the client's cancellation.
 	// Check lock release above; use the known snapshot for later round trips.
@@ -767,16 +793,11 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	_, err = os.Stat(filepath.Join(cancelledTarget, "docbank.db"))
 	require.ErrorIs(t, err, os.ErrNotExist, "cancelled restore must not publish its database")
 	// The shared repo lock is released only after the aborted restore fully
-	// unwinds (target lease, staged files, durability passes) — on Windows CI
-	// that unwinding has taken tens of seconds. The wait bounds a leaked
-	// lock, not abort latency. AcquireExclusiveLock itself blocks up to 60s
-	// while a fresh shared lock exists, so one call may consume most of the
-	// window.
-	require.Eventually(t, func() bool {
-		lock, lockErr = repo.AcquireExclusiveLock("restore-cancel-test", false)
-		return lockErr == nil
-	}, 90*time.Second, 10*time.Millisecond,
-		"server-side cancellation must release the restore repository lock")
+	// unwinds (target lease, staged files, durability passes), which its
+	// handler does before it returns.
+	requests.waitIdle()
+	lock, err = repo.AcquireExclusiveLock("restore-cancel-test", false)
+	require.NoError(t, err, "server-side cancellation must release the restore repository lock")
 	require.NoError(t, lock.Release())
 
 	var restoreEvents []api.BackupProgress
@@ -1635,7 +1656,16 @@ func TestContentVersionPruneValidatesReceipt(t *testing.T) {
 }
 
 func TestStorageRepackRoundTrip(t *testing.T) {
-	c, _ := newClient(t, serverKey)
+	// The repack measures pack ages a second after the real time, so the new
+	// pack is old enough for min_age without the test waiting.
+	c, _, _ := newTrackedClient(t, serverKey, func(deps *api.Deps) {
+		deps.RepackPage = func(ctx context.Context, s *store.Store, blobs *blob.Store,
+			opts internalmaintenance.RepackOptions,
+		) (internalmaintenance.RepackReport, error) {
+			opts.Now = time.Now().Add(time.Second)
+			return internalmaintenance.Repack(ctx, s, blobs, opts)
+		}
+	})
 	for name, content := range map[string]string{
 		"keep.txt": "keep", "drop-a.txt": "drop a", "drop-b.txt": "drop b",
 	} {
@@ -1664,18 +1694,8 @@ func TestStorageRepackRoundTrip(t *testing.T) {
 
 	require.NoError(t, err)
 
-	var report *api.StorageRepackReport
-	var repackErr error
-	// The pack becomes eligible once the platform clock has moved past its
-	// creation time. Each attempt is a daemon round trip, so a loaded CI
-	// runner needs more than a second of attempts.
-	require.Eventually(t, func() bool {
-		report, repackErr = c.API().StorageRepack(t.Context(), &apiclient.StorageRepackRequestOptions{Body: &apiclient.StorageRepackBody{MaxBytes: new(int64(0)), MinAge: new(time.Nanosecond.String()), MinDeadBytes: new(int64(1))}})
-
-		return repackErr == nil && report.PacksRewritten == 1
-	}, 10*time.Second, 10*time.Millisecond,
-		"pack should become eligible after the platform clock advances")
-	require.NoError(t, repackErr)
+	report, err := c.API().StorageRepack(t.Context(), &apiclient.StorageRepackRequestOptions{Body: &apiclient.StorageRepackBody{MaxBytes: new(int64(0)), MinAge: new(time.Nanosecond.String()), MinDeadBytes: new(int64(1))}})
+	require.NoError(t, err)
 	assert.Equal(t, 1, report.PacksRewritten)
 	assert.Equal(t, 1, report.PacksRemoved)
 }

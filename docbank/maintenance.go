@@ -91,13 +91,17 @@ type RepackReport struct {
 // unreachable catalog authority. The daemon separately reconciles physical
 // orphan files for its legacy full-maintenance endpoint.
 func (v *Vault) GarbageCollect(ctx context.Context, opts GCOptions) (GCReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return GCReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.preservation.Lock()
+	if err := v.preservation.Lock(ctx); err != nil {
+		return GCReport{}, err
+	}
 	defer v.preservation.Unlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return GCReport{}, err
+	}
 	defer v.mutation.Unlock()
 	var report internalmaintenance.GCReport
 	err := v.blobs.WithMutation(ctx, func() error {
@@ -112,13 +116,17 @@ func (v *Vault) GarbageCollect(ctx context.Context, opts GCOptions) (GCReport, e
 // Verify validates one bounded canonical-hash page of catalog-authorized
 // content. Whole-catalog metadata validation remains daemon-only.
 func (v *Vault) Verify(ctx context.Context, opts VerifyOptions) (VerifyReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return VerifyReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.preservation.Lock()
+	if err := v.preservation.Lock(ctx); err != nil {
+		return VerifyReport{}, err
+	}
 	defer v.preservation.Unlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return VerifyReport{}, err
+	}
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Verify(ctx, v.metadata, v.blobs,
 		internalmaintenance.VerifyOptions{Budget: internalBudget(opts.Budget)})
@@ -128,13 +136,17 @@ func (v *Vault) Verify(ctx context.Context, opts VerifyOptions) (VerifyReport, e
 // Repack retires dead packs and rewrites eligible sparse packs within one
 // bounded pass while preserving Kit's soft raw-byte budget.
 func (v *Vault) Repack(ctx context.Context, opts RepackOptions) (RepackReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return RepackReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.preservation.Lock()
+	if err := v.preservation.Lock(ctx); err != nil {
+		return RepackReport{}, err
+	}
 	defer v.preservation.Unlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return RepackReport{}, err
+	}
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Repack(ctx, v.metadata, v.blobs,
 		internalmaintenance.RepackOptions{

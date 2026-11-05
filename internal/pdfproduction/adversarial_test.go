@@ -370,38 +370,44 @@ func TestVerifyEvidenceCarriesOnePageDeadline(t *testing.T) {
 }
 
 func TestCanceledEngineAcquireDoesNotWaitForActivePage(t *testing.T) {
-	recipe := qualificationRecipe()
-	engine, err := NewPDFium(recipe)
-	require.NoError(t, err)
-	e, ok := engine.(*pdfiumEngine)
-	require.True(t, ok)
-	t.Cleanup(func() { require.NoError(t, e.Close()) })
-	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	go func() {
-		finished <- e.withInstance(t.Context(), func(pdfium.Pdfium) error { close(entered); <-release; return nil })
-	}()
-	select {
-	case <-entered:
-	case err := <-finished:
-		t.Fatalf("active runtime did not enter: %v", err)
-	case <-time.After(time.Duration(recipe.PageTimeoutSeconds)*time.Second + 30*time.Second):
-		t.Fatal("active runtime did not start")
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	second := make(chan error, 1)
-	go func() { second <- e.withInstance(ctx, func(pdfium.Pdfium) error { return nil }) }()
-	var secondErr error
-	select {
-	case secondErr = <-second:
-		close(release)
-	case <-time.After(5 * time.Second):
-		close(release)
-		secondErr = <-second
-		t.Error("canceled engine acquisition blocked behind an active page")
-	}
-	require.ErrorIs(t, secondErr, context.Canceled)
-	require.NoError(t, <-finished)
+	synctest.Test(t, func(t *testing.T) {
+		// The engine's waits must belong to this bubble, so use a backing
+		// manager created inside it.
+		process := wasmBacking
+		wasmBacking = newBackingManager(process.capacity)
+		t.Cleanup(func() { wasmBacking = process })
+		recipe := qualificationRecipe()
+		engine, err := NewPDFium(recipe)
+		require.NoError(t, err)
+		e, ok := engine.(*pdfiumEngine)
+		require.True(t, ok)
+		t.Cleanup(func() { require.NoError(t, e.Close()) })
+		entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		go func() {
+			finished <- e.withInstance(t.Context(), func(pdfium.Pdfium) error { close(entered); <-release; return nil })
+		}()
+		select {
+		case <-entered:
+		case err := <-finished:
+			t.Fatalf("active runtime did not enter: %v", err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		second := make(chan error, 1)
+		go func() { second <- e.withInstance(ctx, func(pdfium.Pdfium) error { return nil }) }()
+		synctest.Wait()
+		var secondErr error
+		select {
+		case secondErr = <-second:
+			close(release)
+		default:
+			close(release)
+			secondErr = <-second
+			t.Error("canceled engine acquisition blocked behind an active page")
+		}
+		require.ErrorIs(t, secondErr, context.Canceled)
+		require.NoError(t, <-finished)
+	})
 }
 
 func TestEvidenceBoundsPrecedeCanonicalMarshal(t *testing.T) {

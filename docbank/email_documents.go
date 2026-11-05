@@ -16,7 +16,7 @@ var ErrInvalidEmailDocumentRequest = store.ErrInvalidEmailDocumentRequest
 func (v *Vault) RequestEmailDocumentProcessing(
 	ctx context.Context, request document.EmailDocumentProcessingRequest,
 ) (document.EmailDocumentProcessingReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return document.EmailDocumentProcessingReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -28,11 +28,13 @@ func (v *Vault) RequestEmailDocumentProcessing(
 func (v *Vault) PublishEmailDocuments(
 	ctx context.Context, request document.EmailDocumentPublicationRequest,
 ) (document.EmailDocumentPublicationReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return document.EmailDocumentPublicationReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return document.EmailDocumentPublicationReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	return processing.PublishEmailDocuments(ctx, v.metadata, v.blobs, request)
 }
@@ -41,7 +43,7 @@ func (v *Vault) PublishEmailDocuments(
 func (v *Vault) EmailDocumentPublication(
 	ctx context.Context, operationID string,
 ) (document.EmailDocumentPublicationReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return document.EmailDocumentPublicationReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -52,7 +54,7 @@ func (v *Vault) EmailDocumentPublication(
 func (v *Vault) EmailDocumentRelations(
 	ctx context.Context, query document.EmailDocumentRelationQuery,
 ) (document.EmailDocumentRelationPage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return document.EmailDocumentRelationPage{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -62,11 +64,13 @@ func (v *Vault) EmailDocumentRelations(
 // RemoveEmailDocumentPublication releases a receipt and its exact references,
 // leaving the ordinary children intact. This relinquishes its retry guarantee.
 func (v *Vault) RemoveEmailDocumentPublication(ctx context.Context, operationID, digest string) error {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return err
+	}
 	defer v.mutation.Unlock()
 	return v.metadata.RemoveEmailDocumentPublication(ctx, operationID, digest)
 }

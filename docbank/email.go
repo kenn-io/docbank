@@ -50,7 +50,7 @@ type EmailPartReceipt struct {
 // immutable content version. Pending and ineligible versions retain their
 // populated Version alongside the corresponding error.
 func (v *Vault) EmailMetadata(ctx context.Context, versionID string) (EmailMetadata, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return EmailMetadata{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -61,11 +61,13 @@ func (v *Vault) EmailMetadata(ctx context.Context, versionID string) (EmailMetad
 // EnsureEmailMetadata synchronously decodes and publishes current email
 // metadata and chosen-body search authority for one exact retained version.
 func (v *Vault) EnsureEmailMetadata(ctx context.Context, versionID string) (EmailMetadata, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return EmailMetadata{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return EmailMetadata{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return EmailMetadata{}, err
@@ -85,7 +87,7 @@ func (v *Vault) EnsureEmailMetadata(ctx context.Context, versionID string) (Emai
 func (v *Vault) EmailMetadataGeneration(
 	ctx context.Context, versionID, generationID string,
 ) (EmailMetadata, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return EmailMetadata{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -98,7 +100,7 @@ func (v *Vault) EmailMetadataGeneration(
 func (v *Vault) OpenEmailPart(
 	ctx context.Context, versionID, generationID, partPath, role string,
 ) (io.ReadCloser, EmailPartReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, EmailPartReceipt{}, err
 	}
 	receipt, err := v.metadata.EmailPart(ctx, versionID, generationID, partPath, role)

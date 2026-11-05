@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
+	"go.kenn.io/docbank/internal/waitlock"
 )
 
 // Queries use setup-owned DDL and an explicitly granted runtime login. This
@@ -148,7 +149,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 	actual, err := pgschema.Validate(ctx, db, cfg)
 	require.NoError(t, err)
 	require.Equal(t, id, actual)
-	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}
+	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, providerEgressMu: waitlock.New()}
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT id,(SELECT vault_uid FROM vault_metadata) FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID, &s.vaultID))
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT store_id FROM blob_stores WHERE role='primary'`).Scan(&s.primaryStoreID))
 	return s

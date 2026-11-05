@@ -540,7 +540,9 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 // BeginEmbeddingProviderEgress rechecks the claim and consent under the shared
 // provider fence. The caller must close the fence when Embed returns.
 func (s *Store) BeginEmbeddingProviderEgress(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork, prior *ProviderOperationAuthorization, at time.Time) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
-	s.providerEgressMu.RLock()
+	if err := s.providerEgressMu.RLock(ctx); err != nil {
+		return ProviderOperationAuthorization{}, nil, err
+	}
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	var auth ProviderOperationAuthorization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {

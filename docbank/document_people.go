@@ -13,7 +13,7 @@ import (
 // Call RebuildDocumentEvents first. Missing event data keeps the receipt
 // running and returns an incomplete error; retry with the same operation ID.
 func (v *Vault) RebuildDocumentPeople(ctx context.Context, operationID string) (DocumentPeopleBuild, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return DocumentPeopleBuild{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -50,7 +50,7 @@ func (v *Vault) RebuildDocumentPeople(ctx context.Context, operationID string) (
 
 // DocumentPeopleCoverage reports attribution derivation for current files.
 func (v *Vault) DocumentPeopleCoverage(ctx context.Context) (DocumentPeopleCoverage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return DocumentPeopleCoverage{}, err
 	}
 	defer v.lifecycle.RUnlock()

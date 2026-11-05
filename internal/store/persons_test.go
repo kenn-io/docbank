@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -92,22 +91,22 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = readConn.Close() }()
 
-	createdCh := make(chan struct {
+	type personResult struct {
 		person Person
 		err    error
-	}, 1)
+	}
+	createdCh := make(chan personResult, 1)
+	waits := s.db.Stats().WaitCount
 	go func() {
 		person, err := s.CreatePerson(ctx, "Synthetic", "operator")
-		createdCh <- struct {
-			person Person
-			err    error
-		}{person, err}
+		createdCh <- personResult{person, err}
 	}()
-	require.Eventually(t, func() bool {
-		var id string
-		return s.writeDB.QueryRowContext(ctx,
-			`SELECT person_id FROM persons WHERE display_name=?`, "Synthetic").Scan(&id) == nil
-	}, 2*time.Second, 10*time.Millisecond)
+	// The mutation either returns or queues a post-commit read on the
+	// occupied read pool. Either way its row has committed.
+	waitCtx, cancelWait := context.WithTimeout(ctx, poolWaitBudget)
+	createdResult, returned, err := waitForPoolWaiter(waitCtx, s.db, waits, createdCh)
+	cancelWait()
+	require.NoError(t, err)
 	var createdRowID string
 	require.NoError(t, s.writeDB.QueryRowContext(ctx,
 		`SELECT person_id FROM persons WHERE display_name=?`, "Synthetic").Scan(&createdRowID))
@@ -116,7 +115,9 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 		"Later edit", "later edit", createdRowID)
 	require.NoError(t, err)
 	require.NoError(t, readConn.Close())
-	createdResult := <-createdCh
+	if !returned {
+		createdResult = <-createdCh
+	}
 	require.NoError(t, createdResult.err)
 	require.Equal(t, "Synthetic", createdResult.person.DisplayName)
 	require.Equal(t, int64(1), createdResult.person.Revision)
@@ -125,28 +126,28 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 	require.NoError(t, err)
 	readConn, err = s.db.Conn(ctx)
 	require.NoError(t, err)
-	updatedCh := make(chan struct {
-		person Person
-		err    error
-	}, 1)
+	updatedCh := make(chan personResult, 1)
+	waits = s.db.Stats().WaitCount
 	go func() {
 		person, err := s.UpdatePerson(ctx, initial.PersonID, initial.Revision, "Committed rename")
-		updatedCh <- struct {
-			person Person
-			err    error
-		}{person, err}
+		updatedCh <- personResult{person, err}
 	}()
-	require.Eventually(t, func() bool {
-		var revision int64
-		return s.writeDB.QueryRowContext(ctx,
-			`SELECT revision FROM persons WHERE person_id=?`, initial.PersonID).Scan(&revision) == nil && revision == 2
-	}, 2*time.Second, 10*time.Millisecond)
+	waitCtx, cancelWait = context.WithTimeout(ctx, poolWaitBudget)
+	updatedResult, returned, err := waitForPoolWaiter(waitCtx, s.db, waits, updatedCh)
+	cancelWait()
+	require.NoError(t, err)
+	var committedRevision int64
+	require.NoError(t, s.writeDB.QueryRowContext(ctx,
+		`SELECT revision FROM persons WHERE person_id=?`, initial.PersonID).Scan(&committedRevision))
+	require.Equal(t, int64(2), committedRevision)
 	_, err = s.writeDB.ExecContext(ctx,
 		`UPDATE persons SET display_name=?,display_name_folded=?,revision=revision+1 WHERE person_id=?`,
 		"Later edit", "later edit", initial.PersonID)
 	require.NoError(t, err)
 	require.NoError(t, readConn.Close())
-	updatedResult := <-updatedCh
+	if !returned {
+		updatedResult = <-updatedCh
+	}
 	require.NoError(t, updatedResult.err)
 	require.Equal(t, "Committed rename", updatedResult.person.DisplayName)
 	require.Equal(t, int64(2), updatedResult.person.Revision)

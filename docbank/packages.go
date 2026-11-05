@@ -168,7 +168,9 @@ type LabelLookupResult struct {
 // PreflightPackage validates a load-file source and retains the result for a
 // later ImportPackage call.
 func (v *Vault) PreflightPackage(ctx context.Context, request PackagePreflightRequest) (PackagePreflight, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackagePreflight{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackagePreflight{}, ErrClosed
@@ -179,7 +181,9 @@ func (v *Vault) PreflightPackage(ctx context.Context, request PackagePreflightRe
 
 // PackagePreflight reads one retained preflight owned by this vault.
 func (v *Vault) PackagePreflight(ctx context.Context, preflightID string) (PackagePreflight, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackagePreflight{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackagePreflight{}, ErrClosed
@@ -190,7 +194,9 @@ func (v *Vault) PackagePreflight(ctx context.Context, preflightID string) (Packa
 // ImportPackage admits one durable import. Repeating the same OperationID
 // returns the original job.
 func (v *Vault) ImportPackage(ctx context.Context, request PackageImportRequest) (PackageImportJob, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackageImportJob{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackageImportJob{}, ErrClosed
@@ -201,7 +207,9 @@ func (v *Vault) ImportPackage(ctx context.Context, request PackageImportRequest)
 
 // PackageImportStatus reports progress for one admitted operation.
 func (v *Vault) PackageImportStatus(ctx context.Context, operationID string) (PackageImportJob, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackageImportJob{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackageImportJob{}, ErrClosed
@@ -211,7 +219,9 @@ func (v *Vault) PackageImportStatus(ctx context.Context, operationID string) (Pa
 
 // Packages lists retained packages in stable ID order.
 func (v *Vault) Packages(ctx context.Context, request PackageListRequest) (PackagePage, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackagePage{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackagePage{}, ErrClosed
@@ -236,7 +246,9 @@ func (v *Vault) Packages(ctx context.Context, request PackageListRequest) (Packa
 
 // Package reads one retained package by ID.
 func (v *Vault) Package(ctx context.Context, packageID string) (Package, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return Package{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return Package{}, ErrClosed
@@ -250,7 +262,9 @@ func (v *Vault) Package(ctx context.Context, packageID string) (Package, error) 
 
 // PackageMembers lists the immutable members of one package in ordinal order.
 func (v *Vault) PackageMembers(ctx context.Context, request PackageMemberRequest) (PackageMemberPage, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackageMemberPage{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackageMemberPage{}, ErrClosed
@@ -293,7 +307,9 @@ func (v *Vault) PackageMembers(ctx context.Context, request PackageMemberRequest
 
 // PackageRecord reads one retained sender row with every column.
 func (v *Vault) PackageRecord(ctx context.Context, packageID, rowID string) (PackageRecord, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return PackageRecord{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return PackageRecord{}, ErrClosed
@@ -335,7 +351,9 @@ func (v *Vault) PackageRecord(ctx context.Context, packageID, rowID string) (Pac
 
 // LookupLabel finds every scoped match for one exact Bates label.
 func (v *Vault) LookupLabel(ctx context.Context, request LabelLookupRequest) (LabelLookupResult, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return LabelLookupResult{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return LabelLookupResult{}, ErrClosed

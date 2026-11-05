@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -28,7 +29,9 @@ type contentionDriver struct {
 }
 
 func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sql.DB, error) {
-	options.BusyTimeout = time.Millisecond //nolint:kennlint // deadlinetest: the held SQLite lock must outlast a busy attempt to exercise worker retries
+	// A held SQLite lock fails a statement at once, so contention reaches
+	// the worker's retry loop without SQLite sleeping on the wall clock.
+	options.BusyTimeout = docsqlite.NoBusyWait
 	db, err := d.Driver.Open(path, options)
 	if err == nil {
 		d.dbs = append(d.dbs, db)
@@ -71,61 +74,70 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 func TestWorkerStartupRemovesOnlyAbandonedPhotoStages(t *testing.T) {
 	for _, state := range []string{"abandoned", "live"} {
 		t.Run(state, func(t *testing.T) {
-			started := make(chan struct{})
-			gate := api.NewOperationGate()
-			calls := 0
-			worker, catalog, job, _, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
-				calls++
-				if calls == 1 {
-					close(started)
-				}
-				return gate.MutateContext(ctx, fn)
-			}))
-			dir := filepath.Join(filepath.Dir(path), exporter.ArchiveDirectory)
-			stagePath := filepath.Join(dir, ".export-photo-abandoned")
-			var stage *filepublish.Stage
-			var release func()
-			if state == "live" {
-				var err error
-				release, err = catalog.AcquirePhotoExportPreparation(t.Context())
-				require.NoError(t, err)
-				defer func() {
-					if release != nil {
-						release()
+			now := time.Now()
+			synctest.Test(t, func(t *testing.T) {
+				// Export deadlines are wall-clock timestamps; start the fake clock at now.
+				time.Sleep(time.Until(now))
+				started := make(chan struct{})
+				gate := api.NewOperationGate()
+				calls := 0
+				worker, catalog, job, _, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
+					calls++
+					if calls == 1 {
+						close(started)
 					}
-				}()
-				stage, err = filepublish.CreateStage(dir, ".export-photo-")
-				require.NoError(t, err)
-				defer func() { require.NoError(t, stage.Cleanup()) }()
-				stagePath = filepath.Dir(stage.Path())
-			} else {
-				require.NoError(t, os.Mkdir(stagePath, 0700))
-				require.NoError(t, os.WriteFile(filepath.Join(stagePath, "payload.tmp"), []byte("synthetic render"), 0600))
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			done := make(chan error, 1)
-			go func() { done <- worker.Run(ctx) }()
-			<-started
-			if stage != nil {
-				select {
-				case err := <-done:
-					t.Fatalf("worker stopped during live preparation: %v", err)
-				case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the held preparation slot must block startup cleanup
+					return gate.MutateContext(ctx, fn)
+				}))
+				dir := filepath.Join(filepath.Dir(path), exporter.ArchiveDirectory)
+				stagePath := filepath.Join(dir, ".export-photo-abandoned")
+				var stage *filepublish.Stage
+				var release func()
+				if state == "live" {
+					var err error
+					release, err = catalog.AcquirePhotoExportPreparation(t.Context())
+					require.NoError(t, err)
+					defer func() {
+						if release != nil {
+							release()
+						}
+					}()
+					stage, err = filepublish.CreateStage(dir, ".export-photo-")
+					require.NoError(t, err)
+					defer func() { require.NoError(t, stage.Cleanup()) }()
+					stagePath = filepath.Dir(stage.Path())
+				} else {
+					require.NoError(t, os.Mkdir(stagePath, 0700))
+					require.NoError(t, os.WriteFile(filepath.Join(stagePath, "payload.tmp"), []byte("synthetic render"), 0600))
 				}
-				_, err := os.Stat(stage.Path())
-				require.NoError(t, err)
-				require.NoError(t, stage.Cleanup())
-				release()
-				release = nil
-			}
-			require.Eventually(t, func() bool {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- worker.Run(ctx) }()
+				<-started
+				if stage != nil {
+					// The worker now waits for the held preparation slot before cleanup.
+					synctest.Wait()
+					select {
+					case err := <-done:
+						t.Fatalf("worker stopped during live preparation: %v", err)
+					default:
+					}
+					_, err := os.Stat(stage.Path())
+					require.NoError(t, err)
+					require.NoError(t, stage.Cleanup())
+					release()
+					release = nil
+				}
+				// Give the worker time to finish the job and go idle.
+				time.Sleep(time.Minute)
 				_, err := os.Stat(stagePath)
-				stored, readErr := catalog.ExportJob(ctx, "master", job.ID)
-				return errors.Is(err, os.ErrNotExist) && readErr == nil && stored.State == "completed"
-			}, 5*time.Second, 10*time.Millisecond)
-			cancel()
-			require.ErrorIs(t, <-done, context.Canceled)
+				require.ErrorIs(t, err, os.ErrNotExist)
+				stored, err := catalog.ExportJob(ctx, "master", job.ID)
+				require.NoError(t, err)
+				require.Equal(t, "completed", stored.State)
+				cancel()
+				require.ErrorIs(t, <-done, context.Canceled)
+			})
 		})
 	}
 }
@@ -133,143 +145,153 @@ func TestWorkerStartupRemovesOnlyAbandonedPhotoStages(t *testing.T) {
 func TestWorkerRetriesCatalogContention(t *testing.T) {
 	for _, phase := range []string{"startup", "cleanup", "claim", "progress", "finish"} {
 		t.Run(phase, func(t *testing.T) {
-			gate := api.NewOperationGate()
-			var locker *sql.DB
-			var catalog *store.Store
-			type lockResult struct {
-				tx  *sql.Tx
-				err error
-			}
-			locked := make(chan lockResult, 1)
-			calls := 0
-			worker, catalog, job, driver, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
-				calls++
-				// RunOne claims, opens the source, advances progress, then publishes.
-				target := map[string]int{"startup": 1, "cleanup": 1, "claim": 1, "progress": 3, "finish": 4}[phase]
-				if calls == target {
-					tx, err := locker.BeginTx(ctx, nil)
-					if err != nil {
-						return err
+			now := time.Now()
+			synctest.Test(t, func(t *testing.T) {
+				// Export deadlines are wall-clock timestamps; start the fake clock at now.
+				time.Sleep(time.Until(now))
+				gate := api.NewOperationGate()
+				var locker *sql.DB
+				var catalog *store.Store
+				type lockResult struct {
+					tx  *sql.Tx
+					err error
+				}
+				locked := make(chan lockResult, 1)
+				calls := 0
+				worker, catalog, job, driver, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
+					calls++
+					// RunOne claims, opens the source, advances progress, then publishes.
+					target := map[string]int{"startup": 1, "cleanup": 1, "claim": 1, "progress": 3, "finish": 4}[phase]
+					if calls == target {
+						tx, err := locker.BeginTx(ctx, nil)
+						if err != nil {
+							return err
+						}
+						locked <- lockResult{tx, catalog.RequeueExportJobs(ctx)}
 					}
-					locked <- lockResult{tx, catalog.RequeueExportJobs(ctx)}
+					return gate.MutateContext(ctx, fn)
+				}))
+				var err error
+				locker, err = driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, locker.Close()) }()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					switch phase {
+					case "startup":
+						done <- worker.Run(ctx)
+					case "cleanup":
+						done <- worker.Cleanup(ctx)
+					default:
+						_, err := worker.RunOne(ctx)
+						done <- err
+					}
+				}()
+				var tx *sql.Tx
+				select {
+				case result := <-locked:
+					tx = result.tx
+					err = result.err
+				case err := <-done:
+					t.Fatalf("worker stopped before contention: %v", err)
 				}
-				return gate.MutateContext(ctx, fn)
-			}))
-			var err error
-			locker, err = driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-			require.NoError(t, err)
-			defer func() { require.NoError(t, locker.Close()) }()
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				switch phase {
-				case "startup":
-					done <- worker.Run(ctx)
-				case "cleanup":
-					done <- worker.Cleanup(ctx)
+				defer func() { _ = tx.Rollback() }()
+				// The real competing transaction makes the catalog report contention.
+				require.True(t, catalog.RenditionJobErrorRetryable(err), "expected SQLite contention, got %v", err)
+				// Let the worker meet the held lock on several retries.
+				time.Sleep(time.Second)
+				select {
+				case err := <-done:
+					t.Fatalf("worker stopped during temporary contention: %v", err)
 				default:
-					_, err := worker.RunOne(ctx)
-					done <- err
 				}
-			}()
-			var tx *sql.Tx
-			select {
-			case result := <-locked:
-				tx = result.tx
-				err = result.err
-			case err := <-done:
-				t.Fatalf("worker stopped before contention: %v", err)
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
-			defer func() { _ = tx.Rollback() }()
-			// The real competing transaction exceeds the configured busy timeout.
-			require.True(t, catalog.RenditionJobErrorRetryable(err), "expected SQLite contention, got %v", err)
-			select {
-			case err := <-done:
-				t.Fatalf("worker stopped during temporary contention: %v", err)
-			case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open SQLite transaction keeps the worker in contention
-			}
-			require.NoError(t, tx.Rollback())
-			if phase == "startup" {
-				require.Eventually(t, func() bool {
+				require.NoError(t, tx.Rollback())
+				if phase == "startup" {
+					// Give the worker time to finish the job and go idle.
+					time.Sleep(time.Minute)
 					stored, err := catalog.ExportJob(ctx, "master", job.ID)
-					return err == nil && stored.State == "completed"
-				}, 3*time.Second, 10*time.Millisecond)
-				cancel()
-				require.ErrorIs(t, <-done, context.Canceled)
-			} else {
-				require.NoError(t, <-done)
-			}
-			if phase == "cleanup" {
-				return
-			}
-			file, receipt, release, err := worker.Lease(t.Context(), "master", job.ID)
-			require.NoError(t, err)
-			defer release()
-			verified, err := bundle.Verify(t.Context(), file, receipt.Size, job.Fingerprint)
-			require.NoError(t, err)
-			require.Equal(t, receipt, verified)
+					require.NoError(t, err)
+					require.Equal(t, "completed", stored.State)
+					cancel()
+					require.ErrorIs(t, <-done, context.Canceled)
+				} else {
+					require.NoError(t, <-done)
+				}
+				if phase == "cleanup" {
+					return
+				}
+				file, receipt, release, err := worker.Lease(t.Context(), "master", job.ID)
+				require.NoError(t, err)
+				defer release()
+				verified, err := bundle.Verify(t.Context(), file, receipt.Size, job.Fingerprint)
+				require.NoError(t, err)
+				require.Equal(t, receipt, verified)
+			})
 		})
 	}
 }
 
 func TestWorkerDoesNotFenceClaimOnTemporaryReadContention(t *testing.T) {
-	opening, resume := make(chan struct{}), make(chan struct{})
-	gate := api.NewOperationGate()
-	calls := 0
-	worker, catalog, job, driver, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
-		calls++
-		if calls == 2 {
-			close(opening)
-			select {
-			case <-resume:
-			case <-ctx.Done():
-				return ctx.Err()
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Export deadlines are wall-clock timestamps; start the fake clock at now.
+		time.Sleep(time.Until(now))
+		opening, resume := make(chan struct{}), make(chan struct{})
+		gate := api.NewOperationGate()
+		calls := 0
+		worker, catalog, job, driver, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
+			calls++
+			if calls == 2 {
+				close(opening)
+				select {
+				case <-resume:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
+			return gate.MutateContext(ctx, fn)
+		}))
+		// Only the external locker should cause contention in this fixture.
+		// Let the other SQLite connection take an exclusive lock while no query runs.
+		for _, db := range driver.dbs {
+			db.SetMaxOpenConns(1)
+			db.SetMaxIdleConns(0)
 		}
-		return gate.MutateContext(ctx, fn)
-	}))
-	// Only the external locker should cause contention in this fixture.
-	// Let the other SQLite connection take an exclusive lock while no query runs.
-	for _, db := range driver.dbs {
-		db.SetMaxOpenConns(1)
-		db.SetMaxIdleConns(0)
-	}
-	locker, err := driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, locker.Close()) }()
-	locker.SetMaxOpenConns(1)
-	_, err = locker.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := worker.RunOne(ctx); done <- err }()
-	select {
-	case <-opening:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	tx, err := locker.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	err = catalog.CheckExportClaim(ctx, store.ExportClaim{})
-	require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
-	// Allow at least one claim poll to observe the real read lock.
-	time.Sleep(350 * time.Millisecond) //nolint:kennlint // sleeptest: claim polls must see the real SQLite read lock, which runs on the wall clock
-	// Keep resumed reads from racing the last connection's WAL teardown.
-	for _, db := range driver.dbs {
-		db.SetMaxIdleConns(2)
-	}
-	require.NoError(t, tx.Rollback())
-	require.NoError(t, locker.Close())
-	close(resume)
-	require.NoError(t, <-done)
-	stored, err := catalog.ExportJob(ctx, "master", job.ID)
-	require.NoError(t, err)
-	require.Equal(t, "completed", stored.State)
+		locker, err := driver.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, locker.Close()) }()
+		locker.SetMaxOpenConns(1)
+		_, err = locker.ExecContext(t.Context(), "PRAGMA locking_mode=EXCLUSIVE")
+		require.NoError(t, err)
+		ctx := t.Context()
+		done := make(chan error, 1)
+		go func() { _, err := worker.RunOne(ctx); done <- err }()
+		select {
+		case <-opening:
+		case err := <-done:
+			t.Fatalf("worker stopped before opening its source: %v", err)
+		}
+		tx, err := locker.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+		err = catalog.CheckExportClaim(ctx, store.ExportClaim{})
+		require.True(t, catalog.RenditionJobErrorRetryable(err), "expected read contention, got %v", err)
+		// Let several claim polls meet the read lock.
+		time.Sleep(time.Second)
+		// Keep resumed reads from racing the last connection's WAL teardown.
+		for _, db := range driver.dbs {
+			db.SetMaxIdleConns(2)
+		}
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, locker.Close())
+		close(resume)
+		require.NoError(t, <-done)
+		stored, err := catalog.ExportJob(ctx, "master", job.ID)
+		require.NoError(t, err)
+		require.Equal(t, "completed", stored.State)
+	})
 }
 
 func TestWorkerStopsOnPermanentCatalogError(t *testing.T) {

@@ -44,7 +44,7 @@ type BackupRepositoryClaim = backupapp.RepositoryClaim
 // PreviewBackupClaim reports the history a claim would assign to this vault
 // installation. A repository owned by another vault is refused.
 func (v *Vault) PreviewBackupClaim(ctx context.Context, repository *BackupRepository) (BackupRepositoryClaim, error) {
-	return v.claimBackupRepository(repository, func(repo *backup.Repo) (BackupRepositoryClaim, error) {
+	return v.claimBackupRepository(ctx, repository, func(repo *backup.Repo) (BackupRepositoryClaim, error) {
 		return backupapp.PreviewRepositoryClaim(ctx, repo, v.metadata)
 	})
 }
@@ -53,15 +53,15 @@ func (v *Vault) PreviewBackupClaim(ctx context.Context, repository *BackupReposi
 // when it still matches the preview that returned fingerprint. Otherwise it
 // returns ErrBackupRepositoryClaimChanged and changes nothing.
 func (v *Vault) ClaimBackupRepository(ctx context.Context, repository *BackupRepository, fingerprint string) (BackupRepositoryClaim, error) {
-	return v.claimBackupRepository(repository, func(repo *backup.Repo) (BackupRepositoryClaim, error) {
+	return v.claimBackupRepository(ctx, repository, func(repo *backup.Repo) (BackupRepositoryClaim, error) {
 		return backupapp.ClaimRepository(ctx, repo, v.metadata, fingerprint)
 	})
 }
 
-func (v *Vault) claimBackupRepository(repository *BackupRepository,
+func (v *Vault) claimBackupRepository(ctx context.Context, repository *BackupRepository,
 	claim func(*backup.Repo) (BackupRepositoryClaim, error),
 ) (BackupRepositoryClaim, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return BackupRepositoryClaim{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -268,7 +268,7 @@ func (r *BackupRepository) Snapshots() ([]BackupSnapshot, error) {
 func (v *Vault) CreateBackup(
 	ctx context.Context, repository *BackupRepository, opts BackupOptions,
 ) (BackupSnapshot, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return BackupSnapshot{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -278,7 +278,9 @@ func (v *Vault) CreateBackup(
 	if err := backupapp.ValidateDisjointRoots(v.root.Name(), repository.repo.Root()); err != nil {
 		return BackupSnapshot{}, err
 	}
-	v.preservation.RLock()
+	if err := v.preservation.RLock(ctx); err != nil {
+		return BackupSnapshot{}, err
+	}
 	defer v.preservation.RUnlock()
 	manifest, err := backupapp.Create(ctx, repository.repo, version.Version, v.metadata, v.blobs,
 		backup.CreateOptions{
@@ -330,7 +332,7 @@ func (r *BackupRepository) Verify(
 func (v *Vault) RestoreBackup(
 	ctx context.Context, repository *BackupRepository, opts BackupRestoreOptions,
 ) (BackupRestoreReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return BackupRestoreReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -413,7 +415,9 @@ func (f *vaultBackupFreezer) Begin(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f.vault.mutation.Lock()
+	if err := f.vault.mutation.Lock(ctx); err != nil {
+		return err
+	}
 	f.held = true
 	prepared := false
 	defer func() {

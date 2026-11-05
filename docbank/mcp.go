@@ -29,7 +29,7 @@ func (v *Vault) CallReadTool(ctx context.Context, vaultID uuid.UUID, req *sdkmcp
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	defer v.lifecycle.RUnlock()
