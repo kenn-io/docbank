@@ -32,9 +32,12 @@ var schemaV0151SQL string
 //go:embed testdata/schema-v0.16.0.sql
 var schemaV0160SQL string
 
+//go:embed testdata/schema-v0.17.0.sql
+var schemaV0170SQL string
+
 // releasedSchemaFixtures holds the exact schema.sql of every release from
 // v0.15.0 on, keyed by storage schema version.
-var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL, 41: schemaV0160SQL}
+var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL, 41: schemaV0160SQL, 48: schemaV0170SQL}
 
 // firstFixtureStorageSchemaVersion is the oldest schema in
 // releasedSchemaFixtures. Older releases have their own upgrade tests.
@@ -50,13 +53,18 @@ func newReleasedFixtureStore(t *testing.T, path string, driver docsqlite.Driver,
 	db, err := driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	// Current writers need a feed scratch table. Keep it connection-local so
-	// closing the builder leaves only the exact released schema on disk.
 	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE vault_changes(seq INTEGER PRIMARY KEY,kind TEXT,node_id INTEGER,node_revision INTEGER)`)
-	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err)
+	// Current writers need a feed table, which releases before v0.17.0 lack.
+	// Keep it connection-local so closing the builder leaves only the exact
+	// released schema on disk.
+	var feedTables int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_schema WHERE name='vault_changes'`).Scan(&feedTables))
+	if feedTables == 0 {
+		_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE vault_changes(seq INTEGER PRIMARY KEY,kind TEXT,node_id INTEGER,node_revision INTEGER)`)
+		require.NoError(t, err)
+	}
 	_, err = db.ExecContext(t.Context(), `INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,?)`, releasedFixtureVaultID, version)
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `INSERT INTO nodes(id,parent_id,name,kind,revision,created_at,modified_at)
@@ -85,7 +93,8 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 	t.Helper()
 	columns, err := queryTableColumns(t.Context(), q, table)
 	require.NoError(t, err)
-	rows, err := q.QueryContext(t.Context(), `SELECT `+strings.Join(columns, ",")+` FROM `+table+` ORDER BY rowid`)
+	// Order by content: WITHOUT ROWID tables have no rowid.
+	rows, err := q.QueryContext(t.Context(), `SELECT `+strings.Join(columns, ",")+` FROM `+table+` ORDER BY `+strings.Join(columns, ","))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	values := make([]any, len(columns))
@@ -141,6 +150,76 @@ func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
 				dumpReleasedTable(t, s.db, table, &upgraded)
 			}
 			assert.Equal(t, released.String(), upgraded.String(), "checkout bindings, observations, and pending work survive the upgrade")
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+
+// A v0.17.0 vault keeps the state that metadata JSONL leaves out: watch
+// absence marks, pending description text, face scan markers, description jobs
+// with their explicit start, and the change feed position.
+func TestUpgradeReleasedV0170KeepsLocalState(t *testing.T) {
+	t.Parallel()
+	tables := []string{"watch_source_absences", "photo_suggestions", "photo_face_scans",
+		"rendition_jobs", "rendition_job_waiters", "photo_description_explicit_waiters",
+		"vault_change_head", "vault_changes"}
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0170SQL, 48)
+			_, err := db.ExecContext(ctx, `INSERT INTO vault_change_head(singleton,epoch) VALUES(1,'20000000-0000-4000-8000-000000000048')`)
+			require.NoError(t, err)
+
+			run, err := legacy.BeginIngest(ctx, "watch", "archive")
+			require.NoError(t, err)
+			_, err = legacy.IngestFileExact(ctx, run, legacy.RootID(), "note.txt", fakeHash("c1"), 4, "text/plain", "note.txt", "")
+			require.NoError(t, err)
+			gone := WatchPresenceScan{ListedDirs: []string{""}}
+			require.NoError(t, legacy.ReconcileWatchSourcePresence(ctx, "archive", gone, time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)))
+
+			pending := albumAsset(t, legacy, "pending.jpg")
+			putPhotoSuggestion(t, legacy, pending, document.PhotoDescription{Caption: "A harbor at dusk."})
+
+			described := albumAsset(t, legacy, "described.jpg")
+			node, err := legacy.NodeByID(ctx, described.Files[0].NodeID)
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, node.CurrentVersionID, fakeHash("d4"))
+			require.NoError(t, err)
+			request := photoDescriptionJobRequest(t, legacy, node.CurrentVersionID, producerB, true)
+			grantRenditionJobConsent(t, legacy, request)
+			startPhotoDescription(t, legacy, request, time.Now().UTC().Add(time.Minute))
+
+			_, head, err := legacy.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
+			var released strings.Builder
+			for _, table := range tables {
+				dumpReleasedTable(t, db, table, &released)
+			}
+			for _, kept := range []string{"watch_source_absences", "photo_face_scans", "rendition_jobs", "photo_description_explicit_waiters", "vault_changes"} {
+				require.Containsf(t, released.String(), kept+" ", "the released vault has %s rows", kept)
+			}
+			require.NoError(t, db.Close())
+
+			s, err := Open(t.Context(), path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			var upgraded strings.Builder
+			for _, table := range tables {
+				dumpReleasedTable(t, s.db, table, &upgraded)
+			}
+			assert.Equal(t, released.String(), upgraded.String(), "local state survives the upgrade unchanged")
+			suggestions := photoSuggestionValues(t, s, pending.ID)
+			require.Len(t, suggestions, 1)
+			assert.Equal(t, "A harbor at dusk.", suggestions[0].Value.Caption, "pending text needs no second provider call")
+			changed, err := s.WatchSourcePresenceChanged(ctx, "archive", gone)
+			require.NoError(t, err)
+			assert.False(t, changed, "the missing watched file stays marked absent")
+			changes, next, err := s.VaultChanges(ctx, head, 500)
+			require.NoError(t, err, "a change feed cursor from before the upgrade stays valid")
+			assert.Empty(t, changes)
+			assert.Equal(t, head, next)
 			require.NoError(t, s.ValidateMetadata(ctx))
 		})
 	}
