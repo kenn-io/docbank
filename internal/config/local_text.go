@@ -80,6 +80,7 @@ func LocalTextEmbedding(p EmbeddingProfileConfig, mode string) (EmbeddingProfile
 	}
 	p.Runtime = new(*p.Runtime)
 	p.Runtime.Managed, p.Runtime.ServerMode = true, mode
+	p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = p.Runtime.ModelRevision, ""
 	p.Runtime.ProviderEgressConfig = ProviderEgressConfig{}
 	p.Embedder = nil
 	p.AuthorizationFingerprint, p.DisclosureFingerprint = localTextFingerprint("embed-authorization"), localTextFingerprint("embed-disclosure")

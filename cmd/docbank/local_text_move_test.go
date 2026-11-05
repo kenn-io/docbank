@@ -46,6 +46,9 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	p.Runtime.ConnectTimeout, p.Runtime.KeepAlive, p.Runtime.TLSHandshakeTimeout = config.Duration(time.Second), config.Duration(time.Second), config.Duration(time.Second)
 	p.Runtime.ModelRevision = revision
 	p.Runtime.DeploymentEpoch = p.Runtime.ModelRevision
+	if format == "revision-header" {
+		p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = "", "X-Model-Revision"
+	}
 	p.Chunk.MaxTokens, p.Chunk.OverlapTokens = 800, 100
 	p.AuthorizationFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-source-authorization")))
 	p.DisclosureFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-source-disclosure")))
@@ -78,6 +81,7 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	for _, variant := range []struct{ name, binding, format string }{
 		{"semantic", "semantic", "prefix-free"},
+		{"revision-header", "semantic", "revision-header"},
 		{"local-text", config.LocalTextProfile, "prefix-free"},
 		{"dot-product", "semantic", "dot-product"},
 		{"unconstrained-normalization", "semantic", "unconstrained-normalization"},
@@ -118,6 +122,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 						data[i] = map[string]any{"object": "embedding", "index": i, "embedding": vector}
 					}
 					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("X-Model-Revision", "ollama-nomic-september")
 					assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": request.Model, "data": data}))
 				})
 			}
@@ -215,6 +220,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 			require.NoError(t, err)
+			require.Equal(t, name, plan.Profile)
 			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
 			require.NoError(t, err)
 			require.NoError(t, connection.Close())

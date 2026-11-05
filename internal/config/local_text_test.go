@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 )
 
-func TestLocalTextRejectsRevisionEchoAndReservedProfile(t *testing.T) {
+func TestLocalTextConvertsRevisionEchoAndRejectsReservedProfile(t *testing.T) {
 	cfg := validProcessingConfig()
 	cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_TEST_REVISION_KEY"}}
 	profile := cfg.EmbeddingProfiles["semantic"]
@@ -23,8 +23,11 @@ func TestLocalTextRejectsRevisionEchoAndReservedProfile(t *testing.T) {
 		ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
-	_, err := LocalTextEmbedding(profile, "local")
-	require.Error(t, err)
+	converted, err := LocalTextEmbedding(profile, "local")
+	require.NoError(t, err)
+	require.Equal(t, "source-revision", converted.Runtime.DeploymentEpoch)
+	require.Empty(t, converted.Runtime.ProviderRevisionHeader)
+	require.Equal(t, "X-Model-Revision", profile.Runtime.ProviderRevisionHeader)
 	cfg.ProcessingProfiles[LocalTextProfile] = cfg.ProcessingProfiles["archive"]
 	require.NoError(t, cfg.Validate())
 	_, err = cfg.WithLocalText()

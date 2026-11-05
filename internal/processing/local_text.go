@@ -184,10 +184,8 @@ func (setup *LocalTextSetup) activate(ctx context.Context, service *Service, pla
 		fill := &LocalTextSetup{Service: service, Selected: plan.Profile, logger: setup.logger}
 		pass := Backfill[store.DocumentSummary]{Name: "local-text-move", Page: 50, IdleDelay: time.Second, DrainOnce: true,
 			List: fill.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: fill.process}
-		if err = pass.Run(ctx); err != nil {
-			return err
-		}
-		if err = service.rebuildVectorSpaces(ctx, slices.Collect(maps.Values(service.profiles[plan.Profile].vectorSpaces))); err != nil {
+		err = errors.Join(pass.Run(ctx), service.rebuildVectorSpaces(ctx, slices.Collect(maps.Values(service.profiles[plan.Profile].vectorSpaces))))
+		if err != nil {
 			return err
 		}
 	}

@@ -350,7 +350,7 @@ func writeDaemonEmbeddingConfig(t *testing.T, root string, cfg config.Config) {
 		runtime := p.Runtime
 		fmt.Fprintf(&encoded, "[embedding_profiles.%s.runtime]\n", name)
 		require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{
-			"adapter_contract": runtime.AdapterContract, "endpoint": runtime.Endpoint, "model_revision": runtime.ModelRevision, "deployment_epoch": runtime.DeploymentEpoch,
+			"adapter_contract": runtime.AdapterContract, "endpoint": runtime.Endpoint, "model_revision": runtime.ModelRevision, "deployment_epoch": runtime.DeploymentEpoch, "provider_revision_header": runtime.ProviderRevisionHeader,
 			"request_timeout": runtime.RequestTimeout.Std().String(), "max_request_bytes": runtime.MaxRequestBytes, "allowed_cidrs": runtime.AllowedCIDRs, "proxy_mode": runtime.ProxyMode,
 			"connect_timeout": runtime.ConnectTimeout.Std().String(), "keep_alive": runtime.KeepAlive.Std().String(), "tls_handshake_timeout": runtime.TLSHandshakeTimeout.Std().String(),
 		}))
