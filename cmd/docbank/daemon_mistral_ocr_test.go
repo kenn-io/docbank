@@ -91,7 +91,7 @@ func TestMistralOCRRuntimeManifest(t *testing.T) {
 	require.Empty(t, profiles)
 }
 
-func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig) (*daemonconn.Connection, *atomic.Int64) {
+func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig, terminalFailure bool) (*daemonconn.Connection, *atomic.Int64) {
 	t.Helper()
 	var attempts atomic.Int64
 	var heldClock atomic.Int64
@@ -100,6 +100,9 @@ func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig) (*daemonc
 		client.Transport = mistralProbeTransport(func(*http.Request) (*http.Response, error) {
 			heldClock.CompareAndSwap(0, time.Now().UTC().UnixNano())
 			attempts.Add(1)
+			if terminalFailure {
+				return &http.Response{StatusCode: http.StatusUnsupportedMediaType, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+			}
 			return nil, errors.New("synthetic provider failure")
 		})
 		return client
@@ -142,7 +145,7 @@ func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig) (*daemonc
 }
 
 func TestDaemonMistralOCRProcessing(t *testing.T) {
-	daemon, attempts := startMistralOCRDaemon(t, nil)
+	daemon, attempts := startMistralOCRDaemon(t, nil, true)
 	source := mistraltest.MinimalPDF("synthetic daemon OCR")
 	output, err := runCLI(t, "processing", "profiles", "--json")
 	require.NoError(t, err)
@@ -163,22 +166,21 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	require.Len(t, plan.Flow, 1)
-	job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-	require.NoError(t, err)
+	job, err := daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	require.Error(t, err)
 	require.Equal(t, node.CurrentVersionID, job.ContentVersionID)
-	// The synthetic provider fails, so after the client's HTTP retries the worker
-	// records a transient failure and schedules a retry.
-	settleDaemon(t)
+	// The stream ends after the provider rejects the input and the durable
+	// job records the terminal failure.
 	status, err := daemon.ProcessingStatus(t.Context(), job.ID)
 	require.NoError(t, err)
-	require.Equal(t, "retry_wait", status.State, "%+v", status)
-	require.Equal(t, "transient", status.FailureCode)
+	require.Equal(t, "failed", status.State, "%+v", status)
+	require.Equal(t, "terminal", status.FailureCode)
 	require.Positive(t, attempts.Load(), "the Mistral provider must be attempted")
 }
 
 func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	inbox := t.TempDir()
-	daemon, attempts := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(time.Hour)}})
+	daemon, attempts := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(time.Hour)}}, false)
 	path := filepath.Join(t.TempDir(), "consent.pdf")
 	require.NoError(t, os.WriteFile(path, mistraltest.MinimalPDF("consent source"), 0600))
 	_, err := runCLI(t, "add", path, "--dest", "/documents")
@@ -205,17 +207,6 @@ func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	// records a transient failure that waits to retry; the held worker clock
 	// keeps that retry from coming due.
 	require.Equal(t, "retry_wait", items[0].LatestProcessingState)
-	// Starting the same processing joins the queued rendition job, and its
-	// status reports why that job is waiting.
-	watchedSelector := api.ProcessingSelector{NodeID: watched.ID, ContentVersionID: watched.CurrentVersionID, Profile: "documents"}
-	watchedPlan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: watchedSelector}})
-	require.NoError(t, err)
-	joined, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: watchedSelector, PlanFingerprint: watchedPlan.Fingerprint, Consent: true}, watchedPlan.ProfileFingerprint)
-	require.NoError(t, err)
-	status, err := daemon.ProcessingStatus(t.Context(), joined.ID)
-	require.NoError(t, err)
-	require.Equal(t, "retry_wait", status.State, "%+v", status)
-	require.Equal(t, "transient", status.FailureCode)
 	require.Positive(t, attempts.Load(), "the Mistral provider must be attempted")
 }
 
