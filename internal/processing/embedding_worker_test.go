@@ -406,7 +406,9 @@ func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *test
 					fixture.blobs.onBlock = cancel
 				}
 				started := time.Now()
-				_, err := fixture.worker(t).ScanOnce(ctx)
+				worker := fixture.worker(t)
+				worker.wait = jobs.Wait
+				_, err := worker.ScanOnce(ctx)
 				require.ErrorIs(t, err, context.Canceled)
 				assert.Zero(t, time.Since(started), "cancellation returns without waiting")
 				assert.Empty(t, fixture.catalog.heads)
