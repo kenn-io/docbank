@@ -205,7 +205,8 @@ func TestVoyageEmbeddingResponseLimitCancellationAndTransportFailure(t *testing.
 			profile = refingerprintVoyageProfile(t, profile)
 			provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				writer.Header().Set("Content-Type", "application/json")
-				_, _ = writer.Write([]byte(strings.Repeat("x", 4097)))
+				_, _ = writer.Write(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))
+				_, _ = writer.Write([]byte(strings.Repeat(" ", 4097)))
 			}))
 			authorization := voyageAuthorization(profile.Descriptor)
 			authorization.MaxResponseBytes = 4096

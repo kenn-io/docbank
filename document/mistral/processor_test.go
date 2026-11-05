@@ -170,10 +170,10 @@ func TestProcessorCancellationDoesNotWaitForSpoolReservation(t *testing.T) {
 		}
 		releaseLock()
 		require.ErrorIs(t, processErr, context.Canceled)
-		removed, err := ScavengeSpoolDirectory(directory, time.Now().Add(time.Second))
-		require.NoError(t, err)
-		assert.Equal(t, 1, removed)
 	})
+	removed, err := ScavengeSpoolDirectory(directory, time.Now().Add(time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
 }
 
 func TestProcessorDOCXRoute(t *testing.T) {
