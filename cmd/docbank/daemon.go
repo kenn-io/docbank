@@ -329,8 +329,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		choice = config.LocalTextConfig{}
 	}
 	baseConfig := cfg
-	candidateProfiles := func(mode string) (map[string]processing.ProfileConfig, config.Config, error) {
-		candidate, err := localTextCandidate(baseConfig, mode)
+	compatible, err := localTextCompatible(cfg, processingProfiles)
+	if err != nil {
+		return err
+	}
+	sourceProfiles := make(map[string]document.ProcessingProfileV1, len(processingProfiles))
+	for name, profile := range processingProfiles {
+		sourceProfiles[name] = profile.Profile
+	}
+	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
+		candidate, err := localTextCandidate(baseConfig, mode, name)
 		if err != nil {
 			return nil, candidate, err
 		}
@@ -342,7 +350,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return profiles, candidate, err
 	}
 	if choice.Profile != "" {
-		selected, candidate, err := candidateProfiles(choice.Server)
+		name := choice.Profile
+		_, configured := baseConfig.ProcessingProfiles[name]
+		if name == config.LocalTextProfile && !configured {
+			name = ""
+		}
+		selected, candidate, err := candidateProfiles(choice.Server, name)
+		_, executable := processingProfiles[choice.Profile]
+		if err == nil && (configured && !executable || selected[choice.Profile].RenditionProvider == nil) {
+			err = processing.ErrProfileNotConfigured
+		}
 		if err == nil {
 			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
 		}
@@ -397,14 +414,15 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	tracker := api.NewActivityTracker()
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
+		Compatible: compatible, SourceProfiles: sourceProfiles,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
 		Save: func(name, mode string) error {
 			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
 		},
 	}
-	localText.Candidate = func(mode string) (*processing.Service, error) {
-		profiles, _, err := candidateProfiles(mode)
+	localText.Candidate = func(mode, name string) (*processing.Service, error) {
+		profiles, _, err := candidateProfiles(mode, name)
 		if err != nil {
 			return nil, err
 		}

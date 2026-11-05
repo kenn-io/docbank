@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -38,14 +40,16 @@ type LocalTextPlan struct {
 // LocalTextSetup builds a private service for the reviewed profile. Activation
 // happens on daemon restart, so all consumers keep one effective identity.
 type LocalTextSetup struct {
-	Service       *Service
-	Candidate     func(string) (*Service, error)
-	Selected      string
-	Startup       func(context.Context, bool, string) error
-	Save          func(string, string) error
-	ActivityBegin func()
-	ActivityEnd   func()
-	mu            sync.Mutex
+	Service        *Service
+	Candidate      func(mode, name string) (*Service, error)
+	Compatible     []string
+	SourceProfiles map[string]document.ProcessingProfileV1
+	Selected       string
+	Startup        func(context.Context, bool, string) error
+	Save           func(string, string) error
+	ActivityBegin  func()
+	ActivityEnd    func()
+	mu             sync.Mutex
 	// mu also guards the skip cache during the daemon's final idle check.
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
@@ -53,8 +57,26 @@ type LocalTextSetup struct {
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
-	name := config.LocalTextProfile
-	service, err := setup.Candidate(mode)
+	name, effect := "", "Build local index"
+	names := slices.Sorted(maps.Keys(setup.Service.profiles))
+	if slices.Contains(setup.Compatible, setup.Selected) {
+		names = append([]string{setup.Selected}, slices.DeleteFunc(names, func(n string) bool { return n == setup.Selected })...)
+	}
+	for _, candidate := range names {
+		indexed, err := setup.indexedText(ctx, candidate)
+		if err != nil {
+			return LocalTextPlan{}, nil, err
+		}
+		if !indexed {
+			continue
+		}
+		if slices.Contains(setup.Compatible, candidate) {
+			name, effect = candidate, "Reuse existing vectors"
+			break
+		}
+		effect = "Rebuild required: model or input contract differs from local Nomic"
+	}
+	service, err := setup.Candidate(mode, name)
 	if err != nil {
 		return LocalTextPlan{}, nil, err
 	}
@@ -64,6 +86,9 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			service.Stop()
 		}
 	}()
+	if name == "" {
+		name = config.LocalTextProfile
+	}
 	profile, ok := service.profiles[name]
 	if !ok {
 		return LocalTextPlan{}, nil, ErrProfileNotConfigured
@@ -74,7 +99,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 	}
 	plan := LocalTextPlan{VaultUID: service.catalog.VaultID(), Profile: name, Server: mode, ProfileFingerprint: profile.record.Fingerprint,
 		Managed: true, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
-		VectorEffect: "local-text (separate; adds missing content)"}
+		VectorEffect: effect}
 	for _, binding := range profile.portable.Embeddings {
 		plan.Models = append(plan.Models, binding.Model)
 	}
@@ -85,6 +110,38 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 	plan.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(encoded))
 	keep = true
 	return plan, service, nil
+}
+
+func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool, error) {
+	active := setup.Service.profiles[name]
+	authorities := []string{active.record.Fingerprint}
+	if source, ok := setup.SourceProfiles[name]; ok {
+		_, fingerprints, err := document.CanonicalProfile(source)
+		if err != nil {
+			return false, err
+		}
+		if fingerprints.Profile != active.record.Fingerprint {
+			authorities = append(authorities, fingerprints.Profile)
+		}
+	}
+	for _, binding := range active.portable.Embeddings {
+		if binding.InputKind != document.EmbeddingInputRenditionChunk {
+			continue
+		}
+		for _, authority := range authorities {
+			coverage, err := setup.Service.catalog.RevalidateSearchCandidates(ctx, nil, store.SearchOptions{VectorSpaceID: active.vectorSpaces[binding.Name]}, authority, binding.Name)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			if coverage.Coverage != nil && coverage.Coverage.CompleteDocuments > 0 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (setup *LocalTextSetup) Plan(ctx context.Context, mode string) (LocalTextPlan, error) {

@@ -73,6 +73,23 @@ func (c Config) WithLocalText() (Config, error) {
 	return c, nil
 }
 
+// LocalTextEmbedding keeps the model and input identity while moving its transport.
+func LocalTextEmbedding(p EmbeddingProfileConfig, mode string) (EmbeddingProfileConfig, error) {
+	if p.Runtime == nil || p.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" ||
+		p.Model != "nomic-embed-text" || p.Dimensions != 768 || p.Metric != "cosine" ||
+		p.Normalization != "unit_length" {
+		return p, errors.New("model or input contract differs from local Nomic")
+	}
+	p.Runtime = new(*p.Runtime)
+	p.Runtime.Managed, p.Runtime.ServerMode = true, mode
+	p.Runtime.ProviderEgressConfig = ProviderEgressConfig{}
+	p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = p.Runtime.ModelRevision, ""
+	p.Embedder = nil
+	p.AuthorizationFingerprint, p.DisclosureFingerprint = localTextFingerprint("embed-authorization"), localTextFingerprint("embed-disclosure")
+	p.CredentialBinding, p.TrustBoundary = "credential:local-text", string(document.EmbeddingTrustOperatorNetwork)
+	return p, nil
+}
+
 // ManagedEmbedding identifies the daemon-owned Kit provider override.
 func ManagedEmbedding(p EmbeddingProfileConfig) bool {
 	return p.Runtime != nil && p.Runtime.AdapterContract == "docbank-openai-compatible-embeddings/v1" &&

@@ -25,7 +25,11 @@ docbank processing profiles
 docbank processing local --server local
 ```
 
-The command previews the built-in `local-text` profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. It builds a separate `local-text` index with Nomic v1.5 (`nomic-embed-text`) and the plaintext extractor. PDF, Office, vision, and image embeddings need their configured providers.
+The command previews the profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. Setup prefers the saved configured Nomic recipe with existing vectors, then the first indexed compatible recipe in name order, and moves it to the shared server with its extractor, chunks, and existing vectors. Rerunning the command finds that index even after an earlier setup selected the built-in profile. Only new or changed content needs embedding.
+
+For an indexed recipe on another model or input contract, the preview reports a rebuild before downloading or starting work. Vaults without compatible indexed recipes use the built-in `local-text` profile with Nomic and the plaintext extractor. Restart restores the exact saved recipe, including existing watches.
+
+To return to your configured providers, delete `local-text.json` beside the vault's `config.toml` and run `docbank daemon restart`.
 
 Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background and resumes after a daemon restart. Revoking processing consent stops provider calls.
 

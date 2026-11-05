@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -100,22 +101,7 @@ func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
 		require.Equal(t, "failed", failed.State)
 	}()
 	require.EqualValues(t, 1, calls.Load())
-	require.NoError(t, writeDaemonASRConfig(root, cfg))
-	var encoded bytes.Buffer
-	runtime := embedding.Runtime
-	embedding.Runtime = nil
-	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{"embedding_profiles": map[string]any{"semantic": embedding}}))
-	encoded.WriteString("[embedding_profiles.semantic.runtime]\n")
-	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{
-		"adapter_contract": runtime.AdapterContract, "endpoint": runtime.Endpoint, "model_revision": runtime.ModelRevision, "deployment_epoch": runtime.DeploymentEpoch,
-		"request_timeout": runtime.RequestTimeout.Std().String(), "max_request_bytes": runtime.MaxRequestBytes, "allowed_cidrs": runtime.AllowedCIDRs, "proxy_mode": runtime.ProxyMode,
-		"connect_timeout": runtime.ConnectTimeout.Std().String(), "keep_alive": runtime.KeepAlive.Std().String(), "tls_handshake_timeout": runtime.TLSHandshakeTimeout.Std().String(),
-	}))
-	file, err := os.OpenFile(filepath.Join(root, "config.toml"), os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-	_, err = file.Write(encoded.Bytes())
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
+	writeDaemonEmbeddingConfig(t, root, cfg)
 	t.Setenv("DOCBANK_HOME", root)
 	startServe(t)
 	waitForDaemon(t, root)
@@ -341,4 +327,32 @@ func TestEmbeddingRuntimeClassifiesMalformedVoyageResponses(t *testing.T) {
 		require.Equal(t, processing.EmbeddingProviderInvalidResponse, kind)
 		require.Zero(t, delay)
 	}
+}
+
+func writeDaemonEmbeddingConfig(t *testing.T, root string, cfg config.Config) {
+	t.Helper()
+	require.NoError(t, writeDaemonASRConfig(root, cfg))
+	var encoded bytes.Buffer
+	profiles := maps.Clone(cfg.EmbeddingProfiles)
+	for name, p := range profiles {
+		p.Runtime = nil
+		profiles[name] = p
+	}
+	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{"embedding_profiles": profiles}))
+	for name, p := range cfg.EmbeddingProfiles {
+		runtime := p.Runtime
+		fmt.Fprintf(&encoded, "[embedding_profiles.%s.runtime]\n", name)
+		require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{
+			"adapter_contract": runtime.AdapterContract, "endpoint": runtime.Endpoint, "model_revision": runtime.ModelRevision, "deployment_epoch": runtime.DeploymentEpoch,
+			"request_timeout": runtime.RequestTimeout.Std().String(), "max_request_bytes": runtime.MaxRequestBytes, "allowed_cidrs": runtime.AllowedCIDRs, "proxy_mode": runtime.ProxyMode,
+			"connect_timeout": runtime.ConnectTimeout.Std().String(), "keep_alive": runtime.KeepAlive.Std().String(), "tls_handshake_timeout": runtime.TLSHandshakeTimeout.Std().String(),
+		}))
+	}
+	file, err := os.OpenFile(filepath.Join(root, "config.toml"), os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = file.Write(encoded.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	_, err = config.Load(root)
+	require.NoError(t, err)
 }

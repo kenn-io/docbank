@@ -47,7 +47,7 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	setup := &LocalTextSetup{Service: service, Selected: "local-text"}
 	gateFailure := errors.New("synthetic grant failure")
 	saveFailure := errors.New("synthetic save failure")
-	setup.Candidate = func(string) (*Service, error) {
+	setup.Candidate = func(string, string) (*Service, error) {
 		next := config
 		next.Gate = &localTextGrantGate{workerTestGate: newWorkerTestGate(), err: gateFailure}
 		s, err := NewService(t.Context(), next)
@@ -64,7 +64,7 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.ErrorIs(t, err, gateFailure)
 	require.Equal(t, "previous-profile", saved)
-	setup.Candidate = func(string) (*Service, error) {
+	setup.Candidate = func(string, string) (*Service, error) {
 		s, err := NewService(t.Context(), config)
 		return s, err
 	}
