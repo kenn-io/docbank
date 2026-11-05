@@ -125,6 +125,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			plan.Models = append(plan.Models, binding.Model)
 		}
 	}
+	plan.RetainedClasses = sortedUnique(plan.RetainedClasses)
 	encoded, err := json.Marshal(plan, json.Deterministic(true))
 	if err != nil {
 		return LocalTextPlan{}, nil, err
