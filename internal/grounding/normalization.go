@@ -31,7 +31,14 @@ type figureKey struct{ kind, value string }
 // Only consume a whole sequence of existing literal tokens. Unrecognized input
 // remains exactly the same figure that the literal checker would have seen.
 func normalizedFigures(text string) []normalizedFigure {
-	text = string(util.UnescapePunctuations([]byte(text)))
+	return decodedFigures(decodeFigureText(text))
+}
+
+func decodeFigureText(text string) string {
+	return string(util.UnescapePunctuations([]byte(text)))
+}
+
+func decodedFigures(text string) []normalizedFigure {
 	result := []normalizedFigure{}
 	rs := []rune(text)
 	type span struct{ start, end int }

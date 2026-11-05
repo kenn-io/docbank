@@ -250,6 +250,7 @@ resource links, is capped at 1 MiB.
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `find_conflicts` | Uses the same query, profile, mode, limit, binding, and source selectors as `search_documents`, without `explain` or `rerank`. Compares money, percentages, and durations in content excerpts and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -395,6 +396,37 @@ sanitized JSON-RPC internal error. Stderr records the operation and a fixed
 error category for diagnosis. Neither path includes host paths, SQL, provider
 secrets, daemon keys, or unrequested document text.
 
+### Find differing figures
+
+Call `find_conflicts` with search terms and a source selector. For example:
+
+```json
+{"name":"find_conflicts","arguments":{"query":"cooling period","profile":"default","filters":{}}}
+```
+
+If matching sentences say "The cooling period is 7 days." and "The cooling
+period is 15 days.", the result is `CONFLICTING`. Each conflict includes the
+figures, their sentences, and passage references starting at 1. Each passage
+includes its document identity, evidence IDs, and `modified_at` from the catalog.
+That timestamp describes the document, not when a policy takes effect.
+
+The tool compares money in the same currency, percentages written as `%` or
+`percent`, and durations in the same unit from minutes through years. Subjects
+must have exactly the same lowercase letter-words after removing the figure
+and its unit. Product names and qualifiers remain part of the subject.
+Each sentence must contain every query term as a word prefix and exactly one
+figure. A second figure, including a date, makes the sentence ambiguous.
+
+Name-only evidence, a lowercase first sentence, and an unfinished final sentence
+are skipped. Complete sentences after a leading excerpt marker remain eligible.
+A passage stating different values for the same subject drops that subject.
+`compared: false` marks passages with no eligible figures.
+
+`NO_CONFLICT` means at least one subject could be compared across passages and
+all comparable figures agreed. `NOT_COMPARABLE` means none could be lined up.
+These statuses cover the retrieved excerpts only. Check coverage and truncation,
+and open the sources to verify disagreements. The tool chooses no winner.
+
 ### Answer questions
 
 `answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
@@ -443,7 +475,7 @@ PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
 ## Resources and rendition windows
 
 `resources/list` is intentionally empty. `list_documents`,
-`search_documents`, `answer_question`, and `get_document` attach resource links for each active
+`search_documents`, `find_conflicts`, `answer_question`, and `get_document` attach resource links for each active
 rendition, and `resources/templates/list` publishes one RFC 6570 template.
 
 The canonical rendition URI is:

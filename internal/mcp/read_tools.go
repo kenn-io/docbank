@@ -68,6 +68,8 @@ func executeReadTool(
 		output, links, err = answerQuestion(ctx, daemonAnswerSession(lease), raw)
 	case "search_documents":
 		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
+	case "find_conflicts":
+		output, links, err = findConflicts(ctx, daemonDocumentSession(lease), raw)
 	case "get_document":
 		output, links, err = getDocument(ctx, lease, raw)
 	case "list_document_versions":
@@ -437,40 +439,8 @@ func searchDocuments(
 	}
 	input.Mode = effectiveSearchMode(input.Mode)
 
-	type response struct {
-		resolution api.DocumentSourceFenceResolution
-		vaultID    string
-		report     api.DocumentSearchReport
-		documents  []api.DocumentSummary
-	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
-		request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
-			Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank}
-		var resolution api.DocumentSourceFenceResolution
-		var report api.DocumentSearchReport
-		var callErr error
-		if input.Filters != nil {
-			request.Scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
-			report, callErr = c.SearchDocuments(ctx, request)
-		} else {
-			resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
-			if callErr != nil {
-				return response{}, callErr
-			}
-			request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
-			report, callErr = searchResolvedDocuments(ctx, c, request)
-		}
-		if callErr != nil {
-			return response{}, callErr
-		}
-		if len(report.Results) == 0 {
-			return response{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
-		}
-		documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
-		if callErr != nil {
-			return response{}, callErr
-		}
-		return response{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
+		return runDocumentSearch(ctx, c, input, false)
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
@@ -500,6 +470,43 @@ func searchDocuments(
 			RerankRelevance: searchRerankRelevance(item, index, output.Reranking)}
 	}
 	return output, documentResourceLinks(result.vaultID, result.documents), nil
+}
+
+type documentSearchResponse struct {
+	resolution api.DocumentSourceFenceResolution
+	vaultID    string
+	report     api.DocumentSearchReport
+	documents  []api.DocumentSummary
+}
+
+func runDocumentSearch(ctx context.Context, c documentClient, input searchDocumentsInput, contentFirst bool) (documentSearchResponse, error) {
+	request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
+		Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: contentFirst}
+	var resolution api.DocumentSourceFenceResolution
+	var report api.DocumentSearchReport
+	var callErr error
+	if input.Filters != nil {
+		request.Scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
+		report, callErr = c.SearchDocuments(ctx, request)
+	} else {
+		resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
+		if callErr != nil {
+			return documentSearchResponse{}, callErr
+		}
+		request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
+		report, callErr = searchResolvedDocuments(ctx, c, request)
+	}
+	if callErr != nil {
+		return documentSearchResponse{}, callErr
+	}
+	if len(report.Results) == 0 {
+		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
+	}
+	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
+	if callErr != nil {
+		return documentSearchResponse{}, callErr
+	}
+	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
 }
 
 // retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.

@@ -41,7 +41,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	daemon, service, profileName := newProcessingDocumentServer(t, f)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	embedded := sdkmcp.NewServer(testImplementation(), nil)
-	for _, name := range []string{"get_vault_info", "list_documents", "search_documents"} {
+	for _, name := range []string{"get_vault_info", "list_documents", "search_documents", "find_conflicts"} {
 		tool, err := ReadTool(name)
 		require.NoError(t, err)
 		embedded.AddTool(tool, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
@@ -68,6 +68,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 		{"get_vault_info", map[string]any{}},
 		{"search_documents", map[string]any{"query": "alpha", "mode": "lexical", "profile": profileName, "filters": map[string]any{}}},
 		{"search_documents", map[string]any{"query": "alpha", "profile": "missing", "filters": map[string]any{"mime_type": "image/png"}}},
+		{"find_conflicts", map[string]any{"query": "alpha", "mode": "lexical", "profile": profileName, "filters": map[string]any{}}},
 		{"list_documents", map[string]any{"cursor": "invalid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

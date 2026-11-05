@@ -78,6 +78,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
 	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
+	findConflictsTool,
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
@@ -326,7 +327,7 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 			}
 		}
 		fallthrough
-	case "search_documents":
+	case "search_documents", "find_conflicts":
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil
