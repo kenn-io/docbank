@@ -28,6 +28,22 @@ func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 	require.Empty(t, targets)
 }
 
+func TestDocumentEventBackfillIdleListingPreservesWriteRevision(t *testing.T) {
+	t.Parallel()
+	catalog := openDocumentEventTestStore(t)
+	_, err := catalog.CreateFile(t.Context(), catalog.RootID(), "example.txt", testDigest("idle"), 4, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, RebuildDocumentEvents(t.Context(), catalog))
+	backfill := NewDocumentEventBackfill(catalog, nil, nil)
+	revision := catalog.WriteRevision()
+	for range 3 {
+		targets, err := backfill.List(t.Context(), "", 25)
+		require.NoError(t, err)
+		require.Empty(t, targets)
+		require.Equal(t, revision, catalog.WriteRevision(), "idle listings must let the backfill settle")
+	}
+}
+
 func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {
 	t.Parallel()
 	for _, address := range []string{"ÜSER@EXAMPLE.TEST", "USER@İ.example.test", `"Ada Lovelace"@example.test`, `"<Ada"@example.test`, `" Ada"@example.test`} {

@@ -961,6 +961,7 @@ func startProcessingJobs(
 	}
 	metadata := &processing.Backfill[store.SourceMetadataTarget]{
 		Name: "source-metadata", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		List: func(ctx context.Context, after string, limit int) ([]store.SourceMetadataTarget, error) {
 			return s.MissingSourceMetadataTargetsAfter(
 				ctx, processing.SourceMetadataExtractorFingerprint, after, limit)
@@ -1029,10 +1030,12 @@ func startProcessingJobs(
 		return fmt.Errorf("starting email backfill: %w", err)
 	}
 	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
+	documentEvents.WriteRevision = s.WriteRevision
 	if err := supervisor.StartWorker("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)
 	}
 	documentPeople := processing.NewDocumentPeopleBackfill(s, gate.MutateContext, logger)
+	documentPeople.WriteRevision = s.WriteRevision
 	if err := supervisor.StartWorker("derive:document-people", documentPeople.Run); err != nil {
 		return fmt.Errorf("starting document people derivation: %w", err)
 	}

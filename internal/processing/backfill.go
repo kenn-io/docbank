@@ -40,6 +40,9 @@ type Backfill[T any] struct {
 	// Three consecutive listing failures or three failures of one target return
 	// the last error so synchronous callers do not wait indefinitely.
 	DrainOnce bool
+	// WriteRevision changes after committed catalog writes. When set, an empty
+	// first page settles the scan until the revision changes. DrainOnce ignores it.
+	WriteRevision func() uint64
 	// List returns targets ordered by key after the given cursor.
 	List func(ctx context.Context, after string, limit int) ([]T, error)
 	// Key returns the ordering key of one target, which is also its cursor.
@@ -72,8 +75,21 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 	// passFound records whether the scan since the cursor last reset attempted
 	// any target.
 	passFound := false
+	var settled bool
+	var settledRevision uint64
 	for {
-		targets, err := b.List(ctx, cursor, b.Page)
+		var revision uint64
+		if !b.DrainOnce && b.WriteRevision != nil && cursor == "" {
+			revision = b.WriteRevision()
+			if revision != settledRevision {
+				settled = false
+			}
+		}
+		var targets []T
+		var err error
+		if !settled {
+			targets, err = b.List(ctx, cursor, b.Page)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -92,10 +108,14 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 		}
 		listFailures = 0
 		if len(targets) == 0 {
+			firstPage := cursor == ""
 			cursor = ""
 			retries.retainSeen()
 			if b.DrainOnce && len(retries) == 0 {
 				return nil
+			}
+			if !b.DrainOnce && b.WriteRevision != nil && firstPage && len(retries) == 0 {
+				settled, settledRevision = true, revision
 			}
 			// Only a completed scan reports no work to Settle. Targets in retry
 			// backoff become ready only with time.
@@ -107,6 +127,7 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			idleDelay = min(idleDelay*2, backfillMaxIdleDelay)
 			continue
 		}
+		settled = false
 		idleDelay = b.IdleDelay
 		attempted, err := b.processPage(ctx, targets, retries)
 		passFound = passFound || attempted > 0

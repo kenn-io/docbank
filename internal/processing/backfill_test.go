@@ -123,6 +123,82 @@ func newTestBackfill(catalog *fakeBackfillCatalog, page int, drain bool) *Backfi
 	}
 }
 
+func TestBackfillSettlesUntilWriteRevisionChanges(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a")
+		var revision atomic.Uint64
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.WriteRevision = revision.Load
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
+		synctest.Wait()
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		catalog.mu.Lock()
+		listed := catalog.listed
+		assert.True(t, catalog.done["a"])
+		catalog.mu.Unlock()
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		catalog.mu.Lock()
+		assert.Equal(t, listed, catalog.listed, "a drained catalog stays idle")
+		catalog.keys = append(catalog.keys, "b")
+		catalog.mu.Unlock()
+		revision.Add(1)
+		time.Sleep(backfillMaxIdleDelay)
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		assert.True(t, catalog.done["b"], "a committed write wakes the backfill")
+		assert.Equal(t, 1, catalog.attempts["b"])
+	})
+}
+
+func TestBackfillWriteDuringEmptyListingWakesNextScan(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog()
+		var revision atomic.Uint64
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.WriteRevision = revision.Load
+		backfill.List = func(ctx context.Context, after string, limit int) ([]string, error) {
+			targets, err := catalog.list(ctx, after, limit)
+			if revision.Load() == 0 {
+				catalog.mu.Lock()
+				catalog.keys = append(catalog.keys, "a")
+				catalog.mu.Unlock()
+				revision.Add(1)
+			}
+			return targets, err
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
+		time.Sleep(backfillMaxIdleDelay)
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		assert.True(t, catalog.done["a"], "settling uses the revision before List")
+	})
+}
+
+func TestBackfillRetriesWithoutWriteRevisionChanges(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a", "b")
+		catalog.failing["a"] = 100000
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.WriteRevision = func() uint64 { return 0 }
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		require.ErrorIs(t, backfill.Run(ctx), context.DeadlineExceeded)
+		assert.GreaterOrEqual(t, catalog.attempts["a"], 4)
+		assert.True(t, catalog.done["b"], "a failing target allows siblings to progress")
+	})
+}
+
 func TestBackfillDrainsEveryTargetAcrossPagesAndStops(t *testing.T) {
 	t.Parallel()
 	catalog := newFakeBackfillCatalog("a", "b", "c", "d", "e")
