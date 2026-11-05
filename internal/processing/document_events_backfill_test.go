@@ -28,6 +28,78 @@ func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 	require.Empty(t, targets)
 }
 
+func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
+	t.Parallel()
+	catalog := openDocumentEventTestStore(t)
+	ctx := t.Context()
+	created, err := catalog.CreateFile(ctx, catalog.RootID(), "example.txt", testDigest("idle"), 4, "text/plain")
+	require.NoError(t, err)
+	metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Fields:          []document.SourceMetadataFieldV1{},
+		Warnings:        []document.SourceMetadataWarningV1{},
+	})
+	require.NoError(t, err)
+	_, err = catalog.PublishSourceMetadata(ctx, created.BlobHash, SourceMetadataExtractorFingerprint, metadata)
+	require.NoError(t, err)
+	require.NoError(t, RebuildDocumentEvents(ctx, catalog))
+	require.NoError(t, RebuildDocumentPeople(ctx, catalog))
+	gridRecipe, err := VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	_, gridFingerprint, err := document.MarshalVisualPreviewRecipeV1(gridRecipe)
+	require.NoError(t, err)
+	emailFingerprint, err := EmailDecoderFingerprint()
+	require.NoError(t, err)
+	bodyFingerprint, err := EmailBodyProfileFingerprint()
+	require.NoError(t, err)
+	events := NewDocumentEventBackfill(catalog, nil, nil)
+	people := NewDocumentPeopleBackfill(catalog, nil, nil)
+	media := &Service{catalog: catalog, principal: "daemon:operator"}
+	for _, test := range []struct {
+		name string
+		list func() (bool, error)
+	}{
+		{"source metadata", func() (bool, error) {
+			targets, err := catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"document events", func() (bool, error) {
+			targets, err := events.List(ctx, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"document people", func() (bool, error) {
+			targets, err := people.List(ctx, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"visual previews", func() (bool, error) {
+			targets, err := catalog.MissingPhotoVisualPreviewTargetsAfter(ctx, gridFingerprint, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"photo quality", func() (bool, error) {
+			targets, err := catalog.MissingPhotoQualityTargetsAfter(ctx, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"email", func() (bool, error) {
+			targets, err := catalog.MissingEmailTargetsAfter(ctx, emailFingerprint, bodyFingerprint, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"media continuations", func() (bool, error) {
+			targets, err := media.MediaProcessingTargets(ctx, "", 25)
+			return len(targets) == 0, err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			revision := catalog.WriteRevision()
+			for range 3 {
+				empty, err := test.list()
+				require.NoError(t, err)
+				require.True(t, empty)
+				require.Equal(t, revision, catalog.WriteRevision(), "idle listings must let the backfill settle")
+			}
+		})
+	}
+}
+
 func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {
 	t.Parallel()
 	for _, address := range []string{"ÜSER@EXAMPLE.TEST", "USER@İ.example.test", `"Ada Lovelace"@example.test`, `"<Ada"@example.test`, `" Ada"@example.test`} {

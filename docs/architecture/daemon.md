@@ -195,6 +195,14 @@ The list includes the newest 1,000 durable storage records. Finished storage
 operations clear within an hour after their retention ends unless they still
 own pending cleanup.
 
+Source-metadata, email, visual-preview, photo-quality, document-events,
+document-people, media-continuations, and local-text backfills stop scanning
+after an empty full scan. They rescan after any committed vault write or a
+daemon restart. A write wakes a settled backfill within its existing idle wait,
+at most ten seconds.
+A failing target keeps its lane polling at the retry cadence. Local text also
+polls while it waits for index publication to finish.
+
 The daemon's content jobs include:
 
 - `extract:plain-text` verifies and indexes supported current text content with

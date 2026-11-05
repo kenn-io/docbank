@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorworker"
@@ -119,6 +120,37 @@ func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvi
 	tb.Cleanup(service.Stop)
 	require.NoError(tb, service.grantProfileConsent(tb.Context(), service.profiles["pdf"], nil))
 	return fixture, &LocalTextSetup{Service: service, Selected: "pdf"}
+}
+
+func TestLocalTextIdleStopsCatalogScansAndWakesOnWrite(t *testing.T) {
+	t.Parallel()
+	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	ctx := t.Context()
+	supervisor := jobs.New(ctx, slog.New(slog.DiscardHandler))
+	defer func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(ctx))) }()
+	require.NoError(t, supervisor.StartWorker("local-text", func(ctx context.Context) error {
+		return setup.Backfill(ctx, nil)
+	}))
+	require.NoError(t, supervisor.Settle(ctx))
+	// An idle listing needs mu. Settle can finish with it held only if the
+	// unchanged lane remains settled when the supervisor wakes it.
+	setup.mu.Lock()
+	settleCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err := supervisor.Settle(settleCtx)
+	cancel()
+	setup.mu.Unlock()
+	require.NoError(t, err, "an idle lane must stop listing the unchanged catalog")
+
+	written, err := fixture.blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.PDF()))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(ctx, fixture.catalog.RootID(), "new.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	require.NoError(t, supervisor.Settle(ctx))
+	profile := setup.Service.profiles[setup.Selected]
+	embeddings, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
+	require.NoError(t, err)
+	require.Len(t, embeddings, 1)
+	require.Equal(t, "completed", embeddings[0].State)
 }
 
 func TestLocalTextSkipsIneligibleSweepAndPrunesAbsentInputs(t *testing.T) {

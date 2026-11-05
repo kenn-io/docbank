@@ -430,10 +430,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
 		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
-		List:    processingService.MediaProcessingTargets,
-		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
-		Process: processingService.ContinueMediaProcessing,
-		Logger:  logger,
+		WriteRevision: s.WriteRevision,
+		List:          processingService.MediaProcessingTargets,
+		Key:           func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process:       processingService.ContinueMediaProcessing,
+		Logger:        logger,
 	}
 	if err := jobSupervisor.StartWorker("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
@@ -961,6 +962,7 @@ func startProcessingJobs(
 	}
 	metadata := &processing.Backfill[store.SourceMetadataTarget]{
 		Name: "source-metadata", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		List: func(ctx context.Context, after string, limit int) ([]store.SourceMetadataTarget, error) {
 			return s.MissingSourceMetadataTargetsAfter(
 				ctx, processing.SourceMetadataExtractorFingerprint, after, limit)
@@ -990,9 +992,10 @@ func startProcessingJobs(
 
 	quality := &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "photo-quality", Page: 10, IdleDelay: time.Second,
-		List:   s.MissingPhotoQualityTargetsAfter,
-		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
-		Mutate: gate.MutateContext, Logger: logger,
+		WriteRevision: s.WriteRevision,
+		List:          s.MissingPhotoQualityTargetsAfter,
+		Key:           func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
+		Mutate:        gate.MutateContext, Logger: logger,
 		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
 			return processing.EvaluatePhotoQuality(ctx, s, blobs, target)
 		},
@@ -1010,6 +1013,7 @@ func startProcessingJobs(
 	}
 	email := &processing.Backfill[store.EmailTarget]{
 		Name: "email", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		List: func(ctx context.Context, after string, limit int) ([]store.EmailTarget, error) {
 			return s.MissingEmailTargetsAfter(
 				ctx, emailFingerprint, emailBodyProfileFingerprint, after, limit,
@@ -1029,10 +1033,12 @@ func startProcessingJobs(
 		return fmt.Errorf("starting email backfill: %w", err)
 	}
 	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
+	documentEvents.WriteRevision = s.WriteRevision
 	if err := supervisor.StartWorker("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)
 	}
 	documentPeople := processing.NewDocumentPeopleBackfill(s, gate.MutateContext, logger)
+	documentPeople.WriteRevision = s.WriteRevision
 	if err := supervisor.StartWorker("derive:document-people", documentPeople.Run); err != nil {
 		return fmt.Errorf("starting document people derivation: %w", err)
 	}
@@ -1068,6 +1074,7 @@ func newVisualPreviewBackfill(
 	}
 	return &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "visual-previews", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		Control: func(ctx context.Context) (store.LaneControl, error) {
 			return s.LaneControl(ctx, store.VisualPreviewLane)
 		},
