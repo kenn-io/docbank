@@ -194,9 +194,11 @@ func (s *Store) ListPhotoAssets(
 			return err
 		}
 		displayFrom := photoBrowseDisplayFrom
+		countFrom := photoBrowseScopeFrom
 		if photoXMPQueueRestricted(compiled.Query) {
 			// Seek queued assets before their display files, then sort this small set.
 			displayFrom = `photo_xmp_unsettled xq CROSS JOIN ` + photoBrowseDisplayFrom
+			countFrom = `photo_xmp_unsettled xq CROSS JOIN ` + photoBrowseScopeFrom
 			scope.match.sql = `a.asset_id=xq.asset_id AND (` + scope.match.sql + `)`
 			scope.queue = ` CROSS JOIN photo_xmp_unsettled xq`
 			from = displayFrom
@@ -241,7 +243,7 @@ func (s *Store) ListPhotoAssets(
 			}
 		}
 		if boundary == nil {
-			countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + displayFrom +
+			countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + countFrom +
 				` WHERE ` + scope.where())
 			if err != nil {
 				return err
@@ -352,11 +354,14 @@ func (s *Store) ListPhotoAssets(
 	return page, err
 }
 
+// photoBrowseScopeFrom holds only the relations photoBrowseScope.where reads.
+const photoBrowseScopeFrom = `photo_assets a
+ CROSS JOIN photo_files f ON f.file_id=a.display_file_id
+ CROSS JOIN nodes n ON n.id=f.node_id`
+
 // Force the outer relation to be the indexed sort source. Every following join
 // uses an ownership key; the member predicate only visits this asset's files.
-const photoBrowseDisplayFrom = `photo_assets a
- CROSS JOIN photo_files f ON f.file_id=a.display_file_id
- CROSS JOIN nodes n ON n.id=f.node_id
+const photoBrowseDisplayFrom = photoBrowseScopeFrom + `
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
  LEFT JOIN source_metadata_generations mg ON mg.generation_id=h.generation_id
