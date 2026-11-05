@@ -329,8 +329,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		choice = config.LocalTextConfig{}
 	}
 	baseConfig := cfg
-	candidateProfiles := func(mode string, names []string) (map[string]processing.ProfileConfig, config.Config, error) {
-		candidate, err := localTextCandidate(baseConfig, mode, names)
+	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
+		candidate, err := localTextCandidate(baseConfig, mode, name)
 		if err != nil {
 			return nil, candidate, err
 		}
@@ -341,22 +341,19 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		profiles, err := executableProcessingProfiles(candidate, bundle)
 		return profiles, candidate, err
 	}
-	var active []string
-	for _, name := range choice.Profiles {
-		selected, candidate, err := candidateProfiles(choice.Server, []string{name})
-		if err == nil && selected[name].RenditionProvider == nil {
+	if choice.Profile != "" {
+		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
+		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
 		}
 		if err == nil {
-			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, name, selected[name])
+			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
 		}
 		if err != nil {
-			logger.Warn("restore local text selection; profile indexing remains inactive", "profile", name, "error", err)
-			continue
+			logger.Warn("restore local text selection; indexing remains inactive", "profile", choice.Profile, "error", err)
+			choice = config.LocalTextConfig{}
 		}
-		active = append(active, name)
 	}
-	choice.Profiles = active
 
 	for _, watch := range cfg.Watches {
 		if watch.Profile != "" {
@@ -402,15 +399,15 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
-	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profiles,
+	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
-		Save: func(names []string, mode string) error {
-			return saveLocalText(layout.Root, config.LocalTextConfig{Profiles: names, Server: mode})
+		Save: func(name, mode string) error {
+			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
 		},
 	}
-	localText.Candidate = func(mode string, names []string) (*processing.Service, error) {
-		profiles, _, err := candidateProfiles(mode, names)
+	localText.Candidate = func(mode, name string) (*processing.Service, error) {
+		profiles, _, err := candidateProfiles(mode, name)
 		if err != nil {
 			return nil, err
 		}
@@ -418,8 +415,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
 	}
-	for _, name := range choice.Profiles {
-		if err := jobSupervisor.StartWorker("embed:local-text:"+name, func(ctx context.Context) error { return localText.Backfill(ctx, name, logger) }); err != nil {
+	if choice.Profile != "" {
+		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
 			return err
 		}
 	}

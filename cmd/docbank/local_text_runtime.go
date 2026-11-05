@@ -8,7 +8,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/config"
@@ -22,37 +21,20 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return choice, nil
 	}
-	if err != nil {
-		return choice, err
-	}
-	var version struct {
-		Version int `json:"version"`
-	}
-	if err = json.Unmarshal(data, &version); err != nil {
-		return choice, err
-	}
-	switch version.Version {
-	case 1:
-		var old struct {
-			Version int    `json:"version"`
-			Profile string `json:"profile"`
-			Server  string `json:"server"`
-		}
-		err = json.Unmarshal(data, &old, json.RejectUnknownMembers(true))
-		choice = config.LocalTextConfig{Version: 1, Profiles: []string{old.Profile}, Server: old.Server}
-	case 2:
+	if err == nil {
 		err = json.Unmarshal(data, &choice, json.RejectUnknownMembers(true))
-	default:
-		err = fmt.Errorf("unsupported local-text format version %d", version.Version)
-	}
-	if err == nil && (len(choice.Profiles) == 0 || slices.Contains(choice.Profiles, "") || (choice.Server != "auto" && choice.Server != "local")) {
-		err = errors.New("local-text selection requires profiles and auto or local server")
+		if err == nil && choice.Version != 1 {
+			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
+		}
+		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local")) {
+			err = errors.New("local-text selection requires a profile and auto or local server")
+		}
 	}
 	return choice, err
 }
 
 func saveLocalText(root string, choice config.LocalTextConfig) error {
-	choice.Version = 2
+	choice.Version = 1
 	data, err := json.Marshal(choice)
 	if err != nil {
 		return err
@@ -60,32 +42,20 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
 }
 
-// localTextCandidate moves compatible recipes, or supplies the plaintext fallback.
-func localTextCandidate(cfg config.Config, mode string, names []string) (config.Config, error) {
+// localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.
+func localTextCandidate(cfg config.Config, mode, name string) (config.Config, error) {
 	if mode != "auto" && mode != "local" {
 		return cfg, processing.ErrProfileNotConfigured
+	}
+	if _, configured := cfg.ProcessingProfiles[name]; name == config.LocalTextProfile && !configured {
+		name = ""
 	}
 	candidate := cfg
 	candidate.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
 	candidate.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
 	candidate.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
-	if len(names) == 0 {
-		names = []string{config.LocalTextProfile}
-	}
-	candidate.ProcessingProfiles = make(map[string]config.ProcessingProfileConfig, len(names))
-	for _, name := range names {
-		if _, configured := cfg.ProcessingProfiles[name]; name == config.LocalTextProfile && !configured {
-			fallback, err := candidate.WithLocalText()
-			if err != nil {
-				return cfg, err
-			}
-			candidate = fallback
-			profile := candidate.EmbeddingProfiles[name]
-			profile.Runtime = new(*profile.Runtime)
-			profile.Runtime.ServerMode = mode
-			candidate.EmbeddingProfiles[name] = profile
-			continue
-		}
+	candidate.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
+	if name != "" {
 		recipe, ok := cfg.ProcessingProfiles[name]
 		if !ok {
 			return cfg, processing.ErrProfileNotConfigured
@@ -109,8 +79,19 @@ func localTextCandidate(cfg config.Config, mode string, names []string) (config.
 		if textBindings == 0 {
 			return cfg, processing.ErrProfileNotConfigured
 		}
-		candidate.ProcessingProfiles[name] = recipe
+		candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{name: recipe}
+		return candidate, nil
 	}
+	var err error
+	candidate, err = candidate.WithLocalText()
+	if err != nil {
+		return cfg, err
+	}
+	candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: candidate.ProcessingProfiles[config.LocalTextProfile]}
+	p := candidate.EmbeddingProfiles[config.LocalTextProfile]
+	p.Runtime = new(*p.Runtime)
+	p.Runtime.ServerMode = mode
+	candidate.EmbeddingProfiles[config.LocalTextProfile] = p
 	return candidate, nil
 }
 
@@ -144,10 +125,7 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 		return cfg, err
 	}
 	profiles[name] = selected
-	if cfg.EffectiveProfiles == nil {
-		cfg.EffectiveProfiles = make(map[string]config.ResolvedProcessingProfile)
-	}
-	cfg.EffectiveProfiles[name] = resolved
+	cfg.EffectiveProfiles = map[string]config.ResolvedProcessingProfile{name: resolved}
 	cfg.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
 	cfg.ProcessingProfiles[name] = candidate.ProcessingProfiles[name]
 	return cfg, nil

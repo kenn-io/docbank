@@ -3833,12 +3833,11 @@ export interface LocalTextPlan {
   flow: ProcessingFlowHop[];
   managed: boolean;
   models: string[];
-  profile_fingerprints: string[];
-  profiles: string[];
+  profile: string;
+  profile_fingerprint: string;
   retained_classes: string[];
   scope: string;
   server: string;
-  unchanged: string[];
   vault_uid: string;
   vector_effect: string;
 }

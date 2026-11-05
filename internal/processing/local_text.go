@@ -20,32 +20,31 @@ import (
 
 const localTextSkipLimit = 262_144
 
-type localTextSkipKey struct{ profile, version, name string }
+type localTextSkipKey struct{ version, name string }
 type localTextSkip struct{ seen bool }
 
 type LocalTextPlan struct {
-	Fingerprint         string    `json:"fingerprint"`
-	VaultUID            string    `json:"vault_uid"`
-	Profiles            []string  `json:"profiles"`
-	Unchanged           []string  `json:"unchanged"`
-	Server              string    `json:"server"`
-	ProfileFingerprints []string  `json:"profile_fingerprints"`
-	Models              []string  `json:"models"`
-	VectorEffect        string    `json:"vector_effect"`
-	Managed             bool      `json:"managed"`
-	Flow                []FlowHop `json:"flow"`
-	RetainedClasses     []string  `json:"retained_classes"`
-	Scope               string    `json:"scope"`
+	Fingerprint        string    `json:"fingerprint"`
+	VaultUID           string    `json:"vault_uid"`
+	Profile            string    `json:"profile"`
+	Server             string    `json:"server"`
+	ProfileFingerprint string    `json:"profile_fingerprint"`
+	Models             []string  `json:"models"`
+	VectorEffect       string    `json:"vector_effect"`
+	Managed            bool      `json:"managed"`
+	Flow               []FlowHop `json:"flow"`
+	RetainedClasses    []string  `json:"retained_classes"`
+	Scope              string    `json:"scope"`
 }
 
-// LocalTextSetup builds a private service for the reviewed profiles. Activation
+// LocalTextSetup builds a private service for the reviewed profile. Activation
 // happens on daemon restart, so all consumers keep one effective identity.
 type LocalTextSetup struct {
 	Service       *Service
-	Candidate     func(mode string, names []string) (*Service, error)
-	Selected      []string
+	Candidate     func(mode, name string) (*Service, error)
+	Selected      string
 	Startup       func(context.Context, bool, string) error
-	Save          func([]string, string) error
+	Save          func(string, string) error
 	ActivityBegin func()
 	ActivityEnd   func()
 	mu            sync.Mutex
@@ -56,45 +55,45 @@ type LocalTextSetup struct {
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
-	names := append(slices.Collect(maps.Keys(setup.Service.profiles)), setup.Selected...)
-	slices.Sort(names)
-	names = slices.Compact(names)
-	var selected, unchanged []string
-	for _, name := range names {
-		indexed := false
-		if _, configured := setup.Service.profiles[name]; configured {
-			var err error
-			indexed, err = setup.indexedText(ctx, name)
-			if err != nil {
-				return LocalTextPlan{}, nil, err
-			}
-		}
-		if !indexed && !slices.Contains(setup.Selected, name) {
+	name, effect := "", "local-text (separate; adds missing content)"
+	names := slices.Sorted(maps.Keys(setup.Service.profiles))
+	if setup.Selected != "" && setup.Selected != config.LocalTextProfile {
+		names = append([]string{setup.Selected}, names...)
+	}
+	for _, candidate := range names {
+		if candidate == config.LocalTextProfile {
 			continue
 		}
-		trial, err := setup.Candidate(mode, []string{name})
+		if _, configured := setup.Service.profiles[candidate]; !configured {
+			continue
+		}
+		indexed, err := setup.indexedText(ctx, candidate)
+		if err != nil {
+			return LocalTextPlan{}, nil, err
+		}
+		if !indexed && candidate != setup.Selected {
+			continue
+		}
+		trial, err := setup.Candidate(mode, candidate)
 		if trial != nil {
 			trial.Stop()
 		}
 		if errors.Is(err, ErrProfileNotConfigured) {
-			if indexed {
-				unchanged = append(unchanged, name)
+			if indexed && setup.Selected != config.LocalTextProfile {
+				effect = "Rebuild required: model or text format differs from Nomic"
 			}
 			continue
 		}
 		if err != nil {
 			return LocalTextPlan{}, nil, err
 		}
-		selected = append(selected, name)
+		name, effect = candidate, "Keep existing index"
+		break
 	}
-	effect := "Keep existing index"
-	if len(selected) == 0 {
-		effect = "Build local index"
-		if len(unchanged) > 0 {
-			effect = "Rebuild required: model or text format differs from Nomic"
-		}
+	if name == "" {
+		name = config.LocalTextProfile
 	}
-	service, err := setup.Candidate(mode, selected)
+	service, err := setup.Candidate(mode, name)
 	if err != nil {
 		return LocalTextPlan{}, nil, err
 	}
@@ -104,28 +103,20 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			service.Stop()
 		}
 	}()
-	if len(selected) == 0 {
-		selected = []string{config.LocalTextProfile}
+	profile, ok := service.profiles[name]
+	if !ok {
+		return LocalTextPlan{}, nil, ErrProfileNotConfigured
 	}
-	plan := LocalTextPlan{VaultUID: service.catalog.VaultID(), Profiles: selected, Unchanged: unchanged, Server: mode,
-		Managed: true, Scope: "this vault and new imports", VectorEffect: effect}
-	for _, name := range selected {
-		profile, ok := service.profiles[name]
-		if !ok {
-			return LocalTextPlan{}, nil, ErrProfileNotConfigured
-		}
-		operation, err := service.planForSource(ctx, Selector{Profile: name}, store.Node{}, store.ContentVersion{}, profile)
-		if err != nil {
-			return LocalTextPlan{}, nil, err
-		}
-		plan.ProfileFingerprints = append(plan.ProfileFingerprints, profile.record.Fingerprint)
-		plan.Flow = append(plan.Flow, operation.Flow...)
-		plan.RetainedClasses = append(plan.RetainedClasses, operation.RetainedClasses...)
-		for _, binding := range profile.portable.Embeddings {
-			plan.Models = append(plan.Models, binding.Model)
-		}
+	operation, err := service.planForSource(ctx, Selector{Profile: name}, store.Node{}, store.ContentVersion{}, profile)
+	if err != nil {
+		return LocalTextPlan{}, nil, err
 	}
-	plan.RetainedClasses = sortedUnique(plan.RetainedClasses)
+	plan := LocalTextPlan{VaultUID: service.catalog.VaultID(), Profile: name, Server: mode, ProfileFingerprint: profile.record.Fingerprint,
+		Managed: true, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
+		VectorEffect: effect}
+	for _, binding := range profile.portable.Embeddings {
+		plan.Models = append(plan.Models, binding.Model)
+	}
 	encoded, err := json.Marshal(plan, json.Deterministic(true))
 	if err != nil {
 		return LocalTextPlan{}, nil, err
@@ -174,26 +165,24 @@ func (setup *LocalTextSetup) Apply(ctx context.Context, mode, fingerprint string
 	if err := setup.Startup(ctx, plan.Managed, mode); err != nil {
 		return LocalTextPlan{}, err
 	}
-	for _, name := range plan.Profiles {
-		if err := service.grantProfileConsent(ctx, service.profiles[name], nil); err != nil {
-			return LocalTextPlan{}, err
-		}
+	if err := service.grantProfileConsent(ctx, service.profiles[plan.Profile], nil); err != nil {
+		return LocalTextPlan{}, err
 	}
-	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profiles, plan.Server) }); err != nil {
+	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profile, plan.Server) }); err != nil {
 		return LocalTextPlan{}, fmt.Errorf("%w: save local text selection: %w", ErrConsentSaved, err)
 	}
 
 	return plan, nil
 }
 
-func (setup *LocalTextSetup) targets(ctx context.Context, profile, after string, limit int) ([]store.DocumentSummary, error) {
+func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
-	return setup.listTargets(ctx, profile, after, limit, true)
+	return setup.listTargets(ctx, after, limit, true)
 }
 
-func (setup *LocalTextSetup) listTargets(ctx context.Context, name, after string, limit int, sweep bool) ([]store.DocumentSummary, error) {
-	profile, ok := setup.Service.profiles[name]
+func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limit int, sweep bool) ([]store.DocumentSummary, error) {
+	profile, ok := setup.Service.profiles[setup.Selected]
 	if !ok {
 		return nil, nil
 	}
@@ -233,7 +222,7 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, name, after string
 			if suppressed[item.ContentVersionID] {
 				continue
 			}
-			key := localTextSkipKey{name, item.ContentVersionID, item.Name}
+			key := localTextSkipKey{item.ContentVersionID, item.Name}
 			if skip, ok := setup.skips[key]; ok {
 				if sweep {
 					skip.seen = true
@@ -248,9 +237,6 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, name, after string
 		if len(items) < 1000 {
 			if len(result) == 0 && sweep {
 				for key, skip := range setup.skips {
-					if key.profile != name {
-						continue
-					}
 					if !skip.seen {
 						delete(setup.skips, key)
 					} else {
@@ -265,27 +251,27 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, name, after string
 	return result, nil
 }
 
-func (setup *LocalTextSetup) process(ctx context.Context, name string, item store.DocumentSummary) error {
-	selector := Selector{Profile: name, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
-	profile := setup.Service.profiles[name]
+func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {
+	selector := Selector{Profile: setup.Selected, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
+	profile := setup.Service.profiles[setup.Selected]
 	plan, err := setup.Service.Plan(ctx, selector)
 	if err != nil {
 		return err
 	}
 	if plan.RenditionIneligibleReason != "" {
 		if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
-			setup.skip(name, item, "")
+			setup.skip(item, "")
 		}
 		return nil
 	}
 	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
 		runOptions: processingRunOptions{retryUnavailable: true, deferIndex: true}})
 	if errors.Is(err, document.ErrTokenizerLimit) {
-		setup.skip(name, item, "tokenizer_limit")
+		setup.skip(item, "tokenizer_limit")
 		return nil
 	}
 	if errors.Is(err, ErrRenditionFailed) {
-		setup.skip(name, item, "rendition_failed")
+		setup.skip(item, "rendition_failed")
 		return nil
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrPlanChanged) {
@@ -310,19 +296,19 @@ func (setup *LocalTextSetup) process(ctx context.Context, name string, item stor
 		}
 	}
 	if err == nil && skipCode != "" {
-		setup.skip(name, item, skipCode)
+		setup.skip(item, skipCode)
 	}
 	return err
 }
 
-func (setup *LocalTextSetup) skip(name string, item store.DocumentSummary, code string) {
+func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
 	logger := cmp.Or(setup.logger, slog.Default())
 	if setup.skips == nil {
 		setup.skips = make(map[localTextSkipKey]*localTextSkip)
 	}
-	key := localTextSkipKey{name, item.ContentVersionID, item.Name}
+	key := localTextSkipKey{item.ContentVersionID, item.Name}
 	if _, exists := setup.skips[key]; exists {
 		return
 	}
@@ -342,23 +328,20 @@ func (setup *LocalTextSetup) skip(name string, item store.DocumentSummary, code 
 func (setup *LocalTextSetup) Pending(ctx context.Context) (bool, error) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
-	for _, name := range setup.Selected {
-		items, err := setup.listTargets(ctx, name, "", 1, false)
-		if err != nil || len(items) > 0 {
-			return len(items) > 0, err
-		}
-		pending, err := setup.publicationPending(ctx, name)
-		if err != nil || pending {
-			return pending, err
-		}
+	items, err := setup.listTargets(ctx, "", 1, false)
+	if err != nil {
+		return false, err
 	}
-	return false, nil
+	if len(items) > 0 {
+		return true, nil
+	}
+	return setup.publicationPending(ctx)
 }
 
 // publicationPending compares the publisher's active manifest with current
 // membership. The recurring daemon index worker owns the rebuild itself.
-func (setup *LocalTextSetup) publicationPending(ctx context.Context, name string) (bool, error) {
-	profile, ok := setup.Service.profiles[name]
+func (setup *LocalTextSetup) publicationPending(ctx context.Context) (bool, error) {
+	profile, ok := setup.Service.profiles[setup.Selected]
 	if !ok {
 		return false, nil
 	}
@@ -371,10 +354,8 @@ func (setup *LocalTextSetup) publicationPending(ctx context.Context, name string
 	return false, nil
 }
 
-func (setup *LocalTextSetup) Backfill(ctx context.Context, name string, logger *slog.Logger) error {
-	setup.mu.Lock()
+func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) error {
 	setup.logger = logger
-	setup.mu.Unlock()
 	holding := false
 	release := func() {
 		if holding {
@@ -386,13 +367,13 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, name string, logger *
 	}
 	defer release()
 	// Publication can finish without a counted write, so poll while holding activity.
-	lane := Backfill[store.DocumentSummary]{Name: "local-text:" + name, Page: 50, IdleDelay: time.Second, Logger: logger,
+	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
 		WriteRevision: setup.Service.catalog.WriteRevision, Busy: func() bool { return holding },
 		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
-			items, err := setup.targets(ctx, name, after, limit)
+			items, err := setup.targets(ctx, after, limit)
 			pending := len(items) > 0
 			if err == nil && after == "" && !pending {
-				pending, err = setup.publicationPending(ctx, name)
+				pending, err = setup.publicationPending(ctx)
 			}
 			if pending && !holding {
 				holding = true
@@ -403,6 +384,6 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, name string, logger *
 				release()
 			}
 			return items, err
-		}, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: func(ctx context.Context, item store.DocumentSummary) error { return setup.process(ctx, name, item) }}
+		}, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: setup.process}
 	return lane.Run(ctx)
 }

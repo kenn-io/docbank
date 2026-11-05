@@ -33,8 +33,8 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 				}
 				return nil
 			},
-			Save: func(names []string, mode string) error {
-				assert.Equal(t, []string{"local-text"}, names)
+			Save: func(name, mode string) error {
+				assert.Equal(t, "local-text", name)
 				assert.Equal(t, "local", mode)
 				if saveFailure.Load() {
 					return errors.New("synthetic selection path failure")
@@ -42,7 +42,7 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 				return nil
 			},
 		}
-		setup.Candidate = func(mode string, _ []string) (*processing.Service, error) {
+		setup.Candidate = func(mode, _ string) (*processing.Service, error) {
 			assert.Equal(t, "local", mode)
 			candidate := *deps
 			configure(&candidate)
@@ -57,8 +57,6 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	var plan api.LocalTextPlan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
 	require.Equal(t, "this vault and new imports", plan.Scope)
-	require.Equal(t, expected.Profiles, plan.Profiles)
-	require.Equal(t, expected.ProfileFingerprints, plan.ProfileFingerprints)
 	require.NotEmpty(t, expected.VectorEffect)
 	require.Equal(t, expected.VectorEffect, plan.VectorEffect)
 	require.Len(t, plan.Flow, 3)
