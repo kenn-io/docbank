@@ -2475,10 +2475,6 @@ func (s *Store) SearchPageWithOptions(
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
 		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
-		from, err := smallScopeContentFrom(ctx, queryer, opts.UnderNodeID, from)
-		if err != nil {
-			return err
-		}
 		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
 		contentArgs = slices.Concat(contentArgs, filterArgs, []any{remaining + len(nameHits) + 1})
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
@@ -2881,23 +2877,6 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 		hits[i].Path = paths[i]
 	}
 	return nil
-}
-
-// smallScopeContentFrom leads content search from the files of a scope holding
-// at most 1,024 live nodes, instead of from every copy of a matching blob.
-func smallScopeContentFrom(ctx context.Context, queryer rowQuerier, scopeID int64, from string) (string, error) {
-	if scopeID == 0 {
-		return from, nil
-	}
-	var live int
-	err := queryer.QueryRowContext(ctx, `WITH RECURSIVE scoped(id) AS (SELECT ? UNION ALL
-		SELECT child.id FROM nodes child JOIN scoped ON child.parent_id=scoped.id WHERE child.trashed_at IS NULL
-	) SELECT COUNT(*) FROM (SELECT id FROM scoped LIMIT 1025)`, scopeID).Scan(&live)
-	if err != nil || live > 1024 {
-		return from, err
-	}
-	// Without INDEXED BY, the planner leads from nodes_parent and visits trashed children.
-	return strings.ReplaceAll(strings.Replace(from, "nodes n", "nodes n INDEXED BY nodes_live_children", 1), "CROSS JOIN", "JOIN"), nil
 }
 
 // contentSearchMatches shares retained-text ranking and publication bindings with Photos.

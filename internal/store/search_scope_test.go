@@ -39,10 +39,6 @@ func TestScopedSearchPlansStartFromMatches(t *testing.T) {
 				assert.NotRegexp(t, `(?m)^SCAN n(?: |$)`, detail, "published=%v explained=%v query=%d", published, explained, i)
 				assert.NotContains(t, detail, "nodes_parent")
 				assert.Contains(t, detail, "nodes_live_children")
-				if i == 1 && !published && !explained {
-					// A one-file scope probes its version instead of expanding every matching copy.
-					assert.NotContains(t, detail, "content_versions_blob")
-				}
 				if i == 1 && published {
 					assert.Contains(t, detail, "rendition_attachments_build")
 				}
