@@ -74,11 +74,6 @@ func (s *Store) changeSupersession(ctx context.Context, successorID, predecessor
 	if successorID == predecessorID {
 		return result, fmt.Errorf("self link: %w", ErrInvalidSupersession)
 	}
-	if put && note != nil {
-		if err := validSupersessionNote(*note); err != nil {
-			return result, err
-		}
-	}
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := liveFileTx(ctx, tx, predecessorID)
 		if err != nil {

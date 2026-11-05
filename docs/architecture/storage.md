@@ -136,7 +136,7 @@ deferred product scope.
 
 ### Declared document validity
 
-Storage schema 44 adds owner-declared document replacements and effective
+Storage schema 49 adds owner-declared document replacements and effective
 dates. `node_supersessions` points from the successor file to the predecessor
 file. `node_effective_windows` holds inclusive calendar dates in `YYYY-MM-DD`
 form; a null endpoint is open. These declarations belong to nodes, so editing
