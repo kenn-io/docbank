@@ -90,7 +90,10 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 		t.Fatal(err)
 	}
 	exited := make(chan error, 1)
-	go func() { exited <- command.Wait() }()
+	go func() {
+		exited <- command.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
 		_ = tree.kill()
 		_ = command.Process.Kill()
