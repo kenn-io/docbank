@@ -229,13 +229,13 @@ func (s *photoCheckpointStore) sweep(now time.Time) {
 	}
 }
 
-func setPhotoProfileCookie(w http.ResponseWriter, r *http.Request, profile string, secure bool) {
+func setPhotoProfileCookie(w http.ResponseWriter, r *http.Request, profile, basePath string, secure bool) {
 	domain := ""
 	hostURL := url.URL{Host: r.Host}
 	if strings.HasSuffix(hostURL.Hostname(), ".docbank.localhost") {
 		domain = "docbank.localhost"
 	}
-	http.SetCookie(w, &http.Cookie{Name: photoProfileCookie, Value: profile, Domain: domain, Path: photoCheckpointPath, MaxAge: photoProfileMaxAge, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure}) //nolint:gosec // HTTP loopback origin is intentional.
+	http.SetCookie(w, &http.Cookie{Name: photoProfileCookie, Value: profile, Domain: domain, Path: basePath + photoCheckpointPath, MaxAge: photoProfileMaxAge, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure}) //nolint:gosec // HTTP loopback origin is intentional.
 }
 
 func registerPhotoImportCheckpoint(mux *http.ServeMux, api huma.API, d Deps) {
@@ -275,7 +275,7 @@ func registerPhotoImportCheckpoint(mux *http.ServeMux, api huma.API, d Deps) {
 				return
 			}
 			owner.sweep(time.Now())
-			setPhotoProfileCookie(w, r, hex.EncodeToString(random[:]), secure)
+			setPhotoProfileCookie(w, r, hex.EncodeToString(random[:]), d.Cfg.Web.BasePath, secure)
 			writeJSON(w, 200, photoCheckpointStatus{})
 			return
 		}
@@ -295,7 +295,7 @@ func registerPhotoImportCheckpoint(mux *http.ServeMux, api huma.API, d Deps) {
 				checkpointError(w, err)
 				return
 			}
-			setPhotoProfileCookie(w, r, profile, secure)
+			setPhotoProfileCookie(w, r, profile, d.Cfg.Web.BasePath, secure)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

@@ -291,7 +291,8 @@ func webLaunchURL(origin, basePath string) string {
 func configureWebBasePath(index []byte, basePath string) []byte {
 	// Vite emits relative entry assets and resolves imported assets against their
 	// module URL. Only HTML entry points need a server-selected absolute path.
-	index = bytes.ReplaceAll(index, []byte(`="./assets/`), []byte(`="`+basePath+`/assets/`))
+	// Rewrite absolute URLs first so an /assets mount is not prefixed twice.
 	index = bytes.ReplaceAll(index, []byte(`="/assets/`), []byte(`="`+basePath+`/assets/`))
+	index = bytes.ReplaceAll(index, []byte(`="./assets/`), []byte(`="`+basePath+`/assets/`))
 	return bytes.Replace(index, []byte("</head>"), []byte(`<meta name="docbank-base-path" content="`+html.EscapeString(basePath)+`"></head>`), 1)
 }

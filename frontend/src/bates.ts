@@ -1,5 +1,6 @@
 import { offerPreparedDownload } from "./download.js";
 import { sha256Digest } from "./crypto.js";
+import { webBasePath } from "./web-path.js";
 import * as generated from "./generated/docbank.js";
 import type {
   BatesAllocation,
@@ -66,7 +67,7 @@ interface ExpectedAllocation {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const hash = /^[0-9a-f]{64}$/;
 export const maxBatesPages = 250;
-const pendingKey = "docbank.bates.pendingReservation";
+const pendingKey = (): string => "docbank.bates.pendingReservation" + webBasePath();
 
 function valid(
   condition: unknown,
@@ -517,7 +518,7 @@ export async function downloadBatesExport(
 export function loadPendingBatesReservation(): PendingBatesReservation | null {
   let raw: string | null;
   try {
-    raw = sessionStorage.getItem(pendingKey);
+    raw = sessionStorage.getItem(pendingKey());
   } catch {
     return null;
   }
@@ -549,7 +550,7 @@ export function loadPendingBatesReservation(): PendingBatesReservation | null {
 /** Remembers a pending reservation for this tab; returns false when the browser refuses storage. */
 export function savePendingBatesReservation(pending: PendingBatesReservation): boolean {
   try {
-    sessionStorage.setItem(pendingKey, JSON.stringify(pending));
+    sessionStorage.setItem(pendingKey(), JSON.stringify(pending));
     return true;
   } catch {
     return false;
@@ -558,7 +559,7 @@ export function savePendingBatesReservation(pending: PendingBatesReservation): b
 
 export function clearPendingBatesReservation(): void {
   try {
-    sessionStorage.removeItem(pendingKey);
+    sessionStorage.removeItem(pendingKey());
   } catch {
     // Storage that cannot be read cannot resurrect the reservation either.
   }

@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,6 +12,31 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
 )
+
+func TestWebBasePathEntryAssetsLoad(t *testing.T) {
+	t.Parallel()
+	for _, basePath := range []string{"", "/archive", "/assets", "/assets/library"} {
+		t.Run(basePath, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Default()
+			cfg.Server.APIKey = "synthetic-api-key-0123456789abcdef"
+			cfg.Web.BasePath = basePath
+			s := NewServer(Deps{Cfg: cfg, WebURL: "http://localhost/"})
+			defer s.Close()
+			page := httptest.NewRecorder()
+			s.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "http://localhost"+basePath+"/", nil))
+			require.Equal(t, http.StatusOK, page.Code)
+			assets := regexp.MustCompile(`(?:src|href)="([^"]*assets/[^"]+)"`).FindAllStringSubmatch(page.Body.String(), -1)
+			require.NotEmpty(t, assets)
+			for _, asset := range assets {
+				response := httptest.NewRecorder()
+				s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://localhost"+asset[1], nil))
+				require.Equal(t, http.StatusOK, response.Code, asset[1])
+				require.NotEmpty(t, response.Body.Bytes(), asset[1])
+			}
+		})
+	}
+}
 
 func TestWebBasePath(t *testing.T) {
 	t.Parallel()

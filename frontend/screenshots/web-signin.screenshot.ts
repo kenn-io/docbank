@@ -71,7 +71,7 @@ async function prepareVault(
 }
 
 // Exercise the implemented interface against an isolated synthetic real daemon.
-for (const basePath of ["", "/archive"]) {
+for (const basePath of ["", "/archive", "/assets"]) {
   test(`key login, uploads, independent tabs and CLI handoff at ${basePath || "/"}`, async ({
     page,
   }) => {

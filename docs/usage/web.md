@@ -1141,6 +1141,8 @@ the configured prefix.
 
 Login cookies are scoped to the configured path and have distinct names for
 each origin and path. This lets separate Docbank instances share an origin.
+Photo-import resume cookies use the mounted checkpoint endpoint, and pending
+Bates exports in the same browser tab are kept separately for each mount.
 As with any applications on the same origin, their scripts share browser
 origin authority; a path is not a browser security boundary.
 
