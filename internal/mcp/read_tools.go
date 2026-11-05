@@ -500,7 +500,11 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 			return documentSearchResponse{}, callErr
 		}
 		request.Fence = api.DocumentSearchFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
-		report, callErr = searchResolvedDocuments(ctx, c, request)
+		if contentFirst {
+			report, callErr = searchResolvedDocuments(ctx, c, request)
+		} else {
+			report, callErr = c.SearchDocuments(ctx, request)
+		}
 	}
 	if callErr != nil {
 		return documentSearchResponse{}, callErr
