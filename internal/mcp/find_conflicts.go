@@ -111,6 +111,8 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 			body := data.Bytes()
 			if _, stripped, err := document.ParseRenditionFrontMatterV1(body); err == nil {
 				body = stripped
+			} else if bytes.HasPrefix(body, []byte("---\n")) {
+				return ""
 			}
 			return string(body)
 		}

@@ -418,6 +418,7 @@ and durations in the same unit from minutes through years. Sentences must match
 exactly after lowercasing, collapsing whitespace, and masking the figure and its
 unit. Each sentence must contain exactly one figure. A second figure, including
 a date, makes the sentence ambiguous.
+The nearest preceding Markdown heading is also part of the match.
 
 The tool reads each hit's retained Markdown or original plain text through a
 verified read. Each quote is a whole sentence from that source, located by the

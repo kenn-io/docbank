@@ -174,6 +174,8 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 		missingFirst     bool
 	}{
 		{"v1 envelope", string(rendered.Markdown), sentence, false},
+		{"future envelope", strings.Replace(string(rendered.Markdown), "docbank-sanitized-markdown/v1", "docbank-sanitized-markdown/v2", 1), "", false},
+		{"malformed envelope", "---\ndocbank: invalid\n---\n" + sentence, "", false},
 		{"email without envelope", "```\n" + sentence + "\n```", "```\n" + sentence + "\n```", false},
 		{"later matching build", string(rendered.Markdown), sentence, true},
 	} {
