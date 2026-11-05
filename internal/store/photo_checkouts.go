@@ -10,14 +10,12 @@ import (
 	"math"
 	"path"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/filename"
-	"go.kenn.io/docbank/internal/query"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/text/unicode/norm"
 )
@@ -141,7 +139,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	for _, id := range selection.AssetIDs {
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets WHERE asset_id=?)`, id).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets WHERE asset_id=$1)`, id).Scan(&exists); err != nil {
 			return nil, estimate, err
 		}
 		if !exists {
@@ -153,45 +151,10 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			return nil, estimate, err
 		}
 	}
-	base := query.Query{V: 1, Syntax: "simple", Mode: query.ModeLexical, Sort: query.Sort{Field: "name", Direction: "asc"}}
-	var queries []query.Query
-	if selection.All {
-		queries = append(queries, base)
-	} else {
-		if len(selection.AssetIDs) > 0 {
-			q := base
-			q.Filters.AssetIDs = selection.AssetIDs
-			queries = append(queries, q)
-		}
-		if len(selection.AlbumIDs) > 0 {
-			q := base
-			q.Filters.SetIDs = selection.AlbumIDs
-			queries = append(queries, q)
-		}
-		if y := selection.Years; y != nil {
-			q := base
-			q.Filters.CaptureAfter = fmt.Sprintf("%04d-01-01", y.From)
-			if y.To < 9999 {
-				q.Filters.CaptureBefore = fmt.Sprintf("%04d-01-01", y.To+1)
-			}
-			queries = append(queries, q)
-		}
+	ids, err := s.checkoutSelectionIDsTx(ctx, tx, selection)
+	if err != nil {
+		return nil, estimate, err
 	}
-	assets := map[string]bool{}
-	for _, q := range queries {
-		ids, err := s.photoSetSelectionIDs(ctx, tx, PhotoSetSelection{Query: &q})
-		if err != nil {
-			return nil, estimate, err
-		}
-		for _, id := range ids {
-			assets[id] = true
-		}
-	}
-	ids := make([]string, 0, len(assets))
-	for id := range assets {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
 	entries := make([]PhotoCheckoutEntry, 0)
 	encodedIDs, err := json.Marshal(ids)
 	if err != nil {
@@ -205,7 +168,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
  FROM photo_files f JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN photo_assets a ON a.asset_id=f.asset_id JOIN photo_files display ON display.file_id=a.display_file_id
  LEFT JOIN photo_timeline timeline ON timeline.file_id=display.file_id
- WHERE f.asset_id IN (SELECT value FROM json_each(?)) AND n.trashed_at IS NULL ORDER BY f.asset_id,f.file_id`, string(encodedIDs))
+ WHERE f.asset_id IN (SELECT value FROM `+metadataJSONDialect{postgres: s.postgresSchema != ""}.arrayValues("$1")+`) AND n.trashed_at IS NULL ORDER BY f.asset_id,f.file_id`, string(encodedIDs))
 	if err != nil {
 		return nil, estimate, err
 	}
@@ -276,7 +239,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		}
 	}
 	kept := entries[:0]
-	clear(assets)
+	assets := make(map[string]bool)
 	for _, entry := range entries {
 		if _, skip := skipped[entry.AssetID]; skip {
 			continue
@@ -388,10 +351,10 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		if checkout.SkippedPhotos == nil {
 			checkout.SkippedPhotos = []PhotoCheckoutSkip{}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_checkouts(checkout_id,selection_json,skipped_photos_json,skipped_photo_count,byte_limit,created_at,destination,operation_id,state,destination_reserved,destination_identity) VALUES(?,?,?,?,?,?,?,?,?,1,?)`, id, string(encoded), string(skipped), estimate.SkippedPhotoCount, byteLimit, checkout.CreatedAt, destination, operation.ID, checkout.State, identity); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_checkouts(checkout_id,selection_json,skipped_photos_json,skipped_photo_count,byte_limit,created_at,destination,operation_id,state,destination_reserved,destination_identity) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10)`, id, string(encoded), string(skipped), estimate.SkippedPhotoCount, byteLimit, checkout.CreatedAt, destination, operation.ID, checkout.State, identity); err != nil {
 			return err
 		}
-		insert, err := tx.PrepareContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id) VALUES(?,?,?,?,?,?,?,?)`)
+		insert, err := tx.PrepareContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`)
 		if err != nil {
 			return err
 		}
@@ -403,7 +366,7 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		}
 		var stale bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_checkout_entries e LEFT JOIN content_versions v ON v.version_id=e.version_id LEFT JOIN photo_files f ON f.file_id=e.file_id
- WHERE e.checkout_id=? AND (v.version_id IS NULL OR f.file_id IS NULL OR v.node_id<>f.node_id))`, id).Scan(&stale); err != nil {
+ WHERE e.checkout_id=$1 AND (v.version_id IS NULL OR f.file_id IS NULL OR v.node_id<>f.node_id))`, id).Scan(&stale); err != nil {
 			return err
 		}
 		if stale {
@@ -472,18 +435,18 @@ func scanPhotoCheckout(row scanner) (PhotoCheckout, error) {
 }
 
 func (s *Store) PhotoCheckout(ctx context.Context, id string) (PhotoCheckout, error) {
-	return scanPhotoCheckout(s.db.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+	return scanPhotoCheckout(s.db.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=$1`, id))
 }
 
 func (s *Store) PhotoCheckoutStatus(ctx context.Context, id, after string, limit int) (PhotoCheckoutStatus, error) {
 	var out PhotoCheckoutStatus
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		out.Checkout, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		out.Checkout, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=$1`, id))
 		if err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(size),0),COALESCE(SUM(published),0),COALESCE(SUM(CASE WHEN published=1 THEN size ELSE 0 END),0) FROM photo_checkout_entries WHERE checkout_id=?`, id).Scan(&out.Files, &out.Bytes, &out.PublishedFiles, &out.PublishedBytes); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(size),0),COALESCE(SUM(published),0),COALESCE(SUM(CASE WHEN published=1 THEN size ELSE 0 END),0) FROM photo_checkout_entries WHERE checkout_id=$1`, id).Scan(&out.Files, &out.Bytes, &out.PublishedFiles, &out.PublishedBytes); err != nil {
 			return err
 		}
 		out.Entries, out.NextAfter, err = photoCheckoutEntriesPage(ctx, tx, id, after, limit)
@@ -517,7 +480,7 @@ func (s *Store) PhotoCheckoutWorkingSummary(ctx context.Context, id string, limi
 	counts := make(map[string]int64)
 	var entries []PhotoCheckoutEntry
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT working_state,COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? GROUP BY working_state`, id)
+		rows, err := tx.QueryContext(ctx, `SELECT working_state,COUNT(*) FROM photo_checkout_entries WHERE checkout_id=$1 GROUP BY working_state`, id)
 		if err != nil {
 			return err
 		}
@@ -536,14 +499,14 @@ func (s *Store) PhotoCheckoutWorkingSummary(ctx context.Context, id string, limi
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		entries, err = readPhotoCheckoutEntries(tx.QueryContext(ctx, photoCheckoutEntrySelect+` WHERE checkout_id=? AND working_state<>'clean' ORDER BY sidecar_of_file_id IS NOT NULL,relative_path,file_id LIMIT ?`, id, limit))
+		entries, err = readPhotoCheckoutEntries(tx.QueryContext(ctx, photoCheckoutEntrySelect+` WHERE checkout_id=$1 AND working_state<>'clean' ORDER BY sidecar_of_file_id IS NOT NULL,relative_path,file_id LIMIT $2`, id, limit))
 		return err
 	})
 	return counts, entries, err
 }
 
 func (s *Store) PhotoCheckoutEntries(ctx context.Context, id string) ([]PhotoCheckoutEntry, error) {
-	rows, err := s.db.QueryContext(ctx, photoCheckoutEntrySelect+` WHERE checkout_id=? ORDER BY sidecar_of_file_id IS NOT NULL,relative_path,file_id`, id)
+	rows, err := s.db.QueryContext(ctx, photoCheckoutEntrySelect+` WHERE checkout_id=$1 ORDER BY sidecar_of_file_id IS NOT NULL,relative_path,file_id`, id)
 	return readPhotoCheckoutEntries(rows, err)
 }
 
@@ -571,7 +534,7 @@ func photoCheckoutEntriesPage(ctx context.Context, db interface {
 	if limit < 1 || limit > 250 || after != "" && validateUUIDv4(after) != nil {
 		return nil, "", ErrInvalidPhotoCheckout
 	}
-	entries, err := readPhotoCheckoutEntries(db.QueryContext(ctx, photoCheckoutEntrySelect+` WHERE checkout_id=? AND file_id>? ORDER BY file_id LIMIT ?`, id, after, limit+1))
+	entries, err := readPhotoCheckoutEntries(db.QueryContext(ctx, photoCheckoutEntrySelect+` WHERE checkout_id=$1 AND file_id>$2 ORDER BY file_id LIMIT $3`, id, after, limit+1))
 	if err != nil {
 		return nil, "", err
 	}
@@ -619,11 +582,11 @@ func (s *Store) lockPhotoPublication(ctx context.Context, assetID string) (func(
 // CheckPhotoCheckoutEntry checks whether the frozen member is still eligible.
 func (s *Store) CheckPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry) error {
 	var allowed bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL
- AND f.sidecar_of_file_id IS ? AND (? IS NULL OR EXISTS(
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=$1 AND f.file_id=$2 AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL
+ AND f.sidecar_of_file_id IS NOT DISTINCT FROM $3 AND (CAST($4 AS TEXT) IS NULL OR EXISTS(
  SELECT 1 FROM photo_files target JOIN nodes target_node ON target_node.id=target.node_id
- JOIN photo_checkout_entries frozen ON frozen.file_id=target.file_id AND frozen.checkout_id=?
- WHERE target.file_id=? AND target.asset_id=a.asset_id AND target_node.trashed_at IS NULL AND frozen.published=1)))`, e.AssetID, e.FileID, e.SidecarOfID, e.SidecarOfID, e.CheckoutID, e.SidecarOfID).Scan(&allowed); err != nil {
+ JOIN photo_checkout_entries frozen ON frozen.file_id=target.file_id AND frozen.checkout_id=$5
+ WHERE target.file_id=$6 AND target.asset_id=a.asset_id AND target_node.trashed_at IS NULL AND frozen.published=1)))`, e.AssetID, e.FileID, e.SidecarOfID, e.SidecarOfID, e.CheckoutID, e.SidecarOfID).Scan(&allowed); err != nil {
 		return fmt.Errorf("checking checkout visibility: %w", err)
 	}
 	if !allowed {
@@ -649,16 +612,26 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 		return err
 	}
 	// Recovery needs durable intent if install succeeds before its entry mark commits.
-	result, err := s.writeDB.ExecContext(ctx, `UPDATE storage_operations SET cursor=?,updated_at=? WHERE operation_id=(SELECT operation_id FROM photo_checkouts WHERE checkout_id=?) AND state IN ('queued','running')`, e.FileID, nowRFC3339(), e.CheckoutID)
-	if err := requireOneStorageOperationRow(result, err, e.CheckoutID, "recording checkout publication intent"); err != nil {
+	if err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET cursor=$1,updated_at=$2 WHERE operation_id=(SELECT operation_id FROM photo_checkouts WHERE checkout_id=$3) AND state IN ('queued','running')`, e.FileID, nowRFC3339(), e.CheckoutID)
+		return requireOneStorageOperationRow(result, err, e.CheckoutID, "recording checkout publication intent")
+	}); err != nil {
 		return err
 	}
 	published, publicationErr := publish()
 	if !published {
-		_, err := s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE storage_operations SET cursor='' WHERE operation_id=(SELECT operation_id FROM photo_checkouts WHERE checkout_id=?) AND cursor=?`, e.CheckoutID, e.FileID)
+		cleanup := context.WithoutCancel(ctx)
+		err := s.withStorageTx(cleanup, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(cleanup, `UPDATE storage_operations SET cursor='' WHERE operation_id=(SELECT operation_id FROM photo_checkouts WHERE checkout_id=$1) AND cursor=$2`, e.CheckoutID, e.FileID)
+			return err
+		})
 		return errors.Join(publicationErr, err)
 	}
-	_, err = s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE photo_checkout_entries SET published=1,base_held=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
+	cleanup := context.WithoutCancel(ctx)
+	err = s.withStorageTx(cleanup, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(cleanup, `UPDATE photo_checkout_entries SET published=1,base_held=1 WHERE checkout_id=$1 AND file_id=$2`, e.CheckoutID, e.FileID)
+		return err
+	})
 	if err != nil {
 		err = fmt.Errorf("%w: %w", ErrPhotoCheckoutPublicationUnrecorded, err)
 	}
@@ -668,24 +641,24 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 // ClaimPhotoCheckout keeps the started marker when a paused operation returns to the queue.
 func (s *Store) ClaimPhotoCheckout(ctx context.Context, id, operationID string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET state='running',error='',updated_at=? WHERE operation_id=? AND state IN ('queued','running')`, nowRFC3339(), operationID)
+		result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET state='running',error='',updated_at=$1 WHERE operation_id=$2 AND state IN ('queued','running')`, nowRFC3339(), operationID)
 		if err := requireOneStorageOperationRow(result, err, operationID, "claiming checkout"); err != nil {
 			return err
 		}
-		result, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET state='running',error='' WHERE checkout_id=? AND operation_id=?`, id, operationID)
+		result, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET state='running',error='' WHERE checkout_id=$1 AND operation_id=$2`, id, operationID)
 		return requireOneStorageOperationRow(result, err, operationID, "claiming checkout")
 	})
 }
 
 func (s *Store) FinishPhotoCheckout(ctx context.Context, id, operationID string, state StorageOperationState, receipt, failure string, retention time.Time) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=1 WHERE checkout_id=? AND (published=1 OR file_id=(SELECT cursor FROM storage_operations WHERE operation_id=?))`, id, operationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=1 WHERE checkout_id=$1 AND (published=1 OR file_id=(SELECT cursor FROM storage_operations WHERE operation_id=$2))`, id, operationID); err != nil {
 			return err
 		}
 		if err := finishStorageOperationTx(ctx, tx, operationID, state, receipt, failure, retention); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET state=?,error=?,retention_released=?,destination_reserved=? WHERE checkout_id=? AND operation_id=?`, string(state), boundedStorageOperationError(failure), state == StorageOperationFailed || state == StorageOperationCancelled, state != StorageOperationFailed && state != StorageOperationCancelled, id, operationID)
+		result, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET state=$1,error=$2,retention_released=$3,destination_reserved=$4 WHERE checkout_id=$5 AND operation_id=$6`, string(state), boundedStorageOperationError(failure), boolInt(state == StorageOperationFailed || state == StorageOperationCancelled), boolInt(state != StorageOperationFailed && state != StorageOperationCancelled), id, operationID)
 		if err := requireOneStorageOperationRow(result, err, operationID, "finishing checkout"); err != nil {
 			return err
 		}
@@ -703,7 +676,7 @@ func (s *Store) FinishPhotoCheckout(ctx context.Context, id, operationID string,
 // after publication can no longer be observed directly.
 func (s *Store) PreserveUncertainPhotoCheckoutHolds(ctx context.Context, id, operationID string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=1 WHERE checkout_id=? AND (published=1 OR file_id=(SELECT cursor FROM storage_operations WHERE operation_id=? AND cursor<>''))`, id, operationID)
+		_, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=1 WHERE checkout_id=$1 AND (published=1 OR file_id=(SELECT cursor FROM storage_operations WHERE operation_id=$2 AND cursor<>''))`, id, operationID)
 		return err
 	})
 }
@@ -715,10 +688,10 @@ func (s *Store) ObservePhotoCheckout(ctx context.Context, id, operationID string
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=(file_id IN (SELECT value FROM json_each(?))) WHERE checkout_id=?`, string(encoded), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=CASE WHEN file_id IN (SELECT value FROM `+metadataJSONDialect{postgres: s.postgresSchema != ""}.arrayValues("$1")+`) THEN 1 ELSE 0 END WHERE checkout_id=$2`, string(encoded), id); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE storage_operations SET cursor='',completed_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_bytes=(SELECT COALESCE(SUM(size),0) FROM photo_checkout_entries WHERE checkout_id=? AND published=1) WHERE operation_id=?`, id, id, id, operationID)
+		_, err := tx.ExecContext(ctx, `UPDATE storage_operations SET cursor='',completed_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=$1 AND published=1),copied_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=$2 AND published=1),copied_bytes=(SELECT COALESCE(SUM(size),0) FROM photo_checkout_entries WHERE checkout_id=$3 AND published=1) WHERE operation_id=$4`, id, id, id, operationID)
 		return err
 	})
 }
@@ -726,7 +699,7 @@ func (s *Store) ObservePhotoCheckout(ctx context.Context, id, operationID string
 // PhotoCheckoutStarted survives operation deferral without marking never-admitted work started.
 func (s *Store) PhotoCheckoutStarted(ctx context.Context, id string) (bool, error) {
 	var started bool
-	err := s.db.QueryRowContext(ctx, `SELECT state='running' FROM photo_checkouts WHERE checkout_id=?`, id).Scan(&started)
+	err := s.db.QueryRowContext(ctx, `SELECT state='running' FROM photo_checkouts WHERE checkout_id=$1`, id).Scan(&started)
 	return started, err
 }
 
@@ -735,13 +708,13 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 	var out PhotoCheckout
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		out, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		out, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=$1`, id))
 		if err != nil {
 			return err
 		}
 		switch out.LastOperationState {
 		case string(StorageOperationQueued), string(StorageOperationRunning):
-			_, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retirement_requested=1 WHERE checkout_id=?`, id)
+			_, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retirement_requested=1 WHERE checkout_id=$1`, id)
 			out.RetirementRequested = true
 			return err
 		case "", "completed", exportFailedState, "cancelled":
@@ -751,13 +724,13 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 		if out.RetiredAt != nil {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retirement_requested=1 WHERE checkout_id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retirement_requested=1 WHERE checkout_id=$1`, id); err != nil {
 			return err
 		}
 		if err := retireRequestedCheckoutTx(ctx, tx, id); err != nil {
 			return err
 		}
-		out, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		out, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=$1`, id))
 		return err
 	})
 	return out, err
@@ -770,8 +743,10 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 // store's own data for leftover checkout content and rejecting a reuse it
 // already approved.
 func (s *Store) ReleaseCheckoutDestination(ctx context.Context, id string) error {
-	_, err := s.writeDB.ExecContext(ctx, `UPDATE photo_checkouts SET destination='' WHERE checkout_id=? AND destination_reserved=0`, id)
-	return err
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET destination='' WHERE checkout_id=$1 AND destination_reserved=0`, id)
+		return err
+	})
 }
 
 // e and c are the entry and checkout aliases in every retained-version query.

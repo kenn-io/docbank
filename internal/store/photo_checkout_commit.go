@@ -27,21 +27,26 @@ type PhotoCheckoutObservation struct {
 func (s *Store) ObservePhotoCheckoutEntries(ctx context.Context, id, destinationIdentity string, observations []PhotoCheckoutObservation) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var allowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT destination_identity=? AND retired_at IS NULL FROM photo_checkouts WHERE checkout_id=?`, destinationIdentity, id).Scan(&allowed); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT destination_identity=$1 AND retired_at IS NULL FROM photo_checkouts WHERE checkout_id=$2`, destinationIdentity, id).Scan(&allowed); err != nil {
 			return err
 		}
 		if !allowed {
 			return ErrInvalidPhotoCheckout
 		}
-		return observePhotoCheckoutEntriesTx(ctx, tx, id, observations, false)
+		return s.observePhotoCheckoutEntriesTx(ctx, tx, id, observations, false)
 	})
 }
 
-func observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, id string, observations []PhotoCheckoutObservation, bind bool) error {
+func (s *Store) observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, id string, observations []PhotoCheckoutObservation, bind bool) error {
 	const batchSize = 256
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	values := d.arrayValues("$1")
+	if !d.postgres {
+		values += " AS items"
+	}
 	binding := ""
 	if bind {
-		binding = `,published=o.identity<>'',base_held=e.base_held OR (o.identity<>'' AND EXISTS(SELECT 1 FROM content_versions v WHERE v.version_id=e.version_id))`
+		binding = `,published=CASE WHEN o.identity<>'' THEN 1 ELSE 0 END,base_held=CASE WHEN e.base_held<>0 OR (o.identity<>'' AND EXISTS(SELECT 1 FROM content_versions v WHERE v.version_id=e.version_id)) THEN 1 ELSE 0 END`
 	}
 	for start := 0; start < len(observations); start += batchSize {
 		batch := observations[start:min(start+batchSize, len(observations))]
@@ -53,11 +58,11 @@ func observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, id string, o
 			return fmt.Errorf("%w: checkout observation batch exceeds 128 KiB", ErrInvalidPhotoCheckout)
 		}
 		if _, err := tx.ExecContext(ctx, `WITH changes AS MATERIALIZED (
- SELECT matched.rowid AS entry_id,json_extract(o.value,'$.Identity') AS identity,
- json_extract(o.value,'$.Hash') AS hash,json_extract(o.value,'$.Size') AS size,
- json_extract(o.value,'$.Mtime') AS mtime,json_extract(o.value,'$.Since') AS since,json_extract(o.value,'$.State') AS state
- FROM json_each(?) o CROSS JOIN photo_checkout_entries matched
- ON matched.checkout_id=? AND matched.file_id=json_extract(o.value,'$.FileID'))
+ SELECT matched.checkout_id,matched.file_id,`+d.text("items.value", "Identity")+` AS identity,
+ `+d.text("items.value", "Hash")+` AS hash,`+d.number("items.value", "Size")+` AS size,
+ `+d.text("items.value", "Mtime")+` AS mtime,`+d.text("items.value", "Since")+` AS since,`+d.text("items.value", "State")+` AS state
+ FROM `+values+` JOIN photo_checkout_entries matched
+ ON matched.checkout_id=$2 AND matched.file_id=`+d.text("items.value", "FileID")+`)
  UPDATE photo_checkout_entries AS e
  SET observed_identity=o.identity,observed_hash=o.hash,
  observed_size=o.size,observed_mtime=o.mtime,observed_since=o.since,
@@ -66,7 +71,7 @@ func observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, id string, o
  AND NOT EXISTS(SELECT 1 FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE f.file_id=e.file_id AND `+photoCheckoutEntryAuthority+`)
  THEN 'conflict' WHEN o.state='edited' AND e.blob_hash=o.hash AND e.size=o.size
  THEN 'clean' ELSE o.state END`+binding+`
- FROM changes o WHERE e.rowid=o.entry_id`, string(encoded), id); err != nil {
+ FROM changes o WHERE e.checkout_id=o.checkout_id AND e.file_id=o.file_id`, string(encoded), id); err != nil {
 			return err
 		}
 	}
@@ -77,18 +82,18 @@ func observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, id string, o
 // The caller checks the previous folder before entering this write transaction.
 func (s *Store) BindPhotoCheckout(ctx context.Context, id, destination, identity, operationID string, observations []PhotoCheckoutObservation) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		c, err := scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		c, err := scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=$1`, id))
 		if err != nil {
 			return err
 		}
 		if err := ValidatePhotoCheckoutRebind(c, operationID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET destination=?,destination_identity=?,state=CASE WHEN state='unbound' THEN 'completed' ELSE state END,destination_reserved=1 WHERE checkout_id=?`, destination, identity, id)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET destination=$1,destination_identity=$2,state=CASE WHEN state='unbound' THEN 'completed' ELSE state END,destination_reserved=1 WHERE checkout_id=$3`, destination, identity, id)
 		if err != nil {
 			return err
 		}
-		if err := observePhotoCheckoutEntriesTx(ctx, tx, id, observations, true); err != nil {
+		if err := s.observePhotoCheckoutEntriesTx(ctx, tx, id, observations, true); err != nil {
 			return err
 		}
 		return validatePhotoCheckoutReferences(ctx, tx)
@@ -181,7 +186,7 @@ type checkoutCommitState struct {
 // its receipt and saved-version counters in the same transaction.
 func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e PhotoCheckoutEntry, hash string, size int64, mediaType string, physical BlobPhysical) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		exists, err := checkoutCommitEntryRecorded(ctx, tx, c.LastOperationID, e.FileID)
+		exists, err := s.checkoutCommitEntryRecorded(ctx, tx, c.LastOperationID, e.FileID)
 		if err != nil {
 			return err
 		}
@@ -203,7 +208,7 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 		if err := tx.QueryRowContext(ctx, `WITH RECURSIVE chain(observed_at,identity) AS (
   SELECT b.observed_at,b.provenance_identity FROM content_versions cv
   JOIN provenance_version_bindings b ON b.content_version_id=cv.version_id
-  WHERE cv.node_id=? AND cv.blob_hash=?
+  WHERE cv.node_id=$1 AND cv.blob_hash=$2
   UNION ALL SELECT chain.observed_at,p.identity FROM chain JOIN provenance p ON p.supersedes=chain.identity)
   SELECT COALESCE((SELECT p.original_mtime FROM chain JOIN provenance p ON p.identity=chain.identity
   WHERE p.original_mtime IS NOT NULL AND substr(p.original_mtime,1,4)<>'0000'
@@ -216,7 +221,7 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 			return err
 		}
 		var startedAt string
-		if err := tx.QueryRowContext(ctx, `SELECT created_at FROM storage_operations WHERE operation_id=?`, c.LastOperationID).Scan(&startedAt); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT created_at FROM storage_operations WHERE operation_id=$1`, c.LastOperationID).Scan(&startedAt); err != nil {
 			return err
 		}
 		run := IngestRun{record: metadataIngest{Type: metadataIngestType, ID: c.LastOperationID, StartedAt: startedAt, SourceKind: "photo-checkout", SourceDesc: c.ID}}
@@ -227,7 +232,7 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: "checkout_commit", AssetID: e.AssetID, BeforeRevision: node.Revision, AfterRevision: version.NodeRevision, Before: before, After: after}); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET version_id=?,blob_hash=?,size=?,base_held=1,working_state='clean' WHERE checkout_id=? AND file_id=?`, version.ID, hash, size, c.ID, e.FileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET version_id=$1,blob_hash=$2,size=$3,base_held=1,working_state='clean' WHERE checkout_id=$4 AND file_id=$5`, version.ID, hash, size, c.ID, e.FileID); err != nil {
 			return err
 		}
 		return advanceCheckoutCommitTx(ctx, tx, c.LastOperationID, size)
@@ -236,15 +241,15 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 
 func advanceCheckoutCommitTx(ctx context.Context, tx *sql.Tx, operationID string, size int64) error {
 	// Copied counters report saved versions; receipts identify entries on retry.
-	result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET copied_objects=copied_objects+1,copied_bytes=copied_bytes+?,updated_at=? WHERE operation_id=? AND state='running'`, size, nowRFC3339(), operationID)
+	result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET copied_objects=copied_objects+1,copied_bytes=copied_bytes+$1,updated_at=$2 WHERE operation_id=$3 AND state='running'`, size, nowRFC3339(), operationID)
 	return requireOneStorageOperationRow(result, err, operationID, "advancing checkout commit")
 }
 
 func retireRequestedCheckoutTx(ctx context.Context, tx *sql.Tx, id string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retired_at=?,retention_released=1,destination_reserved=0 WHERE checkout_id=? AND retirement_requested=1 AND retired_at IS NULL`, nowRFC3339(), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retired_at=$1,retention_released=1,destination_reserved=0 WHERE checkout_id=$2 AND retirement_requested=1 AND retired_at IS NULL`, nowRFC3339(), id); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=0 WHERE checkout_id=? AND EXISTS(SELECT 1 FROM photo_checkouts WHERE checkout_id=? AND retired_at IS NOT NULL)`, id, id)
+	_, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=0 WHERE checkout_id=$1 AND EXISTS(SELECT 1 FROM photo_checkouts WHERE checkout_id=$2 AND retired_at IS NOT NULL)`, id, id)
 	return err
 }
 
@@ -271,30 +276,36 @@ func validateCheckoutCommitReceipt(v metadataPhotoReceipt) error {
 }
 
 // photoCheckoutEntryAuthority compares the frozen selection with current authority.
-const photoCheckoutEntryAuthority = `f.asset_id=e.asset_id AND f.sidecar_of_file_id IS e.sidecar_of_file_id AND n.current_version_id=e.version_id AND n.trashed_at IS NULL`
+const photoCheckoutEntryAuthority = `f.asset_id=e.asset_id AND f.sidecar_of_file_id IS NOT DISTINCT FROM e.sidecar_of_file_id AND n.current_version_id=e.version_id AND n.trashed_at IS NULL`
 
 // CheckPhotoCheckoutCommitEntry reports an already committed entry and refuses stale
 // working edits before blob publication.
 func (s *Store) CheckPhotoCheckoutCommitEntry(ctx context.Context, c PhotoCheckout, e PhotoCheckoutEntry) (bool, error) {
-	committed, err := checkoutCommitEntryRecorded(ctx, s.db, c.LastOperationID, e.FileID)
-	if err != nil || committed {
-		return committed, err
-	}
-	_, err = checkoutCommitAuthority(ctx, s.db, c, e)
-	return false, err
+	var committed bool
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		committed, err = s.checkoutCommitEntryRecorded(ctx, tx, c.LastOperationID, e.FileID)
+		if err != nil || committed {
+			return err
+		}
+		_, err = checkoutCommitAuthority(ctx, tx, c, e)
+		return err
+	})
+	return committed, err
 }
 
-func checkoutCommitEntryRecorded(ctx context.Context, q metadataQuerier, operationID, fileID string) (bool, error) {
+func (s *Store) checkoutCommitEntryRecorded(ctx context.Context, q metadataQuerier, operationID, fileID string) (bool, error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	var exists bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_change_receipts WHERE operation='checkout_commit' AND json_extract(after_json,'$.operation_id')=? AND json_extract(after_json,'$.file_id')=?)`, operationID, fileID).Scan(&exists)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_change_receipts WHERE operation='checkout_commit' AND `+d.text("after_json", "operation_id")+`=$1 AND `+d.text("after_json", "file_id")+`=$2)`, operationID, fileID).Scan(&exists)
 	return exists, err
 }
 
 func checkoutCommitAuthority(ctx context.Context, q metadataQuerier, c PhotoCheckout, e PhotoCheckoutEntry) (int64, error) {
 	var nodeID int64
 	var valid bool
-	if err := q.QueryRowContext(ctx, `SELECT f.node_id,COALESCE(e.version_id=? AND e.blob_hash=? AND e.size=? AND `+photoCheckoutEntryAuthority+` AND c.last_operation_id=? AND EXISTS(SELECT 1 FROM storage_operations o WHERE o.operation_id=c.last_operation_id AND o.kind='photo_checkout_commit') AND c.destination_identity=? AND c.retired_at IS NULL,0)
-  FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id JOIN photo_files f ON f.file_id=e.file_id JOIN nodes n ON n.id=f.node_id WHERE e.checkout_id=? AND e.file_id=?`, e.VersionID, e.Hash, e.Size, c.LastOperationID, c.DestinationIdentity, c.ID, e.FileID).Scan(&nodeID, &valid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT f.node_id,COALESCE(e.version_id=$1 AND e.blob_hash=$2 AND e.size=$3 AND `+photoCheckoutEntryAuthority+` AND c.last_operation_id=$4 AND EXISTS(SELECT 1 FROM storage_operations o WHERE o.operation_id=c.last_operation_id AND o.kind='photo_checkout_commit') AND c.destination_identity=$5 AND c.retired_at IS NULL,FALSE)
+  FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id JOIN photo_files f ON f.file_id=e.file_id JOIN nodes n ON n.id=f.node_id WHERE e.checkout_id=$6 AND e.file_id=$7`, e.VersionID, e.Hash, e.Size, c.LastOperationID, c.DestinationIdentity, c.ID, e.FileID).Scan(&nodeID, &valid); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, fmt.Errorf("%w: checkout file binding changed", ErrStaleRevision)
 		}

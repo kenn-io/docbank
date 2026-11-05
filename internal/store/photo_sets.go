@@ -67,7 +67,7 @@ func photoSetByID(ctx context.Context, q metadataQuerier, id string) (PhotoSet, 
 	if validateUUIDv4(id) != nil {
 		return PhotoSet{}, ErrNotFound
 	}
-	set, err := scanPhotoSet(q.QueryRowContext(ctx, `SELECT `+photoSetColumns+` FROM photo_sets WHERE set_id=? AND deleted_at IS NULL`, id))
+	set, err := scanPhotoSet(q.QueryRowContext(ctx, `SELECT `+photoSetColumns+` FROM photo_sets WHERE set_id=$1 AND deleted_at IS NULL`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoSet{}, ErrNotFound
 	}
