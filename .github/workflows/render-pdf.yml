@@ -66,7 +66,7 @@ jobs:
 
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -102,7 +102,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 26.12.1
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
@@ -143,7 +143,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 26.12.1
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
