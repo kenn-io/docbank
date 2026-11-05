@@ -296,6 +296,7 @@ func (setup *LocalTextSetup) process(ctx context.Context, name string, item stor
 	if err != nil {
 		return err
 	}
+	skipCode := ""
 	for _, id := range job.EmbeddingJobIDs {
 		status, statusErr := setup.Service.catalog.EmbeddingJobByID(ctx, id)
 		if statusErr != nil {
@@ -304,11 +305,14 @@ func (setup *LocalTextSetup) process(ctx context.Context, name string, item stor
 		if status.State == "failed" {
 			switch status.FailureCode {
 			case store.EmbeddingFailureInvalidResponse, store.EmbeddingFailureInputRejected, store.EmbeddingFailureStaleAuthority:
-				setup.skip(name, item, string(status.FailureCode))
+				skipCode = string(status.FailureCode)
 			default:
 				err = errors.Join(err, fmt.Errorf("local text embedding job %s failed: %s", id, status.FailureCode))
 			}
 		}
+	}
+	if err == nil && skipCode != "" {
+		setup.skip(name, item, skipCode)
 	}
 	return err
 }
