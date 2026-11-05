@@ -12,6 +12,35 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
+func TestDocumentPeopleDeleteUsesVersionIndexSQLite(t *testing.T) {
+	t.Parallel()
+	for _, existing := range []bool{false, true} {
+		name := "new"
+		if existing {
+			name = "existing"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			if existing {
+				s, err := Open(t.Context(), path)
+				require.NoError(t, err)
+				// Simulate a vault created before the people-generations version index existed.
+				_, err = s.db.ExecContext(t.Context(), "DROP INDEX IF EXISTS document_people_generations_version")
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+			}
+			s, err := Open(t.Context(), path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			// Deleting a content version must find people generations through an index.
+			plan := explainQueryPlan(t, s, "DELETE FROM content_versions WHERE version_id = ?", "version-1")
+			require.Contains(t, plan, "SEARCH document_people_generations USING COVERING INDEX document_people_generations_version (content_version_id=?)")
+		})
+	}
+}
+
 func TestDocumentPeopleKeepsIndependentActorEvidenceAfterReopen(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "people.db")

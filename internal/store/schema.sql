@@ -2865,6 +2865,8 @@ CREATE TABLE IF NOT EXISTS document_people_generations (
     canonical_json BLOB NOT NULL, checksum TEXT NOT NULL, created_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS document_people_generations_version ON document_people_generations(content_version_id);
+
 CREATE TRIGGER IF NOT EXISTS document_people_generations_immutable_update
 BEFORE UPDATE ON document_people_generations BEGIN
     SELECT RAISE(ABORT, 'document people generations are immutable');
