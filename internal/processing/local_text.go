@@ -192,15 +192,15 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limi
 			return nil, nil
 		}
 	}
-	imageBindings := 0
+	bindings := 0
 	for _, binding := range profile.portable.Embeddings {
-		if binding.InputKind == document.EmbeddingInputImage {
-			imageBindings++
+		if binding.InputKind != document.EmbeddingInputImage {
+			bindings++
 		}
 	}
 	var result []store.DocumentSummary
 	for len(result) < limit {
-		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), imageBindings, 1000)
+		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000)
 		if err != nil {
 			return nil, err
 		}
