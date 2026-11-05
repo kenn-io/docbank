@@ -430,10 +430,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
 		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
-		List:    processingService.MediaProcessingTargets,
-		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
-		Process: processingService.ContinueMediaProcessing,
-		Logger:  logger,
+		WriteRevision: s.WriteRevision,
+		List:          processingService.MediaProcessingTargets,
+		Key:           func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process:       processingService.ContinueMediaProcessing,
+		Logger:        logger,
 	}
 	if err := jobSupervisor.StartWorker("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
@@ -991,9 +992,10 @@ func startProcessingJobs(
 
 	quality := &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "photo-quality", Page: 10, IdleDelay: time.Second,
-		List:   s.MissingPhotoQualityTargetsAfter,
-		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
-		Mutate: gate.MutateContext, Logger: logger,
+		WriteRevision: s.WriteRevision,
+		List:          s.MissingPhotoQualityTargetsAfter,
+		Key:           func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
+		Mutate:        gate.MutateContext, Logger: logger,
 		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
 			return processing.EvaluatePhotoQuality(ctx, s, blobs, target)
 		},
@@ -1011,6 +1013,7 @@ func startProcessingJobs(
 	}
 	email := &processing.Backfill[store.EmailTarget]{
 		Name: "email", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		List: func(ctx context.Context, after string, limit int) ([]store.EmailTarget, error) {
 			return s.MissingEmailTargetsAfter(
 				ctx, emailFingerprint, emailBodyProfileFingerprint, after, limit,
@@ -1045,7 +1048,7 @@ func startProcessingJobs(
 // newPhotoSidecarBackfill processes originals whose live inputs differ from their receipt.
 func newPhotoSidecarBackfill(s *store.Store, blobs *blob.Store, gate *api.OperationGate, logger *slog.Logger) func(context.Context) error {
 	return func(ctx context.Context) error {
-		lane := &processing.Backfill[store.PhotoSidecarTarget]{Name: "photo-sidecars", Page: 10, IdleDelay: time.Second, List: func(ctx context.Context, after string, limit int) ([]store.PhotoSidecarTarget, error) {
+		lane := &processing.Backfill[store.PhotoSidecarTarget]{Name: "photo-sidecars", Page: 10, IdleDelay: time.Second, WriteRevision: s.WriteRevision, List: func(ctx context.Context, after string, limit int) ([]store.PhotoSidecarTarget, error) {
 			attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			return s.PhotoXMPTargetsAfter(attempt, after, limit)
@@ -1071,6 +1074,7 @@ func newVisualPreviewBackfill(
 	}
 	return &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "visual-previews", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		Control: func(ctx context.Context) (store.LaneControl, error) {
 			return s.LaneControl(ctx, store.VisualPreviewLane)
 		},

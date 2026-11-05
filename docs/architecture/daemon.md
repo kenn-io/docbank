@@ -195,7 +195,8 @@ The list includes the newest 1,000 durable storage records. Finished storage
 operations clear within an hour after their retention ends unless they still
 own pending cleanup.
 
-Source-metadata, document-events, and document-people backfills stop scanning
+Source-metadata, email, visual-preview, photo-quality, photo-sidecar,
+document-events, document-people, and media-continuation backfills stop scanning
 after an empty full scan. They rescan after any committed vault write or a
 daemon restart, and keep scanning while retries are pending. A write wakes a
 settled backfill within its existing idle wait, at most ten seconds.

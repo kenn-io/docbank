@@ -300,6 +300,8 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) 
 		}
 	}
 	defer release()
+	// Listing also releases activity after vector index bookkeeping, which does
+	// not advance the store's write revision.
 	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
 		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
 			items, err := setup.targets(ctx, after, limit)

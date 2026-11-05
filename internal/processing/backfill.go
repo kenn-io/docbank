@@ -127,7 +127,6 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			idleDelay = min(idleDelay*2, backfillMaxIdleDelay)
 			continue
 		}
-		settled = false
 		idleDelay = b.IdleDelay
 		attempted, err := b.processPage(ctx, targets, retries)
 		passFound = passFound || attempted > 0
