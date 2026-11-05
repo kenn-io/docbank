@@ -207,7 +207,7 @@ func checkPhotoCheckoutAlbumSelectionPostgres(t *testing.T) {
 		_, err = setup.ExecContext(ctx, `INSERT INTO documents.photo_set_members(set_id,asset_id,added_at) VALUES($1,$2,$3)`, setID, asset.ID, nowRFC3339())
 		require.NoError(t, err)
 	}
-	c, _, estimate, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AlbumIDs: []string{setID, setID}, AssetIDs: []string{included.ID, other.ID}}, t.TempDir(), "identity", 0)
+	c, _, estimate, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AlbumIDs: []string{setID, setID}, AssetIDs: []string{other.ID}}, t.TempDir(), "identity", 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, estimate.Assets)
 	entries, err := s.PhotoCheckoutEntries(ctx, c.ID)

@@ -39,10 +39,6 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	postgres := newPostgresQueryStore(t)
 	left := describeBackendSchema(t, sqlite)
 	right := describeBackendSchema(t, postgres)
-	// SQLite records its released layout; PostgreSQL is not released yet.
-	require.Contains(t, left["vault_metadata"].Columns, "schema_version")
-	assert.NotContains(t, right["vault_metadata"].Columns, "schema_version")
-	delete(left["vault_metadata"].Columns, "schema_version")
 	// PostgreSQL's transactional node counter implements SQLite's sqlite_sequence.
 	require.Contains(t, right, "node_allocation")
 	delete(right, "node_allocation")

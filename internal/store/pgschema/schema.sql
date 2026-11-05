@@ -2,7 +2,8 @@
 -- restore.
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
-    vault_uid      UUID NOT NULL UNIQUE
+    vault_uid      UUID NOT NULL UNIQUE,
+    schema_version INTEGER NOT NULL
 );
 
 -- Allocation is transactional: audit replay requires consecutive committed IDs.

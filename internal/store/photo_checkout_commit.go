@@ -39,15 +39,7 @@ func (s *Store) ObservePhotoCheckoutEntries(ctx context.Context, id, destination
 
 func (s *Store) observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, id string, observations []PhotoCheckoutObservation, bind bool) error {
 	const batchSize = 256
-	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
-	values := d.arrayValues("$1")
-	if !d.postgres {
-		values += " AS items"
-	}
-	binding := ""
-	if bind {
-		binding = `,published=CASE WHEN o.identity<>'' THEN 1 ELSE 0 END,base_held=CASE WHEN e.base_held<>0 OR (o.identity<>'' AND EXISTS(SELECT 1 FROM content_versions v WHERE v.version_id=e.version_id)) THEN 1 ELSE 0 END`
-	}
+	query := s.photoCheckoutObservationsSQL(bind)
 	for start := 0; start < len(observations); start += batchSize {
 		batch := observations[start:min(start+batchSize, len(observations))]
 		encoded, err := json.Marshal(batch)
@@ -57,25 +49,41 @@ func (s *Store) observePhotoCheckoutEntriesTx(ctx context.Context, tx *sql.Tx, i
 		if len(encoded) > 128<<10 {
 			return fmt.Errorf("%w: checkout observation batch exceeds 128 KiB", ErrInvalidPhotoCheckout)
 		}
-		if _, err := tx.ExecContext(ctx, `WITH changes AS MATERIALIZED (
- SELECT matched.checkout_id,matched.file_id,`+d.text("items.value", "Identity")+` AS identity,
- `+d.text("items.value", "Hash")+` AS hash,`+d.number("items.value", "Size")+` AS size,
- `+d.text("items.value", "Mtime")+` AS mtime,`+d.text("items.value", "Since")+` AS since,`+d.text("items.value", "State")+` AS state
- FROM `+values+` JOIN photo_checkout_entries matched
- ON matched.checkout_id=$2 AND matched.file_id=`+d.text("items.value", "FileID")+`)
+		if _, err := tx.ExecContext(ctx, query, string(encoded), id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) photoCheckoutObservationsSQL(bind bool) string {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	values := d.arrayValues("$1")
+	join := "JOIN"
+	if !d.postgres {
+		values += " AS items"
+		// Keep the bounded observation batch outermost without SQLite statistics.
+		join = "CROSS JOIN"
+	}
+	binding := ""
+	if bind {
+		binding = `,published=CASE WHEN o.identity<>'' THEN 1 ELSE 0 END,base_held=CASE WHEN e.base_held<>0 OR (o.identity<>'' AND EXISTS(SELECT 1 FROM content_versions v WHERE v.version_id=e.version_id)) THEN 1 ELSE 0 END`
+	}
+	return `WITH changes AS MATERIALIZED (
+ SELECT matched.checkout_id,matched.file_id,` + d.text("items.value", "Identity") + ` AS identity,
+ ` + d.text("items.value", "Hash") + ` AS hash,` + d.number("items.value", "Size") + ` AS size,
+ ` + d.text("items.value", "Mtime") + ` AS mtime,` + d.text("items.value", "Since") + ` AS since,` + d.text("items.value", "State") + ` AS state
+ FROM ` + values + ` ` + join + ` photo_checkout_entries matched
+ ON matched.checkout_id=$2 AND matched.file_id=` + d.text("items.value", "FileID") + `)
  UPDATE photo_checkout_entries AS e
  SET observed_identity=o.identity,observed_hash=o.hash,
  observed_size=o.size,observed_mtime=o.mtime,observed_since=o.since,
  working_state=CASE WHEN o.state<>'missing' AND o.hash<>''
  AND (o.hash<>e.blob_hash OR o.size<>e.size)
- AND NOT EXISTS(SELECT 1 FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE f.file_id=e.file_id AND `+photoCheckoutEntryAuthority+`)
+ AND NOT EXISTS(SELECT 1 FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE f.file_id=e.file_id AND ` + photoCheckoutEntryAuthority + `)
  THEN 'conflict' WHEN o.state='edited' AND e.blob_hash=o.hash AND e.size=o.size
- THEN 'clean' ELSE o.state END`+binding+`
- FROM changes o WHERE e.checkout_id=o.checkout_id AND e.file_id=o.file_id`, string(encoded), id); err != nil {
-			return err
-		}
-	}
-	return nil
+ THEN 'clean' ELSE o.state END` + binding + `
+ FROM changes o WHERE e.checkout_id=o.checkout_id AND e.file_id=o.file_id`
 }
 
 // BindPhotoCheckout records a verified machine-local root; backups omit it.

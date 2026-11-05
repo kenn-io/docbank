@@ -607,19 +607,32 @@ role, directly or indirectly. This ownership check is separate from object
 privileges: an owner can revoke its own write privileges and still retain the
 authority to alter objects or grant those privileges again.
 
-PostgreSQL support is unreleased. Edit the canonical DDL directly; do not assign
-layout versions, add compatibility gates, or write migrations for development
-schemas. Recreate disposable test databases when the schema changes.
+PostgreSQL schemas are disposable until the first deployment whose data must
+survive upgrades. An ordinary Docbank release does not establish that boundary:
+the public vault lifecycle still opens only SQLite. Edit
+`internal/store/pgschema/schema.sql` directly and increment `pgschema.SchemaVersion`
+whenever it changes, including indexes and column defaults. No migrations are
+needed during this period. `Setup` records the version in `vault_metadata` in the
+installation transaction. Both `Setup` and runtime `Validate` reject a missing or
+different version with a "recreate this schema" error; neither repairs it. Recreate
+only disposable development schemas with the current build, never retained data.
 
-The first release with PostgreSQL support establishes its schema version and
-upgrade floor, independently of SQLite layout versions and JSONL format versions.
-Subsequent changes require numbered
-`NNNNNN_description.up.sql` transitions, with the target version in the filename.
+Before the first retained deployment, establish the current schema as migration
+1 (`000001_initial_schema.up.sql`) and add a CI check that installs the numbered
+chain and compares it with the canonical schema. This is the PostgreSQL upgrade
+floor, independent of SQLite layout versions and JSONL format versions. From
+that cutoff onward, every change to the schema needs a numbered
+`NNNNNN_description.up.sql` transition, including indexes or defaults added while
+porting an operation. A port that changes only Go or queries needs none. Keep at
+most one new migration per PR; revise it while it remains branch-only and has
+been applied only to disposable databases.
+
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
 reaches main or a deployed database it is immutable; fix forward. Recovery uses
 a pre-upgrade backup and compatible binary, not down migrations. This discipline
-does not change SQLite's JSONL cutover policy.
+does not change SQLite's JSONL cutover policy. The migration chain and its CI
+comparison must land before retained PostgreSQL deployments are supported.
 
 Do not add SQL `CHECK` constraints. Value validation belongs in Go and must be
 shared by writes, imports, restores and audits. Primary keys, foreign keys,
@@ -658,7 +671,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; versioning starts with the first PostgreSQL release, and a public vault is not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; development versions reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
@@ -1181,7 +1194,10 @@ operation. Content, provenance, its replay receipt, the advanced checkout base
 and progress counters commit together. Retrying a completed entry preserves
 the same content and counters. Admission reads its receipt and authority from
 one snapshot. Observation batches and destination binding also roll back as a
-unit. Retiring a checkout releases its retained versions without deleting copies.
+unit. On SQLite, observations drive the join from each bounded JSON batch and
+seek entries by checkout and file ID; a query-plan test covers this without
+statistics. Retiring a checkout releases its retained versions without deleting
+copies.
 
 The `photo-checkout` contracts exercise native operations, late publication and
 commit failures, batched observation rollback, snapshots and retained-version

@@ -1164,13 +1164,8 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 	})
 }
 
-// TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication covers
-// recovery after a destination can no longer be confirmed: a reconcile that
-// cannot verify a previously published entry still clears its published
-// flag (ObservePhotoCheckout), but PreserveUncertainPhotoCheckoutHolds must
-// run first so the source version stays held, matching the documented
-// "published or uncertain copies retain their bases until retirement"
-// guarantee.
+// Recovery must retain an uncertain copy's base after reconciliation clears
+// the durable publication intent, even when publication was never recorded.
 func checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
@@ -1184,7 +1179,12 @@ func checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testi
 	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+	// Interrupt at the external-copy boundary, after intent is committed but
+	// before completion can set published or base_held. Recovery sees this
+	// same state if the process stops after installing the working copy.
+	require.PanicsWithValue(t, "copy interrupted", func() {
+		_ = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { panic("copy interrupted") })
+	})
 
 	require.NoError(t, s.PreserveUncertainPhotoCheckoutHolds(ctx, checkout.ID, op.ID))
 	require.NoError(t, s.ObservePhotoCheckout(ctx, checkout.ID, op.ID, nil))
@@ -1432,6 +1432,23 @@ func TestPhotoCheckoutObservationBatchesKeepSummaryAndRollback(t *testing.T) {
 		}
 		observations = append(observations, observation)
 	}
+	// Without statistics, SQLite must drive the join from the small batch,
+	// seeking each entry by its complete key instead of scanning the checkout.
+	batch, err := json.Marshal(observations[:256])
+	require.NoError(t, err)
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+s.photoCheckoutObservationsSQL(false), string(batch), c.ID)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Regexp(t, `SEARCH matched .*\(checkout_id=\? AND file_id=\?\)`, strings.Join(plan, "\n"))
 	require.NoError(t, s.ObservePhotoCheckoutEntries(t.Context(), c.ID, "identity", observations))
 	counts, paths, err := s.PhotoCheckoutWorkingSummary(t.Context(), c.ID, 10)
 	require.NoError(t, err)

@@ -268,10 +268,15 @@ release, from a breaking change to `feat` to `fix`.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
-  Until the first release with PostgreSQL support, edit canonical DDL directly:
-  no layout version bumps, compatibility gates or migrations for development
-  schemas. That release establishes the baseline for Kata-style numbered
-  forward migrations, without changing msgvault's or SQLite's existing history.
+  PostgreSQL schemas remain disposable until the first deployment whose data
+  must survive upgrades. Until then, edit canonical DDL directly, increment
+  `pgschema.SchemaVersion` whenever `schema.sql` changes, and recreate development
+  schemas on a version mismatch; setup and runtime validation must refuse them.
+  Before that first retained deployment, capture the current schema as migration
+  1 and add CI comparison of the canonical schema with the numbered forward chain.
+  After that cutoff every schema change, including indexes and defaults, needs a
+  migration. A port that changes only Go or queries needs none. This does not
+  change msgvault's or SQLite's existing history.
   The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
 - Register PostgreSQL operation tests in `internal/store/backend_contract_test.go`;
