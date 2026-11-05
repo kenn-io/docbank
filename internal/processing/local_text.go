@@ -140,14 +140,11 @@ func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool
 		if binding.InputKind != document.EmbeddingInputRenditionChunk {
 			continue
 		}
-		coverage, err := setup.Service.catalog.RevalidateSearchCandidates(ctx, nil, store.SearchOptions{VectorSpaceID: active.vectorSpaces[binding.Name]}, active.record.Fingerprint, binding.Name)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
+		exists, err := setup.Service.catalog.HasEmbeddingHeads(ctx, active.record.Fingerprint, binding.Name)
 		if err != nil {
 			return false, err
 		}
-		if coverage.Coverage != nil && coverage.Coverage.CompleteDocuments > 0 {
+		if exists {
 			return true, nil
 		}
 	}

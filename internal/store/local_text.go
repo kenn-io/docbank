@@ -5,6 +5,13 @@ import (
 	"errors"
 )
 
+// HasEmbeddingHeads reports retained vectors for a binding, including trashed documents.
+func (s *Store) HasEmbeddingHeads(ctx context.Context, profile, binding string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads WHERE profile_fingerprint=$1 AND binding_id=$2)`, profile, binding).Scan(&exists)
+	return exists, err
+}
+
 // MissingProcessingTargetsAfter excludes published work at the selected
 // profile, including after daemon restart. Failed jobs remain eligible.
 func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, after string, bindings, imageBindings, limit int) ([]DocumentSummary, error) {
