@@ -304,9 +304,6 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				var current int
 				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata`).Scan(&current))
 				assert.Equal(t, currentStorageSchemaVersion, current)
-				var indexes int
-				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name IN ('rendition_attachments_build','document_people_generations_version')`).Scan(&indexes))
-				assert.Equal(t, 2, indexes, "opening a released vault creates the current access indexes")
 				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				require.Nil(t, asset.HiddenAt)
@@ -353,9 +350,16 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 					assert.Equal(t, releasedSchemaCatalog(t, released, false), releasedSchemaCatalog(t, current, false), message)
 					before := releasedSchemaCatalog(t, released, true)
 					after := releasedSchemaCatalog(t, current, true)
-					_, err := released.ExecContext(t.Context(), schemaSQL)
+					beforeOpen, err := os.Stat(filepath.Join(path, "released.db"))
+					require.NoError(t, err)
+					require.NoError(t, released.Close())
+					opened, err := Open(t.Context(), filepath.Join(path, "released.db"), driver.driver)
 					require.NoError(t, err, message)
-					assert.Equal(t, after, releasedSchemaCatalog(t, released, true), message)
+					t.Cleanup(func() { require.NoError(t, opened.Close()) })
+					afterOpen, err := os.Stat(filepath.Join(path, "released.db"))
+					require.NoError(t, err)
+					assert.True(t, os.SameFile(beforeOpen, afterOpen), "compatible index additions keep the released database in place")
+					assert.Equal(t, after, releasedSchemaCatalog(t, opened.db, true), message)
 					for name, object := range after {
 						if _, existed := before[name]; existed || object[0] != "index" {
 							continue

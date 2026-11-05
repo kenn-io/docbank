@@ -249,7 +249,7 @@ in `releasedSchemaFixtures`. Three checks enforce this:
   fails when a tag's schema version is unlisted or its `schema.sql` has no
   exact fixture.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
-  trigger, or view changes, or when a changed index would not reach existing vaults.
+  trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.
 - `TestEveryReleasedSchemaFixtureUpgrades` opens each fixture with the current
   binary, so bumping the schema fails until the released version has a cutover
