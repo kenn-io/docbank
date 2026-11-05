@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -190,8 +192,27 @@ func runSupervisedChild(control launchControl, executablePath string, statusFD i
 	command.Stdout = io.Discard
 	command.Stderr = os.Stderr
 	command.WaitDelay = childDrainWindow
+	if control.HoldChildAfterExec {
+		// Linux delivers the exec trap to the tracing thread. Holding that
+		// thread lets the test observe the actual child before cancellation.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		command.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
+	}
 	if err := command.Start(); err != nil {
 		return 0, fmt.Errorf("start sandbox supervised child: %w", err)
+	}
+	if control.HoldChildAfterExec {
+		var status unix.WaitStatus
+		_, waitErr := unix.Wait4(command.Process.Pid, &status, 0, nil)
+		if waitErr != nil || !status.Stopped() || status.StopSignal() != unix.SIGTRAP {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			if waitErr != nil {
+				return 0, fmt.Errorf("wait for supervised child exec trap: %w", waitErr)
+			}
+			return 0, fmt.Errorf("unexpected supervised child exec status: %v", status)
+		}
 	}
 	// Start returns after exec succeeds. The status descriptor is
 	// close-on-exec, so the child never holds it.

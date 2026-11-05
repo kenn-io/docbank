@@ -167,7 +167,7 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 func TestLibreOfficeCancellationReapsProcessTree(t *testing.T) {
 	started := make(chan struct{})
 	var once sync.Once
-	policy := realLibreOfficePolicy(t, nativeRunner{childStarted: func() { once.Do(func() { close(started) }) }})
+	policy := realLibreOfficePolicy(t, nativeRunner{childStarted: func() { once.Do(func() { close(started) }) }, holdChildAfterExec: true})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	source := testSource(t, realDOCX(false, "", ""), docxMediaType)

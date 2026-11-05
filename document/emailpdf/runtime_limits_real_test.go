@@ -135,22 +135,34 @@ func TestRuntimeRealLimits(t *testing.T) {
 		require.Less(t, len(html), maxHTMLBytes)
 		require.NoError(t, r.writeInputs(dir, []byte(html)))
 		unit := "docbank-email-pdf-" + uuid.New().String() + ".service"
+		slice := "docbanktest" + strings.ReplaceAll(uuid.New().String(), "-", "") + ".slice"
+		anchor := "docbank-email-pdf-anchor-" + uuid.New().String() + ".service"
 		ctx, cancel := context.WithTimeout(t.Context(), 75*time.Second)
 		defer cancel()
+		t.Cleanup(func() { collectLimitUnit(t, anchor) })
+		// Keep this test's slice alive even if systemd removes the worker's
+		// cgroup immediately after its last process exits.
+		output, err := exec.CommandContext(ctx, "systemd-run", "--user", "--quiet", "--unit="+anchor, "--slice="+slice, "/usr/bin/sleep", "infinity").CombinedOutput()
+		require.NoError(t, err, "start test slice anchor: %s", output)
+		group, err := exec.CommandContext(ctx, "systemctl", "--user", "show", anchor, "--property=ControlGroup", "--value").Output()
+		require.NoError(t, err)
+		groupPath := strings.TrimSpace(string(group))
+		require.NotEmpty(t, groupPath)
+		require.Equal(t, slice, filepath.Base(filepath.Dir(groupPath)))
+		events := filepath.Join("/sys/fs/cgroup", filepath.Dir(groupPath), "memory.events")
 		cmd := r.command(ctx, dir, unit, "/runtime/worker", r.workerArgs()...)
+		cmd.Args = slices.Insert(cmd.Args, 1, "--slice="+slice)
 		// Retain only the terminal unit's accounting for inspection. Every
 		// execution/resource property and the real worker remain unchanged.
 		cmd.Args = slices.DeleteFunc(cmd.Args, func(arg string) bool { return arg == "--collect" })
 		t.Cleanup(func() { collectLimitUnit(t, unit) })
-		// memory.events counts are hierarchical, so the user manager's cgroup
-		// records an OOM kill in this unit even after its cgroup is removed,
-		// and the kernel reports each change as a file modification.
-		managerEvents := userManagerMemoryEvents(t)
+		// The slice contains only this worker and the idle anchor. Its
+		// hierarchical counter survives removal of the worker's cgroup.
 		watcher, err := fsnotify.NewWatcher()
 		require.NoError(t, err)
 		defer func() { _ = watcher.Close() }()
-		require.NoError(t, watcher.Add(managerEvents))
-		oomKillsBefore := oomKillCount(t, managerEvents)
+		require.NoError(t, watcher.Add(events))
+		oomKillsBefore := oomKillCount(t, events)
 		finished := make(chan error, 1)
 		go func() { finished <- cmd.Run() }()
 		for running := true; running; {
@@ -160,7 +172,7 @@ func TestRuntimeRealLimits(t *testing.T) {
 			case watchErr := <-watcher.Errors:
 				require.NoError(t, watchErr)
 			case <-watcher.Events:
-				if oomKillCount(t, managerEvents) == oomKillsBefore {
+				if oomKillCount(t, events) == oomKillsBefore {
 					continue
 				}
 				// systemd's OOMPolicy=continue may leave the browser host alive
@@ -173,8 +185,11 @@ func TestRuntimeRealLimits(t *testing.T) {
 				running = false
 			}
 		}
-		oomKills := oomKillCount(t, managerEvents) - oomKillsBefore
+		oomKills := oomKillCount(t, events) - oomKillsBefore
 		require.Error(t, err)
+		anchorState, stateErr := exec.CommandContext(ctx, "systemctl", "--user", "show", anchor, "--property=ActiveState", "--value").Output()
+		require.NoError(t, stateErr)
+		require.Equal(t, "active", strings.TrimSpace(string(anchorState)), "the idle slice anchor must not be the OOM victim")
 		accounting, showErr := exec.CommandContext(ctx, "systemctl", "--user", "show", unit, "--property=Result", "--property=MemoryPeak", "--property=MemoryMax", "--property=MemorySwapMax").Output()
 		require.NoError(t, showErr)
 		t.Logf("real Chromium memory accounting: %s", accounting)
@@ -237,17 +252,6 @@ func TestRuntimeRealLimits(t *testing.T) {
 	entries, err := os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries, "worker staging must be removed on success and limit rejection")
-}
-
-// userManagerMemoryEvents returns the memory.events file of the user
-// manager's cgroup, which contains every unit systemd-run --user starts.
-func userManagerMemoryEvents(t *testing.T) string {
-	t.Helper()
-	group, err := exec.CommandContext(t.Context(), "systemctl", "--user", "show", "--property=ControlGroup", "--value").Output()
-	require.NoError(t, err)
-	path := strings.TrimPrefix(strings.TrimSpace(string(group)), "/")
-	require.NotEmpty(t, path, "user manager cgroup")
-	return filepath.Join("/sys/fs/cgroup", path, "memory.events")
 }
 
 func oomKillCount(t *testing.T, eventsPath string) int64 {

@@ -277,7 +277,8 @@ func openLaunchControl(request Request, rootDirectory string) (*os.File, string,
 	encoded, err := encodeControl(launchControl{
 		RootDirectory: rootDirectory,
 		Policy:        request.Policy, PolicyFingerprint: request.PolicyFingerprint,
-		StdinSHA256: request.StdinSHA256,
+		StdinSHA256:        request.StdinSHA256,
+		HoldChildAfterExec: request.HoldChildAfterExec,
 	})
 	if err != nil {
 		return nil, "", err
