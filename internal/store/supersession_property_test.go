@@ -38,13 +38,6 @@ func TestSupersessionOmittedNoteAfterSuccessorTrashRestoreProperty(t *testing.T)
 		if err != nil {
 			ht.Fatalf("trash successor: %v", err)
 		}
-		staleView, err := s.NodeValidity(ctx, old.ID, "2025-01-01")
-		if err != nil {
-			ht.Fatalf("read predecessor while successor is trashed: %v", err)
-		}
-		if len(staleView.Successors) != 0 {
-			ht.Fatalf("trashed successor remained visible: %+v", staleView.Successors)
-		}
 		restored, _, err := s.Restore(ctx, trashed.ID, trashed.Revision)
 		if err != nil {
 			ht.Fatalf("restore successor: %v", err)

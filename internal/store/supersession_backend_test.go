@@ -34,4 +34,16 @@ func checkSupersessionMetadataGraphValidationPostgres(t *testing.T) {
 		}
 		return s.validateMetadataState(ctx, tx, high)
 	}))
+
+	// A reverse link creates a cycle that retained-state validation must reject.
+	_, err = setup.ExecContext(ctx, `INSERT INTO documents.node_supersessions(successor_node_id,predecessor_node_id,note,recorded_at) VALUES($1,$2,$3,$4)`,
+		predecessor.ID, successor.ID, "", nowRFC3339())
+	require.NoError(t, err)
+	require.ErrorIs(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		high, err := s.auditNodeSequence(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return s.validateMetadataState(ctx, tx, high)
+	}), ErrInvalidSupersession)
 }

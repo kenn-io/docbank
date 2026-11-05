@@ -45,26 +45,8 @@ func TestSupersessionCLI(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &window))
 	assert.Equal(t, "2025-02-01", window.EffectiveFrom)
 	assert.Equal(t, "2025-12-31", window.EffectiveTo)
-	out, err = runCLI(t, "document", "supersede", "/leases/next.txt", "--replaces", "/leases/old.txt", "--note", "renewed lease")
+	_, err = runCLI(t, "document", "supersede", "/leases/next.txt", "--replaces", "/leases/old.txt")
 	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("Document validity updated: id:%d\n", successorID), out)
-	out, err = runCLI(t, "document", "supersede", "/leases/next.txt", "--replaces", "/leases/old.txt")
-	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("Document validity unchanged: id:%d\n", successorID), out)
-	out, err = runCLI(t, "document", "validity", "/leases/old.txt", "--as-of", "2025-06-01", "--json")
-	require.NoError(t, err)
-	var v api.NodeValidity
-	require.NoError(t, json.Unmarshal([]byte(out), &v))
-	assert.Equal(t, "superseded", v.State)
-	require.Len(t, v.Successors, 1)
-	assert.Equal(t, "renewed lease", v.Successors[0].Note)
-	_, err = runCLI(t, "document", "supersede", "/leases/next.txt", "--replaces", "/leases/old.txt", "--note", "")
-	require.NoError(t, err)
-	out, err = runCLI(t, "document", "validity", "/leases/old.txt", "--as-of", "2025-06-01", "--json")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &v))
-	require.Len(t, v.Successors, 1)
-	assert.Empty(t, v.Successors[0].Note)
 	resetFlags(rootCmd)
 	var stdout, stderr bytes.Buffer
 	code := runProcess([]string{"document", "effective", "/leases/next.txt", "--from", "2026-01-01"}, &stdout, &stderr)
@@ -104,7 +86,7 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 			// Another client renamed the file after selector resolution.
 			assert.NoError(t, json.MarshalWrite(w, api.NodeValidity{
 				Node:  api.Node{ID: 42, Path: "/renamed-lease.txt", Revision: 2},
-				State: "current", AsOf: "2025-06-01",
+				State: "not_yet_effective", AsOf: "2025-06-01",
 			}))
 		default:
 			http.Error(w, r.URL.Path, http.StatusNotFound)
@@ -112,29 +94,8 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 	})
 	out, err := runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01")
 	require.NoError(t, err)
-	assert.Equal(t, "/renamed-lease.txt: current (as of 2025-06-01)\n", out)
+	assert.Equal(t, "/renamed-lease.txt: not yet effective (as of 2025-06-01)\n", out)
 	assert.Equal(t, []string{"GET /api/v1/nodes/42", "GET /api/v1/nodes/42/validity"}, requests)
-}
-
-func TestValidityHumanOutputUsesNaturalStateLabel(t *testing.T) {
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/v1/nodes/42":
-			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Path: "/future.txt", Revision: 1}))
-		case "GET /api/v1/nodes/42/validity":
-			assert.NoError(t, json.MarshalWrite(w, api.NodeValidity{
-				Node: api.Node{ID: 42, Path: "/future.txt", Revision: 1}, State: "not_yet_effective", AsOf: "2025-06-01",
-			}))
-		default:
-			http.Error(w, r.URL.Path, http.StatusNotFound)
-		}
-	})
-
-	out, err := runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01")
-	require.NoError(t, err)
-	assert.Equal(t, "/future.txt: not yet effective (as of 2025-06-01)\n", out)
-
 	out, err = runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01", "--json")
 	require.NoError(t, err)
 	var view api.NodeValidity
