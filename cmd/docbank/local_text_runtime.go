@@ -47,7 +47,7 @@ func localTextCandidate(cfg config.Config, mode, name string) (config.Config, er
 	if mode != "auto" && mode != "local" {
 		return cfg, processing.ErrProfileNotConfigured
 	}
-	if _, configured := cfg.ProcessingProfiles[name]; name == config.LocalTextProfile && !configured {
+	if name == config.LocalTextProfile {
 		name = ""
 	}
 	candidate := cfg

@@ -167,11 +167,31 @@ func (setup *LocalTextSetup) Apply(ctx context.Context, mode, fingerprint string
 	if err := service.grantProfileConsent(ctx, service.profiles[plan.Profile], nil); err != nil {
 		return LocalTextPlan{}, err
 	}
-	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profile, plan.Server) }); err != nil {
-		return LocalTextPlan{}, fmt.Errorf("%w: save local text selection: %w", ErrConsentSaved, err)
+	if err := setup.activate(ctx, service, plan); err != nil {
+		return LocalTextPlan{}, err
 	}
 
 	return plan, nil
+}
+
+func (setup *LocalTextSetup) activate(ctx context.Context, service *Service, plan LocalTextPlan) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: activate local text selection: %w", ErrConsentSaved, err)
+		}
+	}()
+	if plan.Profile != config.LocalTextProfile {
+		fill := &LocalTextSetup{Service: service, Selected: plan.Profile, logger: setup.logger}
+		pass := Backfill[store.DocumentSummary]{Name: "local-text-move", Page: 50, IdleDelay: time.Second, DrainOnce: true,
+			List: fill.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: fill.process}
+		if err = pass.Run(ctx); err != nil {
+			return err
+		}
+		if err = service.rebuildVectorSpaces(ctx, slices.Collect(maps.Values(service.profiles[plan.Profile].vectorSpaces))); err != nil {
+			return err
+		}
+	}
+	return setup.Service.gate.MutateContext(ctx, func() error { return setup.Save(plan.Profile, plan.Server) })
 }
 
 func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
