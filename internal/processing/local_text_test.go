@@ -88,106 +88,108 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.NoError(t, err, "consent remains saved when the selection write fails")
 	}
-	t.Run("selection", func(t *testing.T) {
-		provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
-		fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
-		source := original.Service.profiles["pdf"]
-		profileFor := func(name string) ProfileConfig {
-			portable := source.portable
-			portable.Rendition = new(*portable.Rendition)
-			portable.Rendition.AuthorizationFingerprint = workerHash(name)
-			return ProfileConfig{Profile: portable, RenditionProvider: source.provider,
-				EmbeddingProviders: source.embedders, Tokenizers: source.tokenizers}
-		}
-		serviceFor := func(profiles map[string]ProfileConfig) *Service {
-			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
-				Gate: newWorkerTestGate(), Profiles: profiles, SpoolDirectory: t.TempDir()})
-			require.NoError(t, err)
-			t.Cleanup(service.Stop)
-			return service
-		}
-		service := serviceFor(map[string]ProfileConfig{"archive": profileFor("archive"),
-			"aaa-unused": profileFor("unused"), "bbb-incompatible": profileFor("other")})
-		var saved []string
-		secondRevision := ""
-		setup := &LocalTextSetup{Service: service,
-			Candidate: func(_ string, names []string) (*Service, error) {
-				if len(names) == 0 {
-					names = []string{"local-text"}
-				}
-				profiles := make(map[string]ProfileConfig)
-				for _, name := range names {
-					if name == "bbb-incompatible" {
-						return nil, ErrProfileNotConfigured
-					}
-					identity := name
-					if name != "local-text" {
-						identity += "-managed"
-					}
-					if name == "archive" {
-						identity += secondRevision
-					}
-					profiles[name] = profileFor(identity)
-				}
-				return serviceFor(profiles), nil
-			},
-			Startup: func(context.Context, bool, string) error { return nil },
-			Save:    func(names []string, _ string) error { saved = names; return nil }}
-		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+}
+
+func TestLocalTextSelection(t *testing.T) {
+	t.Parallel()
+	provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
+	fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+	source := original.Service.profiles["pdf"]
+	profileFor := func(name string) ProfileConfig {
+		portable := source.portable
+		portable.Rendition = new(*portable.Rendition)
+		portable.Rendition.AuthorizationFingerprint = workerHash(name)
+		return ProfileConfig{Profile: portable, RenditionProvider: source.provider,
+			EmbeddingProviders: source.embedders, Tokenizers: source.tokenizers}
+	}
+	serviceFor := func(profiles map[string]ProfileConfig) *Service {
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			Gate: newWorkerTestGate(), Profiles: profiles, SpoolDirectory: t.TempDir()})
 		require.NoError(t, err)
-		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "indexed.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-		require.NoError(t, err)
-		process := func(service *Service, profile string) {
-			selector := Selector{Profile: profile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
-			plan, err := service.Plan(t.Context(), selector)
-			require.NoError(t, err)
-			_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
-			require.NoError(t, err)
-		}
-		empty, err := setup.Plan(t.Context(), "local")
-		require.NoError(t, err)
-		require.Equal(t, "Build local index", empty.VectorEffect)
-		process(service, "bbb-incompatible")
-		rebuild, err := setup.Plan(t.Context(), "local")
-		require.NoError(t, err)
-		require.Contains(t, rebuild.VectorEffect, "Rebuild required")
-		process(service, "archive")
-		_, _, err = fixture.catalog.Trash(t.Context(), node.ID, store.UnconditionalRev)
-		require.NoError(t, err)
-		plan, err := setup.Plan(t.Context(), "local")
-		require.NoError(t, err)
-		require.Equal(t, []string{"archive"}, plan.Profiles, "skip an unindexed recipe")
-		require.Equal(t, []string{"bbb-incompatible"}, plan.Unchanged)
-		require.Equal(t, "Keep existing index", plan.VectorEffect)
-		_, _, err = fixture.catalog.Restore(t.Context(), node.ID, store.UnconditionalRev)
-		require.NoError(t, err)
-		process(service, "aaa-unused")
-		both, err := setup.Plan(t.Context(), "local")
-		require.NoError(t, err)
-		require.Equal(t, []string{"aaa-unused", "archive"}, both.Profiles)
-		require.Len(t, both.ProfileFingerprints, 2)
-		require.Greater(t, len(both.Flow), len(plan.Flow), "the preview includes both providers")
-		secondRevision = "-changed"
-		_, err = setup.Apply(t.Context(), "local", both.Fingerprint)
-		require.ErrorIs(t, err, ErrPlanChanged, "a changed profile invalidates the whole approval")
-		secondRevision = ""
-		setup.Service, err = setup.Candidate("local", []string{"archive", "local-text"})
-		require.NoError(t, err)
-		setup.Selected = []string{"archive", "local-text"}
-		rerun, err := setup.Plan(t.Context(), "local")
-		require.NoError(t, err)
-		require.Equal(t, []string{"archive", "local-text"}, rerun.Profiles, "keep both saved recipes before managed backfill")
-		require.Equal(t, "Keep existing index", rerun.VectorEffect)
-		_, err = setup.Apply(t.Context(), "local", rerun.Fingerprint)
-		require.NoError(t, err)
-		require.Equal(t, rerun.Profiles, saved)
-		for _, name := range saved {
-			for _, request := range setup.Service.profileConsentRequests(setup.Service.profiles[name]) {
-				_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
-				require.NoError(t, err, "each saved profile has consent")
+		t.Cleanup(service.Stop)
+		return service
+	}
+	service := serviceFor(map[string]ProfileConfig{"archive": profileFor("archive"),
+		"aaa-unused": profileFor("unused"), "bbb-incompatible": profileFor("other")})
+	var saved []string
+	secondRevision := ""
+	setup := &LocalTextSetup{Service: service,
+		Candidate: func(_ string, names []string) (*Service, error) {
+			if len(names) == 0 {
+				names = []string{"local-text"}
 			}
+			profiles := make(map[string]ProfileConfig)
+			for _, name := range names {
+				if name == "bbb-incompatible" {
+					return nil, ErrProfileNotConfigured
+				}
+				identity := name
+				if name != "local-text" {
+					identity += "-managed"
+				}
+				if name == "archive" {
+					identity += secondRevision
+				}
+				profiles[name] = profileFor(identity)
+			}
+			return serviceFor(profiles), nil
+		},
+		Startup: func(context.Context, bool, string) error { return nil },
+		Save:    func(names []string, _ string) error { saved = names; return nil }}
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "indexed.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	process := func(service *Service, profile string) {
+		selector := Selector{Profile: profile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	empty, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "Build local index", empty.VectorEffect)
+	process(service, "bbb-incompatible")
+	rebuild, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Contains(t, rebuild.VectorEffect, "Rebuild required")
+	process(service, "archive")
+	_, _, err = fixture.catalog.Trash(t.Context(), node.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	plan, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, []string{"archive"}, plan.Profiles, "skip an unindexed recipe")
+	require.Equal(t, []string{"bbb-incompatible"}, plan.Unchanged)
+	require.Equal(t, "Keep existing index", plan.VectorEffect)
+	_, _, err = fixture.catalog.Restore(t.Context(), node.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	process(service, "aaa-unused")
+	both, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, []string{"aaa-unused", "archive"}, both.Profiles)
+	require.Len(t, both.ProfileFingerprints, 2)
+	require.Greater(t, len(both.Flow), len(plan.Flow), "the preview includes both providers")
+	secondRevision = "-changed"
+	_, err = setup.Apply(t.Context(), "local", both.Fingerprint)
+	require.ErrorIs(t, err, ErrPlanChanged, "a changed profile invalidates the whole approval")
+	secondRevision = ""
+	setup.Service, err = setup.Candidate("local", []string{"archive", "local-text"})
+	require.NoError(t, err)
+	setup.Selected = []string{"archive", "local-text"}
+	rerun, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, []string{"archive", "local-text"}, rerun.Profiles, "keep both saved recipes before managed backfill")
+	require.Equal(t, "Keep existing index", rerun.VectorEffect)
+	_, err = setup.Apply(t.Context(), "local", rerun.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, rerun.Profiles, saved)
+	for _, name := range saved {
+		for _, request := range setup.Service.profileConsentRequests(setup.Service.profiles[name]) {
+			_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
+			require.NoError(t, err, "each saved profile has consent")
 		}
-	})
+	}
 }
 
 type localTextGrantGate struct {
@@ -303,10 +305,10 @@ func TestLocalTextSkipsIneligibleSweepAndPrunesAbsentInputs(t *testing.T) {
 	require.Empty(t, targets, "a fully ineligible sweep lets the lane idle")
 	otherTargets, err := setup.targets(t.Context(), "other", "", 1)
 	require.NoError(t, err)
-	require.Len(t, otherTargets, 1, "one lane's skips leave the other lane's work pending")
+	require.Len(t, otherTargets, 1, "the other lane has pending work")
 	next, err := setup.targets(t.Context(), "other", otherTargets[0].ContentVersionID, 1)
 	require.NoError(t, err)
-	require.Len(t, next, 1, "the second lane keeps its own document cursor")
+	require.Len(t, next, 1, "one lane's skips leave the other lane's work pending")
 	require.NotEqual(t, otherTargets[0].ContentVersionID, next[0].ContentVersionID)
 	setup.skip("other", otherTargets[0], "")
 	for range 2 {

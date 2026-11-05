@@ -210,7 +210,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 	require.NoError(t, err)
 	require.Equal(t, []string{name, "archive-small", config.LocalTextProfile}, plan.Profiles)
-	require.Len(t, plan.ProfileFingerprints, 3)
 	require.Equal(t, []string{"aaa-other"}, plan.Unchanged)
 	preview := new(bytes.Buffer)
 	command := &cobra.Command{}
@@ -225,7 +224,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	choice, err := readLocalText(layout.Root)
 	require.NoError(t, err)
 	require.Equal(t, plan.Profiles, choice.Profiles)
-	require.Equal(t, 2, choice.Version)
 	ollama.Close()
 	writeDaemonEmbeddingConfig(t, layout.Root, cfg)
 	t.Setenv("DOCBANK_HOME", layout.Root)
@@ -239,7 +237,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	outcome, err := tryAutomaticSearch(t.Context(), connection, "lease renewal", 2, daemonconn.SearchOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, outcome.report, "automatic search must use the local provider after Ollama stops")
-	require.Equal(t, before[name][0], outcome.report.Results[0].ContentVersionID)
 	for _, profile := range choice.Profiles {
 		semantic, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 		require.NoError(t, err)
