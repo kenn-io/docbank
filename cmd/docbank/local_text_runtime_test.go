@@ -348,11 +348,8 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 }
 
 func TestLocalTextEnablesWithoutInput(t *testing.T) {
-	const credentialEnvironment = "DOCBANK_TEST_MOVE_KEY"
 	bin := buildDocbank(t)
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv(credentialEnvironment, "synthetic-key")
-	t.Setenv("DOCBANK_TEST_DOCLING_KEY", "synthetic-key")
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
@@ -365,14 +362,6 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	require.NoError(t, err)
 	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
 	require.NoError(t, err)
-	cfg := localTextSourceConfig(t, server.URL, "unused-model", "", credentialEnvironment)
-	docling, _ := doclingDocumentProcessingConfig(t, server.URL)
-	cfg.RenditionProfiles["documents"] = docling.RenditionProfiles["documents"]
-	cfg.CredentialBindings["docling"] = docling.CredentialBindings["docling"]
-	recipe := cfg.ProcessingProfiles["archive"]
-	recipe.Rendition = "documents"
-	cfg.ProcessingProfiles["archive"] = recipe
-	writeDaemonEmbeddingConfig(t, root, cfg)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	defer func() { _, _ = daemonconn.Stop(context.Background(), root) }()
@@ -382,8 +371,6 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	data, err := command.CombinedOutput()
 	require.NoError(t, err, string(data))
 	require.Contains(t, string(data), "Text indexing enabled for this vault and new imports.")
-	require.Contains(t, string(data), "local-text (separate; adds missing content)")
-	require.NotContains(t, string(data), "docling")
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
 	require.Equal(t, config.LocalTextProfile, choice.Profile)

@@ -46,9 +46,6 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	p.Runtime.ConnectTimeout, p.Runtime.KeepAlive, p.Runtime.TLSHandshakeTimeout = config.Duration(time.Second), config.Duration(time.Second), config.Duration(time.Second)
 	p.Runtime.ModelRevision = revision
 	p.Runtime.DeploymentEpoch = p.Runtime.ModelRevision
-	if format == "revision-echo" {
-		p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = "", "X-Model-Revision"
-	}
 	p.Chunk.MaxTokens, p.Chunk.OverlapTokens = 800, 100
 	if format == "other-model" {
 		p.Model = "other-model"
@@ -73,169 +70,171 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 }
 
 func TestLocalTextKeepsOllamaVectors(t *testing.T) {
-	const name, credentialEnvironment = "archive", "DOCBANK_TEST_MOVE_KEY"
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv(credentialEnvironment, "synthetic-key")
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	var localDocuments atomic.Int64
-	handler := func(counter *atomic.Int64) http.Handler {
-		ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/v1/embeddings" {
-				ping.ServeHTTP(w, r)
-				return
+	for _, binding := range []string{"semantic", config.LocalTextProfile} {
+		t.Run(binding, func(t *testing.T) {
+			const name, credentialEnvironment = "archive", "DOCBANK_TEST_MOVE_KEY"
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv(credentialEnvironment, "synthetic-key")
+			t.Setenv("DOCBANK_HOME", t.TempDir())
+			var localDocuments atomic.Int64
+			handler := func(counter *atomic.Int64) http.Handler {
+				ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/v1/embeddings" {
+						ping.ServeHTTP(w, r)
+						return
+					}
+					var request struct {
+						Input []string `json:"input"`
+						Model string   `json:"model"`
+					}
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+						return
+					}
+					data := make([]map[string]any, len(request.Input))
+					for i, text := range request.Input {
+						if text != "lease renewal" && !strings.HasPrefix(text, "search_query:") && !strings.HasPrefix(text, "query:") {
+							counter.Add(1)
+						}
+						vector := make([]float32, 768)
+						if strings.Contains(text, "lease") {
+							vector[0] = 1
+						} else {
+							vector[1] = 1
+						}
+						data[i] = map[string]any{"object": "embedding", "index": i, "embedding": vector}
+					}
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": request.Model, "data": data}))
+				})
 			}
-			var request struct {
-				Input []string `json:"input"`
-				Model string   `json:"model"`
+			var ollamaDocuments atomic.Int64
+			ollama := httptest.NewServer(handler(&ollamaDocuments))
+			defer ollama.Close()
+			local := httptest.NewServer(handler(&localDocuments))
+			defer local.Close()
+			dir, err := embedlocal.DefaultDir()
+			require.NoError(t, err)
+			endpoint, err := kitdaemon.ParseEndpoint(local.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+			require.NoError(t, err)
+			_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+			require.NoError(t, err)
+			layout := home.Layout{Root: t.TempDir()}
+			require.NoError(t, layout.Ensure())
+			catalog, err := store.Open(t.Context(), layout.DBPath())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, blobs.Close()) }()
+			cfg := localTextSourceConfig(t, ollama.URL, "ollama-nomic-september", "prefix-free", credentialEnvironment)
+			if binding == config.LocalTextProfile {
+				cfg.EmbeddingProfiles[binding] = cfg.EmbeddingProfiles["semantic"]
+				delete(cfg.EmbeddingProfiles, "semantic")
+				recipe := cfg.ProcessingProfiles[name]
+				recipe.Embeddings = []string{binding}
+				recipe.MaxSegmentRunes = 2048
+				cfg.ProcessingProfiles[name] = recipe
 			}
-			if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
-				return
+			serviceFor := func(cfg config.Config) *processing.Service {
+				bundle, err := configureEmbeddingRuntimeBundle(cfg)
+				require.NoError(t, err)
+				profiles, err := executableProcessingProfiles(cfg, bundle)
+				require.NoError(t, err)
+				service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
+				require.NoError(t, err)
+				t.Cleanup(service.Stop)
+				return service
 			}
-			data := make([]map[string]any, len(request.Input))
-			for i, text := range request.Input {
-				if text != "lease renewal" && !strings.HasPrefix(text, "search_query:") && !strings.HasPrefix(text, "query:") {
-					counter.Add(1)
+			service := serviceFor(cfg)
+			var nodes []store.Node
+			add := func(name, text string) store.Node {
+				written, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader(text))
+				require.NoError(t, err)
+				encoding, err := written.EncodingName()
+				require.NoError(t, err)
+				node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, written.Hash, written.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+				require.NoError(t, err)
+				return node
+			}
+			process := func(service *processing.Service, node store.Node, profile string) {
+				selector := processing.Selector{Profile: profile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+				plan, err := service.Plan(t.Context(), selector)
+				require.NoError(t, err)
+				_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+				require.NoError(t, err)
+			}
+			for i, text := range []string{"lease renewal terms", "garden planting instructions"} {
+				node := add(fmt.Sprintf("document-%d.txt", i), text)
+				nodes = append(nodes, node)
+				process(service, node, name)
+			}
+			search := func(service *processing.Service, profile string) []string {
+				report, err := service.Search(t.Context(), processing.SearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, AllLive: &store.SearchOptions{}})
+				require.NoError(t, err)
+				var ids []string
+				for _, result := range report.Results {
+					ids = append(ids, result.Document.ContentVersionID)
 				}
-				vector := make([]float32, 768)
-				if strings.Contains(text, "lease") {
-					vector[0] = 1
-				} else {
-					vector[1] = 1
-				}
-				data[i] = map[string]any{"object": "embedding", "index": i, "embedding": vector}
+				return ids
 			}
-			w.Header().Set("Content-Type", "application/json")
-			assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": request.Model, "data": data}))
+			before := search(service, name)
+			require.Equal(t, nodes[0].CurrentVersionID, before[0])
+			localDocuments.Store(0)
+			require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
+			writeDaemonEmbeddingConfig(t, layout.Root, cfg)
+			t.Setenv("DOCBANK_HOME", layout.Root)
+			t.Setenv("DO_NOT_TRACK", "1")
+			stop := startServe(t)
+			defer stop()
+			waitForDaemon(t, layout.Root)
+			connection, err := daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
+			require.NoError(t, err)
+			require.Equal(t, name, plan.Profile)
+			preview := new(bytes.Buffer)
+			command := &cobra.Command{}
+			command.SetOut(preview)
+			require.NoError(t, writeLocalTextPlan(command, *plan))
+			require.Contains(t, preview.String(), name)
+			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
+			require.NoError(t, err)
+			require.NoError(t, connection.Close())
+			stop()
+			choice, err := readLocalText(layout.Root)
+			require.NoError(t, err)
+			require.Equal(t, plan.Profile, choice.Profile)
+			ollama.Close()
+			writeDaemonEmbeddingConfig(t, layout.Root, cfg)
+			t.Setenv("DOCBANK_HOME", layout.Root)
+			t.Setenv("DO_NOT_TRACK", "1")
+			stop = startServe(t)
+			defer stop()
+			waitForDaemon(t, layout.Root)
+			settleDaemon(t)
+			connection, err = daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			outcome, err := tryAutomaticSearch(t.Context(), connection, "lease renewal", 2, daemonconn.SearchOptions{})
+			require.NoError(t, err)
+			require.NotNil(t, outcome.report, "automatic search must use the local provider after Ollama stops")
+			profile := choice.Profile
+			semantic, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+			require.NoError(t, err)
+			var after []string
+			for _, result := range semantic.Results {
+				after = append(after, result.ContentVersionID)
+			}
+			require.Equal(t, before, after, profile)
+			require.Zero(t, localDocuments.Load(), "the existing index retains its vectors")
+			text := "new lease renewal document"
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
+			_, err = connection.Upload(t.Context(), catalog.RootID(), "new.txt", "text/plain", hash, int64(len(text)), strings.NewReader(text))
+			require.NoError(t, err)
+			settleDaemon(t)
+			require.Equal(t, int64(1), localDocuments.Load(), "the selected profile embeds the new document")
+			require.NoError(t, connection.Close())
+			stop()
 		})
 	}
-	var ollamaDocuments atomic.Int64
-	ollama := httptest.NewServer(handler(&ollamaDocuments))
-	defer ollama.Close()
-	local := httptest.NewServer(handler(&localDocuments))
-	defer local.Close()
-	dir, err := embedlocal.DefaultDir()
-	require.NoError(t, err)
-	endpoint, err := kitdaemon.ParseEndpoint(local.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
-	require.NoError(t, err)
-	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
-	require.NoError(t, err)
-	layout := home.Layout{Root: t.TempDir()}
-	require.NoError(t, layout.Ensure())
-	catalog, err := store.Open(t.Context(), layout.DBPath())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, catalog.Close()) }()
-	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, blobs.Close()) }()
-	cfg := localTextSourceConfig(t, ollama.URL, "ollama-nomic-september", "prefix-free", credentialEnvironment)
-	serviceFor := func(cfg config.Config) *processing.Service {
-		bundle, err := configureEmbeddingRuntimeBundle(cfg)
-		require.NoError(t, err)
-		profiles, err := executableProcessingProfiles(cfg, bundle)
-		require.NoError(t, err)
-		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), Profiles: profiles, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
-		require.NoError(t, err)
-		t.Cleanup(service.Stop)
-		return service
-	}
-	service := serviceFor(cfg)
-	var nodes []store.Node
-	add := func(name, text string) store.Node {
-		written, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader(text))
-		require.NoError(t, err)
-		encoding, err := written.EncodingName()
-		require.NoError(t, err)
-		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, written.Hash, written.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
-		require.NoError(t, err)
-		return node
-	}
-	process := func(service *processing.Service, node store.Node, profile string) {
-		selector := processing.Selector{Profile: profile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
-		plan, err := service.Plan(t.Context(), selector)
-		require.NoError(t, err)
-		_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
-		require.NoError(t, err)
-	}
-	for i, text := range []string{"lease renewal terms", "garden planting instructions"} {
-		node := add(fmt.Sprintf("document-%d.txt", i), text)
-		nodes = append(nodes, node)
-		process(service, node, name)
-	}
-	search := func(service *processing.Service, profile string) []string {
-		report, err := service.Search(t.Context(), processing.SearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, AllLive: &store.SearchOptions{}})
-		require.NoError(t, err)
-		var ids []string
-		for _, result := range report.Results {
-			ids = append(ids, result.Document.ContentVersionID)
-		}
-		return ids
-	}
-	before := search(service, name)
-	require.Equal(t, nodes[0].CurrentVersionID, before[0])
-	localDocuments.Store(0)
-	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
-	writeDaemonEmbeddingConfig(t, layout.Root, cfg)
-	t.Setenv("DOCBANK_HOME", layout.Root)
-	t.Setenv("DO_NOT_TRACK", "1")
-	stop := startServe(t)
-	defer stop()
-	waitForDaemon(t, layout.Root)
-	connection, err := daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
-	require.NoError(t, err)
-	require.Equal(t, name, plan.Profile)
-	preview := new(bytes.Buffer)
-	command := &cobra.Command{}
-	command.SetOut(preview)
-	require.NoError(t, writeLocalTextPlan(command, *plan))
-	require.Contains(t, preview.String(), name)
-	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
-	require.NoError(t, err)
-	require.NoError(t, connection.Close())
-	stop()
-	choice, err := readLocalText(layout.Root)
-	require.NoError(t, err)
-	require.Equal(t, plan.Profile, choice.Profile)
-	ollama.Close()
-	writeDaemonEmbeddingConfig(t, layout.Root, cfg)
-	t.Setenv("DOCBANK_HOME", layout.Root)
-	t.Setenv("DO_NOT_TRACK", "1")
-	stop = startServe(t)
-	defer stop()
-	waitForDaemon(t, layout.Root)
-	settleDaemon(t)
-	connection, err = daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	outcome, err := tryAutomaticSearch(t.Context(), connection, "lease renewal", 2, daemonconn.SearchOptions{})
-	require.NoError(t, err)
-	require.NotNil(t, outcome.report, "automatic search must use the local provider after Ollama stops")
-	profile := choice.Profile
-	semantic, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
-	require.NoError(t, err)
-	var after []string
-	for _, result := range semantic.Results {
-		after = append(after, result.ContentVersionID)
-	}
-	require.Equal(t, before, after, profile)
-	require.Zero(t, localDocuments.Load(), "the existing index retains its vectors")
-	text := "new lease renewal document"
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
-	_, err = connection.Upload(t.Context(), catalog.RootID(), "new.txt", "text/plain", hash, int64(len(text)), strings.NewReader(text))
-	require.NoError(t, err)
-	settleDaemon(t)
-	require.Equal(t, int64(1), localDocuments.Load(), "the selected profile embeds the new document")
-	require.NoError(t, connection.Close())
-	stop()
-}
-
-func TestLocalTextKeepsRevisionEchoSourcesConfigured(t *testing.T) {
-	server := httptest.NewServer(http.NotFoundHandler())
-	defer server.Close()
-	cfg := localTextSourceConfig(t, server.URL, "source-revision", "revision-echo", "DOCBANK_TEST_REVISION_KEY")
-	_, err := configureEmbeddingRuntimeBundle(cfg)
-	require.NoError(t, err, "the revision-checked source must be executable")
-	_, err = localTextCandidate(cfg, "local", "archive")
-	require.ErrorIs(t, err, processing.ErrProfileNotConfigured, "a revision-checked source must retain its provider")
 }
