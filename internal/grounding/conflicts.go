@@ -43,14 +43,14 @@ var (
 // with the same words around a supported figure. Passage references start at 1.
 func Compare(sources []Source) Comparison {
 	out := Comparison{Status: "NOT_COMPARABLE", Conflicts: []Conflict{}, Compared: make([]bool, len(sources))}
-	type key struct{ kind, unit, subject, heading string }
+	type key struct{ kind, unit, subject string }
 	groups := map[key][]ComparedFigure{}
 	var order []key
 	for i, source := range sources {
 		local := map[key][]ComparedFigure{}
 		var localOrder []key
 		for _, sentence := range sourceSentences(source) {
-			quote := decodeFigureText(strings.Join(strings.Fields(sentence.text), " "))
+			quote := decodeFigureText(strings.Join(strings.Fields(sentence), " "))
 			end := strings.TrimRightFunc(quote, func(r rune) bool {
 				return unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r) || r == '\'' || r == '"'
 			})
@@ -69,7 +69,7 @@ func Compare(sources []Source) Comparison {
 				continue
 			}
 			subject := strings.Join(strings.Fields(strings.ToLower(before+"#"+strings.TrimPrefix(after, suffix))), " ")
-			k := key{kind, unit, subject, sentence.heading}
+			k := key{kind, unit, subject}
 			if _, ok := local[k]; !ok {
 				localOrder = append(localOrder, k)
 			}
@@ -107,27 +107,22 @@ func Compare(sources []Source) Comparison {
 
 // sourceSentences keeps byte offsets while joining hard wraps within paragraphs.
 // Bare code fences separate paragraphs without becoming sentence text.
-func sourceSentences(source Source) []struct{ text, heading string } {
-	var sentences []struct{ text, heading string }
+func sourceSentences(source Source) []string {
+	var sentences []string
 	if source.Start < 0 || source.End <= source.Start || source.End > len(source.Text) {
 		return sentences
 	}
-	start, heading := 0, ""
+	start := 0
 	breaks := paragraphBreak.FindAllStringIndex(source.Text, -1)
 	breaks = append(breaks, []int{len(source.Text), len(source.Text)})
 	for _, boundary := range breaks {
 		text := hardWrap.Replace(source.Text[start:boundary[0]])
-		if strings.HasPrefix(strings.TrimSpace(text), "#") {
-			heading = strings.ToLower(strings.Join(strings.Fields(text), " "))
-			start = boundary[1]
-			continue
-		}
 		offset, state := start, -1
 		for text != "" {
 			var sentence string
 			sentence, text, state = uniseg.FirstSentenceInString(text, state)
 			if offset < source.End && offset+len(sentence) > source.Start {
-				sentences = append(sentences, struct{ text, heading string }{sentence, heading})
+				sentences = append(sentences, sentence)
 			}
 			offset += len(sentence)
 		}

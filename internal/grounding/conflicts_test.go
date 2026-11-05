@@ -79,10 +79,7 @@ func TestCompareSourceSpans(t *testing.T) {
 		{"closing quote", `"The cooling period is 7 days."`, `"The cooling period is 7 days."`, `"The cooling period is 15 days."`, `"The cooling period is 7 days."`, "7", "CONFLICTING", []bool{true, true}},
 		{"heading", "The fee is $5\n\nTerms apply.", "The fee is $5", "The fee is $6.", "", "", "NOT_COMPARABLE", []bool{false, false}},
 		{"blank line splits sentence", "The cooling period is 7\n\ndays.", "The cooling period is 7", "The cooling period is 15 days.", "", "", "NOT_COMPARABLE", []bool{false, false}},
-		{"blank line qualifier", "## Premium plan\n\nThe fee is $5.", "The fee is $5.", "## Standard plan\n\nThe fee is $6.", "", "", "NOT_COMPARABLE", []bool{false, false}},
-		{"same heading agreement", "## Premium plan\n\nThe fee is $5.", "The fee is $5.", "## Premium plan\n\nThe fee is $5.", "", "", "NO_CONFLICT", []bool{true, true}},
-		{"same heading conflict", "## Premium plan\n\nThe fee is $5.", "The fee is $5.", "## Premium plan\n\nThe fee is $6.", "The fee is $5.", "5", "CONFLICTING", []bool{true, true}},
-		{"nearest heading", "# Plans\n\n## Premium plan\n\nTerms apply.\n\nThe fee is $5.", "The fee is $5.", "## Premium plan\n\nThe fee is $6.", "The fee is $5.", "5", "CONFLICTING", []bool{true, true}},
+		{"blank line qualifier", "For premium plans,\n\nThe fee is $5.", "The fee is $5.", "The fee is $6.", "The fee is $5.", "5", "CONFLICTING", []bool{true, true}},
 		{"outside span", "The fee is $5. The fee is $6.", "The fee is $5.", "The fee is $5.", "", "", "NO_CONFLICT", []bool{true, true}},
 		{"long sentence crop", strings.Repeat("Premium ", 65) + "the fee is $7.50.", "the fee is $7.", "The fee is $7.60.", "", "", "NOT_COMPARABLE", []bool{false, false}},
 	} {
