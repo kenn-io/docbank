@@ -346,12 +346,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return profiles, candidate, err
 	}
 	if choice.Profile != "" {
-		name := choice.Profile
-		_, configured := baseConfig.ProcessingProfiles[name]
-		if name == config.LocalTextProfile && !configured {
-			name = ""
-		}
-		selected, candidate, err := candidateProfiles(choice.Server, name)
+		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
 		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
 		}

@@ -58,6 +58,9 @@ type LocalTextSetup struct {
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
 	name, effect := "", "Build local index"
 	names := slices.Sorted(maps.Keys(setup.Service.profiles))
+	if slices.Contains(setup.Compatible, setup.Selected) {
+		name, effect, names = setup.Selected, "Reuse existing vectors", nil
+	}
 	for _, candidate := range names {
 		indexed, err := setup.indexedText(ctx, candidate)
 		if err != nil {
@@ -66,7 +69,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 		if !indexed {
 			continue
 		}
-		if slices.Contains(setup.Compatible, candidate) {
+		if slices.Contains(setup.Compatible, candidate) || candidate == config.LocalTextProfile {
 			name, effect = candidate, "Reuse existing vectors"
 			break
 		}
