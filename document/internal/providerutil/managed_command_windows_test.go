@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -77,8 +78,12 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 	}
 	stdinReader, _ := testPipe(t)
 	stdoutReader, stdoutWriter := testPipe(t)
+	helperMode := "block"
+	if managedCommandHelperMode() == "exit-before-ready" {
+		helperMode = "exit-before-ready"
+	}
 	command := exec.CommandContext(t.Context(), executable,
-		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "block")
+		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", helperMode)
 	command.Stdin = stdinReader
 	command.Stdout = stdoutWriter
 	tree, err := newManagedProcessTree(command)
@@ -110,6 +115,23 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForHelperReady(t, stdoutReader, exited)
+}
+
+func TestManagedCommandWindowsEarlyExitCleanup(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An unknown helper mode exits before readiness. Run the owning test in
+	// another process so its expected Fatalf can finish all registered cleanup.
+	command := exec.CommandContext(t.Context(), executable,
+		"-test.run=^TestManagedCommandStartsWindowsProcessSuspended$",
+		"-test.timeout=30s", "--", "exit-before-ready")
+	output, err := command.CombinedOutput()
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(output), "helper process finished before reporting readiness") {
+		t.Fatalf("early helper exit did not finish readiness failure and cleanup: %v\n%s", err, output)
+	}
 }
 
 var procSuspendThread = windows.NewLazySystemDLL("kernel32.dll").NewProc("SuspendThread")
