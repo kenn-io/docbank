@@ -186,7 +186,25 @@ export class PDFReviewBridge {
       registry
         .getPlugin<ZoomPlugin>("zoom")!
         .provides()
-        .onZoomChange(() => this.cancelDraft()),
+        .onZoomChange(({ documentId }) => {
+          this.cancelDraft();
+          if (!this.review || documentId !== this.document()?.id) return;
+          const navigation = this.scroll()?.getPageChangeState();
+          if (!navigation?.isChanging) return;
+          const target = navigation.targetPage;
+          // Fit recalculation scrolls instantly and interrupts a smooth page
+          // turn. Restore its destination after the zoom scroll is applied.
+          requestAnimationFrame(() => {
+            const scroll = this.scroll();
+            if (
+              !this.disposed &&
+              this.review &&
+              this.document()?.id === documentId &&
+              scroll?.getPageChangeState().targetPage === target
+            )
+              this.goToPage(target);
+          });
+        }),
     );
     this.subscriptions.push(
       registry
