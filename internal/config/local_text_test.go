@@ -23,6 +23,8 @@ func TestLocalTextKeepsRevisionEchoSourcesConfigured(t *testing.T) {
 		ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
-	_, err := LocalTextEmbedding(profile, "local")
-	require.EqualError(t, err, "model or input contract differs from local Nomic")
+	_, err := ManagedEmbeddingProfile(profile, nil)
+	require.EqualError(t, err, "openaicompat: exactly one deployment epoch or provider revision header is required")
+	_, err = LocalTextEmbedding(profile, "local")
+	require.EqualError(t, err, "openaicompat: exactly one deployment epoch or provider revision header is required")
 }

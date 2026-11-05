@@ -63,5 +63,72 @@ func checkMissingProcessingTargets(t *testing.T, s *Store) {
 	suppressed, err = s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f2"), []EmbeddingHeadKey{key})
 	require.NoError(t, err)
 	require.Empty(t, suppressed, "another profile has its own suppression identity")
+}
 
+func TestLocalTextEmbeddingHeads(t *testing.T) {
+	t.Parallel()
+	checkLocalTextEmbeddingHeads(t, newTestStore)
+}
+
+func TestLocalTextEmbeddingHeadsPostgres(t *testing.T) {
+	t.Parallel()
+	checkLocalTextEmbeddingHeads(t, newPostgresQueryStore)
+}
+
+func checkLocalTextEmbeddingHeads(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Run("text", func(t *testing.T) {
+		s, version, profile, attachment := seedEmbeddingCatalog(t, open(t))
+		retained, err := s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
+		require.NoError(t, err)
+		require.False(t, retained)
+		record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment)
+		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+		retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
+		require.NoError(t, err)
+		require.False(t, retained, "staging is not published authority")
+		items, err := s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 100)
+		require.NoError(t, err)
+		require.Contains(t, versionIDsForLocalText(items), version)
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
+		retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
+		require.NoError(t, err)
+		require.True(t, retained)
+		for _, key := range [][2]string{{profile.Fingerprint, "other"}, {fakeHash("f2"), "chunk"}} {
+			retained, err = s.HasEmbeddingHeads(t.Context(), key[0], key[1])
+			require.NoError(t, err)
+			require.False(t, retained)
+		}
+		items, err = s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 100)
+		require.NoError(t, err)
+		require.NotContains(t, versionIDsForLocalText(items), version)
+		items, err = s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 2, 100)
+		require.NoError(t, err)
+		require.Contains(t, versionIDsForLocalText(items), version, "one completed binding leaves the second pending")
+		content, err := s.ContentVersionByID(t.Context(), version)
+		require.NoError(t, err)
+		_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
+		require.NoError(t, err)
+		retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
+		require.NoError(t, err)
+		require.True(t, retained, "trashed documents retain reusable vectors")
+	})
+	t.Run("image", func(t *testing.T) {
+		fixture := seedImageEmbeddingCatalog(t, open(t))
+		fixture.publish(t)
+		retained, err := fixture.s.HasEmbeddingHeads(t.Context(), fixture.request.Profile.Fingerprint, fixture.binding.Name)
+		require.NoError(t, err)
+		require.True(t, retained)
+		items, err := fixture.s.MissingProcessingTargetsAfter(t.Context(), fixture.request.Profile.Fingerprint, "", 1, 100)
+		require.NoError(t, err)
+		require.Contains(t, versionIDsForLocalText(items), fixture.node.CurrentVersionID, "an image head does not finish text")
+	})
+}
+
+func versionIDsForLocalText(items []DocumentSummary) []string {
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.ContentVersionID
+	}
+	return ids
 }

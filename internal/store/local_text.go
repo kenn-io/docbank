@@ -13,7 +13,8 @@ func (s *Store) HasEmbeddingHeads(ctx context.Context, profile, binding string) 
 }
 
 // MissingProcessingTargetsAfter excludes published work at the selected
-// profile, including after daemon restart. Failed jobs remain eligible.
+// profile, including after daemon restart. Failed text jobs and image jobs
+// failed by an outage or authorization remain eligible.
 func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, after string, bindings, limit int) ([]DocumentSummary, error) {
 	if bindings < 1 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid processing backfill bounds")
@@ -22,20 +23,15 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
  SELECT id FROM nodes WHERE parent_id IS NULL AND trashed_at IS NULL
  UNION ALL SELECT n.id FROM nodes n JOIN live l ON n.parent_id=l.id WHERE n.trashed_at IS NULL
  ) SELECT n.id,v.version_id,n.name FROM nodes n JOIN live l ON l.id=n.id
- JOIN content_versions v ON v.version_id=n.current_version_id
-`
-	filter := ` WHERE n.trashed_at IS NULL AND v.version_id>?
- AND (SELECT COUNT(DISTINCT h.binding_id) FROM embedding_heads h
- WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=? AND h.input_kind<>'image') < ?
- ORDER BY v.version_id LIMIT ?`
-	if s.postgresSchema != "" {
-		filter = ` WHERE n.trashed_at IS NULL AND v.version_id>$1
- AND (SELECT COUNT(DISTINCT h.binding_id) FROM embedding_heads h
+ JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.trashed_at IS NULL AND v.version_id>$1
+ AND ((SELECT COUNT(DISTINCT h.binding_id) FROM embedding_heads h
  WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2 AND h.input_kind<>'image') < $3
+ OR EXISTS(SELECT 1 FROM embedding_jobs j WHERE j.content_version_id=v.version_id AND j.profile_fingerprint=$2
+ AND j.input_kind='image' AND j.state='failed' AND j.failure_code IN ('provider_unavailable','authorization')
+ AND NOT EXISTS(SELECT 1 FROM embedding_heads h WHERE h.content_version_id=v.version_id
+ AND h.profile_fingerprint=$2 AND h.binding_id=j.binding_id)))
  ORDER BY v.version_id LIMIT $4`
-	}
-
-	rows, err := s.db.QueryContext(ctx, query+filter, after, profile, bindings, limit)
+	rows, err := s.db.QueryContext(ctx, query, after, profile, bindings, limit)
 	if err != nil {
 		return nil, err
 	}
