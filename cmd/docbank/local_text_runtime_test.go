@@ -81,7 +81,7 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 
 func TestLocalTextSelectionFormat(t *testing.T) {
 	t.Parallel()
-	for _, data := range []string{`{"version":1`, `{"version":1,"profile":"local-text","server":"invalid"}`, `{"profile":"local-text","server":"local"}`, `{"version":2,"profile":"local-text","server":"local"}`, `{"version":1,"profile":"local-text","server":"local","typo":true}`} {
+	for _, data := range []string{`{"version":1`, `{"version":1,"profile":"local-text","server":"invalid"}`, `{"profile":"local-text","server":"local"}`, `{"version":3,"profiles":["local-text"],"server":"local"}`, `{"version":2,"profile":"local-text","server":"local"}`, `{"version":2,"profiles":[],"server":"local"}`, `{"version":1,"profile":"local-text","server":"local","typo":true}`} {
 		t.Run(data, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), []byte(data), 0600))
@@ -90,37 +90,55 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
+	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profiles: []string{"archive", config.LocalTextProfile}, Server: "local"}))
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	require.Equal(t, []string{"archive", config.LocalTextProfile}, choice.Profiles)
+	require.Equal(t, 2, choice.Version)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
+	choice, err = readLocalText(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{config.LocalTextProfile}, choice.Profiles)
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
-	t.Run("malformed", func(t *testing.T) {
-		root := t.TempDir()
-		t.Setenv("DOCBANK_HOME", root)
-		t.Setenv("DO_NOT_TRACK", "1")
-		data := []byte(`{"version":1`)
-		require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
-		stop := startServe(t)
-		defer stop()
-		record := waitForDaemon(t, root)
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+record.Address+"/api/v1/jobs", nil)
-		require.NoError(t, err)
-		req.Header.Set("X-Api-Key", record.Metadata["api_key"])
-		response, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, response.Body.Close()) }()
-		var jobs bytes.Buffer
-		_, err = jobs.ReadFrom(response.Body)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, response.StatusCode, jobs.String())
-		require.NotContains(t, jobs.String(), "embed:local-text")
-		saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
-		require.NoError(t, err)
-		require.Equal(t, data, saved)
-	})
+	for _, tc := range []struct {
+		name, data string
+		active     bool
+	}{
+		{"malformed", `{"version":1`, false},
+		{"partly_stale", `{"version":2,"profiles":["removed","local-text"],"server":"local"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DOCBANK_HOME", root)
+			t.Setenv("DO_NOT_TRACK", "1")
+			data := []byte(tc.data)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
+			stop := startServe(t)
+			defer stop()
+			record := waitForDaemon(t, root)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+record.Address+"/api/v1/jobs", nil)
+			require.NoError(t, err)
+			req.Header.Set("X-Api-Key", record.Metadata["api_key"])
+			response, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, response.Body.Close()) }()
+			var jobs bytes.Buffer
+			_, err = jobs.ReadFrom(response.Body)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, response.StatusCode, jobs.String())
+			if tc.active {
+				require.Contains(t, jobs.String(), "embed:local-text:local-text")
+				require.NotContains(t, jobs.String(), "embed:local-text:removed")
+			} else {
+				require.NotContains(t, jobs.String(), "embed:local-text")
+			}
+			saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
+			require.NoError(t, err)
+			require.Equal(t, data, saved)
+		})
+	}
 }
 
 func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
@@ -185,7 +203,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 				require.NoError(t, err)
 				defer func() { require.NoError(t, blobs.Close()) }()
-				cfg, err := localTextCandidate(config.Default(), "local", "")
+				cfg, err := localTextCandidate(config.Default(), "local", nil)
 				require.NoError(t, err)
 				bundle, err := configureEmbeddingRuntimeBundle(cfg)
 				require.NoError(t, err)
@@ -210,7 +228,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 					_, _, err = catalog.Trash(t.Context(), node.ID, node.Revision)
 					require.NoError(t, err)
 					synctest.Test(t, func(t *testing.T) {
-						setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile}
+						setup := &processing.LocalTextSetup{Service: service, Selected: []string{config.LocalTextProfile}}
 						tracker := api.NewActivityTracker()
 						time.Sleep(time.Second)
 						logger := slog.New(slog.DiscardHandler)
@@ -224,7 +242,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 					})
 				}
 			}()
-			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
+			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profiles: []string{config.LocalTextProfile}, Server: "local"}))
 			stop, daemon := startServeReady(t)
 			defer stop()
 			if result.lateImport {
@@ -332,7 +350,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	}
 	http.DefaultTransport = transport
 	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
-	cfg, err := localTextCandidate(config.Default(), "auto", "")
+	cfg, err := localTextCandidate(config.Default(), "auto", nil)
 	require.NoError(t, err)
 	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
@@ -386,5 +404,5 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	require.NotContains(t, string(data), "docling")
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	require.Equal(t, []string{config.LocalTextProfile}, choice.Profiles)
 }

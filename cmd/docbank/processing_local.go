@@ -81,7 +81,10 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\tthis vault and new imports\n", p.Profile, p.Server, p.VectorEffect)
+	_, _ = fmt.Fprintf(w, "profiles:\t%s\nserver:\t%s\nindex:\t%s\nscope:\tthis vault and new imports\n", strings.Join(p.Profiles, ", "), p.Server, p.VectorEffect)
+	if len(p.Unchanged) > 0 {
+		_, _ = fmt.Fprintf(w, "unchanged:\t%s\n", strings.Join(p.Unchanged, ", "))
+	}
 	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)

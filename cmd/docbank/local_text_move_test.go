@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/openaicompat"
@@ -130,6 +135,9 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	recipe := cfg.ProcessingProfiles[name]
 	recipe.Embeddings = []string{"unused"}
 	cfg.ProcessingProfiles["aaa-unused"] = recipe
+	cfg.EmbeddingProfiles["small"] = unused
+	recipe.Embeddings = []string{"small"}
+	cfg.ProcessingProfiles["archive-small"] = recipe
 	cfg.EmbeddingProfiles["other"] = localTextSourceConfig(t, ollama.URL, "other-revision", "other-model", credentialEnvironment).EmbeddingProfiles["semantic"]
 	recipe.Embeddings = []string{"other"}
 	cfg.ProcessingProfiles["aaa-other"] = recipe
@@ -144,6 +152,9 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 		return service
 	}
 	service := serviceFor(cfg)
+	builtinConfig, err := localTextCandidate(cfg, "local", nil)
+	require.NoError(t, err)
+	builtin := serviceFor(builtinConfig)
 	var nodes []store.Node
 	add := func(name, text string) store.Node {
 		written, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader(text))
@@ -164,11 +175,14 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	for i, text := range []string{"lease renewal terms", "garden planting instructions"} {
 		node := add(fmt.Sprintf("document-%d.txt", i), text)
 		nodes = append(nodes, node)
-		process(service, node, name)
+		for _, profile := range []string{name, "archive-small"} {
+			process(service, node, profile)
+		}
+		process(builtin, node, config.LocalTextProfile)
 	}
 	process(service, nodes[0], "aaa-other")
-	search := func(service *processing.Service) []string {
-		report, err := service.Search(t.Context(), processing.SearchRequest{Profile: name, Query: "lease renewal", Mode: "semantic", Limit: 2, AllLive: &store.SearchOptions{}})
+	search := func(service *processing.Service, profile string) []string {
+		report, err := service.Search(t.Context(), processing.SearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, AllLive: &store.SearchOptions{}})
 		require.NoError(t, err)
 		var ids []string
 		for _, result := range report.Results {
@@ -176,8 +190,17 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 		}
 		return ids
 	}
-	before := search(service)
-	require.Equal(t, nodes[0].CurrentVersionID, before[0])
+	before := map[string][]string{}
+	for _, profile := range []string{name, "archive-small", config.LocalTextProfile} {
+		source := service
+		if profile == config.LocalTextProfile {
+			source = builtin
+		}
+		before[profile] = search(source, profile)
+		require.Equal(t, nodes[0].CurrentVersionID, before[profile][0])
+	}
+	localDocuments.Store(0)
+	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
 	writeDaemonEmbeddingConfig(t, layout.Root, cfg)
 	t.Setenv("DOCBANK_HOME", layout.Root)
 	t.Setenv("DO_NOT_TRACK", "1")
@@ -188,21 +211,32 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	require.NoError(t, err)
 	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 	require.NoError(t, err)
-	require.Equal(t, name, plan.Profile)
+	require.Equal(t, []string{name, "archive-small", config.LocalTextProfile}, plan.Profiles)
+	require.Len(t, plan.ProfileFingerprints, 3)
+	require.Equal(t, []string{"aaa-other"}, plan.Unchanged)
+	preview := new(bytes.Buffer)
+	command := &cobra.Command{}
+	command.SetOut(preview)
+	require.NoError(t, writeLocalTextPlan(command, *plan))
+	require.Contains(t, preview.String(), "archive, archive-small, local-text")
+	require.Contains(t, preview.String(), "aaa-other")
 	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
 	require.NoError(t, err)
 	require.NoError(t, connection.Close())
 	stop()
 	choice, err := readLocalText(layout.Root)
 	require.NoError(t, err)
-	require.Equal(t, name, choice.Profile)
-	candidate, err := localTextCandidate(cfg, choice.Server, choice.Profile)
+	require.Equal(t, plan.Profiles, choice.Profiles)
+	require.Equal(t, 2, choice.Version)
+	candidate, err := localTextCandidate(cfg, choice.Server, choice.Profiles)
 	require.NoError(t, err)
 	service.Stop()
 	ollama.Close()
 	moved := serviceFor(candidate)
 	for _, node := range nodes {
-		process(moved, node, name)
+		for _, profile := range choice.Profiles {
+			process(moved, node, profile)
+		}
 	}
 	require.Zero(t, localDocuments.Load(), "unchanged documents reuse their retained vectors")
 	moved.Stop()
@@ -218,20 +252,25 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	outcome, err := tryAutomaticSearch(t.Context(), connection, "lease renewal", 2, daemonconn.SearchOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, outcome.report, "automatic search must use the local provider after Ollama stops")
-	require.Equal(t, before[0], outcome.report.Results[0].ContentVersionID)
-	semantic, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: name, Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
-	require.NoError(t, err)
-	var after []string
-	for _, result := range semantic.Results {
-		after = append(after, result.ContentVersionID)
+	require.Equal(t, before[name][0], outcome.report.Results[0].ContentVersionID)
+	for _, profile := range choice.Profiles {
+		semantic, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+		require.NoError(t, err)
+		var after []string
+		for _, result := range semantic.Results {
+			after = append(after, result.ContentVersionID)
+		}
+		require.Equal(t, before[profile], after, profile)
 	}
-	require.Equal(t, before, after)
+	require.Zero(t, localDocuments.Load(), "all existing indexes retain their vectors")
+	text := "new lease renewal document"
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
+	_, err = connection.Upload(t.Context(), catalog.RootID(), "new.txt", "text/plain", hash, int64(len(text)), strings.NewReader(text))
+	require.NoError(t, err)
+	settleDaemon(t)
+	require.Equal(t, int64(3), localDocuments.Load(), "each selected lane embeds the new document")
 	require.NoError(t, connection.Close())
 	stop()
-	moved = serviceFor(candidate)
-	process(moved, add("new.txt", "new lease renewal document"), name)
-	require.Equal(t, int64(1), localDocuments.Load())
-	moved.Stop()
 }
 
 func TestLocalTextKeepsRevisionEchoSourcesConfigured(t *testing.T) {
@@ -240,6 +279,6 @@ func TestLocalTextKeepsRevisionEchoSourcesConfigured(t *testing.T) {
 	cfg := localTextSourceConfig(t, server.URL, "source-revision", "revision-echo", "DOCBANK_TEST_REVISION_KEY")
 	_, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err, "the revision-checked source must be executable")
-	_, err = localTextCandidate(cfg, "local", "archive")
+	_, err = localTextCandidate(cfg, "local", []string{"archive"})
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured, "a revision-checked source must retain its provider")
 }

@@ -25,9 +25,9 @@ docbank processing profiles
 docbank processing local --server local
 ```
 
-The command previews the profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. Setup keeps an approved configured recipe or picks the first indexed compatible recipe in name order, then moves it to the shared server with its extractor, chunks, and existing vectors. Only new or changed content needs embedding.
+The command previews all selected profiles, models, the server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. Setup moves every indexed compatible Nomic recipe to the shared server and keeps its extractor, chunks, and vectors. Saved selections remain active, including an existing built-in `local-text` index. Only new or changed content needs embedding.
 
-For an indexed recipe on another model or input contract, the preview reports a rebuild before downloading or starting work. Vaults without compatible indexed recipes use the built-in `local-text` profile with Nomic and the plaintext extractor. Restart restores the exact saved recipe, including existing watches.
+Recipes with other models or text formats appear as unchanged in the preview. When no profile can move or remain active, setup uses the built-in `local-text` profile with Nomic and the plaintext extractor, and warns before rebuilding an existing index. Mixed recipes keep image and other bindings on their configured providers. Restart restores every saved profile, including existing watches.
 
 To return to your configured providers, delete `local-text.json` beside the vault's `config.toml` and run `docbank daemon restart`.
 

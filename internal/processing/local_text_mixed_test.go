@@ -40,8 +40,8 @@ func TestLocalTextMixedRecipeFinishesIneligibleImage(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
-	setup := &LocalTextSetup{Service: service, Selected: "mixed"}
-	items, err := setup.targets(t.Context(), "", 50)
+	setup := &LocalTextSetup{Service: service, Selected: []string{"mixed"}}
+	items, err := setup.targets(t.Context(), "mixed", "", 50)
 	require.NoError(t, err)
 	for _, item := range items {
 		require.NotEqual(t, node.CurrentVersionID, item.ContentVersionID, "the completed text and ineligible image must finish this document")

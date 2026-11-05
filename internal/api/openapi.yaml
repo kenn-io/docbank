@@ -8376,10 +8376,14 @@ components:
           items:
             type: string
           type: array
-        profile:
-          type: string
-        profile_fingerprint:
-          type: string
+        profile_fingerprints:
+          items:
+            type: string
+          type: array
+        profiles:
+          items:
+            type: string
+          type: array
         retained_classes:
           items:
             type: string
@@ -8388,6 +8392,10 @@ components:
           type: string
         server:
           type: string
+        unchanged:
+          items:
+            type: string
+          type: array
         vault_uid:
           type: string
         vector_effect:
@@ -8395,9 +8403,10 @@ components:
       required:
         - fingerprint
         - vault_uid
-        - profile
+        - profiles
+        - unchanged
         - server
-        - profile_fingerprint
+        - profile_fingerprints
         - models
         - vector_effect
         - managed

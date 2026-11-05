@@ -17,9 +17,9 @@ const LocalTextProfile = "local-text"
 
 // LocalTextConfig selects vault-wide, ongoing text indexing after approval.
 type LocalTextConfig struct {
-	Version int    `json:"version"`
-	Profile string `json:"profile"`
-	Server  string `json:"server"`
+	Version  int      `json:"version"`
+	Profiles []string `json:"profiles"`
+	Server   string   `json:"server"`
 }
 
 func localTextFingerprint(value string) string {

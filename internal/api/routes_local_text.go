@@ -19,22 +19,23 @@ type LocalTextApplyRequest struct {
 }
 
 type LocalTextPlan struct {
-	Fingerprint        string              `json:"fingerprint"`
-	VaultUID           string              `json:"vault_uid"`
-	Profile            string              `json:"profile"`
-	Server             string              `json:"server"`
-	ProfileFingerprint string              `json:"profile_fingerprint"`
-	Models             []string            `json:"models"`
-	VectorEffect       string              `json:"vector_effect"`
-	Managed            bool                `json:"managed"`
-	Flow               []ProcessingFlowHop `json:"flow"`
-	RetainedClasses    []string            `json:"retained_classes"`
-	Scope              string              `json:"scope"`
+	Fingerprint         string              `json:"fingerprint"`
+	VaultUID            string              `json:"vault_uid"`
+	Profiles            []string            `json:"profiles"`
+	Unchanged           []string            `json:"unchanged"`
+	Server              string              `json:"server"`
+	ProfileFingerprints []string            `json:"profile_fingerprints"`
+	Models              []string            `json:"models"`
+	VectorEffect        string              `json:"vector_effect"`
+	Managed             bool                `json:"managed"`
+	Flow                []ProcessingFlowHop `json:"flow"`
+	RetainedClasses     []string            `json:"retained_classes"`
+	Scope               string              `json:"scope"`
 }
 
 func fromLocalTextPlan(p processing.LocalTextPlan) LocalTextPlan {
-	return LocalTextPlan{Fingerprint: p.Fingerprint, VaultUID: p.VaultUID, Profile: p.Profile, Server: p.Server,
-		ProfileFingerprint: p.ProfileFingerprint, Models: p.Models, VectorEffect: p.VectorEffect,
+	return LocalTextPlan{Fingerprint: p.Fingerprint, VaultUID: p.VaultUID, Profiles: p.Profiles, Unchanged: p.Unchanged, Server: p.Server,
+		ProfileFingerprints: p.ProfileFingerprints, Models: p.Models, VectorEffect: p.VectorEffect,
 		RetainedClasses: p.RetainedClasses, Scope: p.Scope, Managed: p.Managed, Flow: fromProcessingPlan(processing.Plan{Flow: p.Flow}).Flow}
 }
 
