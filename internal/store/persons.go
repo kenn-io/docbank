@@ -316,35 +316,28 @@ type PeopleSearchOptions struct {
 // peopleCandidatesSQL narrows the matches to a typed name prefix and, for the
 // Photos page, to people with a visible depicted photo: Library photos, and
 // Hidden photos too while unlocked.
-func peopleCandidatesSQL(prefix string, photosOnly, unlocked, usePhotoSet bool) (string, []any) {
+func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
 	clause, args := "", []any{}
 	if prefix != "" {
 		clause, args = `instr(persons.display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, ?) AND `, []any{prefix, prefix}
 	}
 	if photosOnly {
-		clause += personHasPhotoSQL(unlocked, "", usePhotoSet) + " AND "
+		clause += personHasPhotoSQL(unlocked, "") + " AND "
 	}
 	return clause, args
 }
 
-// personHasPhotoSQL probes each name candidate, or builds the eligible set for
-// configured-and-locked Hidden and the recent walk's namesakes.
-func personHasPhotoSQL(unlocked bool, walkerAlias string, useSet bool) string {
+// personHasPhotoSQL builds the eligible person list once. The recent walk has
+// already checked its person's photo, so only namesakes need the list.
+func personHasPhotoSQL(unlocked bool, walkerAlias string) string {
 	joins, where := personPhotoSource(unlocked)
-	source := ` FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where
-	clause := `persons.person_id IN (SELECT assertion.person_id` + source + `
+	clause := `persons.person_id IN (SELECT assertion.person_id FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.action='assert' AND assertion.role='depicted')`
 	if walkerAlias != "" {
-		return "(persons.person_id=" + walkerAlias + ".person_id OR " + clause + ")"
+		clause = "(persons.person_id=" + walkerAlias + ".person_id OR " + clause + ")"
 	}
-	if useSet {
-		return clause
-	}
-	// Unary + keeps SQLite on the name index so it can stop after the page fills.
-	return `+persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
- AND EXISTS (SELECT 1` + source + `
- AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted')`
+	return clause
 }
 
 // PeopleByDisplayName returns active people in stable folded-name order, or
@@ -366,7 +359,17 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		hideLocked := scope != nil && scope.ExpiresAt == nil
 		// The recent walk adds its own photo check, reusing its evidence joins.
 		prefix := document.FoldPersonName(query)
-		candidates, args := peopleCandidatesSQL(prefix, options.PhotoSummary && !options.RecentFirst, !hideLocked, hideLocked && scope.Configured)
+		photosOnly := options.PhotoSummary && !options.RecentFirst
+		usePhotoSet := hideLocked && scope.Configured
+		candidates, args := peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
+		if photosOnly && !usePhotoSet {
+			joins, where := personPhotoSource(!hideLocked)
+			// Unary + keeps SQLite on the name index so it can stop after the page fills.
+			candidates += `+persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
+ AND EXISTS (SELECT 1 FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted') AND `
+		}
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
@@ -414,13 +417,13 @@ func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, a
 // typed prefixes. Empty queries walk assertions and finish timestamp ties.
 func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool, prefix string) ([]PersonSearchResult, error) {
 	joins, where := personPhotoSource(!hideLocked)
-	walkCandidates, walkArgs := peopleCandidatesSQL(prefix, false, !hideLocked, false)
+	walkCandidates, walkArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
 	if visibleOnly && !photosOnly {
 		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id") + ") AND "
 		walkArgs = append(walkArgs, true, hideLocked, hideLocked)
 	}
 	if photosOnly {
-		walkCandidates += personHasPhotoSQL(!hideLocked, "person", false) + " AND "
+		walkCandidates += personHasPhotoSQL(!hideLocked, "person") + " AND "
 	}
 	// Empty queries read all assertions. A sequential table scan avoids
 	// fetching each evidence row through the person index.
@@ -435,7 +438,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 	var rankedSQL string
 	var rankedArgs []any
 	if prefix != "" {
-		matches, matchArgs := peopleCandidatesSQL(prefix, false, !hideLocked, false)
+		matches, matchArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
 		rankedSQL = `WITH own AS MATERIALIZED (
  SELECT persons.*, (SELECT assertion.recorded_at FROM person_document_assertions assertion
  CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
