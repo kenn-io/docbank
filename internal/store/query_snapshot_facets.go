@@ -209,7 +209,8 @@ func materializeCaptureDayFacet(
 		return SnapshotFacet{}, err
 	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoBrowseDisplayFrom +
+		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoBrowseScopeFrom +
+			` LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id` +
 			` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql +
 			` GROUP BY COALESCE(pl.day,'') ORDER BY COALESCE(pl.day,'') DESC`,
 		args: match.args, relations: match.relations,
