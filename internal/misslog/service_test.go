@@ -63,6 +63,7 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	require.Equal(t, []string{"reranking_degraded"}, receipt.Degradations)
 	require.Equal(t, "degraded", receipt.Reranking["outcome"])
 	require.Equal(t, 1, strings.Count(rows[index].Receipt, "synthetic secret"))
+	logs.Reset()
 	require.NoError(t, st.Close())
 	svc.Record(context.Background(), Request{Query: "another private secret"})
 	require.NotContains(t, logs.String(), "secret")

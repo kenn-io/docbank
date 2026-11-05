@@ -154,3 +154,26 @@ func TestMissLogOpensSchema43WithoutLocalTable(t *testing.T) {
 		})
 	}
 }
+
+func TestMissLogMutationsKeepEmbeddingDiscoverySettled(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"add", "delete", "purge", "prune"} {
+		t.Run(operation, func(t *testing.T) {
+			s := newTestStore(t)
+			now := time.Now().UTC()
+			require.NoError(t, s.AddMissLogRecord(t.Context(), MissLogRecord{ID: "old", CreatedAt: now.Add(-72 * time.Hour), Receipt: `{}`}, now, 90, 5000))
+			revision := s.WriteRevision()
+			switch operation {
+			case "add":
+				require.NoError(t, s.AddMissLogRecord(t.Context(), MissLogRecord{ID: "new", CreatedAt: now, Receipt: `{}`}, now, 90, 5000))
+			case "delete":
+				require.NoError(t, s.DeleteMissLogRecord(t.Context(), "old"))
+			case "purge":
+				require.NoError(t, s.PurgeMissLogRecords(t.Context()))
+			case "prune":
+				require.NoError(t, s.PruneMissLogRecords(t.Context(), now, 1, 5000))
+			}
+			require.Equal(t, revision, s.WriteRevision(), "private search history keeps document discovery idle")
+		})
+	}
+}

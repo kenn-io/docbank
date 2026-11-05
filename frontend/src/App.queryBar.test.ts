@@ -178,7 +178,7 @@ it("runs the top bar with the page size chosen in Advanced", async () => {
   expect(body.page_size).toBe(250);
 });
 
-it("runs a saved search without recording a miss and keeps its filters for a new search", async () => {
+it("keeps a saved plain-words search's filters when the search text changes", async () => {
   const reportSearch = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
   const saved = parseQuery(
     JSON.stringify({ text: "invoice", filters: { extensions: ["pdf"] }, sort: { field: "size" } }),

@@ -1902,7 +1902,7 @@ func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/current.txt", "synthetic current text")
 	client := daemonconn.New(ts.URL, testAPIKey)
-	for _, scope := range []string{"all_live", "explicit_fence", "empty_fence"} {
+	for _, scope := range []string{"all_live", "explicit_fence"} {
 		t.Run(scope, func(t *testing.T) {
 			request := api.DocumentSearchRequest{Query: "current", Mode: "auto", Profile: "private"}
 			switch scope {
@@ -1910,17 +1910,11 @@ func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 				request.Scope = &api.DocumentSearchScope{Kind: "all_live"}
 			case "explicit_fence":
 				request.Fence = api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
-			case "empty_fence":
-				request.Fence = api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{}}
 			}
 			report, err := client.SearchDocuments(t.Context(), request)
 			require.NoError(t, err)
 			assert.Equal(t, "auto", report.RequestedMode)
 			assert.Equal(t, "lexical", report.ActualMode)
-			if scope == "empty_fence" {
-				assert.Empty(t, report.Results)
-				return
-			}
 			require.Len(t, report.Results, 1)
 			assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
 		})

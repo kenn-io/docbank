@@ -12,7 +12,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
@@ -27,22 +26,8 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 				Name: "private", Fingerprint: profileFingerprint,
 				EmbeddingBindings: []string{"general", "multilingual"},
 			}}))
-		case "GET /api/v1/info":
+		case "GET /api/v1/vault":
 			assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: vaultID}))
-		case "POST /api/v1/processing/source-fences/resolve":
-			var resolveRequest api.DocumentSourceFenceResolveRequest
-			assert.NoError(t, json.UnmarshalRead(request.Body, &resolveRequest))
-			assert.Equal(t, []string{processingTestVersionID}, resolveRequest.ContentVersionIDs)
-			fence := processing.SourceFence{VaultUID: vaultID, ContentVersionIDs: []string{processingTestVersionID}}
-			fingerprint, err := processing.SourceFenceFingerprint(fence)
-			if !assert.NoError(t, err) {
-				http.Error(w, "fixture error", http.StatusInternalServerError)
-				return
-			}
-			assert.NoError(t, json.MarshalWrite(w, api.DocumentSourceFenceResolution{
-				Fence:            api.ResolvedDocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: fence.ContentVersionIDs},
-				FenceFingerprint: fingerprint, ObservedScopeCount: 1,
-			}))
 		case "POST /api/v1/search":
 			searchRequests++
 			var body api.DocumentSearchRequest

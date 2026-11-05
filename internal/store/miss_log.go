@@ -16,22 +16,13 @@ type MissLogRecord struct {
 	Receipt   string
 }
 
-// TryAddMissLogRecord gives automatic persistence a 100 ms context deadline,
-// including admission to the existing storage writer.
-// Explicit management and startup retention keep their ordinary blocking path.
-func (s *Store) TryAddMissLogRecord(ctx context.Context, record MissLogRecord, now time.Time, days, maxRecords int) error {
-	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	defer cancel()
-	return s.AddMissLogRecord(ctx, record, now, days, maxRecords)
-}
-
 // AddMissLogRecord saves a receipt and prunes expired and excess records in one
 // storage transaction, sharing SQLite and PostgreSQL writer serialization.
 func (s *Store) AddMissLogRecord(ctx context.Context, record MissLogRecord, now time.Time, days, maxRecords int) error {
 	if record.ID == "" || len(record.ID) > 128 || record.CreatedAt.IsZero() || len(record.Receipt) > 8<<20 || !jsontext.Value(record.Receipt).IsValid() || days < 1 || days > 365 || maxRecords < 1 || maxRecords > 100000 {
 		return errors.New("invalid miss log record or retention")
 	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO miss_log_records(id, created_at, receipt) VALUES ($1, $2, $3)`, record.ID, record.CreatedAt.UTC().Format(timestampLayout), record.Receipt)
 		if err != nil {
 			return err
@@ -67,7 +58,7 @@ func (s *Store) ListMissLogRecords(ctx context.Context, since time.Time, limit, 
 }
 
 func (s *Store) DeleteMissLogRecord(ctx context.Context, id string) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records WHERE id = $1`, id)
 		if err != nil {
 			return err
@@ -81,7 +72,7 @@ func (s *Store) DeleteMissLogRecord(ctx context.Context, id string) error {
 }
 
 func (s *Store) PurgeMissLogRecords(ctx context.Context) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records`); return err })
+	return s.withBookkeepingTx(ctx, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, `DELETE FROM miss_log_records`); return err })
 }
 
 // PruneMissLogRecords enforces retention at enabled daemon startup.
@@ -89,7 +80,7 @@ func (s *Store) PruneMissLogRecords(ctx context.Context, now time.Time, days, ma
 	if now.IsZero() || days < 1 || days > 365 || maxRecords < 1 || maxRecords > 100000 {
 		return errors.New("invalid miss log retention")
 	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error { return pruneMissLogRecordsTx(ctx, tx, now, days, maxRecords) })
+	return s.withBookkeepingTx(ctx, func(tx *sql.Tx) error { return pruneMissLogRecordsTx(ctx, tx, now, days, maxRecords) })
 }
 
 func pruneMissLogRecordsTx(ctx context.Context, tx *sql.Tx, now time.Time, days, maxRecords int) error {

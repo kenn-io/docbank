@@ -481,14 +481,14 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return usageError(err)
 	}
-	resolution, err := c.ResolveDocumentSourceFence(cmd.Context(), api.DocumentSourceFenceResolveRequest{ContentVersionIDs: options.ContentVersionIDs})
+	info, err := c.API().VaultIdentity(cmd.Context())
 	if err != nil {
 		return err
 	}
 	searchRequest := api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
-		Fence: api.DocumentSearchFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: resolution.Fence.ContentVersionIDs},
+		Fence: api.DocumentSearchFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	}
 	report, err := c.SearchDocuments(cmd.Context(), searchRequest)
 	if err != nil {

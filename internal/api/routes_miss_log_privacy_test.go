@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +14,7 @@ func TestMissLogSubmittedQueryValidationIsPrivate(t *testing.T) {
 	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
 	sentinel := "private-miss-sentinel"
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil,
-		map[string]any{"query": sentinel + strings.Repeat("x", 8192)})
+		map[string]any{"query": sentinel})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	require.NotContains(t, body, sentinel)
 	rows, err := st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)

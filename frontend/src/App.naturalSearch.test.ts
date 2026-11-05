@@ -1145,7 +1145,6 @@ it("shows the empty-population note and reports a submitted search once", async 
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(harness.postBodies).toHaveLength(2));
   expect(searchRun).toHaveBeenCalledOnce();
-  expect(harness.misses).toHaveLength(1);
   expect(failure).not.toHaveBeenCalled();
 });
 
@@ -1186,41 +1185,6 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
   ).toBe(1);
-  expect(failure).not.toHaveBeenCalled();
-});
-
-it("records an empty lexical fallback after a processing failure", async () => {
-  const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
-  const file = node(2, "fallback.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", []),
-    baseSearchStatus: 500,
-    tagSearch: { hits: [], limit: 1000, truncated: false },
-  });
-  render(App);
-  await screen.findAllByText("fallback.txt");
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
-  await submitSearch("fallback miss");
-  await screen.findByText(/Natural-language search unavailable/);
-  await waitFor(() => expect(harness.misses).toHaveLength(1));
-  expect(harness.misses[0]).toMatchObject({
-    query: "fallback miss",
-    requested_mode: "hybrid",
-    actual_mode: "lexical",
-  });
-  expect(harness.misses[0]?.degradations).toEqual([
-    screen.getByText(/Natural-language search unavailable/).textContent,
-  ]);
   expect(failure).not.toHaveBeenCalled();
 });
 

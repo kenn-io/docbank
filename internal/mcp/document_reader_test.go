@@ -107,7 +107,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	assert.Equal(t, "/alpha.txt", hit["path"])
 }
 
-func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
+func TestEmbeddedDocumentReaderDoesNotRecordMiss(t *testing.T) {
 	f := newNativeExportFixture(t)
 	f.addFile(t, "synthetic.txt", "synthetic content")
 	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
@@ -120,25 +120,19 @@ func TestMissLogMCPEmptyScopeUsesDaemonAndEmbeddedReader(t *testing.T) {
 	cfg.MissLog.Enabled = true
 	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
 	t.Cleanup(apiServer.Close)
-	httpServer := httptest.NewServer(apiServer.Handler())
-	t.Cleanup(httpServer.Close)
 	args := map[string]any{"query": "synthetic private scope miss", "mode": "lexical", "profile": profileName, "filters": map[string]any{"mime_type": "image/png"}}
-	remote, err := invokeReadTool(t.Context(), exportTestLease(t, httpServer.URL), "search_documents", args)
-	require.NoError(t, err)
-	assert.NotContains(t, structuredMap(t, remote.StructuredContent), "miss_log_id")
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	raw, err := json.Marshal(args)
 	require.NoError(t, err)
 	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
 	require.NoError(t, err)
 	require.False(t, result.IsError, result)
-	assert.NotContains(t, structuredMap(t, result.StructuredContent), "miss_log_id")
 	records, err := f.catalog.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
+	require.Empty(t, records)
 }
 
-func TestMissLogMCPEmptyFenceUsesResolvedModeForImageOnlyProfile(t *testing.T) {
+func TestDocumentSearchSubmitsEmptyFenceForImageOnlyProfile(t *testing.T) {
 	client := &answerFakeClient{empty: true, report: api.DocumentSearchReport{
 		RequestedMode: "hybrid", ActualMode: "lexical",
 		Coverage:     api.DocumentSearchCoverage{State: "complete"},
@@ -148,11 +142,9 @@ func TestMissLogMCPEmptyFenceUsesResolvedModeForImageOnlyProfile(t *testing.T) {
 		return call(ctx, client)
 	})
 
-	result, _, err := searchDocuments(t.Context(), session,
+	_, _, err := searchDocuments(t.Context(), session,
 		[]byte(`{"query":"synthetic image-only miss","mode":"hybrid","profile":"images-only"}`), false)
 	require.NoError(t, err)
-	assert.Equal(t, "hybrid", result.RequestedMode)
-	assert.Equal(t, "lexical", result.ActualMode)
 	require.Len(t, client.requests, 1)
 	assert.Equal(t, "images-only", client.requests[0].Profile)
 	assert.Equal(t, "hybrid", client.requests[0].Mode)

@@ -96,7 +96,7 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	if err = s.recordMutate(ctx, func() error {
-		return s.store.TryAddMissLogRecord(ctx, store.MissLogRecord{ID: receipt.ID, CreatedAt: receipt.CreatedAt, Receipt: string(encoded)}, receipt.CreatedAt, s.config.RetentionDays, s.config.MaxRecords)
+		return s.store.AddMissLogRecord(ctx, store.MissLogRecord{ID: receipt.ID, CreatedAt: receipt.CreatedAt, Receipt: string(encoded)}, receipt.CreatedAt, s.config.RetentionDays, s.config.MaxRecords)
 	}); err != nil {
 		s.logger.Warn("miss_log_write_failed")
 	}

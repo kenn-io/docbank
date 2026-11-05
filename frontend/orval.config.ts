@@ -24,25 +24,9 @@ export default defineConfig({
           }
           if (operation.operationName === "uploadFile" && operation.body.formData) {
             operation.body.formData = operation.body.formData.replace(
-              /(formData\.append\(`file`,[\s\S]*?)(\);)/,
-              "$1, params.name$2",
+              "uploadFileBody.file);",
+              "uploadFileBody.file, params.name);",
             );
-          }
-          if (
-            ["submitMediaSourceWithFormData", "importMediaArtifact"].includes(
-              operation.operationName,
-            )
-          ) {
-            operation.body.definition = operation.body.definition.replace(
-              /file: Blob \| File \| string;/g,
-              "file: Blob | File;",
-            );
-            for (const schema of operation.body.schemas) {
-              schema.model = schema.model.replace(
-                /file: Blob \| File \| string;/g,
-                "file: Blob | File;",
-              );
-            }
           }
           return operation;
         },

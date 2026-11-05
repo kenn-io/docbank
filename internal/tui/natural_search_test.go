@@ -60,8 +60,8 @@ func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
 }
 
 func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
-	for _, replaced := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reply", true: "replaced pending"}[replaced], func(t *testing.T) {
+	for _, outcome := range []string{"reply", "replaced pending", "failed"} {
+		t.Run(outcome, func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
 			readme := fake.nodes["/README.txt"]
@@ -84,7 +84,7 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			model, rerank := updateModel(t, model, base)
 			require.NotNil(t, rerank)
 			assert.Empty(t, fake.actions)
-			if replaced {
+			if outcome == "replaced pending" {
 				model.requestID, model.reportSearchID = 8, 8
 				model.naturalSearchID = 4
 				base = model.loadNaturalSearch("another", model.requestID)()
@@ -93,6 +93,9 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 				require.True(t, ok)
 				rerank = batch[0]
 			} else {
+				if outcome == "failed" {
+					fake.err = errors.New("synthetic rerank failure")
+				}
 				batch, ok := rerank().(tea.BatchMsg)
 				require.True(t, ok)
 				model, rerank = updateModel(t, model, batch[0]())
@@ -103,34 +106,12 @@ func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
 			require.Len(t, fake.misses, 1)
 			require.Equal(t, "missing", fake.misses[0].Query)
 			require.Equal(t, "semantic", fake.misses[0].BindingID)
+			if outcome == "failed" {
+				assert.Equal(t, "failed", fake.misses[0].Reranking["outcome"])
+				assert.Contains(t, fake.misses[0].Reranking["cause"], "synthetic rerank failure")
+			}
 		})
 	}
-}
-
-func TestEmptyNaturalSearchRetainsFailedRerank(t *testing.T) {
-	fake := newFakeBackend()
-	fake.profiles[0].RerankingAvailable = true
-	readme := fake.nodes["/README.txt"]
-	readme.TrashedAt = "2026-10-20T12:00:00Z"
-	fake.nodes["/README.txt"] = readme
-	fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "stale base excerpt")
-	fake.naturalSearch.RequestedMode = "hybrid"
-	fake.naturalSearch.ActualMode = "hybrid"
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.naturalProfiles = fake.profiles
-	model.naturalMode, model.naturalRerank = naturalHybrid, true
-	model.requestID, model.reportSearchID, model.naturalSearchID = 7, 7, 3
-	model, cmd := updateModel(t, model, model.loadNaturalSearch("missing", 7)())
-	fake.err = errors.New("synthetic rerank failure")
-	batch, ok := cmd().(tea.BatchMsg)
-	require.True(t, ok)
-	model, cmd = updateModel(t, model, batch[0]())
-	runModelCommand(t, model, cmd)
-	require.Len(t, fake.misses, 1)
-	assert.Equal(t, "missing", fake.misses[0].Query)
-	assert.Equal(t, "failed", fake.misses[0].Reranking["outcome"])
-	assert.Contains(t, fake.misses[0].Reranking["cause"], "synthetic rerank failure")
 }
 
 func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
@@ -140,7 +121,6 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			fake.profiles[0].RerankingAvailable = true
 			readme := fake.nodes["/README.txt"]
 			nonempty := naturalSearchReport(readme.ID, readme.CurrentVersionID, "excerpt")
-			nonempty.Coverage = api.DocumentSearchCoverage{State: "unknown"}
 			fake.naturalSearch, fake.naturalRerankSearch = nonempty, nonempty
 			wantRows := 0
 			want := []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}
@@ -174,10 +154,6 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			runModelCommand(t, model, cmd)
 			assert.Len(t, model.rows, wantRows)
 			assert.Equal(t, want, fake.actions)
-			if !baseEmpty {
-				require.Len(t, fake.misses, 1)
-				assert.Nil(t, fake.misses[0].DocumentCount)
-			}
 		})
 	}
 }
@@ -381,6 +357,8 @@ func TestNaturalSearchScopeFailureKeepsMissContext(t *testing.T) {
 	runModelCommand(t, model, cmd)
 	require.Len(t, fake.misses, 1)
 	receipt := fake.misses[0]
+	assert.Nil(t, receipt.DocumentCount)
+	assert.Nil(t, receipt.Coverage)
 	assert.Equal(t, "missing", receipt.Query)
 	assert.Equal(t, "hybrid", receipt.RequestedMode)
 	assert.Equal(t, "lexical", receipt.ActualMode)
@@ -419,48 +397,6 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	assert.Empty(t, loadedModel.rows[0].naturalMode)
 	runModelCommand(t, loadedModel, cmd)
 	require.Empty(t, fake.misses, "a visible lexical fallback is not a miss")
-}
-
-func TestNaturalSearchFallbackMissPreservesRequestContext(t *testing.T) {
-	fake := newFakeBackend()
-	model, err := New(t.Context(), fake)
-	require.NoError(t, err)
-	model.naturalMode = naturalHybrid
-	model.naturalProfiles = fake.profiles
-	model.searching = true
-	model.searchInput.SetValue("missing")
-	model, _ = updateModel(t, model, key(tea.KeyEnter))
-
-	request := api.DocumentSearchRequest{
-		Query: "missing", Mode: naturalHybrid, Profile: "private", BindingID: "semantic",
-		Scope: &api.DocumentSearchScope{Kind: "all_live"},
-	}
-	updated, _ := model.applyNaturalSearchBase(naturalSearchBaseLoadedMsg{
-		requestID: model.requestID, searchID: model.naturalSearchID, query: "missing", naturalMode: naturalHybrid,
-		request: request, err: errors.New("provider timed out"),
-	})
-	result, ok := updated.(Model)
-	require.True(t, ok)
-	require.NotNil(t, result.fallbackMiss)
-	assert.Equal(t, "hybrid", result.fallbackMiss.RequestedMode)
-	assert.Equal(t, "lexical", result.fallbackMiss.ActualMode)
-	assert.Equal(t, "private", result.fallbackMiss.Profile)
-	assert.Equal(t, "semantic", result.fallbackMiss.BindingID)
-	assert.Nil(t, result.fallbackMiss.DocumentCount)
-	assert.Nil(t, result.fallbackMiss.Coverage)
-
-	loaded, report := result.applySearch(searchLoadedMsg{
-		requestID: result.requestID, query: "missing", report: api.SearchReport{Hits: []api.SearchHit{}},
-	})
-	loadedModel, ok := loaded.(Model)
-	require.True(t, ok)
-	require.Empty(t, loadedModel.rows)
-	require.NotNil(t, report)
-	report()
-	require.Len(t, fake.misses, 1)
-	assert.Equal(t, "hybrid", fake.misses[0].RequestedMode)
-	assert.Equal(t, "lexical", fake.misses[0].ActualMode)
-	assert.Equal(t, "semantic", fake.misses[0].BindingID)
 }
 
 func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {
