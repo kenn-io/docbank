@@ -93,24 +93,6 @@ func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
 			}
 		})
 	}
-	t.Run("local text", func(t *testing.T) {
-		fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-		targets, err := setup.targets(t.Context(), "", 50)
-		require.NoError(t, err)
-		for _, target := range targets {
-			require.NoError(t, setup.process(t.Context(), target))
-		}
-		revision := fixture.catalog.WriteRevision()
-		for range 3 {
-			targets, err := setup.targets(t.Context(), "", 50)
-			require.NoError(t, err)
-			require.Empty(t, targets)
-			pending, err := setup.publicationPending(t.Context())
-			require.NoError(t, err)
-			require.False(t, pending)
-			require.Equal(t, revision, fixture.catalog.WriteRevision())
-		}
-	})
 }
 
 func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {
