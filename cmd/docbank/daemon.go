@@ -430,10 +430,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
 		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
-		List:    processingService.MediaProcessingTargets,
-		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
-		Process: processingService.ContinueMediaProcessing,
-		Logger:  logger,
+		WriteRevision: s.WriteRevision,
+		List:          processingService.MediaProcessingTargets,
+		Key:           func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process:       processingService.ContinueMediaProcessing,
+		Logger:        logger,
 	}
 	if err := jobSupervisor.StartWorker("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)

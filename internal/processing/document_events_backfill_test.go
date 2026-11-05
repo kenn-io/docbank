@@ -54,6 +54,7 @@ func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
 	require.NoError(t, err)
 	events := NewDocumentEventBackfill(catalog, nil, nil)
 	people := NewDocumentPeopleBackfill(catalog, nil, nil)
+	media := &Service{catalog: catalog, principal: "daemon:operator"}
 	for _, test := range []struct {
 		name string
 		list func() (bool, error)
@@ -80,6 +81,10 @@ func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
 		}},
 		{"email", func() (bool, error) {
 			targets, err := catalog.MissingEmailTargetsAfter(ctx, emailFingerprint, bodyFingerprint, "", 25)
+			return len(targets) == 0, err
+		}},
+		{"media continuations", func() (bool, error) {
+			targets, err := media.MediaProcessingTargets(ctx, "", 25)
 			return len(targets) == 0, err
 		}},
 	} {
