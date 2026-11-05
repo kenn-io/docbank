@@ -41,6 +41,9 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	p.Runtime.ConnectTimeout, p.Runtime.KeepAlive, p.Runtime.TLSHandshakeTimeout = config.Duration(time.Second), config.Duration(time.Second), config.Duration(time.Second)
 	p.Runtime.ModelRevision = revision
 	p.Runtime.DeploymentEpoch = p.Runtime.ModelRevision
+	if format == "revision-echo" {
+		p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = "", "X-Model-Revision"
+	}
 	p.Chunk.MaxTokens, p.Chunk.OverlapTokens = 800, 100
 	if format == "other-model" {
 		p.Model = "other-model"
@@ -55,7 +58,7 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	require.NoError(t, err)
 	descriptor, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{Origin: origin,
 		EgressPolicy: providerEgressPolicy(p.Runtime.ProviderEgressConfig), Descriptor: config.EmbeddingDescriptor(p, input), ModelInput: input, SecretBinding: p.CredentialBinding,
-		DeploymentEpoch: p.Runtime.DeploymentEpoch, RequestTimeout: p.Runtime.RequestTimeout.Std(),
+		DeploymentEpoch: p.Runtime.DeploymentEpoch, ProviderRevisionHeader: p.Runtime.ProviderRevisionHeader, RequestTimeout: p.Runtime.RequestTimeout.Std(),
 		MaxBatchItems: p.MaxBatchItems, MaxInputBytes: p.MaxInputBytes, MaxResponseBytes: p.MaxResponseBytes, MaxRequestBytes: p.Runtime.MaxRequestBytes})
 	require.NoError(t, err)
 	p.DescriptorFingerprint = descriptor.Fingerprint
@@ -229,4 +232,14 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	process(moved, add("new.txt", "new lease renewal document"), name)
 	require.Equal(t, int64(1), localDocuments.Load())
 	moved.Stop()
+}
+
+func TestLocalTextKeepsRevisionEchoSourcesConfigured(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	cfg := localTextSourceConfig(t, server.URL, "source-revision", "revision-echo", "DOCBANK_TEST_REVISION_KEY")
+	_, err := configureEmbeddingRuntimeBundle(cfg)
+	require.NoError(t, err, "the revision-checked source must be executable")
+	_, err = localTextCandidate(cfg, "local", "archive")
+	require.ErrorIs(t, err, processing.ErrProfileNotConfigured, "a revision-checked source must retain its provider")
 }

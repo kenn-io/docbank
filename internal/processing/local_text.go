@@ -59,7 +59,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 	name, effect := "", "Build local index"
 	names := slices.Sorted(maps.Keys(setup.Service.profiles))
 	if slices.Contains(setup.Compatible, setup.Selected) {
-		name, effect, names = setup.Selected, "Reuse existing vectors", nil
+		name, effect, names = setup.Selected, "Keep existing index", nil
 	}
 	for _, candidate := range names {
 		indexed, err := setup.indexedText(ctx, candidate)
@@ -70,10 +70,10 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			continue
 		}
 		if slices.Contains(setup.Compatible, candidate) || candidate == config.LocalTextProfile {
-			name, effect = candidate, "Reuse existing vectors"
+			name, effect = candidate, "Keep existing index"
 			break
 		}
-		effect = "Rebuild required: model or input contract differs from local Nomic"
+		effect = "Rebuild required: model or text format differs from Nomic"
 	}
 	service, err := setup.Candidate(mode, name)
 	if err != nil {
@@ -184,9 +184,15 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limi
 			return nil, nil
 		}
 	}
+	imageBindings := 0
+	for _, binding := range profile.portable.Embeddings {
+		if binding.InputKind == document.EmbeddingInputImage {
+			imageBindings++
+		}
+	}
 	var result []store.DocumentSummary
 	for len(result) < limit {
-		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), 1000)
+		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, len(profile.portable.Embeddings), imageBindings, 1000)
 		if err != nil {
 			return nil, err
 		}

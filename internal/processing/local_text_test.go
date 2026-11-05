@@ -143,14 +143,14 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		plan, err := setup.Plan(t.Context(), "local")
 		require.NoError(t, err)
 		require.Equal(t, "archive", plan.Profile, "skip the earlier unindexed recipe and the old built-in choice")
-		require.Equal(t, "Reuse existing vectors", plan.VectorEffect)
+		require.Equal(t, "Keep existing index", plan.VectorEffect)
 		setup.Service, err = setup.Candidate("local", "archive")
 		require.NoError(t, err)
 		setup.Selected = "archive"
 		rerun, err := setup.Plan(t.Context(), "local")
 		require.NoError(t, err)
 		require.Equal(t, "archive", rerun.Profile, "keep the approved recipe before managed backfill")
-		require.Equal(t, "Reuse existing vectors", rerun.VectorEffect)
+		require.Equal(t, "Keep existing index", rerun.VectorEffect)
 		_, err = setup.Apply(t.Context(), "local", rerun.Fingerprint)
 		require.NoError(t, err)
 		require.Equal(t, "archive", saved)
@@ -159,7 +159,7 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		setup.Service, setup.Selected = builtin, "local-text"
 		repeated, err := setup.Plan(t.Context(), "local")
 		require.NoError(t, err)
-		require.Equal(t, "Reuse existing vectors", repeated.VectorEffect)
+		require.Equal(t, "Keep existing index", repeated.VectorEffect)
 	})
 }
 
