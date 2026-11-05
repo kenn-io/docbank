@@ -248,8 +248,9 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 - `scripts/check-released-schemas.sh` runs in CI against every release tag. It
   fails when a tag's schema version is unlisted or its `schema.sql` has no
   exact fixture.
-- `TestReleasedSchemaFixturesMatchVersions` fails when `schema.sql` changes
-  without a schema version bump after that version shipped.
+- `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
+  trigger, or view changes, or when a changed index would not reach existing vaults.
+  New non-unique indexes need no bump because startup creates them in place.
 - `TestEveryReleasedSchemaFixtureUpgrades` opens each fixture with the current
   binary, so bumping the schema fails until the released version has a cutover
   adapter.

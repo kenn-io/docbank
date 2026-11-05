@@ -32,9 +32,12 @@ var schemaV0151SQL string
 //go:embed testdata/schema-v0.16.0.sql
 var schemaV0160SQL string
 
+//go:embed testdata/schema-v0.17.0.sql
+var schemaV0170SQL string
+
 // releasedSchemaFixtures holds the exact schema.sql of every release from
 // v0.15.0 on, keyed by storage schema version.
-var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL, 41: schemaV0160SQL}
+var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL, 41: schemaV0160SQL, 48: schemaV0170SQL}
 
 // firstFixtureStorageSchemaVersion is the oldest schema in
 // releasedSchemaFixtures. Older releases have their own upgrade tests.
@@ -327,8 +330,8 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 	}
 }
 
-// Coverage guard: a released schema is frozen. Changing schema.sql after a
-// release requires a new storage schema version and a cutover adapter.
+// Released tables, triggers, and views are frozen. Only new non-unique indexes
+// that startup creates in place may be added without a cutover adapter.
 func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 	t.Parallel()
 	for _, version := range releasedStorageSchemaVersions {
@@ -338,13 +341,49 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 		fixture, ok := releasedSchemaFixtures[version]
 		require.Truef(t, ok, "released storage schema %d needs an exact fixture in releasedSchemaFixtures", version)
 		if version == currentStorageSchemaVersion {
-			assert.Equal(t, fixture, schemaSQL,
-				"schema.sql differs from released schema %d; bump currentStorageSchemaVersion and add a cutover adapter", version)
+			for _, driver := range v090UpgradeDrivers() {
+				t.Run(driver.name, func(t *testing.T) {
+					path := t.TempDir()
+					released, _ := newReleasedFixtureStore(t, filepath.Join(path, "released.db"), driver.driver, fixture, version)
+					current, _ := newReleasedFixtureStore(t, filepath.Join(path, "current.db"), driver.driver, schemaSQL, version)
+					message := fmt.Sprintf("schema.sql differs from released schema %d; bump currentStorageSchemaVersion and add a cutover adapter", version)
+					assert.Equal(t, releasedSchemaCatalog(t, released, false), releasedSchemaCatalog(t, current, false), message)
+					before := releasedSchemaCatalog(t, released, true)
+					after := releasedSchemaCatalog(t, current, true)
+					_, err := released.ExecContext(t.Context(), schemaSQL)
+					require.NoError(t, err, message)
+					assert.Equal(t, after, releasedSchemaCatalog(t, released, true), message)
+					for name, object := range after {
+						if _, existed := before[name]; existed || object[0] != "index" {
+							continue
+						}
+						var unique bool
+						require.NoError(t, current.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], name).Scan(&unique))
+						assert.False(t, unique, message)
+					}
+				})
+			}
 		}
 	}
 	for version := range releasedSchemaFixtures {
 		assert.Contains(t, releasedStorageSchemaVersions, version)
 	}
+}
+
+func releasedSchemaCatalog(t *testing.T, db *sql.DB, indexes bool) map[string][3]string {
+	t.Helper()
+	rows, err := db.QueryContext(t.Context(), `SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' AND (? OR type<>'index') ORDER BY type,name`, indexes)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	catalog := make(map[string][3]string)
+	for rows.Next() {
+		var name string
+		var object [3]string
+		require.NoError(t, rows.Scan(&object[0], &name, &object[1], &object[2]))
+		catalog[name] = object
+	}
+	require.NoError(t, rows.Err())
+	return catalog
 }
 
 func TestReleasedStorageSchemasRequireAdapters(t *testing.T) { //nolint:paralleltest // swaps the package-level releasedStorageSchemaVersions
