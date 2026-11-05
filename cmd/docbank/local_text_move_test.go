@@ -209,7 +209,9 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			before := search(service, name)
 			require.Equal(t, nodes[0].CurrentVersionID, before[0])
 			localDocuments.Store(0)
-			require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
+			if variant.name != "revision-header" {
+				require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
+			}
 			writeDaemonEmbeddingConfig(t, layout.Root, cfg)
 			t.Setenv("DOCBANK_HOME", layout.Root)
 			t.Setenv("DO_NOT_TRACK", "1")
@@ -220,6 +222,13 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 			require.NoError(t, err)
+			if variant.name == "revision-header" {
+				require.Equal(t, config.LocalTextProfile, plan.Profile)
+				require.Contains(t, plan.VectorEffect, "Rebuild required")
+				require.Zero(t, localDocuments.Load())
+				require.NoError(t, connection.Close())
+				return
+			}
 			require.Equal(t, name, plan.Profile)
 			require.Contains(t, plan.VectorEffect, "processes 2 documents before setup returns")
 			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})

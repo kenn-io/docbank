@@ -57,7 +57,7 @@ func (c Config) WithLocalText() (Config, error) {
 			ContextFingerprint: h("chunk-context"), Formatter: "chunk/v1", MaxTokens: 1024,
 			OverlapTokens: 128, Tokenizer: "unicode-runes", TokenizerRevision: "v1", TruncationPolicy: "reject_indivisible"},
 		Runtime: &EmbeddingRuntimeConfig{AdapterContract: "docbank-openai-compatible-embeddings/v1",
-			ModelRevision:  "nomic-embed-text-v1.5",
+			ModelRevision: "nomic-embed-text-v1.5", DeploymentEpoch: "nomic-embed-text-v1.5",
 			RequestTimeout: Duration(30 * time.Second), MaxRequestBytes: 2 << 20},
 	}, "")
 	if err != nil {
@@ -83,7 +83,6 @@ func LocalTextEmbedding(p EmbeddingProfileConfig, mode string) (EmbeddingProfile
 	}
 	p.Runtime = new(*p.Runtime)
 	p.Runtime.Managed, p.Runtime.ServerMode = true, mode
-	p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = p.Runtime.ModelRevision, ""
 	p.Runtime.ProviderEgressConfig = ProviderEgressConfig{}
 	p.Embedder = nil
 	p.AuthorizationFingerprint, p.DisclosureFingerprint = localTextFingerprint("embed-authorization"), localTextFingerprint("embed-disclosure")

@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 )
 
-func TestLocalTextConvertsRevisionEchoAndRejectsReservedProfile(t *testing.T) {
+func TestLocalTextRejectsLosingRevisionEchoAndReservedProfile(t *testing.T) {
 	cfg := validProcessingConfig()
 	cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_TEST_REVISION_KEY"}}
 	profile := cfg.EmbeddingProfiles["semantic"]
@@ -23,10 +23,8 @@ func TestLocalTextConvertsRevisionEchoAndRejectsReservedProfile(t *testing.T) {
 		ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
-	converted, err := LocalTextEmbedding(profile, "local")
-	require.NoError(t, err)
-	require.Equal(t, "source-revision", converted.Runtime.DeploymentEpoch)
-	require.Empty(t, converted.Runtime.ProviderRevisionHeader)
+	_, err := LocalTextEmbedding(profile, "local")
+	require.Error(t, err, "the managed server cannot preserve the source revision attestation")
 	require.Equal(t, "X-Model-Revision", profile.Runtime.ProviderRevisionHeader)
 	cfg.ProcessingProfiles[LocalTextProfile] = cfg.ProcessingProfiles["archive"]
 	_, err = cfg.WithLocalText()
