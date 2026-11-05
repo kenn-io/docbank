@@ -17,6 +17,49 @@ import (
 	catalog "go.kenn.io/docbank/mcp"
 )
 
+func TestVaultFindConflictsSegmentBoundary(t *testing.T) {
+	t.Parallel()
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+		"local": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider},
+	}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	for i, qualifier := range []string{"premium", "standard"} {
+		prefix := "For " + qualifier + " accounts, "
+		text := prefix + strings.Repeat("x", 1000-len(prefix)-1) + " the cooling period is " + []string{"7", "15"}[i] + " days."
+		receipt, err := vault.Put(t.Context(), "/"+qualifier+".txt", strings.NewReader(text), docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "local"}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	scope, err := uuid.Parse(vault.ID())
+	require.NoError(t, err)
+	result, err := vault.CallReadTool(t.Context(), scope, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{
+		Name: "find_conflicts", Arguments: []byte(`{"query":"cooling period","profile":"local","filters":{}}`),
+	}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	raw, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	var out struct {
+		Status   string `json:"status"`
+		Passages []struct {
+			Compared bool `json:"compared"`
+		} `json:"passages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &out))
+	require.Len(t, out.Passages, 2)
+	require.Equal(t, "NOT_COMPARABLE", out.Status)
+	for _, passage := range out.Passages {
+		require.False(t, passage.Compared)
+	}
+}
+
 func TestVaultReadTools(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()

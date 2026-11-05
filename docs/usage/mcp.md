@@ -334,8 +334,10 @@ Only version-list searches return `fence`, `fence_fingerprint`, and
 `observed_scope_count`. Version-list searches always return `vault_id`; filter
 searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
-hits. Each excerpt is capped at 512 characters. A cut excerpt starts or ends
-with ` … ` at the cut boundary. Each hit has at most 64 evidence
+hits. Each excerpt is capped at 512 characters. Content excerpts mark cuts from
+search windows, the character cap, and rendition segments within a text unit
+with ` … ` on each cut side. Name excerpts use the character cap alone.
+Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
 skipped-reason codes of at most 64 characters each.
 
@@ -425,8 +427,10 @@ one figure. A second figure, including a date, makes the sentence ambiguous.
 Blank lines separate paragraphs. Single line breaks join wrapped text and never
 end a sentence. Sentences need a final `.`, `!`, or `?`, optionally followed by
 closing quotes or brackets. Headings and bullets without an end mark are skipped.
-A leading excerpt marker drops the first fragment. Later complete sentences
-remain eligible. Name-only evidence is skipped. A passage stating different
+A leading excerpt marker drops the first sentence, and a trailing marker drops
+the last sentence, even when the cut ends in punctuation such as `$7.` from
+`$7.50`. Complete sentences between those edges remain eligible. Name-only
+evidence is skipped. A passage stating different
 values for the same matching sentence drops that comparison.
 `compared: false` marks passages with no eligible figures.
 

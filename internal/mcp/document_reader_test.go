@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -21,8 +20,13 @@ func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server,
 	t.Helper()
 	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
 	require.NoError(t, err)
+	return newProcessingDocumentServerWithProfile(t, f, profileName, profile)
+}
+
+func newProcessingDocumentServerWithProfile(t *testing.T, f *nativeExportFixture, profileName string, profile processing.ProfileConfig) (*Server, *processing.Service, string) {
+	t.Helper()
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
+		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, service.Shutdown(context.Background())) })
 	cfg := config.Default()

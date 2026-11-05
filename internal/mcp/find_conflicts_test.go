@@ -10,9 +10,79 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestFindConflictsClippedSourceBoundaries(t *testing.T) {
+	for _, boundary := range []string{"decimal", "segment start"} {
+		t.Run(boundary, func(t *testing.T) {
+			f := newNativeExportFixture(t)
+			_, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
+			require.NoError(t, err)
+			provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+			require.NoError(t, err)
+			profile.RenditionProvider = provider
+			profile.Profile.Rendition.Name = "plaintext"
+			profile.Profile.Rendition.AdapterContract = "plaintext.in-process/v1"
+			profile.Profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
+			profile.Profile.RetentionDisclosure.RetainTypedArtifacts = false
+			profile.Profile.Rendition.Descriptor = document.ProviderDescriptorV1{ID: provider.Descriptor().ID, Fingerprint: provider.Descriptor().Fingerprint}
+			profile.Profile.EvidenceLexical.MaxSegmentRunes = 1000
+			daemon, service, profileName := newProcessingDocumentServerWithProfile(t, f, "local", profile)
+			query := "cooling period"
+			for i, value := range []string{"7", "15"} {
+				var text string
+				if boundary == "decimal" {
+					query = "service fee"
+					// Four highlight runes and the trailing marker leave 505 source runes.
+					text = "The service fee " + strings.Repeat("x", 482) + fmt.Sprintf(" is $7.%d0. Contact support.", i+5)
+				} else {
+					qualifier := []string{"premium", "standard"}[i]
+					prefix := "For " + qualifier + " accounts, "
+					text = prefix + strings.Repeat("x", 1000-len(prefix)-1) + " the cooling period is " + value + " days."
+				}
+				written, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader(text))
+				require.NoError(t, err)
+				encoding, err := written.EncodingName()
+				require.NoError(t, err)
+				node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("policy-%d.txt", i), written.Hash, written.Size, "text/plain",
+					store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created})
+				require.NoError(t, err)
+				if boundary == "decimal" {
+					require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+						BlobHash: written.Hash, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: text,
+					}))
+				} else {
+					selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: profileName}
+					plan, err := service.Plan(t.Context(), selector)
+					require.NoError(t, err)
+					_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+					require.NoError(t, err)
+				}
+			}
+			reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
+			args := map[string]any{"query": query, "profile": profileName, "filters": map[string]any{}}
+			out := exportCall(t, daemon, "find_conflicts", args)
+			raw, err := json.Marshal(args)
+			require.NoError(t, err)
+			embedded, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "find_conflicts", Arguments: raw}})
+			require.NoError(t, err)
+			require.False(t, embedded.IsError)
+			require.Equal(t, out, structuredMap(t, embedded.StructuredContent))
+			passages, ok := out["passages"].([]any)
+			require.True(t, ok)
+			require.Len(t, passages, 2)
+			require.Equal(t, "NOT_COMPARABLE", out["status"])
+			for _, passage := range passages {
+				require.Equal(t, false, schemaMap(t, passage)["compared"])
+			}
+		})
+	}
+}
 
 func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	f := newNativeExportFixture(t)

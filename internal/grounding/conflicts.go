@@ -40,18 +40,20 @@ func Compare(query string, passages []string) Comparison {
 	terms := comparisonWords(query)
 	for i, passage := range passages {
 		clippedStart := strings.HasPrefix(strings.TrimSpace(passage), "…")
+		clippedEnd := strings.HasSuffix(strings.TrimSpace(passage), "…")
 		text := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(decodeFigureText(passage)), " …"))
 		local := map[key][]ComparedFigure{}
 		var localOrder []key
 		first := true
 		// Blank lines separate paragraphs; single line breaks are hard wraps.
-		for _, paragraph := range comparisonParagraphs.Split(text, -1) {
+		paragraphs := comparisonParagraphs.Split(text, -1)
+		for paragraphIndex, paragraph := range paragraphs {
 			text, state := strings.Join(strings.Fields(paragraph), " "), -1
 			for text != "" {
 				var sentence string
 				sentence, text, state = uniseg.FirstSentenceInString(text, state)
 				quote := strings.TrimSpace(sentence)
-				skip := first && clippedStart
+				skip := (first && clippedStart) || (clippedEnd && paragraphIndex == len(paragraphs)-1 && strings.TrimSpace(text) == "")
 				first = false
 				ending := strings.TrimRightFunc(quote, func(r rune) bool {
 					return r == '\'' || r == '"' || unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r)
