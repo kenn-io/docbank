@@ -1419,6 +1419,8 @@ CREATE TABLE IF NOT EXISTS rendition_attachments (
     UNIQUE (content_version_id, profile_fingerprint, build_id)
 );
 
+CREATE INDEX IF NOT EXISTS rendition_attachments_build ON rendition_attachments(build_id);
+
 -- A head can resolve only through the exact attachment at its version/profile
 -- key. Updating this small pointer is the sole rendition activation mutation.
 CREATE TABLE IF NOT EXISTS rendition_heads (

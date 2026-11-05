@@ -145,12 +145,8 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		nameArgs := names.Args
 		nameArgs = append(nameArgs, filterArgs...)
 		nameArgs = append(nameArgs, limit+1)
-		rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
-		SELECT `+nodeCols+` FROM `+nodeFrom+`
-		JOIN name_matches ON name_matches.doc_key=n.id
-		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+nameFilterSQL+`
-		ORDER BY name_matches.score DESC,n.name,n.id
-		LIMIT ?`, nameArgs...)
+		rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL,
+			"AND n.kind='file' AND cv.version_id IS NOT NULL "+nameFilterSQL), nameArgs...)
 		if err != nil {
 			return nil, false, err
 		}
@@ -185,10 +181,10 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
 			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
-			FROM content_fts JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
-			JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
-			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
-			JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
+			FROM content_fts CROSS JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
+			CROSS JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
+			CROSS JOIN content_versions cv ON cv.version_id=matched_cv.version_id
+			CROSS JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
 			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
@@ -196,17 +192,17 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
 				 ru.locator_json
 				FROM rendition_lexical_fts ` + selectedJoin + `
-				JOIN rendition_lexical_generation_builds gb
+				CROSS JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
-				JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
+				CROSS JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
-				JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
-				JOIN rendition_attachments a
+				CROSS JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
+				CROSS JOIN rendition_attachments a
 				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
-				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
+				CROSS JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
-				JOIN content_versions cv ON cv.version_id=a.content_version_id
-				JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+				CROSS JOIN content_versions cv ON cv.version_id=a.content_version_id
+				CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
 				 AND n.trashed_at IS NULL ` + filterSQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
@@ -2416,6 +2412,17 @@ func nameSearchCandidates(match string) (sqlquery.Query, error) {
 	return query, nil
 }
 
+func nameSearchPageSQL(names, filter string) string {
+	// CROSS JOIN leads from name hits; paging first loads full metadata only for the selected hits.
+	return `WITH name_matches AS (` + names + `), name_page AS (
+		SELECT n.id,name_matches.score,n.name FROM name_matches CROSS JOIN ` + nodeFrom + `
+		WHERE name_matches.doc_key=n.id AND n.trashed_at IS NULL ` + filter + `
+		ORDER BY name_matches.score DESC,n.name,n.id LIMIT ?
+	) SELECT ` + nodeCols + ` FROM name_page CROSS JOIN ` + nodeFrom + `
+		WHERE n.id=name_page.id
+		ORDER BY name_page.score DESC,name_page.name,name_page.id`
+}
+
 // SearchPage returns live name matches in their established order, followed
 // by content-only matches. Keeping the two ranks separate preserves the
 // deterministic name-search contract: enabling extraction never reorders or
@@ -2453,13 +2460,7 @@ func (s *Store) SearchPageWithOptions(
 	nameArgs := names.Args
 	nameArgs = append(nameArgs, filterArgs...)
 	nameArgs = append(nameArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
-		SELECT `+nodeCols+`
-		FROM `+nodeFrom+`
-		JOIN name_matches ON name_matches.doc_key=n.id
-		WHERE n.trashed_at IS NULL `+nameFilterSQL+`
-		ORDER BY name_matches.score DESC,n.name,n.id
-		LIMIT ?`, nameArgs...)
+	rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL, nameFilterSQL), nameArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)
 	}
@@ -2480,8 +2481,8 @@ func (s *Store) SearchPageWithOptions(
 	remaining := limit - len(nameHits)
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
-		cte, join, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
-		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + nodeFrom + ` ` + join + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
+		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
+		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
 		contentArgs = append(contentArgs, filterArgs...)
 		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
@@ -2780,13 +2781,15 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 	if opts.UnderNodeID != 0 {
 		// Only directories can parent a result. Keep files out of the recursive
 		// scope and match the immediate parent, so the scope itself stays excluded.
+		// Trash marks whole subtrees; restore also restores their ancestors.
+		// Live directories therefore suffice and use nodes_live_children.
 		clauses = append(clauses, `AND n.parent_id IN (
 			WITH RECURSIVE directories(id) AS (
 				SELECT ?
 				UNION ALL
 				SELECT child.id FROM nodes child
 				JOIN directories parent ON child.parent_id=parent.id
-				WHERE child.kind='dir'
+				WHERE child.kind='dir' AND child.trashed_at IS NULL
 			)
 			SELECT id FROM directories
 		)`)
@@ -2895,11 +2898,11 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 }
 
 // contentSearchMatches shares retained-text ranking and publication bindings with Photos.
-func contentSearchMatches(match, generation string, profile *string) (cte, join, rank string, args []any) {
+func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
 	args = []any{match}
 	if generation == "" {
 		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM content_fts WHERE content_fts MATCH ? GROUP BY blob_hash)`,
-			`JOIN matched_blobs mb ON mb.blob_hash=cv.blob_hash JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
 	}
 	profileFilter := ""
 	args = append(args, generation)
@@ -2911,7 +2914,7 @@ func contentSearchMatches(match, generation string, profile *string) (cte, join,
   JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
   JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
   WHERE rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)` + profileFilter + ` GROUP BY a.content_version_id)`,
-		`JOIN matched_versions mv ON mv.version_id=cv.version_id`, `mv.best_rank`, args
+		`matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`, `mv.best_rank`, args
 }
 
 // photoAssetTextCandidates ranks every member of the asset that owns matching
@@ -2961,11 +2964,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
   JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
-	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)
-	from := `matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
-	if generation != "" {
-		from = `matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
-	}
+	cte, from, rank, args := contentSearchMatches(textMatch, generation, profile)
 	result.SQL += ` UNION ALL SELECT node_id,1 tier,score FROM (WITH ` + cte + ` SELECT n.id node_id,-` + rank + ` score FROM ` + from + `)`
 	result.Args = append(result.Args, args...)
 	return result, nil
