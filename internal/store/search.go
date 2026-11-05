@@ -2339,8 +2339,9 @@ func validateLexicalGenerationCoversCurrentHeadsTx(
 	if err != nil {
 		return err
 	}
+	generationBuildSet := stringSet(generationBuildIDs)
 	for _, buildID := range buildIDs {
-		if !slices.Contains(generationBuildIDs, buildID) {
+		if _, ok := generationBuildSet[buildID]; !ok {
 			return fmt.Errorf("lexical generation %s does not cover published rendition build %s (current rendition head build): %w",
 				generationID, buildID, ErrLexicalGenerationStale)
 		}
