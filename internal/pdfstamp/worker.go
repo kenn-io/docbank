@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"slices"
 	"sync"
+
+	"go.kenn.io/kit/consolewindow"
 )
 
 const maxWorkerRequestBytes = 1 << 20
@@ -165,6 +167,7 @@ func runWorker(ctx context.Context, request workerRequest, sources [][]byte) (in
 		_, _ = input.Write(source)
 	}
 	command := exec.CommandContext(ctx, executable, "internal-pdfstamp-worker") //nolint:gosec // executable is the running Docbank binary.
+	consolewindow.Hide(command)
 	command.Stdin = &input
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &limitedStampWriter{Writer: &stdout, Remaining: MaxOutputBytes + 8}
