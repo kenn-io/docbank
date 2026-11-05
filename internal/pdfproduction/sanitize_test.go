@@ -231,6 +231,12 @@ func TestSanitizedWriterRejectsRunSubstitutionAndMutatedMaskPixels(t *testing.T)
 	var out bytes.Buffer
 	require.Error(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
 	require.Empty(t, out.Bytes())
+	p, a, r = sanitizedFixture(t, "keep keep")
+	a.Runs = append([]redaction.Run(nil), a.Runs...)
+	a.Runs[0].Boxes = append([]redaction.Box(nil), a.Runs[0].Boxes...)
+	a.Runs[0].Boxes[0].X0++
+	require.Error(t, WriteFresh(t.Context(), &out, &artifactSequence{pages: []PageArtifact{a}}, p, PDFWriteOptions{Recipe: r, StagingDirectory: t.TempDir(), MaxBytes: r.MaxStagingBytes}))
+	require.Empty(t, out.Bytes())
 	p, a, r = sanitizedFixture(t, "secret")
 	mask := p.Runs[0].Boxes[0]
 	p.RedactBoxes = []redaction.Box{mask}
