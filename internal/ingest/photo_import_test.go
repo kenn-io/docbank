@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -279,7 +280,13 @@ func TestPhotoImportPublishedBytes(t *testing.T) {
 	assert.Equal(t, got, content)
 }
 
+// Fake time advances only while the import waits, so the elapsed time is
+// exactly the settle waits and the gate's hold time is zero.
 func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
+	synctest.Test(t, testPhotoImportSettlesOnceOutsideTheGate)
+}
+
+func testPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	root := t.TempDir()
 	for i := range 6 {
 		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
@@ -306,12 +313,11 @@ func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	assert.Equal(t, 1, end)
 	require.Len(t, entered, 7)
 	// The only wait sits between destination setup and the first group, outside the gate.
-	assert.GreaterOrEqual(t, entered[1].Sub(left[0]), interval)
-	var held time.Duration
+	assert.Equal(t, interval, entered[1].Sub(left[0]))
 	for i := range entered {
-		held += left[i].Sub(entered[i])
+		assert.Zero(t, left[i].Sub(entered[i]), "the gate never holds a wait")
 	}
-	assert.Less(t, elapsed-held, 6*interval)
+	assert.Equal(t, interval, elapsed, "the import settles once, not once per group")
 }
 func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
 	ing := newTestIngester(t)

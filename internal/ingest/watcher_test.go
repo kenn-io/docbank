@@ -231,7 +231,11 @@ func assertWatcherSameSizeAndMtimeVersions(t *testing.T, initial, changed []byte
 	}
 }
 
-// Rewrite the file with the same size and restored mtime, retrying until native change time moves.
+// Rewrite the file with the same size and restored mtime, retrying until native
+// change time moves. The stat above marks the change time as observed, so
+// kernels with fine-grained change times (Linux 6.13+ multigrain timestamps,
+// APFS, NTFS) move it on the first rewrite. A coarse clock may need another
+// rewrite; retry immediately rather than sleeping.
 func rewriteSourceWithRestoredMtime(t *testing.T, path string, content []byte) {
 	t.Helper()
 	file, err := os.Open(path)
@@ -254,7 +258,6 @@ func rewriteSourceWithRestoredMtime(t *testing.T, path string, content []byte) {
 			return
 		}
 		require.True(t, time.Now().Before(deadline), "filesystem change time did not advance")
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // sleeptest: wait for the native filesystem clock
 	}
 }
 

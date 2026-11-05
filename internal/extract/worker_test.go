@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -205,40 +206,54 @@ func TestWorkerRecordsDeterministicFailuresWithoutOpeningOversizeBlob(t *testing
 }
 
 func TestWorkerRetriesTransientOpenFailure(t *testing.T) {
-	dir := t.TempDir()
-	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, s.Close()) }()
+		blobs, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, blobs.Close()) }()
 
-	content := "A recoverable nebula record.\n"
-	hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader(content))
-	require.NoError(t, err)
-	_, err = s.CreateFile(t.Context(), s.RootID(), "notes.txt", hash, size, "text/plain")
-	require.NoError(t, err)
-	reader := &transientBlobReader{delegate: blobs, failures: 1}
-	w, err := New(s, reader, nil)
-	require.NoError(t, err)
-	w.interval = 5 * time.Millisecond
-	w.retry = 10 * time.Millisecond
+		content := "A recoverable nebula record.\n"
+		hash, size, err := blobs.WriteContext(t.Context(), strings.NewReader(content))
+		require.NoError(t, err)
+		_, err = s.CreateFile(t.Context(), s.RootID(), "notes.txt", hash, size, "text/plain")
+		require.NoError(t, err)
+		reader := &transientBlobReader{delegate: blobs, failures: 1}
+		w, err := New(s, reader, nil)
+		require.NoError(t, err)
+		w.interval = 5 * time.Millisecond
+		w.retry = 10 * time.Millisecond
 
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- w.Run(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		runErr := <-done
-		if runErr != nil {
-			// Cancellation can reach either the idle wait or a catalog query.
-			assert.ErrorIs(t, runErr, context.Canceled)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- w.Run(ctx) }()
+		defer func() {
+			cancel()
+			require.NoError(t, <-done)
+		}()
+		search := func() int {
+			hits, _, err := s.SearchPage(t.Context(), "nebula", 10)
+			require.NoError(t, err)
+			return len(hits)
 		}
-		assert.GreaterOrEqual(t, reader.calls, 2)
+
+		// The first scan fails to open the blob and defers it; the worker idles.
+		synctest.Wait()
+		require.Equal(t, 1, reader.calls)
+		require.Zero(t, search())
+
+		// Idle scans before the retry delay leave the deferred blob alone.
+		time.Sleep(w.retry - time.Millisecond)
+		synctest.Wait()
+		require.Equal(t, 1, reader.calls)
+		require.Zero(t, search())
+
+		// A scan after the retry delay opens the blob again and indexes it.
+		time.Sleep(w.interval)
+		synctest.Wait()
+		require.Equal(t, 2, reader.calls)
+		require.Equal(t, 1, search())
 	})
-	// This exercises real storage; busy CI runners can take more than a second.
-	require.Eventually(t, func() bool {
-		hits, _, searchErr := s.SearchPage(t.Context(), "nebula", 10)
-		return searchErr == nil && len(hits) == 1
-	}, 30*time.Second, 10*time.Millisecond)
 }

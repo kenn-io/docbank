@@ -232,14 +232,20 @@ func TestRenditionWorkerReleasesDaemonGateDuringProviderEgress(t *testing.T) {
 	})
 }
 
-func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) { //nolint:paralleltest // proves the fence holds by waiting 100ms of real time
+func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) {
+	t.Parallel()
 	for _, resumable := range []bool{false, true} {
 		name := "render"
 		if resumable {
 			name = "render resumable"
 		}
 		t.Run(name, func(t *testing.T) {
-			testRenditionWorkerFencesConsentRevocationThroughProviderExecution(t, resumable)
+			t.Parallel()
+			// The fence's waiters block on channels, so synctest.Wait
+			// returns while a revocation waits for the provider call.
+			synctest.Test(t, func(t *testing.T) {
+				testRenditionWorkerFencesConsentRevocationThroughProviderExecution(t, resumable)
+			})
 		})
 	}
 }
@@ -268,6 +274,10 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 
 	beginCommitted := make(chan struct{})
 	allowProvider := make(chan struct{})
+	var allowOnce sync.Once
+	allow := func() { allowOnce.Do(func() { close(allowProvider) }) }
+	// A failed check must still let the worker leave the bubble.
+	t.Cleanup(allow)
 	catalog := &transientRenditionCatalog{Store: fixture.catalog}
 	catalog.afterBegin = func() {
 		close(beginCommitted)
@@ -294,38 +304,43 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 	}()
 	select {
 	case <-beginCommitted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider authority did not commit")
+	case runErr := <-workerDone:
+		require.FailNow(t, "provider authority did not commit", "worker returned: %v", runErr)
 	}
-	revocationDone := make(chan error, 1)
+	revoked := make(chan error, 1)
 	go func() {
 		_, revokeErr := fixture.catalog.RevokeConsent(
 			t.Context(), store.ProcessingConsentRevocationRequest{
 				Principal: request.Authorization.Principal,
 				Scope:     request.Authorization.Scope,
 			})
-		revocationDone <- revokeErr
+		revoked <- revokeErr
 	}()
-	select {
-	case revokeErr := <-revocationDone:
-		require.FailNow(t, "consent revocation crossed an unstarted provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the unstarted provider fence keeps revocation blocked
-	}
+	synctest.Wait()
+	requireStillWaiting(t, revoked, "consent revocation crossed an unstarted provider fence")
 
-	close(allowProvider)
+	allow()
 	select {
 	case <-provider.renderStarted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider invocation did not start")
+	case runErr := <-workerDone:
+		require.FailNow(t, "provider invocation did not start", "worker returned: %v", runErr)
 	}
-	select {
-	case revokeErr := <-revocationDone:
-		require.FailNow(t, "consent revocation crossed an active provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the active provider fence keeps revocation blocked
-	}
+	synctest.Wait()
+	requireStillWaiting(t, revoked, "consent revocation crossed an active provider fence")
 	close(provider.renderRelease)
-	require.NoError(t, <-revocationDone)
+	require.NoError(t, <-revoked)
 	require.NoError(t, <-workerDone)
+}
+
+// requireStillWaiting fails if done has delivered. Call it after
+// synctest.Wait, when every goroutine in the bubble is blocked.
+func requireStillWaiting(t *testing.T, done <-chan error, crossed string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.FailNow(t, crossed, "returned: %v", err)
+	default:
+	}
 }
 
 func TestRenditionWorkerRetriesTransientCatalogFailuresWithinClaim(t *testing.T) {

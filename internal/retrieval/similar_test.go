@@ -101,16 +101,9 @@ func TestSimilarStoredMetricsNoEncoderAndLeaseCleanup(t *testing.T) {
 				case <-scoring.scoring:
 				case err := <-done:
 					t.Fatalf("returned before reaching candidate scoring: %v", err)
-				case <-time.After(time.Second):
-					t.Fatal("did not reach candidate scoring")
 				}
 				cancel()
-				select {
-				case err := <-done:
-					require.ErrorIs(t, err, context.Canceled)
-				case <-time.After(time.Second):
-					t.Fatal("scoring did not stop promptly")
-				}
+				require.ErrorIs(t, <-done, context.Canceled, "scoring stops at cancellation")
 				assert.False(t, backend.releasedAt.IsZero(), "scoring cancellation releases lease")
 				require.NoError(t, backend.releaseContextErr, "lease release uses an uncancelled context")
 				assert.Empty(t, b.scores, "cancelled scoring never reaches candidate resolution")

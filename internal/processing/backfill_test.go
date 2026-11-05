@@ -245,17 +245,20 @@ func TestBackfillWriteDuringEmptyListingWakesNextScan(t *testing.T) {
 
 func TestBackfillDrainsEveryTargetAcrossPagesAndStops(t *testing.T) {
 	t.Parallel()
-	catalog := newFakeBackfillCatalog("a", "b", "c", "d", "e")
-	backfill := newTestBackfill(catalog, 2, true)
-	gated := 0
-	backfill.Mutate = func(_ context.Context, fn func() error) error { gated++; return fn() }
+	// The pause after the partial last page passes on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a", "b", "c", "d", "e")
+		backfill := newTestBackfill(catalog, 2, true)
+		gated := 0
+		backfill.Mutate = func(_ context.Context, fn func() error) error { gated++; return fn() }
 
-	require.NoError(t, backfill.Run(t.Context()))
-	assert.Len(t, catalog.done, 5)
-	assert.Equal(t, 5, gated, "every target runs under the gate on its own")
-	for _, key := range catalog.keys {
-		assert.Equal(t, 1, catalog.attempts[key], key)
-	}
+		require.NoError(t, backfill.Run(t.Context()))
+		assert.Len(t, catalog.done, 5)
+		assert.Equal(t, 5, gated, "every target runs under the gate on its own")
+		for _, key := range catalog.keys {
+			assert.Equal(t, 1, catalog.attempts[key], key)
+		}
+	})
 }
 
 func TestBackfillQuarantinesFailingTargetsWithoutBlockingOthers(t *testing.T) {

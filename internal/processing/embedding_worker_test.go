@@ -387,25 +387,32 @@ func TestEmbeddingWorkerCapacityBisectionReachesSingleItemBatch(t *testing.T) {
 	assert.Equal(t, []int{8, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1}, fixture.runtime.batchSizes(work.Binding.Name))
 }
 
-func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *testing.T) { //nolint:paralleltest // asserts cancellation returns within one second of real time
+func TestEmbeddingWorkerCancellationDuringProviderAndPersistenceIsPrompt(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"provider", "persistence"} {
 		t.Run(phase, func(t *testing.T) {
-			fixture := newEmbeddingWorkerFixture(t)
-			work := fixture.work(phase, document.EmbeddingInputRenditionChunk, "semantic")
-			fixture.catalog.enqueue(work)
-			ctx, cancel := context.WithCancel(t.Context())
-			if phase == "provider" {
-				fixture.runtime.block = true
-				fixture.runtime.onBlock = cancel
-			} else {
-				fixture.blobs.block = true
-				fixture.blobs.onBlock = cancel
-			}
-			started := time.Now()
-			_, err := fixture.worker(t).ScanOnce(ctx)
-			require.ErrorIs(t, err, context.Canceled)
-			assert.Less(t, time.Since(started), time.Second)
-			assert.Empty(t, fixture.catalog.heads)
+			// On the bubble's clock, a prompt return takes no time at all; any
+			// retry or poll wait before it would show up as elapsed time.
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newEmbeddingWorkerFixture(t)
+				work := fixture.work(phase, document.EmbeddingInputRenditionChunk, "semantic")
+				fixture.catalog.enqueue(work)
+				ctx, cancel := context.WithCancel(t.Context())
+				if phase == "provider" {
+					fixture.runtime.block = true
+					fixture.runtime.onBlock = cancel
+				} else {
+					fixture.blobs.block = true
+					fixture.blobs.onBlock = cancel
+				}
+				started := time.Now()
+				worker := fixture.worker(t)
+				worker.wait = jobs.Wait
+				_, err := worker.ScanOnce(ctx)
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Zero(t, time.Since(started), "cancellation returns without waiting")
+				assert.Empty(t, fixture.catalog.heads)
+			})
 		})
 	}
 }
@@ -1383,47 +1390,42 @@ func (catalog *observedEmbeddingCatalog) BeginEmbeddingProviderEgress(ctx contex
 	return auth, fence, err
 }
 
-func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolint:paralleltest // proves the fence holds by waiting 100ms of real time
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	authorized, proceed, started := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	fake.runtime.block = true
-	fake.runtime.onBlock = func() { close(started) }
-	worker.catalog = &observedEmbeddingCatalog{Store: fixture.catalog, afterAuthorize: func() {
-		close(authorized)
-		select {
-		case <-proceed:
-		case <-ctx.Done():
-		}
-	}}
-	done := make(chan error, 1)
-	go func() { _, err := worker.ScanOnce(ctx); done <- err }()
-	<-authorized
-	revoked := make(chan error, 1)
-	go func() {
-		_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
-		revoked <- err
-	}()
-	select {
-	case err := <-revoked:
+func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
+	t.Parallel()
+	// The fence's waiters block on channels, so synctest.Wait returns while a
+	// revocation waits for the provider call.
+	synctest.Test(t, func(t *testing.T) {
+		fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		authorized, proceed, started := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		fake.runtime.block = true
+		fake.runtime.onBlock = func() { close(started) }
+		worker.catalog = &observedEmbeddingCatalog{Store: fixture.catalog, afterAuthorize: func() {
+			close(authorized)
+			select {
+			case <-proceed:
+			case <-ctx.Done():
+			}
+		}}
+		done := make(chan error, 1)
+		go func() { _, err := worker.ScanOnce(ctx); done <- err }()
+		<-authorized
+		revoked := make(chan error, 1)
+		go func() {
+			_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
+			revoked <- err
+		}()
+		synctest.Wait()
+		requireStillWaiting(t, revoked, "revocation crossed authorized provider boundary")
+		close(proceed)
+		<-started
+		synctest.Wait()
+		requireStillWaiting(t, revoked, "revocation crossed active provider call")
 		cancel()
-		<-done
-		t.Fatalf("revocation crossed authorized provider boundary: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
-	}
-	close(proceed)
-	<-started
-	select {
-	case err := <-revoked:
-		cancel()
-		<-done
-		t.Fatalf("revocation crossed active provider call: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the active provider call keeps revocation blocked
-	}
-	cancel()
-	require.ErrorIs(t, <-done, context.Canceled)
-	require.NoError(t, <-revoked)
+		require.ErrorIs(t, <-done, context.Canceled)
+		require.NoError(t, <-revoked)
+	})
 }
 
 func TestEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t *testing.T) {

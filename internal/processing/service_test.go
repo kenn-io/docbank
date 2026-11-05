@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -199,59 +200,66 @@ func frontmatterHashForService(value string) string {
 
 func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing.T) {
 	t.Parallel()
-	fixture, fake, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
-	fake.runtime.failures[request.BindingID] = []error{embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{}}
-	provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: request.Descriptor}
-	runtime, err := NewProviderEmbeddingRuntime(provider, fixture.blobs, t.TempDir(), fake.runtime.Classify)
-	require.NoError(t, err)
-	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
-	_, fingerprints, err := document.CanonicalProfile(portable)
-	require.NoError(t, err)
-	profile := configuredProfile{vectorSpaces: fingerprints.VectorSpace, portable: portable, record: request.Profile,
-		embedders:         map[string]document.EmbeddingProvider{request.BindingID: provider},
-		embeddingRuntimes: map[string]*ProviderEmbeddingRuntime{request.BindingID: runtime}}
-	var clockOffset atomic.Int64
-	clockOffset.Store(int64(time.Second))
-	service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: fake.gate,
-		clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
-	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	var jobs []string
-	var runErr error
-	finished := make(chan struct{})
-	go func() {
-		jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, processingRunOptions{})
-		close(finished)
-	}()
-	t.Cleanup(func() { cancel(); <-finished })
-	var pendingID string
-	require.Eventually(t, func() bool {
-		statuses, statusErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, profile.record.Fingerprint)
-		if statusErr != nil {
-			return false
+	// Retry delays and the service poll run on the bubble's clock.
+	synctest.Test(t, func(t *testing.T) {
+		fixture, fake, _, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+		fake.runtime.failures[request.BindingID] = []error{embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{}}
+		exhausted := make(chan struct{})
+		fake.runtime.inspectInputs = func([]document.EmbeddingInput) {
+			if fake.runtime.callCount(request.BindingID) == 3 {
+				close(exhausted)
+			}
 		}
+		provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: request.Descriptor}
+		runtime, err := NewProviderEmbeddingRuntime(provider, fixture.blobs, t.TempDir(), fake.runtime.Classify)
+		require.NoError(t, err)
+		var portable document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+		_, fingerprints, err := document.CanonicalProfile(portable)
+		require.NoError(t, err)
+		profile := configuredProfile{vectorSpaces: fingerprints.VectorSpace, portable: portable, record: request.Profile,
+			embedders:         map[string]document.EmbeddingProvider{request.BindingID: provider},
+			embeddingRuntimes: map[string]*ProviderEmbeddingRuntime{request.BindingID: runtime}}
+		var clockOffset atomic.Int64
+		clockOffset.Store(int64(time.Second))
+		service := &Service{catalog: fixture.catalog, blobs: fixture.blobs, gate: fake.gate,
+			clock: func() time.Time { return time.Now().UTC().Add(time.Duration(clockOffset.Load())) }}
+		version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		var jobs []string
+		var runErr error
+		finished := make(chan struct{})
+		go func() {
+			jobs, runErr = service.runEmbeddings(ctx, version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, processingRunOptions{})
+			close(finished)
+		}()
+		t.Cleanup(func() { cancel(); <-finished })
+		<-exhausted
+		// The service now polls the job through its retry backoff.
+		synctest.Wait()
+		statuses, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, profile.record.Fingerprint)
+		require.NoError(t, err)
+		var pendingID string
 		for _, status := range statuses {
 			if status.State == "retry_wait" {
 				pendingID = status.ID
-				return true
 			}
 		}
-		return false
-	}, 10*time.Second, time.Millisecond)
-	cancel()
-	<-finished
-	require.ErrorIs(t, runErr, context.Canceled)
-	require.Equal(t, []string{pendingID}, jobs)
-	require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
-	clockOffset.Store(int64(2 * time.Minute))
-	retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, processingRunOptions{})
-	require.NoError(t, err)
-	require.Equal(t, jobs, retried)
-	status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.State)
+		require.NotEmpty(t, pendingID, "the exhausted job waits out its retry backoff")
+		cancel()
+		<-finished
+		require.ErrorIs(t, runErr, context.Canceled)
+		require.Equal(t, []string{pendingID}, jobs)
+		require.Equal(t, 3, fake.runtime.callCount(request.BindingID), "waiting must not call the provider before backoff expires")
+		clockOffset.Store(int64(2 * time.Minute))
+		retried, err := service.runEmbeddings(t.Context(), version, profile, request.Authorization.Principal, request.Authorization.Scope, "", nil, processingRunOptions{})
+		require.NoError(t, err)
+		require.Equal(t, jobs, retried)
+		status, err := fixture.catalog.EmbeddingJobByID(t.Context(), jobs[0])
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
+	})
 }
 
 func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
@@ -555,79 +563,84 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.ErrorIs(t, err, ErrConsentRequired)
 }
 
-func TestEmbeddingOnlyConsentPreconditions(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
+func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"missing", "revoked", "expired-before", "expired-during", "allowed", "provider-authorization"} {
 		t.Run(phase, func(t *testing.T) {
-			fixture, fake, _, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
-			var profile document.ProcessingProfileV1
-			require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))
-			profile.Rendition = nil
-			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-			profile.RetentionDisclosure.RetainProviderMarkdown = false
-			provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
-			config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
-				Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
-				Profiles: map[string]ProfileConfig{"direct": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{original.BindingID: provider}}}}
-			if phase == "provider-authorization" {
-				fake.runtime.failures[original.BindingID] = []error{errors.New("synthetic credential denied")}
-				configured := config.Profiles["direct"]
-				configured.EmbeddingClassifiers = map[string]func(error) (EmbeddingProviderFailure, time.Duration){original.BindingID: func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }}
-				config.Profiles["direct"] = configured
-			}
-			service, err := NewService(t.Context(), config)
-			require.NoError(t, err)
-			version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
-			require.NoError(t, err)
-			selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
-			plan, err := service.Plan(t.Context(), selector)
-			require.NoError(t, err)
-			if phase != "missing" {
-				var expiry *time.Time
-				if phase == "expired-before" || phase == "expired-during" {
-					expiry = new(time.Now().Add(2 * time.Second))
+			t.Parallel()
+			// Consent expiry is measured on the bubble's clock.
+			synctest.Test(t, func(t *testing.T) {
+				fixture, fake, _, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+				var profile document.ProcessingProfileV1
+				require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))
+				profile.Rendition = nil
+				profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+				profile.RetentionDisclosure.RetainProviderMarkdown = false
+				provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
+				config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+					Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
+					Profiles: map[string]ProfileConfig{"direct": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{original.BindingID: provider}}}}
+				if phase == "provider-authorization" {
+					fake.runtime.failures[original.BindingID] = []error{errors.New("synthetic credential denied")}
+					configured := config.Profiles["direct"]
+					configured.EmbeddingClassifiers = map[string]func(error) (EmbeddingProviderFailure, time.Duration){original.BindingID: func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }}
+					config.Profiles["direct"] = configured
 				}
-				_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, ExpiresAt: expiry})
+				service, err := NewService(t.Context(), config)
 				require.NoError(t, err)
-				if phase == "revoked" {
-					_, err = service.RevokeConsent(t.Context())
+				version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
+				require.NoError(t, err)
+				selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
+				plan, err := service.Plan(t.Context(), selector)
+				require.NoError(t, err)
+				if phase != "missing" {
+					var expiry *time.Time
+					if phase == "expired-before" || phase == "expired-during" {
+						expiry = new(time.Now().Add(2 * time.Second))
+					}
+					_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, ExpiresAt: expiry})
 					require.NoError(t, err)
+					if phase == "revoked" {
+						_, err = service.RevokeConsent(t.Context())
+						require.NoError(t, err)
+					}
+					if phase == "expired-before" {
+						time.Sleep(time.Until(*expiry) + time.Second)
+					}
+					if phase == "expired-during" {
+						fake.runtime.inspectInputs = func([]document.EmbeddingInput) { time.Sleep(time.Until(*expiry) + time.Second) }
+					}
 				}
-				if phase == "expired-before" {
-					<-time.After(time.Until(*expiry) + 20*time.Millisecond)
-				}
-				if phase == "expired-during" {
-					fake.runtime.inspectInputs = func([]document.EmbeddingInput) { <-time.After(time.Until(*expiry) + 20*time.Millisecond) }
-				}
-			}
-			job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: false})
-			jobs, readErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, plan.ProfileFingerprint)
-			if phase == "missing" || phase == "revoked" || phase == "expired-before" {
-				require.ErrorIs(t, readErr, store.ErrNotFound)
-			} else {
-				require.NoError(t, readErr)
-			}
-			switch phase {
-			case "missing":
-				require.ErrorIs(t, err, ErrConsentRequired)
-				require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
-			case "revoked":
-				require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
-			case "expired-before", "expired-during":
-				require.ErrorIs(t, err, store.ErrProcessingConsentExpired)
-			default:
-				require.NoError(t, err)
-				status, statusErr := service.Status(t.Context(), job.ID)
-				require.NoError(t, statusErr)
-				if phase == "allowed" {
-					require.Equal(t, "completed", status.State)
+				job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: false})
+				jobs, readErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, plan.ProfileFingerprint)
+				if phase == "missing" || phase == "revoked" || phase == "expired-before" {
+					require.ErrorIs(t, readErr, store.ErrNotFound)
 				} else {
-					require.Equal(t, "authorization", status.FailureCode)
+					require.NoError(t, readErr)
 				}
-			}
-			if phase == "missing" || phase == "revoked" || phase == "expired-before" {
-				require.Empty(t, jobs)
-				require.Zero(t, fake.runtime.calls())
-			}
+				switch phase {
+				case "missing":
+					require.ErrorIs(t, err, ErrConsentRequired)
+					require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+				case "revoked":
+					require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
+				case "expired-before", "expired-during":
+					require.ErrorIs(t, err, store.ErrProcessingConsentExpired)
+				default:
+					require.NoError(t, err)
+					status, statusErr := service.Status(t.Context(), job.ID)
+					require.NoError(t, statusErr)
+					if phase == "allowed" {
+						require.Equal(t, "completed", status.State)
+					} else {
+						require.Equal(t, "authorization", status.FailureCode)
+					}
+				}
+				if phase == "missing" || phase == "revoked" || phase == "expired-before" {
+					require.Empty(t, jobs)
+					require.Zero(t, fake.runtime.calls())
+				}
+			})
 		})
 	}
 }

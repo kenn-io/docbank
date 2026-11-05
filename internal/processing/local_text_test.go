@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -240,40 +241,55 @@ func (p localTextEmbeddingProvider) Embed(ctx context.Context, inputs []document
 
 func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 	t.Parallel()
-	var ready atomic.Bool
-	var calls, clock atomic.Int64
-	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(context.Context) error {
-		calls.Add(1)
-		if !ready.Load() {
-			return errors.New("synthetic server unavailable")
+	// The backfill's retry delays run on the bubble's clock.
+	synctest.Test(t, func(t *testing.T) {
+		var ready atomic.Bool
+		var calls, clock atomic.Int64
+		provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(context.Context) error {
+			calls.Add(1)
+			if !ready.Load() {
+				return errors.New("synthetic server unavailable")
+			}
+			return nil
+		}}
+		fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+		setup.Service.clock = func() time.Time {
+			if calls.Load() == 0 {
+				return time.Now().UTC()
+			}
+			return time.Now().UTC().Add(time.Duration(clock.Add(1)) * 10 * time.Second)
 		}
-		return nil
-	}}
-	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
-	setup.Service.clock = func() time.Time {
-		if calls.Load() == 0 {
-			return time.Now().UTC()
+		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+		require.NoError(t, err)
+		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "outage.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- setup.Backfill(ctx, nil) }()
+		defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) }()
+		profile := setup.Service.profiles["pdf"]
+		// Provider retries back off on the bubble's clock, so advance it until
+		// the job settles.
+		settledJob := func(done func(store.EmbeddingJobStatus) bool) store.EmbeddingJobStatus {
+			t.Helper()
+			for range 600 {
+				synctest.Wait()
+				jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
+				require.NoError(t, err)
+				require.Len(t, jobs, 1)
+				if done(jobs[0]) {
+					return jobs[0]
+				}
+				time.Sleep(time.Second)
+			}
+			require.FailNow(t, "embedding job never settled")
+			return store.EmbeddingJobStatus{}
 		}
-		return time.Now().UTC().Add(time.Duration(clock.Add(1)) * 10 * time.Second)
-	}
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "outage.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	done := make(chan error, 1)
-	go func() { done <- setup.Backfill(ctx, nil) }()
-	defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
-	profile := setup.Service.profiles["pdf"]
-	require.Eventually(t, func() bool {
-		jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
-		return err == nil && len(jobs) == 1 && jobs[0].State == "failed" && jobs[0].FailureCode == store.EmbeddingFailureProviderUnavailable
-	}, 10*time.Second, 10*time.Millisecond)
-	ready.Store(true)
-	require.Eventually(t, func() bool {
-		jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
-		return err == nil && len(jobs) == 1 && jobs[0].State == "completed"
-	}, 10*time.Second, 10*time.Millisecond)
+		job := settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "failed" })
+		require.Equal(t, store.EmbeddingFailureProviderUnavailable, job.FailureCode)
+		ready.Store(true)
+		settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "completed" })
+	})
 }
 
 func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
@@ -285,55 +301,64 @@ func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-			initial, err := setup.targets(t.Context(), "", 50)
-			require.NoError(t, err)
-			for _, item := range initial {
-				require.NoError(t, setup.process(t.Context(), item))
-			}
-			written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-			require.NoError(t, err)
-			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "pending-index.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-			require.NoError(t, err)
-			require.NoError(t, setup.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}))
-			space := setup.Service.profiles[setup.Selected].vectorSpaces["chunk"]
-			if missing {
-				source, err := fixture.catalog.CaptureVectorIndexSource(t.Context(), space)
+			// The backfill's idle delays run on the bubble's clock.
+			synctest.Test(t, func(t *testing.T) {
+				fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+				initial, err := setup.targets(t.Context(), "", 50)
 				require.NoError(t, err)
-				require.Len(t, source.Members, 1)
-				require.NoError(t, fixture.blobs.Remove(source.Members[0].PayloadBlobHash))
-				_, err = fixture.catalog.ReadVectorIndexVectorSet(t.Context(), fixture.blobs, source.Members[0])
-				require.ErrorIs(t, err, store.ErrVectorSetUnavailable)
-			}
-			var active atomic.Int64
-			setup.ActivityBegin = func() { active.Add(1) }
-			setup.ActivityEnd = func() { active.Add(-1) }
-			ctx, cancel := context.WithCancel(t.Context())
-			done := make(chan error, 1)
-			go func() { done <- setup.Backfill(ctx, nil) }()
-			defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
-			require.Eventually(t, func() bool { return active.Load() == 1 }, time.Second, 10*time.Millisecond, "completed embeddings still need a published vector generation")
-			indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-				return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
-			}, Mutate: func(_ context.Context, fn func() error) error { return fn() }, Owner: "local-text-publication-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
-			require.NoError(t, err)
-			if missing {
-				indexed := make(chan error, 1)
-				go func() { indexed <- indexer.Run(ctx) }()
-				defer func() { cancel(); require.ErrorIs(t, <-indexed, ctx.Err()) }()
-			} else {
-				generation, err := indexer.Rebuild(ctx, space)
+				for _, item := range initial {
+					require.NoError(t, setup.process(t.Context(), item))
+				}
+				written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
 				require.NoError(t, err)
-				require.Positive(t, generation.RowCount)
-			}
-			require.Eventually(t, func() bool { return active.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
-			pending, err := setup.Pending(ctx)
-			require.NoError(t, err)
-			require.False(t, pending, "external re-embedding does not count as active publication")
-			if missing {
-				_, err = fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
-				require.ErrorIs(t, err, store.ErrNotFound)
-			}
+				node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "pending-index.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+				require.NoError(t, err)
+				require.NoError(t, setup.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}))
+				space := setup.Service.profiles[setup.Selected].vectorSpaces["chunk"]
+				if missing {
+					source, err := fixture.catalog.CaptureVectorIndexSource(t.Context(), space)
+					require.NoError(t, err)
+					require.Len(t, source.Members, 1)
+					require.NoError(t, fixture.blobs.Remove(source.Members[0].PayloadBlobHash))
+					_, err = fixture.catalog.ReadVectorIndexVectorSet(t.Context(), fixture.blobs, source.Members[0])
+					require.ErrorIs(t, err, store.ErrVectorSetUnavailable)
+				}
+				var active atomic.Int64
+				setup.ActivityBegin = func() { active.Add(1) }
+				setup.ActivityEnd = func() { active.Add(-1) }
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- setup.Backfill(ctx, nil) }()
+				defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
+				synctest.Wait()
+				require.Equal(t, int64(1), active.Load(), "completed embeddings still need a published vector generation")
+				indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+					return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
+				}, Mutate: func(_ context.Context, fn func() error) error { return fn() }, Owner: "local-text-publication-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
+				require.NoError(t, err)
+				if missing {
+					indexed := make(chan error, 1)
+					go func() { indexed <- indexer.Run(ctx) }()
+					defer func() { cancel(); require.ErrorIs(t, <-indexed, ctx.Err()) }()
+				} else {
+					generation, err := indexer.Rebuild(ctx, space)
+					require.NoError(t, err)
+					require.Positive(t, generation.RowCount)
+				}
+				// The backfill re-lists after its idle delay and releases the hold.
+				for i := 0; i < 60 && active.Load() != 0; i++ {
+					time.Sleep(time.Second)
+					synctest.Wait()
+				}
+				require.Zero(t, active.Load())
+				pending, err := setup.Pending(ctx)
+				require.NoError(t, err)
+				require.False(t, pending, "external re-embedding does not count as active publication")
+				if missing {
+					_, err = fixture.catalog.ActiveVectorIndexGeneration(ctx, space)
+					require.ErrorIs(t, err, store.ErrNotFound)
+				}
+			})
 		})
 	}
 }

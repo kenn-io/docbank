@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"testing/synctest"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
@@ -60,58 +61,61 @@ func pageWorkerRuntime(t *testing.T) *pagerender.Runtime {
 func TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs(t *testing.T) {
 	t.Parallel()
 	engine := pageWorkerRuntime(t)
-	root := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(root, "vault.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = catalog.Close() })
-	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = blobs.Close() })
-	data := mediatest.PDF()
-	hash, size, err := blobs.WriteContext(t.Context(), bytes.NewReader(data))
-	require.NoError(t, err)
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic.pdf", hash, size, "application/pdf")
-	require.NoError(t, err)
-	request := store.PageJobRequest{NodeID: node.ID, Revision: node.Revision, Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: hash, Size: size}, Pages: []int{1}, DPI: 144, RuntimeFingerprint: engine.Fingerprint()}
-	job, err := catalog.QueuePageJob(t.Context(), uuid.New().String(), request)
-	require.NoError(t, err)
-	gate := api.NewOperationGate()
-	retried := map[string]bool{}
-	worker, err := processing.NewPageWorker(catalog, blobs, engine, pageMutationFunc(func(ctx context.Context, fn func() error) error {
-		current, err := catalog.PageJob(ctx, job.ID, request.Binding())
-		if err != nil {
-			return err
-		}
-		// Fail once before claiming and once after publication, before finishing.
-		phase := ""
-		if current.State == "queued" {
-			phase = "claim"
-		} else if current.State == "running" && len(current.Results) == 1 {
-			phase = "finish"
-		}
-		if phase != "" && !retried[phase] {
-			retried[phase] = true
-			return sql.ErrConnDone
-		}
-		return gate.MutateContext(ctx, fn)
-	}))
-	require.NoError(t, err)
-	processed, err := worker.RunOne(t.Context())
-	require.NoError(t, err)
-	require.True(t, processed)
-	require.Equal(t, map[string]bool{"claim": true, "finish": true}, retried)
-	complete, err := catalog.PageJob(t.Context(), job.ID, request.Binding())
-	require.NoError(t, err)
-	require.Equal(t, "completed", complete.State)
-	require.Len(t, complete.Results, 1)
-	require.Equal(t, int64(32), complete.Results[0].Width)
-	stream, err := blobs.OpenContext(t.Context(), complete.Results[0].SHA256)
-	require.NoError(t, err)
-	require.NoError(t, stream.Close())
-	canceled, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = worker.RunOne(canceled)
-	require.ErrorIs(t, err, context.Canceled)
+	// The injected storage failures retry after a pause; it passes on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		catalog, err := store.Open(t.Context(), filepath.Join(root, "vault.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = catalog.Close() })
+		blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = blobs.Close() })
+		data := mediatest.PDF()
+		hash, size, err := blobs.WriteContext(t.Context(), bytes.NewReader(data))
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic.pdf", hash, size, "application/pdf")
+		require.NoError(t, err)
+		request := store.PageJobRequest{NodeID: node.ID, Revision: node.Revision, Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: hash, Size: size}, Pages: []int{1}, DPI: 144, RuntimeFingerprint: engine.Fingerprint()}
+		job, err := catalog.QueuePageJob(t.Context(), uuid.New().String(), request)
+		require.NoError(t, err)
+		gate := api.NewOperationGate()
+		retried := map[string]bool{}
+		worker, err := processing.NewPageWorker(catalog, blobs, engine, pageMutationFunc(func(ctx context.Context, fn func() error) error {
+			current, err := catalog.PageJob(ctx, job.ID, request.Binding())
+			if err != nil {
+				return err
+			}
+			// Fail once before claiming and once after publication, before finishing.
+			phase := ""
+			if current.State == "queued" {
+				phase = "claim"
+			} else if current.State == "running" && len(current.Results) == 1 {
+				phase = "finish"
+			}
+			if phase != "" && !retried[phase] {
+				retried[phase] = true
+				return sql.ErrConnDone
+			}
+			return gate.MutateContext(ctx, fn)
+		}))
+		require.NoError(t, err)
+		processed, err := worker.RunOne(t.Context())
+		require.NoError(t, err)
+		require.True(t, processed)
+		require.Equal(t, map[string]bool{"claim": true, "finish": true}, retried)
+		complete, err := catalog.PageJob(t.Context(), job.ID, request.Binding())
+		require.NoError(t, err)
+		require.Equal(t, "completed", complete.State)
+		require.Len(t, complete.Results, 1)
+		require.Equal(t, int64(32), complete.Results[0].Width)
+		stream, err := blobs.OpenContext(t.Context(), complete.Results[0].SHA256)
+		require.NoError(t, err)
+		require.NoError(t, stream.Close())
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err = worker.RunOne(canceled)
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
 
 type pageMutationFunc func(context.Context, func() error) error
