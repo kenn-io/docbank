@@ -169,7 +169,7 @@ later are within the
 
 Thank you to [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
 [Rod Boev (@rodboev)](https://github.com/rodboev),
-[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[@salmonumbrella](https://github.com/salmonumbrella), and
 [Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.17.0.
 See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.16.0...v0.17.0).
 
@@ -364,7 +364,7 @@ change the import path from `go.kenn.io/docbank` to
 
 Thank you to [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
 [Rod Boev (@rodboev)](https://github.com/rodboev),
-[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[@salmonumbrella](https://github.com/salmonumbrella), and
 [Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.16.0.
 See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.15.2...v0.16.0).
 
@@ -408,7 +408,7 @@ See the [full contribution history](https://github.com/kenn-io/docbank/compare/v
 ### Contributors
 
 Thank you to [Rod Boev (@rodboev)](https://github.com/rodboev),
-[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[@salmonumbrella](https://github.com/salmonumbrella), and
 [Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.15.2.
 See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.15.1...v0.15.2).
 
@@ -599,7 +599,7 @@ See the [full contribution history](https://github.com/kenn-io/docbank/compare/v
 Thank you to [Joi Ito (@Joi)](https://github.com/Joi),
 [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
 [Rod Boev (@rodboev)](https://github.com/rodboev),
-[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[@salmonumbrella](https://github.com/salmonumbrella), and
 [Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.15.0.
 
 See the [full release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...v0.15.0).
