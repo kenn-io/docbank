@@ -348,9 +348,10 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 }
 
 func TestLocalTextEnablesWithoutInput(t *testing.T) {
+	const credentialEnvironment = "DOCBANK_TEST_MOVE_KEY"
 	bin := buildDocbank(t)
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("DOCBANK_TEST_MOVE_KEY", "synthetic-key")
+	t.Setenv(credentialEnvironment, "synthetic-key")
 	t.Setenv("DOCBANK_TEST_DOCLING_KEY", "synthetic-key")
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
@@ -364,13 +365,8 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	require.NoError(t, err)
 	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
 	require.NoError(t, err)
-	unused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("unused extractor received a request")
-		http.Error(w, "unused", http.StatusInternalServerError)
-	}))
-	defer unused.Close()
-	cfg := localTextSourceConfig(t, server.URL, "unused-model", "")
-	docling, _ := doclingDocumentProcessingConfig(t, unused.URL)
+	cfg := localTextSourceConfig(t, server.URL, "unused-model", "", credentialEnvironment)
+	docling, _ := doclingDocumentProcessingConfig(t, server.URL)
 	cfg.RenditionProfiles["documents"] = docling.RenditionProfiles["documents"]
 	cfg.CredentialBindings["docling"] = docling.CredentialBindings["docling"]
 	recipe := cfg.ProcessingProfiles["archive"]

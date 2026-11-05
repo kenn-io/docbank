@@ -87,6 +87,80 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.NoError(t, err, "consent remains saved when the selection write fails")
 	}
+	t.Run("selection", func(t *testing.T) {
+		provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
+		fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+		source := original.Service.profiles["pdf"]
+		profileFor := func(name string) ProfileConfig {
+			portable := source.portable
+			portable.Rendition = new(*portable.Rendition)
+			portable.Rendition.AuthorizationFingerprint = workerHash(name)
+			return ProfileConfig{Profile: portable, RenditionProvider: source.provider,
+				EmbeddingProviders: source.embedders, Tokenizers: source.tokenizers}
+		}
+		serviceFor := func(profiles map[string]ProfileConfig) *Service {
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+				Gate: newWorkerTestGate(), Profiles: profiles, SpoolDirectory: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(service.Stop)
+			return service
+		}
+		service := serviceFor(map[string]ProfileConfig{"archive": profileFor("archive"),
+			"aaa-unused": profileFor("unused"), "bbb-incompatible": profileFor("other")})
+		saved := "local-text"
+		setup := &LocalTextSetup{Service: service, Selected: saved, Compatible: []string{"archive", "aaa-unused"},
+			Candidate: func(_, name string) (*Service, error) {
+				if name == "" {
+					name = "local-text"
+				}
+				identity := name
+				if name != "local-text" {
+					identity += "-managed"
+				}
+				return serviceFor(map[string]ProfileConfig{name: profileFor(identity)}), nil
+			},
+			Startup: func(context.Context, bool, string) error { return nil },
+			Save:    func(name, _ string) error { saved = name; return nil }}
+		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+		require.NoError(t, err)
+		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "indexed.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+		require.NoError(t, err)
+		process := func(service *Service, profile string) {
+			selector := Selector{Profile: profile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NoError(t, err)
+		}
+		empty, err := setup.Plan(t.Context(), "local")
+		require.NoError(t, err)
+		require.Equal(t, "Build local index", empty.VectorEffect)
+		process(service, "bbb-incompatible")
+		rebuild, err := setup.Plan(t.Context(), "local")
+		require.NoError(t, err)
+		require.Contains(t, rebuild.VectorEffect, "Rebuild required")
+		process(service, "archive")
+		plan, err := setup.Plan(t.Context(), "local")
+		require.NoError(t, err)
+		require.Equal(t, "archive", plan.Profile, "skip the earlier unindexed recipe and the old built-in choice")
+		require.Equal(t, "Reuse existing vectors", plan.VectorEffect)
+		setup.Service, err = setup.Candidate("local", "archive")
+		require.NoError(t, err)
+		setup.Selected = "archive"
+		rerun, err := setup.Plan(t.Context(), "local")
+		require.NoError(t, err)
+		require.Equal(t, "archive", rerun.Profile, "keep the approved recipe before managed backfill")
+		require.Equal(t, "Reuse existing vectors", rerun.VectorEffect)
+		_, err = setup.Apply(t.Context(), "local", rerun.Fingerprint)
+		require.NoError(t, err)
+		require.Equal(t, "archive", saved)
+		builtin := serviceFor(map[string]ProfileConfig{"local-text": profileFor("local-text")})
+		process(builtin, "local-text")
+		setup.Service, setup.Selected = builtin, "local-text"
+		repeated, err := setup.Plan(t.Context(), "local")
+		require.NoError(t, err)
+		require.Equal(t, "Reuse existing vectors", repeated.VectorEffect)
+	})
 }
 
 type localTextGrantGate struct {
