@@ -430,11 +430,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
 		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
-		WriteRevision: s.WriteRevision,
-		List:          processingService.MediaProcessingTargets,
-		Key:           func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
-		Process:       processingService.ContinueMediaProcessing,
-		Logger:        logger,
+		List:    processingService.MediaProcessingTargets,
+		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process: processingService.ContinueMediaProcessing,
+		Logger:  logger,
 	}
 	if err := jobSupervisor.StartWorker("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
@@ -1048,7 +1047,7 @@ func startProcessingJobs(
 // newPhotoSidecarBackfill processes originals whose live inputs differ from their receipt.
 func newPhotoSidecarBackfill(s *store.Store, blobs *blob.Store, gate *api.OperationGate, logger *slog.Logger) func(context.Context) error {
 	return func(ctx context.Context) error {
-		lane := &processing.Backfill[store.PhotoSidecarTarget]{Name: "photo-sidecars", Page: 10, IdleDelay: time.Second, WriteRevision: s.WriteRevision, List: func(ctx context.Context, after string, limit int) ([]store.PhotoSidecarTarget, error) {
+		lane := &processing.Backfill[store.PhotoSidecarTarget]{Name: "photo-sidecars", Page: 10, IdleDelay: time.Second, List: func(ctx context.Context, after string, limit int) ([]store.PhotoSidecarTarget, error) {
 			attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			return s.PhotoXMPTargetsAfter(attempt, after, limit)

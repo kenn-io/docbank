@@ -82,14 +82,6 @@ func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
 			targets, err := catalog.MissingEmailTargetsAfter(ctx, emailFingerprint, bodyFingerprint, "", 25)
 			return len(targets) == 0, err
 		}},
-		{"photo sidecars", func() (bool, error) {
-			targets, err := catalog.PhotoXMPTargetsAfter(ctx, "", 25)
-			return len(targets) == 0, err
-		}},
-		{"media continuations", func() (bool, error) {
-			targets, err := catalog.MediaProcessingContinuations(ctx, "test-principal", "", 25)
-			return len(targets) == 0, err
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			revision := catalog.WriteRevision()
@@ -101,6 +93,24 @@ func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
 			}
 		})
 	}
+	t.Run("local text", func(t *testing.T) {
+		fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+		targets, err := setup.targets(t.Context(), "", 50)
+		require.NoError(t, err)
+		for _, target := range targets {
+			require.NoError(t, setup.process(t.Context(), target))
+		}
+		revision := fixture.catalog.WriteRevision()
+		for range 3 {
+			targets, err := setup.targets(t.Context(), "", 50)
+			require.NoError(t, err)
+			require.Empty(t, targets)
+			pending, err := setup.publicationPending(t.Context())
+			require.NoError(t, err)
+			require.False(t, pending)
+			require.Equal(t, revision, fixture.catalog.WriteRevision())
+		}
+	})
 }
 
 func TestDocumentEventEmailActorsMatchPersonIdentity(t *testing.T) {

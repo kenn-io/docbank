@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -119,6 +121,56 @@ func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvi
 	tb.Cleanup(service.Stop)
 	require.NoError(tb, service.grantProfileConsent(tb.Context(), service.profiles["pdf"], nil))
 	return fixture, &LocalTextSetup{Service: service, Selected: "pdf"}
+}
+
+func TestLocalTextIdleStopsCatalogScansAndWakesOnWrite(t *testing.T) { //nolint:paralleltest // The goroutine profile observes the whole process.
+	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	targets, err := setup.targets(ctx, "", 50)
+	require.NoError(t, err)
+	for _, target := range targets {
+		require.NoError(t, setup.process(ctx, target))
+	}
+	// A blocked targets call is visible in the goroutine profile while mu is held.
+	listing := func() bool {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		return bytes.Contains(buf[:n], []byte("(*LocalTextSetup).targets"))
+	}
+	setup.mu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- setup.Backfill(ctx, nil) }()
+	started := assert.Eventually(t, listing, time.Second, 10*time.Millisecond)
+	setup.mu.Unlock()
+	defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) }()
+	require.True(t, started, "the lane starts a real target listing")
+	require.Eventually(t, func() bool {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		for stack := range strings.SplitSeq(string(buf[:n]), "\n\n") {
+			if strings.Contains(stack, "(*LocalTextSetup).Backfill") && strings.Contains(stack, "jobs.Idle") {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+	setup.mu.Lock()
+	before := fixture.catalog.WriteRevision()
+	idle := assert.Never(t, listing, 3200*time.Millisecond, 10*time.Millisecond, "an idle lane must stop listing the unchanged catalog")
+	setup.mu.Unlock()
+	require.Equal(t, before, fixture.catalog.WriteRevision())
+	require.True(t, idle)
+	version, err := fixture.catalog.ContentVersionByID(ctx, fixture.versionID)
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(ctx, fixture.catalog.RootID(), "new.pdf", version.BlobHash, version.Size, "application/pdf")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		setup.mu.Lock()
+		defer setup.mu.Unlock()
+		_, processed := setup.skips[localTextSkipKey{node.CurrentVersionID, node.Name}]
+		return processed
+	}, 12*time.Second, 10*time.Millisecond, "a new version wakes the lane")
 }
 
 func TestLocalTextSkipsIneligibleSweepAndPrunesAbsentInputs(t *testing.T) {
@@ -304,44 +356,6 @@ func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestLocalTextReleasesActivityAfterUncountedCoverageWrite(t *testing.T) {
-	t.Parallel()
-	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	targets, err := setup.targets(ctx, "", 50)
-	require.NoError(t, err)
-	for _, target := range targets {
-		require.NoError(t, setup.process(ctx, target))
-	}
-	written, err := fixture.blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(ctx, fixture.catalog.RootID(), "pending.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	require.NoError(t, setup.process(ctx, store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}))
-	space := setup.Service.profiles[setup.Selected].vectorSpaces["chunk"]
-	source, err := fixture.catalog.CaptureVectorIndexSource(ctx, space)
-	require.NoError(t, err)
-	require.Len(t, source.Members, 1)
-	var active atomic.Int64
-	setup.ActivityBegin = func() { active.Add(1) }
-	setup.ActivityEnd = func() { active.Add(-1) }
-	done := make(chan error, 1)
-	go func() { done <- setup.Backfill(ctx, nil) }()
-	defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) }()
-	require.Eventually(t, func() bool { return active.Load() == 1 }, time.Second, 10*time.Millisecond)
-	member := source.Members[0]
-	revision := fixture.catalog.WriteRevision()
-	require.NoError(t, fixture.catalog.ReplaceVectorIndexUnavailableCoverage(ctx, []store.VectorIndexUnavailableCoverage{{
-		VectorSpaceID: space, SourceManifestChecksum: source.ManifestChecksum,
-		Missing: []store.VectorIndexUnavailableSet{{EmbeddingSetID: member.EmbeddingSetID,
-			VectorSetID: member.VectorSetID, PayloadBlobHash: member.PayloadBlobHash}},
-		ExternalReembeddingRequired: true,
-	}}))
-	require.Equal(t, revision, fixture.catalog.WriteRevision())
-	require.Eventually(t, func() bool { return active.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestLocalTextPurgeSuppressionControlsTargets(t *testing.T) {

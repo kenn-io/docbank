@@ -156,6 +156,65 @@ func TestBackfillSettlesUntilWriteRevisionChanges(t *testing.T) {
 	})
 }
 
+func TestBackfillSettledPassLetsSupervisorSettle(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a")
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.WriteRevision = func() uint64 { return 0 }
+		listCount := func() int {
+			catalog.mu.Lock()
+			defer catalog.mu.Unlock()
+			return catalog.listed
+		}
+		supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+		defer func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) }()
+		require.NoError(t, supervisor.StartWorker("test", backfill.Run))
+		synctest.Wait()
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		listed := listCount()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		require.NoError(t, supervisor.Settle(ctx))
+		require.Equal(t, listed, listCount(), "settling the supervisor does not relist an unchanged catalog")
+	})
+}
+
+func TestBackfillBusyKeepsListingUntilReleased(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog()
+		var busy atomic.Bool
+		busy.Store(true)
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.WriteRevision = func() uint64 { return 0 }
+		backfill.Busy = busy.Load
+		listCount := func() int {
+			catalog.mu.Lock()
+			defer catalog.mu.Unlock()
+			return catalog.listed
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
+		synctest.Wait()
+		first := listCount()
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		require.Greater(t, listCount(), first, "busy work keeps the lane polling")
+		busy.Store(false)
+		time.Sleep(backfillMaxIdleDelay)
+		synctest.Wait()
+		settled := listCount()
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		require.Equal(t, settled, listCount(), "the lane settles once busy work ends")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
+}
+
 func TestBackfillWriteDuringEmptyListingWakesNextScan(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

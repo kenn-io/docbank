@@ -43,6 +43,9 @@ type Backfill[T any] struct {
 	// WriteRevision changes after committed catalog writes. When set, an empty
 	// first page settles the scan until the revision changes. DrainOnce ignores it.
 	WriteRevision func() uint64
+	// Busy reports work whose completion does not change WriteRevision.
+	// A busy lane keeps listing until that work finishes.
+	Busy func() bool
 	// List returns targets ordered by key after the given cursor.
 	List func(ctx context.Context, after string, limit int) ([]T, error)
 	// Key returns the ordering key of one target, which is also its cursor.
@@ -114,7 +117,7 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			if b.DrainOnce && len(retries) == 0 {
 				return nil
 			}
-			if !b.DrainOnce && b.WriteRevision != nil && firstPage && len(retries) == 0 {
+			if !b.DrainOnce && b.WriteRevision != nil && firstPage && len(retries) == 0 && (b.Busy == nil || !b.Busy()) {
 				settled, settledRevision = true, revision
 			}
 			// Only a completed scan reports no work to Settle. Targets in retry

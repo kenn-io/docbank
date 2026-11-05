@@ -300,9 +300,9 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) 
 		}
 	}
 	defer release()
-	// Listing also releases activity after vector index bookkeeping, which does
-	// not advance the store's write revision.
+	// Publication can finish without a counted write, so poll while holding activity.
 	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
+		WriteRevision: setup.Service.catalog.WriteRevision, Busy: func() bool { return holding },
 		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
 			items, err := setup.targets(ctx, after, limit)
 			pending := len(items) > 0
