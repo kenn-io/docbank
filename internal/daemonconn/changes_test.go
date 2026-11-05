@@ -56,6 +56,8 @@ func TestWatchChangesTerminalRecords(t *testing.T) {
 				if tc.contentLength != "" {
 					w.Header().Set("Content-Length", tc.contentLength)
 				}
+				// Match the daemon's header flush so even an empty stream stays active until read.
+				w.(http.Flusher).Flush()
 				_, _ = io.WriteString(w, tc.body)
 			}))
 			_, err := daemonconn.New(server.URL, "key").WatchChanges(t.Context(), "", false, nil, func(store.VaultChange) error { t.Fatal("control record delivered as change"); return nil })
