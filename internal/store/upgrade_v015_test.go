@@ -304,6 +304,9 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				var current int
 				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata`).Scan(&current))
 				assert.Equal(t, currentStorageSchemaVersion, current)
+				var indexes int
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name IN ('rendition_attachments_build','document_people_generations_version')`).Scan(&indexes))
+				assert.Equal(t, 2, indexes, "opening a released vault creates the current access indexes")
 				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				require.Nil(t, asset.HiddenAt)
