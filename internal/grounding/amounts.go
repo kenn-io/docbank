@@ -31,8 +31,15 @@ func currencyAt(rs []rune, start int) (int, string) {
 // Amounts use comma groups and a decimal point. Other separator conventions
 // remain literal rather than inferring a locale from the currency marker.
 func amountValue(s string) string {
+	if _, fraction, decimal := strings.Cut(s, "."); decimal && len(fraction) > 2 {
+		return ""
+	}
+	return decimalValue(s)
+}
+
+func decimalValue(s string) string {
 	integer, fraction, decimal := strings.Cut(s, ".")
-	if s == "" || decimal && (fraction == "" || len(fraction) > 2) {
+	if s == "" || decimal && fraction == "" {
 		return ""
 	}
 	if strings.Contains(integer, ",") {

@@ -250,6 +250,7 @@ resource links, is capped at 1 MiB.
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `find_conflicts` | Uses the query, profile, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -395,6 +396,57 @@ sanitized JSON-RPC internal error. Stderr records the operation and a fixed
 error category for diagnosis. Neither path includes host paths, SQL, provider
 secrets, daemon keys, or unrequested document text.
 
+### Find differing figures
+
+Call `find_conflicts` with search terms and a source selector. For example:
+
+```json
+{"name":"find_conflicts","arguments":{"query":"cooling period","profile":"default","filters":{}}}
+```
+
+If matching sentences say "The cooling period is 7 days." and "The cooling
+period is 15 days.", the result is `CONFLICTING`. Each conflict includes the
+figures, their sentences, and passage references starting at 1. Each passage
+includes its document identity, evidence IDs, and `modified_at`, the catalog
+modification time, not a date from the source text.
+
+The tool uses lexical search, so it needs no embedding provider. It rejects
+`mode`, `binding_id`, `explain`, and `rerank`. Its result limit is capped at 20.
+
+It compares money in the same currency, percentages written as `%` or `percent`,
+and durations in the same unit from minutes through years. Sentences must match
+exactly after lowercasing, collapsing whitespace, and masking the figure and its
+unit. Each sentence must contain exactly one figure. A second figure, including
+a date, makes the sentence ambiguous. The text outside the figure and its unit
+must contain at least one letter.
+Headings, titles, and neighbouring paragraphs are outside the match, so
+sentences that differ only in that context can appear as conflicts to inspect,
+while list items joined to a sentence by hard wraps produce a sentence with
+several figures, which is skipped.
+
+The tool reads each hit's retained Markdown or original plain text through a
+verified read. Each quote is a whole sentence from that source, located by the
+search excerpt. It skips truncated renditions, sources over 256 KiB, unreadable
+sources, and hits whose excerpt is absent from or repeated in the source. A cancelled call fails
+rather than returning partial results.
+
+Every sentence touched by the excerpt is eligible, including sentences beside
+the query match. Line breaks join hard-wrapped text; blank lines and lines
+containing only a code fence end paragraphs and keep sentences separate.
+Sentences need a final `.`, `!`, or `?`, optionally followed by a closing quote or
+bracket, and must fit within 512 characters. A trailing `...` or `…` marks an
+incomplete sentence, as does a final period after a capital letter followed by
+up to three letters, such as `Dr.` or `Ltd.`.
+Name-only evidence is skipped. A passage stating different values for the same
+matching sentence drops that comparison. `compared: false` marks hits whose
+eligible figures matched no other hit, so open those sources.
+
+`NO_CONFLICT` means at least one matching sentence could be compared across
+passages and all comparable figures agreed. `NOT_COMPARABLE` means none could be
+lined up. These statuses cover only the retrieved, eligible sentences. Check
+`truncated` and open the sources to verify disagreements. The tool chooses no
+winner.
+
 ### Answer questions
 
 `answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
@@ -443,7 +495,7 @@ PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
 ## Resources and rendition windows
 
 `resources/list` is intentionally empty. `list_documents`,
-`search_documents`, `answer_question`, and `get_document` attach resource links for each active
+`search_documents`, `find_conflicts`, `answer_question`, and `get_document` attach resource links for each active
 rendition, and `resources/templates/list` publishes one RFC 6570 template.
 
 The canonical rendition URI is:
