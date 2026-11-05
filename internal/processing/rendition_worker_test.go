@@ -1262,7 +1262,10 @@ func TestRenditionWorkerRefreshesStaleLexicalGenerationWithoutProviderEgress(t *
 	assert.Equal(t, store.RenditionJobCompleted, current.State)
 	activeGeneration, err := fixture.catalog.ActiveLexicalGeneration(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, renditionJobGenerationID(job.ID, current.ClaimEpoch), activeGeneration.ID)
+	assert.Equal(t, 1, activeGeneration.BuildCount)
+	active, err := fixture.catalog.ActiveRendition(t.Context(), fixture.versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, job.ID, active.Build.ID)
 }
 
 var workerSourceBytes = []byte("synthetic private-free source")

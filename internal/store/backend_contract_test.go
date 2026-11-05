@@ -727,12 +727,12 @@ var backendSuites = []backendSuite{
 			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newPostgresQueryStore)
 		}},
 		{"PublishRenditionJobFencesLeaseTheft", func(t *testing.T) { t.Helper(); checkPublishRenditionJobFencesLeaseTheft(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPublishRenditionJobFencesLeaseTheft(t, newPostgresQueryStore) }},
-		{"RenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress", func(t *testing.T) {
+		{"RenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress", func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t, newTestStore)
+			checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t, newTestStore)
 		}, func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t, newPostgresQueryStore)
+			checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t, newPostgresQueryStore)
 		}},
 		{"PublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead", func(t *testing.T) {
 			t.Helper()

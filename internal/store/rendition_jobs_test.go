@@ -1492,7 +1492,9 @@ func checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t *testing.T, 
 	require.NoError(t, err)
 	assert.Equal(t, 2, publication.PublishedWaiterCount)
 	assert.Zero(t, publication.RejectedWaiterCount)
-	assert.Equal(t, generationID, publication.LexicalGenerationID)
+	activeGeneration, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, activeGeneration.ID, publication.LexicalGenerationID)
 	first, err := s.ActiveRendition(t.Context(), versions[0], baseProfile.Fingerprint)
 	require.NoError(t, err)
 	second, err := s.ActiveRendition(t.Context(), versions[1], embeddingProfile.Fingerprint)
@@ -1553,7 +1555,7 @@ func checkPublishRenditionJobFencesLeaseTheft(t *testing.T, open func(*testing.T
 	require.NoError(t, err)
 }
 
-func checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t *testing.T, open func(*testing.T) *Store) {
+func checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
 	s := open(t)
@@ -1608,29 +1610,22 @@ func checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(
 	_, err = s.PublishRenditionJob(t.Context(), secondClaim, now.Add(4*time.Second))
 	require.NoError(t, err)
 
-	_, err = s.PublishRenditionJob(t.Context(), firstClaim, now.Add(5*time.Second))
-	require.ErrorIs(t, err, ErrLexicalGenerationStale)
-	require.NoError(t, s.MarkRenditionJobRetry(
-		t.Context(), firstClaim, RenditionFailureTransient,
-		now.Add(6*time.Second), now.Add(7*time.Second)))
-	var providerStarted bool
-	require.NoError(t, s.db.QueryRowContext(t.Context(),
-		`SELECT provider_started FROM rendition_jobs WHERE job_id=$1`, firstJob.ID,
-	).Scan(&providerStarted))
-	assert.True(t, providerStarted, "lexical-only retry must retain original egress authority")
-
-	recoveredClaim, err := s.ClaimRenditionJob(
-		t.Context(), firstJob.ID, "worker:fresh-generation", now.Add(7*time.Second), time.Minute)
-	require.NoError(t, err)
-	freshGenerationID := testSHA256([]byte("concurrent-fresh-generation"))
-	_, err = s.StageRenditionJobGeneration(
-		t.Context(), recoveredClaim, freshGenerationID, now.Add(8*time.Second))
-	require.NoError(t, err)
-	_, err = s.PublishRenditionJob(t.Context(), recoveredClaim, now.Add(9*time.Second))
+	publication, err := s.PublishRenditionJob(t.Context(), firstClaim, now.Add(5*time.Second))
 	require.NoError(t, err)
 	active, err := s.ActiveRendition(t.Context(), versions[0], profile.Fingerprint)
 	require.NoError(t, err)
 	assert.Equal(t, firstJob.ID, active.Build.ID)
+	other, err := s.ActiveRendition(t.Context(), versions[1], profile.Fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, secondJob.ID, other.Build.ID, "publication preserves the competing head")
+	generation, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, generation.ID, publication.LexicalGenerationID)
+	assert.Equal(t, 2, generation.BuildCount, "the serving generation includes both builds")
+	completed, err := s.RenditionJobByID(t.Context(), firstJob.ID)
+	require.NoError(t, err)
+	assert.Equal(t, RenditionJobCompleted, completed.State)
+	assert.Equal(t, 1, completed.ProviderAttempts)
 }
 
 func checkPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t *testing.T, open func(*testing.T) *Store) {
