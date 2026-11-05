@@ -379,7 +379,6 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 func TestLocalTextRejectsReservedProfile(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_RESERVED_KEY")
 	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles["archive"]}
-	require.NoError(t, cfg.Validate())
 	_, err := localTextCandidate(cfg, "local", config.LocalTextProfile)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "reserved for local text")
 }

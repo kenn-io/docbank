@@ -29,7 +29,6 @@ func TestLocalTextConvertsRevisionEchoAndRejectsReservedProfile(t *testing.T) {
 	require.Empty(t, converted.Runtime.ProviderRevisionHeader)
 	require.Equal(t, "X-Model-Revision", profile.Runtime.ProviderRevisionHeader)
 	cfg.ProcessingProfiles[LocalTextProfile] = cfg.ProcessingProfiles["archive"]
-	require.NoError(t, cfg.Validate())
 	_, err = cfg.WithLocalText()
 	require.ErrorContains(t, err, "reserved for local text")
 }

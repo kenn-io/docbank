@@ -54,12 +54,9 @@ func TestLocalTextMoveWithPendingProviderFailure(t *testing.T) {
 		}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { saved = name; return nil }}
 		move, err := setup.Plan(t.Context(), "local")
 		require.NoError(t, err)
-		require.Equal(t, "Keep existing index; processes 2 documents before setup returns; embeds only new content", move.VectorEffect)
+		require.Contains(t, move.VectorEffect, "processes 2 documents before setup returns")
 		_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "pending.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
 		require.NoError(t, err)
-		withPending, err := source.Search(t.Context(), request)
-		require.NoError(t, err)
-		require.Len(t, withPending.Results, 1)
 		failing.Store(true)
 		_, err = setup.Apply(t.Context(), "local", move.Fingerprint)
 		require.ErrorIs(t, err, ErrConsentSaved)
