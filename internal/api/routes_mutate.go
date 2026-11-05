@@ -124,6 +124,9 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return FromStoreError(err)
 			}
+			if g.afterRouteMutation != nil {
+				g.afterRouteMutation()
+			}
 			out = nodeOutputAt(n, path)
 			return nil
 		})
@@ -321,6 +324,9 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 			n, path, err := d.Store.Restore(ctx, in.ID, rev)
 			if err != nil {
 				return FromStoreError(err)
+			}
+			if g.afterRouteMutation != nil {
+				g.afterRouteMutation()
 			}
 			out = nodeOutputAt(n, path)
 			return nil

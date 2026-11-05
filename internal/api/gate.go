@@ -24,9 +24,8 @@ type OperationGate struct {
 	admission    sync.RWMutex
 	maintenance  int
 
-	// afterRouteMutation is a test hook. It runs after a route mutation
-	// commits and before its handler builds the response, so a test can
-	// commit a competing change inside that window.
+	// afterRouteMutation is a test hook for move and restore responses. It
+	// runs after the store commits and before the handler builds its response.
 	afterRouteMutation func()
 }
 
@@ -81,13 +80,7 @@ func (g *OperationGate) mutate(ctx context.Context, fn func() error) error {
 		return fmt.Errorf("acquiring route mutation gate: %w", err)
 	}
 	defer g.mu.Release(1)
-	if err := fn(); err != nil {
-		return err
-	}
-	if g.afterRouteMutation != nil {
-		g.afterRouteMutation()
-	}
-	return nil
+	return fn()
 }
 
 func (g *OperationGate) maintainContext(ctx context.Context, fn func() error) error {

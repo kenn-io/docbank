@@ -1,8 +1,7 @@
 package api
 
-// SetAfterRouteMutation installs a hook that runs after each successful route
-// mutation and before its handler builds the response. Install it before the
-// server starts handling requests.
+// SetAfterRouteMutation installs a hook after a move or restore commits and
+// before its handler builds the response. Install it before serving requests.
 func SetAfterRouteMutation(g *OperationGate, hook func()) {
 	g.afterRouteMutation = hook
 }
