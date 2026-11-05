@@ -1607,6 +1607,8 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			return retrieval.Report{}, ErrProfileNotConfigured
 		}
 		searchScope, err = service.catalog.NormalizeProcessingSearchFilters(ctx, *request.AllLive)
+	} else if len(request.Fence.ContentVersionIDs) == 0 {
+		profile, err = service.vaultProfile(request.Profile, request.Fence.VaultUID)
 	} else {
 		profile, ids, err = service.profileFence(request.Profile, request.Fence)
 		searchScope.ContentVersionIDs = ids
@@ -1618,22 +1620,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	semantic := prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid
-	if request.AllLive != nil && semantic && len(profile.portable.Embeddings) != 0 {
-		exists, err := service.catalog.LiveSearchScopeExists(ctx, searchScope)
-		if err != nil {
-			return retrieval.Report{}, err
-		}
-		if !exists {
-			binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
-			if err != nil {
-				return retrieval.Report{}, err
-			}
-			return prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
-		}
-	}
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
+	}
+	if report, empty, err := service.searchEmptyScope(ctx, request, profile, prepared, searchScope); empty || err != nil {
+		return report, err
 	}
 	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
 		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
@@ -1668,6 +1659,34 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	report.RequestedMode = prepared.requestedMode
 	return report, nil
+}
+
+// searchEmptyScope answers an empty explicit fence, or a semantic all-live scope
+// with no live file, without running retrieval or sending query text anywhere.
+func (service *Service) searchEmptyScope(ctx context.Context, request SearchRequest, profile configuredProfile,
+	prepared preparedSearch, scope store.SearchOptions,
+) (retrieval.Report, bool, error) {
+	semantic := prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid
+	if (request.AllLive == nil && len(scope.ContentVersionIDs) != 0) || (request.AllLive != nil && !semantic) {
+		return retrieval.Report{}, false, nil
+	}
+	if request.AllLive != nil {
+		exists, err := service.catalog.LiveSearchScopeExists(ctx, scope)
+		if err != nil || exists {
+			return retrieval.Report{}, false, err
+		}
+	}
+	bindingRequired := false
+	if semantic {
+		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+		if err != nil {
+			return retrieval.Report{}, true, err
+		}
+		bindingRequired = binding.Activation == document.EmbeddingRequired
+	}
+	report, err := prepared.searcher.SearchEmpty(ctx, prepared.mode, bindingRequired)
+	report.RequestedMode = prepared.requestedMode
+	return report, true, err
 }
 
 // SearchModes resolves the modes that Search will report without executing a
@@ -2099,15 +2118,23 @@ func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
 }
 
 func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
-	profile, ok := service.profiles[name]
-	if !ok {
-		return configuredProfile{}, nil, ErrProfileNotConfigured
-	}
-	if fence.VaultUID != service.catalog.VaultID() {
-		return configuredProfile{}, nil, ErrForeignVault
+	profile, err := service.vaultProfile(name, fence.VaultUID)
+	if err != nil {
+		return configuredProfile{}, nil, err
 	}
 	ids, err := normalizeFenceIDs(fence.ContentVersionIDs)
 	return profile, ids, err
+}
+
+func (service *Service) vaultProfile(name, vaultUID string) (configuredProfile, error) {
+	profile, ok := service.profiles[name]
+	if !ok {
+		return configuredProfile{}, ErrProfileNotConfigured
+	}
+	if vaultUID != service.catalog.VaultID() {
+		return configuredProfile{}, ErrForeignVault
+	}
+	return profile, nil
 }
 
 func (service *Service) resolve(ctx context.Context, selector Selector) (store.Node, store.ContentVersion, configuredProfile, error) {

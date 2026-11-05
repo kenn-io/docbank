@@ -414,7 +414,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		OperationID: "validateDocumentSearch", Method: http.MethodPost,
 		Path: "/api/v1/search/validate", Summary: "Validate document-search semantics without executing a search",
 	}, func(ctx context.Context, input *searchValidationInput) (*searchValidationOutput, error) {
-		if _, _, err := validateDocumentSearch(ctx, d.Processing, input.Body); err != nil {
+		if err := validateDocumentSearch(ctx, d.Processing, input.Body); err != nil {
 			return nil, err
 		}
 		return &searchValidationOutput{Body: DocumentSearchValidation{Valid: true}}, nil
@@ -424,7 +424,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Path: "/api/v1/search", Summary: "Search document versions by fence or live scope",
 		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
-		report, err := searchDocuments(ctx, d.Processing, d.Store, input.Body)
+		report, err := searchDocuments(ctx, d.Processing, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -872,43 +872,25 @@ func resolveDocumentSourceFence(ctx context.Context, service *processing.Service
 	}, nil
 }
 
-func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) (string, string, error) {
+func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) error {
 	if service == nil {
-		return "", "", processingUnavailable()
+		return processingUnavailable()
 	}
-	requested, actual, err := service.SearchModes(ctx, processing.SearchRequest{Query: input.Query,
+	if err := service.ValidateSearch(ctx, processing.SearchRequest{Query: input.Query,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
-		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank})
-	if err != nil {
-		return "", "", fromProcessingError(err)
+		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank}); err != nil {
+		return fromProcessingError(err)
 	}
-	return string(requested), string(actual), nil
+	return nil
 }
 
-func searchDocuments(ctx context.Context, service *processing.Service, st *store.Store, input DocumentSearchRequest) (DocumentSearchReport, error) {
+func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
 	}
-	if input.Scope == nil && len(input.Fence.ContentVersionIDs) == 0 {
-		if input.Fence.VaultUID == "" {
-			return DocumentSearchReport{}, NewError(http.StatusUnprocessableEntity, "validation", "document search requires a source fence or an all-live scope")
-		}
-		if st == nil || input.Fence.VaultUID != st.VaultID() {
-			return DocumentSearchReport{}, fromProcessingError(processing.ErrForeignVault)
-		}
-		requested, actual, err := validateDocumentSearch(ctx, service, DocumentSearchValidationRequest{Query: input.Query, Mode: input.Mode, Profile: input.Profile, Limit: input.Limit, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: input.ContentFirst})
-		if err != nil {
-			return DocumentSearchReport{}, err
-		}
-		if input.MediaSources != nil {
-			return DocumentSearchReport{}, fromProcessingError(processing.ErrMediaSearchInvalid)
-		}
-		report := DocumentSearchReport{RequestedMode: requested, ActualMode: actual, Coverage: DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []DocumentSearchResult{}, Trace: []DocumentSearchTrace{}}
-		if input.Rerank {
-			report.Reranking = &DocumentSearchRerankingReceipt{Outcome: "skipped"}
-		}
-		return report, nil
+	if input.Scope == nil && len(input.Fence.ContentVersionIDs) == 0 && input.Fence.VaultUID == "" {
+		return DocumentSearchReport{}, NewError(http.StatusUnprocessableEntity, "validation", "document search requires a source fence or an all-live scope")
 	}
 	var allLive *store.SearchOptions
 	if input.Scope != nil {
