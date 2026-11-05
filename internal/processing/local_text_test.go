@@ -165,7 +165,7 @@ func TestLocalTextSelection(t *testing.T) {
 	plan, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.Equal(t, "archive", plan.Profile, "skip an unindexed recipe")
-	require.Equal(t, "Keep existing index", plan.VectorEffect)
+	require.Equal(t, "Keep existing index; processes 2 documents before setup returns; embeds only new content", plan.VectorEffect)
 	setup.Service, err = setup.Candidate("local", "archive")
 	require.NoError(t, err)
 	setup.Selected = "archive"
@@ -181,7 +181,7 @@ func TestLocalTextSelection(t *testing.T) {
 	fallback, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.Equal(t, "aaa-unused", fallback.Profile, "a saved fallback never outranks an indexed configured recipe")
-	require.Equal(t, "Keep existing index; replaces local-text for new imports", fallback.VectorEffect)
+	require.Equal(t, "Keep existing index; replaces local-text for new imports; processes 2 documents before setup returns; embeds only new content", fallback.VectorEffect)
 }
 
 type localTextGrantGate struct {

@@ -46,21 +46,24 @@ func (c Config) WithLocalText() (Config, error) {
 		MaxResponseBytes: 64 << 20, MaxUnits: 1, RequestedArtifacts: []string{"structured_evidence"},
 		TrustBoundary: string(descriptor.TrustBoundary), UploadOptionsFingerprint: h("render-upload"),
 	}
-	c.EmbeddingProfiles[LocalTextProfile] = EmbeddingProfileConfig{ //nolint:gosec // Stable anonymous binding identities contain no credentials.
-		Activation: "optional", AuthorizationFingerprint: h("embed-authorization"), CompatibilityID: "nomic/search/v1",
-		CredentialBinding: "credential:local-text", DescriptorID: openaicompat.ProviderID,
-		Dimensions: 768, DisclosureFingerprint: h("embed-disclosure"), DocumentFormatter: openaicompat.DocumentFormatterV1,
+	embedding, err := LocalTextEmbedding(EmbeddingProfileConfig{
+		Activation: "optional", CompatibilityID: "nomic/search/v1", DescriptorID: openaicompat.ProviderID,
+		Dimensions: 768, DocumentFormatter: openaicompat.DocumentFormatterV1,
 		QueryFormatter: openaicompat.QueryFormatterV1, InputKind: "rendition_chunk", MaxBatchItems: 32,
 		MaxInputBytes: 1 << 20, MaxInputTokens: 1024, MaxResponseBytes: 32 << 20,
 		Metric: "cosine", Model: "nomic-embed-text", Normalization: "unit_length", ScalarEncoding: "float32",
-		TrustBoundary: string(document.EmbeddingTrustOperatorNetwork), ModelInput: EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)},
+		ModelInput: EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)},
 		Chunk: EmbeddingChunkConfig{ //nolint:gosec // This fingerprint identifies chunk policy.
 			ContextFingerprint: h("chunk-context"), Formatter: "chunk/v1", MaxTokens: 1024,
 			OverlapTokens: 128, Tokenizer: "unicode-runes", TokenizerRevision: "v1", TruncationPolicy: "reject_indivisible"},
-		Runtime: &EmbeddingRuntimeConfig{Managed: true, AdapterContract: "docbank-openai-compatible-embeddings/v1",
-			ModelRevision: "nomic-embed-text-v1.5", DeploymentEpoch: "nomic-embed-text-v1.5",
+		Runtime: &EmbeddingRuntimeConfig{AdapterContract: "docbank-openai-compatible-embeddings/v1",
+			ModelRevision:  "nomic-embed-text-v1.5",
 			RequestTimeout: Duration(30 * time.Second), MaxRequestBytes: 2 << 20},
+	}, "")
+	if err != nil {
+		return c, err
 	}
+	c.EmbeddingProfiles[LocalTextProfile] = embedding
 	c.RetrievalProfiles[LocalTextProfile] = RetrievalProfileConfig{LexicalLimit: 100, VectorLimit: 100}
 	c.ProcessingProfiles[LocalTextProfile] = ProcessingProfileConfig{
 		Rendition: LocalTextProfile, Embeddings: []string{LocalTextProfile}, Retrieval: LocalTextProfile,

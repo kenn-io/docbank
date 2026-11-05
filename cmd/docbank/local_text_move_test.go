@@ -221,6 +221,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 			require.NoError(t, err)
 			require.Equal(t, name, plan.Profile)
+			require.Equal(t, "Keep existing index; replaces local-text for new imports; processes 2 documents before setup returns; embeds only new content", plan.VectorEffect)
 			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
 			require.NoError(t, err)
 			require.NoError(t, connection.Close())

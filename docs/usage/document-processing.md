@@ -29,9 +29,9 @@ The command previews the profile, model, server, and provider disclosures, then 
 
 If another model or text format requires a new built-in index, the preview reports a rebuild before downloading or starting work. Vaults without compatible indexed recipes use the built-in `local-text` profile with Nomic and the plaintext extractor. When no configured recipe moves, an existing saved built-in index continues adding missing content. A moved recipe replaces that built-in selection for new imports. Mixed recipes keep image and other bindings on their configured providers. Setup moves one profile; other configured profiles still need their providers. Restart restores the saved profile, including existing watches.
 
-To return to your configured providers, delete `local-text.json` beside the vault's `config.toml` and run `docbank daemon restart`.
+To return to your configured providers, delete `local-text.json` beside the vault's `config.toml` and run `docbank daemon restart`. Documents added or changed while local indexing was selected need processing under the configured profile.
 
-Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background and resumes after a daemon restart. Revoking processing consent stops provider calls.
+Moving a recipe processes the previewed document count before setup returns. Restart resumes background indexing for the saved profile. Revoking processing consent stops provider calls.
 
 Both `--server auto` and `--server local` use the shared per-user `kennembed` server. Discovery uses its per-user runtime record. When the server or model is missing, the command downloads them from Kit's shared installation and prints the download size first. An already installed server downloads nothing. The daemon's changing loopback port keeps the same consent grant.
 

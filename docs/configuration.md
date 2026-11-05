@@ -1095,11 +1095,7 @@ configuration, or mismatched descriptor.
 
 #### Local text indexing
 
-Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile and all provider disclosures, downloads any missing server and model files, and needs no confirmation. It starts the shared server, grants consent, saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, and restarts the daemon. Your TOML stays intact.
-
-Setup selects an executable text profile with existing `nomic-embed-text` vectors in 768 dimensions. Its comparison metric, normalization setting, and document and query formatting stay intact. It keeps an approved configured recipe; otherwise, it picks the first indexed compatible recipe in name order. Moving that recipe to Kit's shared server keeps the profile name, revision labels, extractor, chunks, and retained vectors. A daemon restart restores the saved profile for automatic search and existing watches. When another model requires a new built-in index, setup previews a rebuild before downloads or provider requests, using the `local-text` profile and plaintext extractor. Vaults without compatible indexed recipes use that built-in profile too. When no configured recipe moves, an existing saved built-in index continues adding missing content. A moved recipe replaces that built-in selection for new imports. Image and other bindings keep their configured providers. Setup moves one profile; other configured profiles continue using their providers. Both `auto` and `local` select Kit's shared per-user server.
-
-The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
+`docbank processing local --server local` saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, leaving TOML intact. See [document processing](usage/document-processing.md#set-up-local-text-search) for setup, profile selection, consent, and rollback.
 
 #### Runtime settings
 

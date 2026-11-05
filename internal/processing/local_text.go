@@ -59,7 +59,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 	var service *Service
 	names := slices.Sorted(maps.Keys(setup.Service.profiles))
 	if setup.Selected != "" && setup.Selected != config.LocalTextProfile {
-		names = append([]string{setup.Selected}, names...)
+		names = append([]string{setup.Selected}, slices.DeleteFunc(names, func(name string) bool { return name == setup.Selected })...)
 	}
 	for _, candidate := range names {
 		if candidate == config.LocalTextProfile {
@@ -144,10 +144,33 @@ func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool
 
 func (setup *LocalTextSetup) Plan(ctx context.Context, mode string) (LocalTextPlan, error) {
 	plan, service, err := setup.review(ctx, mode)
-	if service != nil {
-		service.Stop()
+	if err != nil {
+		return plan, err
 	}
-	return plan, err
+	defer service.Stop()
+	if plan.Profile != config.LocalTextProfile {
+		profile := service.profiles[plan.Profile]
+		bindings := 0
+		for _, binding := range profile.portable.Embeddings {
+			if binding.InputKind != document.EmbeddingInputImage {
+				bindings++
+			}
+		}
+		count, after := 0, ""
+		for bindings > 0 {
+			items, err := service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000)
+			if err != nil {
+				return plan, err
+			}
+			count += len(items)
+			if len(items) < 1000 {
+				break
+			}
+			after = items[len(items)-1].ContentVersionID
+		}
+		plan.VectorEffect += fmt.Sprintf("; processes %d documents before setup returns; embeds only new content", count)
+	}
+	return plan, nil
 }
 
 func (setup *LocalTextSetup) Apply(ctx context.Context, mode, fingerprint string) (LocalTextPlan, error) {
