@@ -194,6 +194,9 @@ func configureExternalRendition(cfg config.Config, name string,
 	if err != nil {
 		return nil, disclosure, err
 	}
+	if configured.AdapterContract == config.MistralOCRAdapterContract && mistralOCRTestClient != nil {
+		client = mistralOCRTestClient(client)
+	}
 	provider, err := adapter.newProvider(secrets, client)
 	if err != nil {
 		return nil, disclosure, err
@@ -336,6 +339,10 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 // Zero keeps the client default. In-process tests set one nanosecond so a
 // transient failure is retried without waiting on the real clock.
 var mistralMaxRetryDelay time.Duration
+
+// mistralOCRTestClient lets in-process tests observe the provider attempt.
+// Production leaves it nil.
+var mistralOCRTestClient func(*http.Client) *http.Client
 
 func configureVision(cfg config.Config, name string, registered map[string]registeredRenditionProvider) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure

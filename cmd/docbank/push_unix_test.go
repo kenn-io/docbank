@@ -42,7 +42,7 @@ func TestPushInterruptPrintsSummary(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("synthetic"), 0600))
 			args := []string{dir, "--to", server.URL, "--name", "laptop", "--dest", "/archive"}
 			if test.watch {
-				args = append(args, "--watch", "--settle-time", "1ms", "--scan-interval", "10ms")
+				args = append(args, "--watch", "--capture-on-change")
 			}
 			cmd := newPushCmd()
 			cmd.SetArgs(args)

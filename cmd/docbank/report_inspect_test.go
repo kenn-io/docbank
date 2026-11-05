@@ -38,10 +38,10 @@ func createCLIReport(t *testing.T) (report.Summary, report.Request) {
 	source := writeSourceFile(t, "synthetic-report.txt", "synthetic alpha")
 	_, err := runCLI(t, "add", source, "--dest", "/")
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		out, searchErr := runCLI(t, "search", "alpha")
-		return searchErr == nil && strings.Contains(out, "/synthetic-report.txt")
-	}, 15*time.Second, 25*time.Millisecond, "synthetic text was not searchable")
+	settleDaemon(t)
+	out, err := runCLI(t, "search", "alpha")
+	require.NoError(t, err)
+	require.Contains(t, out, "/synthetic-report.txt", "synthetic text was not searchable")
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	node, err := connection.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{

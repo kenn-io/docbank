@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -180,11 +179,12 @@ func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
 	require.NoError(t, err, output)
 	var accepted api.StorageOperation
 	require.NoError(t, json.Unmarshal([]byte(output), &accepted))
+	settleDaemon(t)
+	shown, err := runCLI(t, "jobs", "show", accepted.ID, "--json")
+	require.NoError(t, err)
 	var completed api.StorageOperation
-	require.Eventually(t, func() bool {
-		shown, showErr := runCLI(t, "jobs", "show", accepted.ID, "--json")
-		return showErr == nil && json.Unmarshal([]byte(shown), &completed) == nil && completed.State == "completed"
-	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, json.Unmarshal([]byte(shown), &completed))
+	require.Equal(t, "completed", completed.State)
 	receiptJSON, err := json.Marshal(completed.Receipt)
 	require.NoError(t, err)
 	var receipt store.PhotoImportReceipt

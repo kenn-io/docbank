@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
@@ -200,15 +199,11 @@ func exportReportOriginals(t *testing.T, originals []reportOriginal) (string, bu
 	_, err = runCLI(t, "export", "start", plan.ID, "--fingerprint", plan.Fingerprint,
 		"--operation-id", jobID, "--json")
 	require.NoError(t, err)
-	var job bundle.Job
-	require.Eventually(t, func() bool {
-		out, err = runCLI(t, "export", "status", jobID, "--json")
-		if err == nil {
-			err = json.Unmarshal([]byte(out), &job)
-		}
-		return err != nil || job.State == "completed" || job.State == "failed" || job.State == "canceled"
-	}, 30*time.Second, 25*time.Millisecond)
+	settleDaemon(t)
+	out, err = runCLI(t, "export", "status", jobID, "--json")
 	require.NoError(t, err)
+	var job bundle.Job
+	require.NoError(t, json.Unmarshal([]byte(out), &job))
 	require.Equal(t, "completed", job.State, job.Failure)
 	path := filepath.Join(t.TempDir(), "originals.zip")
 	out, err = runCLI(t, "export", "download", jobID, path, "--json")

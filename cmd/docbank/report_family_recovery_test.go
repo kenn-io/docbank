@@ -211,6 +211,7 @@ func assertRecoveryHandleUnavailable(t *testing.T, id string) {
 
 func maintainFamilyStorage(t *testing.T) {
 	t.Helper()
+	measureRepackAgesAhead(t)
 	// Repack selects packs with fewer than half their entries live. One dead
 	// original among the fixture's rendition artifacts would never be selected.
 	for i := range 32 {

@@ -413,7 +413,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return service, err
 	}
 	if choice.Profile != "" {
-		if err := jobSupervisor.Start("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
+		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
 			return err
 		}
 	}

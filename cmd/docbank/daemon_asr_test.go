@@ -87,6 +87,8 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			})
 			require.NoError(t, err)
 			require.Equal(t, "queued", queued.OperationState)
+			// The worker picks up the queued work now instead of at its interval.
+			wakeDaemon(t)
 			select {
 			case <-provider.resultStarted:
 			case <-time.After(10 * time.Second):
@@ -97,14 +99,9 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			assert.NotEqual(t, "succeeded", pending.OperationState)
 			close(provider.resultGate)
 
-			var completed api.MediaReceipt
-			require.EventuallyWithT(t, func(collect *assert.CollectT) {
-				var statusErr error
-				completed, statusErr = daemon.MediaStatus(t.Context(), receipt.SourceID)
-				require.NoError(collect, statusErr)
-				require.Equal(collect, "succeeded", completed.OperationState, "%+v", completed)
-				require.Equal(collect, "transcribed", completed.CoverageState)
-			}, 20*time.Second, 20*time.Millisecond)
+			completed := settledMediaStatus(t, daemon, receipt.SourceID)
+			require.Equal(t, "succeeded", completed.OperationState, "%+v", completed)
+			require.Equal(t, "transcribed", completed.CoverageState)
 			require.Equal(t, receipt.ContentVersionID, completed.ContentVersionID)
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())
@@ -170,12 +167,9 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 			OperationID: "00000000-0000-4000-8000-000000000612", Processing: &api.MediaProcessingBody{Profile: "asr"},
 		})
 		require.NoError(t, err)
-		require.EventuallyWithT(t, func(collect *assert.CollectT) {
-			status, statusErr := daemon.MediaStatus(t.Context(), receipt.SourceID)
-			require.NoError(collect, statusErr)
-			require.Equal(collect, queued.OperationID, status.OperationID)
-			require.Equal(collect, "failed", status.OperationState)
-		}, 10*time.Second, 20*time.Millisecond)
+		status := settledMediaStatus(t, daemon, receipt.SourceID)
+		require.Equal(t, queued.OperationID, status.OperationID)
+		require.Equal(t, "failed", status.OperationState)
 		assert.Zero(t, provider.requests.Load())
 	})
 
@@ -192,12 +186,9 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 			OperationID: "00000000-0000-4000-8000-000000000622", Processing: &api.MediaProcessingBody{Profile: "asr"},
 		})
 		require.NoError(t, err)
-		require.EventuallyWithT(t, func(collect *assert.CollectT) {
-			status, statusErr := daemon.MediaStatus(t.Context(), receipt.SourceID)
-			require.NoError(collect, statusErr)
-			require.Equal(collect, queued.OperationID, status.OperationID)
-			require.Equal(collect, "failed", status.OperationState)
-		}, 10*time.Second, 20*time.Millisecond)
+		status := settledMediaStatus(t, daemon, receipt.SourceID)
+		require.Equal(t, queued.OperationID, status.OperationID)
+		require.Equal(t, "failed", status.OperationState)
 	})
 
 	t.Run("retry is durable after a transient poll error", func(t *testing.T) {
@@ -213,13 +204,10 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 			OperationID: "00000000-0000-4000-8000-000000000632", Processing: &api.MediaProcessingBody{Profile: "asr"},
 		})
 		require.NoError(t, err)
-		require.EventuallyWithT(t, func(collect *assert.CollectT) {
-			status, statusErr := daemon.MediaStatus(t.Context(), receipt.SourceID)
-			require.NoError(collect, statusErr)
-			require.Equal(collect, queued.OperationID, status.OperationID)
-			require.Equal(collect, "succeeded", status.OperationState)
-			require.Equal(collect, "transcribed", status.CoverageState)
-		}, 10*time.Second, 20*time.Millisecond)
+		status := settledMediaStatus(t, daemon, receipt.SourceID)
+		require.Equal(t, queued.OperationID, status.OperationID)
+		require.Equal(t, "succeeded", status.OperationState)
+		require.Equal(t, "transcribed", status.CoverageState)
 		require.GreaterOrEqual(t, provider.polls.Load(), int64(2))
 	})
 
@@ -288,13 +276,10 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 		Processing:  &api.MediaProcessingBody{Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID},
 	})
 	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := daemon.MediaStatus(t.Context(), receipt.SourceID)
-		require.NoError(collect, statusErr)
-		require.Equal(collect, queued.OperationID, status.OperationID)
-		require.Equal(collect, "succeeded", status.OperationState)
-		require.Equal(collect, "transcribed", status.CoverageState)
-	}, 10*time.Second, 20*time.Millisecond)
+	status := settledMediaStatus(t, daemon, receipt.SourceID)
+	require.Equal(t, queued.OperationID, status.OperationID)
+	require.Equal(t, "succeeded", status.OperationState)
+	require.Equal(t, "transcribed", status.CoverageState)
 	assert.Zero(t, provider.requests.Load(), "supplied transcript selection must not call Docling")
 	transcriptOutput, err := runCLI(t, "media", "transcript", receipt.SourceID,
 		"--source-version-id", receipt.SourceVersionID, "--content-version-id", receipt.ContentVersionID)
@@ -326,11 +311,8 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 		Selector: plainSelector, PlanFingerprint: plainPlan.Fingerprint, Consent: true,
 	}, plainPlan.ProfileFingerprint)
 	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		status, statusErr := daemon.ProcessingStatus(t.Context(), plainJob.ID)
-		require.NoError(collect, statusErr)
-		require.Equal(collect, "completed", status.State)
-	}, 10*time.Second, 20*time.Millisecond)
+	plainStatus := settledProcessingStatus(t, daemon, plainJob.ID)
+	require.Equal(t, "completed", plainStatus.State)
 	plainRendition, err := daemon.RenditionForSelector(t.Context(), plainSelector, 1<<20)
 	require.NoError(t, err)
 	var plainBody bytes.Buffer
@@ -354,6 +336,8 @@ func TestDaemonDoclingASRRestoredWork(t *testing.T) {
 		OperationID: "00000000-0000-4000-8000-000000000662", Processing: &api.MediaProcessingBody{Profile: "asr"},
 	})
 	require.NoError(t, err)
+	// The worker picks up the queued work now instead of at its interval.
+	wakeDaemon(t)
 	select {
 	case <-provider.resultStarted:
 	case <-time.After(10 * time.Second):
@@ -412,6 +396,8 @@ func TestDaemonDoclingASRQueuedWorkAfterProfileChange(t *testing.T) {
 				})
 				require.NoError(t, err)
 				if index == 0 {
+					// The worker picks up the queued work now instead of at its interval.
+					wakeDaemon(t)
 					select {
 					case <-provider.resultStarted:
 					case <-time.After(10 * time.Second):
@@ -456,12 +442,9 @@ func TestDaemonDoclingASRQueuedWorkAfterProfileChange(t *testing.T) {
 			record := waitForDaemon(t, root)
 			restarted := daemonconn.New("http://"+record.Address, cfg.Server.APIKey)
 			t.Cleanup(func() { require.NoError(t, restarted.Close()) })
-			require.EventuallyWithT(t, func(collect *assert.CollectT) {
-				status, err := restarted.ProcessingStatus(t.Context(), queued.JobID)
-				require.NoError(collect, err)
-				require.Equal(collect, "failed", status.State)
-				require.Equal(collect, wantFailure, status.FailureCode)
-			}, 10*time.Second, 20*time.Millisecond)
+			status = settledProcessingStatus(t, restarted, queued.JobID)
+			require.Equal(t, "failed", status.State)
+			require.Equal(t, wantFailure, status.FailureCode)
 			require.Equal(t, beforeRestart, provider.requests.Load())
 		})
 	}
@@ -517,6 +500,8 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 		require.Equal(t, "queued", queued.OperationState)
 		testCase.receipt = queued
 		if index == 0 {
+			// The worker picks up the queued work now instead of at its interval.
+			wakeDaemon(t)
 			select {
 			case <-provider.resultStarted:
 			case <-time.After(10 * time.Second):
@@ -524,9 +509,13 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 			}
 		}
 	}
-	closeProviderResultGate(provider)
+	// Stop while the provider still holds the first result, so the running
+	// job cannot finish and publish a rendition before the metadata export.
+	// Releasing the gate first let the worker publish during shutdown, and the
+	// rewritten "running" job then contradicted its own published generation.
 	stop()
 	waitForDaemonStop(t, sourceRoot)
+	closeProviderResultGate(provider)
 	beforeRestore := provider.requests.Load()
 
 	var sourceMetadata bytes.Buffer
@@ -543,12 +532,9 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 	_, restored, _ := startDaemonASRTest(t, provider, daemonASRProviderKey, false, restoredRoot)
 	for index := range cases {
 		testCase := &cases[index]
-		require.EventuallyWithT(t, func(collect *assert.CollectT) {
-			status, statusErr := restored.ProcessingStatus(t.Context(), testCase.receipt.JobID)
-			require.NoError(collect, statusErr)
-			require.Equal(collect, "failed", status.State)
-			require.Equal(collect, "consent", status.FailureCode)
-		}, 10*time.Second, 20*time.Millisecond)
+		status := settledProcessingStatus(t, restored, testCase.receipt.JobID)
+		require.Equal(t, "failed", status.State)
+		require.Equal(t, "consent", status.FailureCode)
 		_, err := restored.RetryMedia(t.Context(), testCase.receipt.SourceID, api.MediaRetryBody{
 			OperationID: testCase.noConsentOperationID,
 			Processing:  &api.MediaProcessingBody{Profile: "asr"},
@@ -577,12 +563,9 @@ func TestDaemonDoclingASRMetadataRestoreRequiresFreshConsent(t *testing.T) {
 	}
 	for index := range cases {
 		testCase := &cases[index]
-		require.EventuallyWithT(t, func(collect *assert.CollectT) {
-			status, statusErr := restored.MediaStatus(t.Context(), testCase.receipt.SourceID)
-			require.NoError(collect, statusErr)
-			require.Equal(collect, "succeeded", status.OperationState)
-			require.Equal(collect, "transcribed", status.CoverageState)
-		}, 20*time.Second, 20*time.Millisecond)
+		status := settledMediaStatus(t, restored, testCase.receipt.SourceID)
+		require.Equal(t, "succeeded", status.OperationState)
+		require.Equal(t, "transcribed", status.CoverageState)
 	}
 	require.Greater(t, provider.requests.Load(), beforeRestore)
 }
@@ -1088,12 +1071,32 @@ func daemonASRSourceAndPlanWith(
 	return receipt, selector, *plan
 }
 
+// waitForDaemonStop checks that a daemon stopped by startServe's stop removed
+// its runtime record, which it does before serveDaemon returns.
 func waitForDaemonStop(t *testing.T, root string) {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		records, listErr := daemonconn.RuntimeStore(root).List()
-		return listErr == nil && len(records) == 0
-	}, daemonShutdownTimeout, 50*time.Millisecond)
+	records, err := daemonconn.RuntimeStore(root).List()
+	require.NoError(t, err)
+	require.Empty(t, records)
+}
+
+// settledMediaStatus waits until the daemon serving DOCBANK_HOME has no
+// background work it can do now, then reads the media status once.
+func settledMediaStatus(t *testing.T, daemon *daemonconn.Connection, sourceID string) api.MediaReceipt {
+	t.Helper()
+	settleDaemon(t)
+	status, err := daemon.MediaStatus(t.Context(), sourceID)
+	require.NoError(t, err)
+	return status
+}
+
+// settledProcessingStatus is settledMediaStatus for a processing job.
+func settledProcessingStatus(t *testing.T, daemon *daemonconn.Connection, jobID string) api.ProcessingStatus {
+	t.Helper()
+	settleDaemon(t)
+	status, err := daemon.ProcessingStatus(t.Context(), jobID)
+	require.NoError(t, err)
+	return status
 }
 
 func closeProviderResultGate(provider *daemonDoclingServer) {

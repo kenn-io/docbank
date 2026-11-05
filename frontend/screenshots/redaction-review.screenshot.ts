@@ -175,8 +175,28 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       path: path.join(captures!, "reader-return-page-two.png"),
       animations: "disabled",
     });
+    const expectFitPage = async () => {
+      await expect(async () => {
+        const output = drawer.getByRole("region", { name: "Scrollable page image" });
+        if (await output.isVisible()) {
+          const r = await output.evaluate((e) => ({
+            height: e.clientHeight,
+            scroll: e.scrollHeight,
+          }));
+          expect(r.scroll).toBeLessThanOrEqual(r.height + 1);
+        } else {
+          const bounds = await drawer.locator('[data-review-page="1"]').boundingBox();
+          const viewer = await drawer.locator("embedpdf-container").boundingBox();
+          expect(bounds!.height).toBeGreaterThan(100);
+          expect(bounds!.y).toBeGreaterThanOrEqual(viewer!.y);
+          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewer!.y + viewer!.height);
+        }
+      }).toPass({ timeout: 10000 });
+    };
     await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
     await originalPage(1);
+    // Page navigation reports its target before the viewport finishes moving.
+    await expectFitPage();
     await page.setViewportSize({ width: 640, height: 400 });
     await expect(
       drawer.getByRole("button", { name: "Preview redaction", exact: true }),
@@ -200,24 +220,6 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("ControlOrMeta+p");
     await expect(drawer.getByRole("heading", { name: "Print Settings" })).toBeHidden();
-    const expectFitPage = async () => {
-      await expect(async () => {
-        const output = drawer.getByRole("region", { name: "Scrollable page image" });
-        if (await output.isVisible()) {
-          const r = await output.evaluate((e) => ({
-            height: e.clientHeight,
-            scroll: e.scrollHeight,
-          }));
-          expect(r.scroll).toBeLessThanOrEqual(r.height + 1);
-        } else {
-          const bounds = await drawer.locator('[data-review-page="1"]').boundingBox();
-          const viewer = await drawer.locator("embedpdf-container").boundingBox();
-          expect(bounds!.height).toBeGreaterThan(100);
-          expect(bounds!.y).toBeGreaterThanOrEqual(viewer!.y);
-          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewer!.y + viewer!.height);
-        }
-      }).toPass({ timeout: 10000 });
-    };
     await expectFitPage();
     const fitZoom = await drawer.getByRole("textbox", { name: "Set zoom" }).inputValue();
     // A new zoom position can appear before replacement images start

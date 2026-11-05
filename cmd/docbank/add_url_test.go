@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -185,11 +186,26 @@ func TestAddURLInterruptRemovesSpool(t *testing.T) {
 	tmp, home := t.TempDir(), os.Getenv("DOCBANK_HOME")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
+	watcher, err := fsnotify.NewWatcher()
+	require.NoError(t, err)
+	defer func() { _ = watcher.Close() }()
+	require.NoError(t, watcher.Add(tmp))
 	child := exec.CommandContext(ctx, executable, "-test.run=^TestAddURLInterruptRemovesSpool$")
 	child.Env = append(os.Environ(), "DOCBANK_TEST_URL_INTERRUPT="+server.URL, "DOCBANK_HOME="+home, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 	require.NoError(t, child.Start())
 	t.Cleanup(func() { _ = child.Process.Kill() })
-	require.Eventually(t, func() bool { files, _ := filepath.Glob(filepath.Join(tmp, "docbank-url-*")); return len(files) == 1 }, 5*time.Second, 10*time.Millisecond)
+	// The spool appears only after the response headers arrive, so wait for its creation.
+	for spooled := false; !spooled; {
+		select {
+		case event := <-watcher.Events:
+			matched, _ := filepath.Match("docbank-url-*", filepath.Base(event.Name))
+			spooled = matched && event.Has(fsnotify.Create)
+		case err := <-watcher.Errors:
+			require.NoError(t, err)
+		case <-ctx.Done():
+			require.FailNow(t, "the download never created its spool")
+		}
+	}
 	require.NoError(t, child.Process.Signal(os.Interrupt))
 	require.NoError(t, child.Wait())
 	entries, err := os.ReadDir(tmp)
