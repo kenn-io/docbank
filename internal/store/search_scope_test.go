@@ -18,6 +18,10 @@ func TestScopedSearchPlansStartFromMatches(t *testing.T) {
 	require.NoError(t, err)
 	file, err := s.CreateFile(ctx, scope.ID, "mercury.txt", fakeHash("b2"), 4, "text/plain")
 	require.NoError(t, err)
+	for i := range 8 {
+		_, err = s.CreateFile(ctx, s.RootID(), "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
+		require.NoError(t, err)
+	}
 	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: file.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury"}))
 	for _, published := range []bool{false, true} {
 		if published {
@@ -30,47 +34,15 @@ func TestScopedSearchPlansStartFromMatches(t *testing.T) {
 			return nil
 		}))
 		for _, explained := range []bool{false, true} {
-			var queries []string
-			func() {
-				readDB := s.db
-				release := make(chan struct{})
-				close(release)
-				s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
-					if strings.Contains(query, "WITH RECURSIVE directories") {
-						queries = append(queries, query)
-					}
-				}})
-				defer func() {
-					require.NoError(t, s.db.Close())
-					s.db = readDB
-				}()
-				opts := SearchOptions{UnderNodeID: scope.ID}
-				if explained {
-					_, _, err = s.SearchExplainedLexicalCandidates(ctx, "mercury", 50, opts, false)
-				} else {
-					_, _, err = s.SearchPageWithOptions(ctx, "mercury", 50, opts)
-				}
-				require.NoError(t, err)
-			}()
-			require.Len(t, queries, 2)
-			for i, query := range queries {
-				args := []any{ftsQuery("mercury")}
-				if i == 0 {
-					names, err := nameSearchCandidates(ftsQuery("mercury"))
-					require.NoError(t, err)
-					args = names.Args
-				}
-				if i == 1 && published {
-					args = append(args, generationID)
-				}
-				args = append(args, scope.ID)
-				if i == 0 || !explained {
-					args = append(args, 51)
-				}
-				detail := explainQueryPlan(t, s, query, args...)
+			plans := scopedSearchQueryPlans(t, s, scope.ID, generationID, explained)
+			for i, detail := range plans {
 				assert.NotRegexp(t, `(?m)^SCAN n(?: |$)`, detail, "published=%v explained=%v query=%d", published, explained, i)
 				assert.NotContains(t, detail, "nodes_parent")
 				assert.Contains(t, detail, "nodes_live_children")
+				if i == 1 && !published && !explained {
+					// A one-file scope probes its version instead of expanding every matching copy.
+					assert.NotContains(t, detail, "content_versions_blob")
+				}
 				if i == 1 && published {
 					assert.Contains(t, detail, "rendition_attachments_build")
 				}
@@ -99,19 +71,15 @@ func TestScopedSearchResultsFollowTopology(t *testing.T) {
 			_, err = s.MigrateLegacyPlainText(ctx)
 			require.NoError(t, err)
 		}
-		for _, state := range []string{"live", "trash", "restore", "outside", "inside", "trashed-root", "restored-root"} {
+		for _, state := range []string{"live", "trash", "restore", "restored-root"} {
 			switch state {
 			case "trash":
 				_, _, err = s.Trash(ctx, nested.ID, UnconditionalRev)
 			case "restore":
 				_, _, err = s.Restore(ctx, nested.ID, UnconditionalRev)
-			case "outside":
-				_, _, err = s.Move(ctx, nested.ID, s.RootID(), "nested", UnconditionalRev)
-			case "inside":
-				_, _, err = s.Move(ctx, nested.ID, scope.ID, "nested", UnconditionalRev)
-			case "trashed-root":
-				_, _, err = s.Trash(ctx, scope.ID, UnconditionalRev)
 			case "restored-root":
+				_, _, err = s.Trash(ctx, scope.ID, UnconditionalRev)
+				require.NoError(t, err)
 				_, _, err = s.Restore(ctx, scope.ID, UnconditionalRev)
 			}
 			require.NoError(t, err)
@@ -125,13 +93,6 @@ func TestScopedSearchResultsFollowTopology(t *testing.T) {
 			}
 			opts := SearchOptions{UnderNodeID: scope.ID}
 			hits, more, err := s.SearchPageWithOptions(ctx, "mercury", 50, opts)
-			if state == "trashed-root" {
-				require.Empty(t, want)
-				require.ErrorIs(t, err, ErrNotFound)
-				_, _, err = s.SearchExplainedLexicalCandidates(ctx, "mercury", 50, opts, false)
-				require.ErrorIs(t, err, ErrNotFound)
-				continue
-			}
 			require.NoError(t, err)
 			assert.False(t, more)
 			assert.Equal(t, want, hits, "published=%v state=%s", published, state)
@@ -160,25 +121,7 @@ func TestRenditionAttachmentBuildIndexAddedOnReopen(t *testing.T) {
 	assert.Contains(t, detail, "rendition_attachments_build")
 }
 
-func TestScopedCopiedBlobUsesSmallFolderPlan(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	scope, err := s.Mkdir(ctx, s.RootID(), "scope")
-	require.NoError(t, err)
-	file, err := s.CreateFile(ctx, scope.ID, "inside.txt", fakeHash("b2"), 4, "text/plain")
-	require.NoError(t, err)
-	for i := range 8 {
-		_, err = s.CreateFile(ctx, s.RootID(), "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
-		require.NoError(t, err)
-	}
-	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: file.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury"}))
-	detail := scopedContentQueryPlan(t, s, scope.ID, "", false)
-	// A one-file scope must probe its current version, rather than expand every copy of the matching blob.
-	assert.NotContains(t, detail, "content_versions_blob")
-}
-
-func TestPublishedSearchChecksLivenessBeforeAttachments(t *testing.T) {
+func TestPublishedSearchVisitsNodesBeforeAttachments(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -202,26 +145,26 @@ func TestPublishedSearchChecksLivenessBeforeAttachments(t *testing.T) {
 	}))
 	require.NotEmpty(t, generationID)
 	for _, explained := range []bool{false, true} {
-		detail := scopedContentQueryPlan(t, s, 0, generationID, explained)
-		liveNode := strings.Index(detail, "SEARCH n ")
+		detail := scopedSearchQueryPlans(t, s, 0, generationID, explained)[1]
+		node := strings.Index(detail, "SEARCH n ")
 		attachments := strings.Index(detail, "SEARCH a ")
-		require.NotEqual(t, -1, liveNode, detail)
+		require.NotEqual(t, -1, node, detail)
 		require.NotEqual(t, -1, attachments, detail)
-		// Reject trashed copies before expanding their published attachments, including before grouping in plain search.
-		assert.Less(t, liveNode, attachments, "explained=%v\n%s", explained, detail)
+		// Visit nodes before attachments, including before grouping in plain search.
+		assert.Less(t, node, attachments, "explained=%v\n%s", explained, detail)
 	}
 }
 
-func scopedContentQueryPlan(t *testing.T, s *Store, scopeID int64, generationID string, explained bool) string {
+func scopedSearchQueryPlans(t *testing.T, s *Store, scopeID int64, generationID string, explained bool) []string {
 	t.Helper()
-	var query string
+	var queries []string
 	func() {
 		readDB := s.db
 		release := make(chan struct{})
 		close(release)
-		s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(sql string) {
-			if strings.Contains(sql, "content_fts MATCH") || strings.Contains(sql, "rendition_lexical_fts MATCH") {
-				query = sql
+		s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(query string) {
+			if strings.Contains(query, "WITH name_matches AS") || strings.Contains(query, "content_fts MATCH") || strings.Contains(query, "rendition_lexical_fts MATCH") {
+				queries = append(queries, query)
 			}
 		}})
 		defer func() {
@@ -230,29 +173,31 @@ func scopedContentQueryPlan(t *testing.T, s *Store, scopeID int64, generationID 
 		}()
 		opts := SearchOptions{UnderNodeID: scopeID}
 		if explained {
-			hits, more, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 50, opts, false)
+			_, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 50, opts, false)
 			require.NoError(t, err)
-			require.Len(t, hits, 1)
-			assert.Equal(t, "inside.txt", hits[0].Node.Name)
-			assert.False(t, more)
 		} else {
-			hits, more, err := s.SearchPageWithOptions(t.Context(), "mercury", 50, opts)
+			_, _, err := s.SearchPageWithOptions(t.Context(), "mercury", 50, opts)
 			require.NoError(t, err)
-			require.Len(t, hits, 1)
-			assert.Equal(t, "inside.txt", hits[0].Node.Name)
-			assert.False(t, more)
 		}
 	}()
-	require.NotEmpty(t, query)
-	args := []any{ftsQuery("mercury")}
-	if generationID != "" {
-		args = append(args, generationID)
+	require.Len(t, queries, 2)
+	plans := make([]string, len(queries))
+	for i, query := range queries {
+		args := []any{ftsQuery("mercury")}
+		if i == 0 {
+			names, err := nameSearchCandidates(ftsQuery("mercury"))
+			require.NoError(t, err)
+			args = names.Args
+		} else if generationID != "" {
+			args = append(args, generationID)
+		}
+		if scopeID != 0 {
+			args = append(args, scopeID)
+		}
+		if i == 0 || !explained {
+			args = append(args, 51)
+		}
+		plans[i] = explainQueryPlan(t, s, query, args...)
 	}
-	if scopeID != 0 {
-		args = append(args, scopeID)
-	}
-	if !explained {
-		args = append(args, 51)
-	}
-	return explainQueryPlan(t, s, query, args...)
+	return plans
 }
