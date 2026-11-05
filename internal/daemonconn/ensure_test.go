@@ -161,6 +161,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without local text setup must be replaced")
 	rec.Metadata[metaProtocolVersion] = "116" // Reserved by another incompatible daemon contract.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "protocol 116 daemons must be replaced")
+	rec.Metadata[metaProtocolVersion] = "120" // Before original-content byte ranges.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-range daemons must be replaced before reading content windows")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
@@ -287,8 +289,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	// Main's protocol 112 lacks the changes route, even with the same dev version.
-	rec.Metadata[metaProtocolVersion] = "112"
+	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	rec.Metadata[metaProtocolVersion] = "119"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root,

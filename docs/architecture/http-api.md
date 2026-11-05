@@ -1778,6 +1778,14 @@ metadata globally, and its `/content` child streams that version with the same
 identity headers and digest contract. A path rename cannot strand a retained
 version reference.
 
+The version's `/content` route accepts a single byte `Range`. It returns
+`206` with `Content-Range`, or `416 invalid_content_range` for an invalid or
+unsatisfiable range. The version, hash, and size headers still identify the
+whole version. The `Content-Digest` trailer covers only the returned window.
+MCP clients verify the assembled bytes against the selected version's size
+and SHA-256. Every window streams from the beginning of the blob up to the
+requested bytes, so a window costs time in proportion to its offset.
+
 `GET /nodes/{id}/provenance` returns the requested file node, its live path when
 one exists, and a bounded newest-ingest-first page from one read snapshot. Each
 fact carries its canonical SHA-256 identity, active/superseded state, ingest

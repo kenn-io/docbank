@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -272,6 +273,66 @@ func TestContentVersionListMetadataAndPackedBytes(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/nodes/"+strconv.FormatInt(s.RootID(), 10)+"/versions", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"not_file"`)
+}
+
+func TestContentVersionByteRanges(t *testing.T) {
+	t.Parallel()
+	for _, storage := range []string{"raw", "zstd", "packed"} {
+		t.Run(storage, func(t *testing.T) {
+			for _, content := range []string{strings.Repeat("raw original bytes", 512), ""} {
+				t.Run(strconv.Itoa(len(content)), func(t *testing.T) {
+					var writer *blob.Store
+					ts, s := newTestServer(t, func(d *api.Deps) {
+						if storage == "zstd" {
+							var err error
+							writer, err = blob.NewWithOptions(store.NewPackCatalog(d.Store), filepath.Join(d.VaultRoot, "blobs"), blob.ManagedOptions())
+							require.NoError(t, err)
+							t.Cleanup(func() { require.NoError(t, writer.Close()) })
+							d.Blobs = writer
+						}
+					})
+					if writer != nil {
+						s.Blobs = writer
+					}
+					n := createFileWithChecksum(t, s, "range.txt", content)
+					if storage == "zstd" && len(content) > 0 {
+						hash, err := packstore.ParseHash(n.BlobHash)
+						require.NoError(t, err)
+						locations, err := s.ResolveBlobLocations(t.Context(), hash)
+						require.NoError(t, err)
+						require.Len(t, locations.Candidates, 1)
+						require.NotNil(t, locations.Candidates[0].Loose)
+						require.Equal(t, packstore.LooseEncodingZstd, locations.Candidates[0].Loose.Encoding)
+					}
+					path := "/api/v1/versions/" + n.CurrentVersionID + "/content"
+					if storage == "packed" {
+						result, err := s.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+						require.NoError(t, err)
+						if len(content) > 0 {
+							require.Equal(t, 1, result.BlobsPacked)
+						}
+					}
+					if len(content) > 0 {
+						resp, body := get(t, ts, path, map[string]string{"Range": "bytes=3-8"})
+						require.Equal(t, http.StatusPartialContent, resp.StatusCode, body)
+						require.Equal(t, content[3:9], body)
+						require.Equal(t, fmt.Sprintf("bytes 3-8/%d", len(content)), resp.Header.Get("Content-Range"))
+						require.Equal(t, n.CurrentVersionID, resp.Header.Get(api.ContentVersionHeader))
+						require.Equal(t, n.BlobHash, resp.Header.Get(api.BlobHashHeader))
+						require.Equal(t, strconv.Itoa(len(content)), resp.Header.Get(api.BlobSizeHeader))
+						digest := sha256.Sum256([]byte(content[3:9]))
+						require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":", resp.Trailer.Get("Content-Digest"))
+					}
+					resp, body := get(t, ts, path, map[string]string{"Range": fmt.Sprintf("bytes=%d-", len(content))})
+					require.Equal(t, http.StatusRequestedRangeNotSatisfiable, resp.StatusCode, body)
+					require.Contains(t, body, `"code":"invalid_content_range"`)
+					resp, body = get(t, ts, path, nil)
+					require.Equal(t, http.StatusOK, resp.StatusCode, body)
+					require.Equal(t, content, body)
+				})
+			}
+		})
+	}
 }
 
 func createFileWithChecksum(t *testing.T, s *testStore, name, content string) store.Node {

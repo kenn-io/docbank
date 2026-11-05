@@ -565,7 +565,7 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 	if readErr != nil || verifyErr != nil || closeErr != nil || int64(len(data)) != rendition.Size {
 		return nil, NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
 	}
-	start, end, err := parseRenditionRange(requested, rendition.Size)
+	start, end, err := parseByteRange(requested, rendition.Size)
 	if err != nil {
 		return nil, NewError(http.StatusRequestedRangeNotSatisfiable, "invalid_rendition_range",
 			"rendition byte range is invalid or unsatisfiable")
@@ -597,31 +597,31 @@ func setRenditionHeaders(ctx huma.Context, rendition processing.Rendition) {
 	ctx.SetHeader(BlobSizeHeader, strconv.FormatInt(rendition.Size, 10))
 }
 
-func parseRenditionRange(value string, size int64) (int64, int64, error) {
+func parseByteRange(value string, size int64) (int64, int64, error) {
 	if size < 1 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
-		return 0, 0, errors.New("invalid rendition range")
+		return 0, 0, errors.New("invalid byte range")
 	}
 	spec := strings.TrimPrefix(value, "bytes=")
 	left, right, ok := strings.Cut(spec, "-")
 	if !ok || (left == "" && right == "") {
-		return 0, 0, errors.New("invalid rendition range")
+		return 0, 0, errors.New("invalid byte range")
 	}
 	if left == "" {
 		suffix, err := strconv.ParseInt(right, 10, 64)
 		if err != nil || suffix < 1 {
-			return 0, 0, errors.New("invalid rendition range")
+			return 0, 0, errors.New("invalid byte range")
 		}
 		return max(int64(0), size-suffix), size, nil
 	}
 	start, err := strconv.ParseInt(left, 10, 64)
 	if err != nil || start < 0 || start >= size {
-		return 0, 0, errors.New("invalid rendition range")
+		return 0, 0, errors.New("invalid byte range")
 	}
 	end := size
 	if right != "" {
 		inclusive, err := strconv.ParseInt(right, 10, 64)
 		if err != nil || inclusive < start {
-			return 0, 0, errors.New("invalid rendition range")
+			return 0, 0, errors.New("invalid byte range")
 		}
 		if inclusive < size-1 {
 			end = inclusive + 1

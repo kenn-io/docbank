@@ -710,6 +710,35 @@ func (c *Connection) VersionContent(ctx context.Context, id string) (*ContentStr
 	return stream, nil
 }
 
+// VersionContentRange streams a non-empty half-open window of an immutable version.
+func (c *Connection) VersionContentRange(ctx context.Context, id string, start, end int64) (*ContentStream, error) {
+	if start < 0 || end <= start {
+		return nil, errors.New("content range must be a non-empty half-open interval")
+	}
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetContentVersionBytes(runtime.WithStreamingResponse(ctx), &apiclient.GetContentVersionBytesRequestOptions{
+		PathParams: &apiclient.GetContentVersionBytesPath{VersionID: id},
+		Header:     &apiclient.GetContentVersionBytesHeaders{Range: new(fmt.Sprintf("bytes=%d-%d", start, end-1))},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if responseHTTP.StatusCode != http.StatusPartialContent {
+		defer func() { _ = responseHTTP.Body.Close() }()
+		return nil, decodeError(responseHTTP)
+	}
+	stream, err := decodeContent(responseHTTP, "content version "+id)
+	if err != nil {
+		return nil, err
+	}
+	gotStart, gotEnd, total, rangeErr := parseContentRange(responseHTTP.Header.Get("Content-Range"))
+	if stream.VersionID != id || rangeErr != nil || gotStart != start || gotEnd != end || total != stream.Size {
+		_ = stream.Close()
+		return nil, integrityErrorf("content version %s returned mismatched version identity or Content-Range", id)
+	}
+	return stream, nil
+}
+
 // PruneContentVersions previews or executes one explicit version-history
 // selector under an optimistic node-revision precondition.
 func (c *Connection) PruneContentVersions(

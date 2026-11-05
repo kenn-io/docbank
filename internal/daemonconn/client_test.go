@@ -1012,6 +1012,45 @@ func TestVersionContentRejectsUnprovenResponses(t *testing.T) {
 	}
 }
 
+func TestVersionContentRange(t *testing.T) {
+	const version = "07d32257-e1e6-4ac7-a858-05c21db179b3"
+	for _, tc := range []struct {
+		name, contentRange, versionID string
+		status                        int
+		valid                         bool
+	}{
+		{"window", "bytes 3-5/10", version, http.StatusPartialContent, true},
+		{"whole response", "bytes 3-5/10", version, http.StatusOK, false},
+		{"wrong offset", "bytes 2-4/10", version, http.StatusPartialContent, false},
+		{"wrong total", "bytes 3-5/11", version, http.StatusPartialContent, false},
+		{"wrong version", "bytes 3-5/10", "d7f37fa1-e987-41b3-9218-e862fb863862", http.StatusPartialContent, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/versions/"+version+"/content", r.URL.Path)
+				assert.Equal(t, "bytes=3-5", r.Header.Get("Range"))
+				w.Header().Set(api.ContentVersionHeader, tc.versionID)
+				w.Header().Set(api.BlobHashHeader, strings.Repeat("a", 64))
+				w.Header().Set(api.BlobSizeHeader, "10")
+				w.Header().Set("Content-Range", tc.contentRange)
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, "def")
+			}))
+			t.Cleanup(ts.Close)
+			stream, err := daemonconn.New(ts.URL, "key").VersionContentRange(t.Context(), version, 3, 6)
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			defer func() { _ = stream.Close() }()
+			data, err := io.ReadAll(stream)
+			require.NoError(t, err)
+			require.Equal(t, "def", string(data))
+		})
+	}
+}
+
 func TestDigestCheckedUploadRoundTrip(t *testing.T) {
 	c, s := newClient(t, serverKey)
 	content := "client upload"

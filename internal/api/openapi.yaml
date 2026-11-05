@@ -32988,12 +32988,16 @@ paths:
       summary: Inspect one immutable content version by stable ID
   /api/v1/versions/{version_id}/content:
     get:
-      description: Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed.
+      description: Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed. Range selects a single byte window and returns 206 with Content-Range.
       operationId: getContentVersionBytes
       parameters:
         - in: path
           name: version_id
           required: true
+          schema:
+            type: string
+        - in: header
+          name: Range
           schema:
             type: string
       responses:
@@ -33008,6 +33012,37 @@ paths:
           headers:
             Content-Digest:
               description: RFC 9530 SHA-256 of bytes actually streamed; delivered as an HTTP trailer
+              schema:
+                type: string
+            X-Docbank-Blob-Hash:
+              description: Catalog SHA-256 identity (lowercase hex)
+              schema:
+                pattern: ^[0-9a-f]{64}$
+                type: string
+            X-Docbank-Blob-Size:
+              description: Catalog raw byte length
+              schema:
+                pattern: ^[0-9]+$
+                type: string
+            X-Docbank-Content-Version:
+              description: Stable content-version UUID
+              schema:
+                format: uuid
+                type: string
+        "206":
+          content:
+            application/octet-stream:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Selected document byte range with expected version and blob identity plus a computed digest trailer
+          headers:
+            Content-Digest:
+              description: RFC 9530 SHA-256 of bytes actually streamed; delivered as an HTTP trailer
+              schema:
+                type: string
+            Content-Range:
               schema:
                 type: string
             X-Docbank-Blob-Hash:

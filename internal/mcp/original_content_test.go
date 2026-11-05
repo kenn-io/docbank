@@ -7,12 +7,61 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
+
+func TestMCPOriginalContentTransfersOnlyWindow(t *testing.T) {
+	for _, storage := range []string{"raw", "zstd", "packed"} {
+		t.Run(storage, func(t *testing.T) {
+			f := newNativeExportFixture(t)
+			f.contentBytes = make(chan int, 1)
+			if storage == "zstd" {
+				writer, err := blob.NewWithOptions(store.NewPackCatalog(f.catalog), filepath.Join(os.Getenv("DOCBANK_HOME"), "blobs"), blob.ManagedOptions())
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, writer.Close()) })
+				f.blobs = writer
+			}
+			original := strings.Repeat("synthetic window bytes", 1<<16)
+			receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader(original[:1<<20]))
+			require.NoError(t, err)
+			encoding, err := receipt.EncodingName()
+			require.NoError(t, err)
+			if storage == "zstd" {
+				require.Equal(t, "zstd", encoding)
+			} else {
+				require.Equal(t, "raw", encoding)
+			}
+			selected, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "window.bin", receipt.Hash, receipt.Size, "text/plain", store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible, Created: receipt.Created, MD5: receipt.MD5})
+			require.NoError(t, err)
+			if storage == "packed" {
+				result, err := f.blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+				require.NoError(t, err)
+				require.Equal(t, 1, result.BlobsPacked)
+			}
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
+			result := exportCall(t, server, "read_document_content", map[string]any{
+				"vault_id": f.catalog.VaultID(), "node_id": selected.ID,
+				"content_version_id": selected.CurrentVersionID, "blob_hash": selected.BlobHash,
+				"size": selected.Size, "offset": selected.Size - (64 << 10), "max_bytes": 64 << 10,
+			})
+			encoded, ok := result["data_base64"].(string)
+			require.True(t, ok)
+			data, err := base64.StdEncoding.DecodeString(encoded)
+			require.NoError(t, err)
+			require.Equal(t, []byte(original[(1<<20)-(64<<10):1<<20]), data)
+			require.Equal(t, 64<<10, <-f.contentBytes)
+		})
+	}
+}
 
 func TestMCPOriginalContent(t *testing.T) {
 	f := newNativeExportFixture(t)
