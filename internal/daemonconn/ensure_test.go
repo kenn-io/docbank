@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -713,6 +714,9 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	//nolint:gosec // os.Args[0] is not user-controlled command text in this test.
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
 	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stdin.Close() })
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
@@ -764,7 +768,7 @@ func TestUnresponsiveDaemonHelper(_ *testing.T) {
 		return
 	}
 	fmt.Println(unresponsiveHelperReady)
-	select {}
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
