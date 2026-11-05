@@ -11,7 +11,7 @@ import (
 func (v *Vault) SubmitSuppliedMedia(
 	ctx context.Context, request SuppliedMediaRequest,
 ) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -29,7 +29,7 @@ func (v *Vault) SubmitSuppliedMedia(
 }
 
 func (v *Vault) SubmitRemoteRecording(ctx context.Context, request RemoteRecordingRequest) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -43,7 +43,7 @@ func (v *Vault) SubmitRemoteRecording(ctx context.Context, request RemoteRecordi
 }
 
 func (v *Vault) ImportRecordingArtifact(ctx context.Context, request MediaArtifactRequest) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -60,7 +60,7 @@ func (v *Vault) ImportRecordingArtifact(ctx context.Context, request MediaArtifa
 }
 
 func (v *Vault) MediaStatus(ctx context.Context, sourceID string) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -71,7 +71,7 @@ func (v *Vault) MediaStatus(ctx context.Context, sourceID string) (MediaReceipt,
 // RemoteRecordingReceipt returns the saved receipt of one remote-recording
 // submission by its operation ID. Unknown IDs read as ErrNotFound.
 func (v *Vault) RemoteRecordingReceipt(ctx context.Context, operationID string) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -83,7 +83,7 @@ func (v *Vault) RemoteRecordingReceipt(ctx context.Context, operationID string) 
 // identities. The result carries evidence, coverage, and latest operation
 // state separately.
 func (v *Vault) MediaTranscript(ctx context.Context, request MediaTranscriptRequest) (MediaTranscript, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaTranscript{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -96,7 +96,7 @@ func (v *Vault) MediaTranscript(ctx context.Context, request MediaTranscriptRequ
 func (v *Vault) RetryMedia(
 	ctx context.Context, operationID, sourceID string, request MediaProcessingRequest,
 ) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -106,7 +106,7 @@ func (v *Vault) RetryMedia(
 }
 
 func (v *Vault) ListMediaSources(ctx context.Context, options MediaListOptions) (MediaSourcePage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaSourcePage{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -124,7 +124,7 @@ func (v *Vault) ListMediaSources(ctx context.Context, options MediaListOptions) 
 }
 
 func (v *Vault) ListMediaOccurrences(ctx context.Context, options MediaListOptions) (MediaOccurrencePage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaOccurrencePage{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -146,7 +146,7 @@ func (v *Vault) ListMediaOccurrences(ctx context.Context, options MediaListOptio
 func (v *Vault) DeclareMediaOccurrence(
 	ctx context.Context, operationID, sourceID string, occurrence MediaOccurrenceInput,
 ) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -158,7 +158,7 @@ func (v *Vault) DeclareMediaOccurrence(
 func (v *Vault) RevokeMediaOccurrence(
 	ctx context.Context, operationID, occurrenceID, expectedRevision string,
 ) (MediaReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MediaReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()

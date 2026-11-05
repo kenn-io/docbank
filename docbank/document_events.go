@@ -13,7 +13,7 @@ import (
 func (v *Vault) RebuildDocumentEvents(
 	ctx context.Context, operationID string,
 ) (DocumentEventBuild, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return DocumentEventBuild{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -57,7 +57,7 @@ func (v *Vault) RebuildDocumentEvents(
 
 // DocumentEventCoverage reports timeline derivation for current file versions.
 func (v *Vault) DocumentEventCoverage(ctx context.Context) (DocumentEventCoverage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return DocumentEventCoverage{}, err
 	}
 	defer v.lifecycle.RUnlock()

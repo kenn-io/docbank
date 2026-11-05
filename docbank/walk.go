@@ -43,7 +43,7 @@ type Walker struct {
 
 // Walk begins a stable snapshot traversal rooted at rootPath.
 func (v *Vault) Walk(ctx context.Context, rootPath string, opts WalkOptions) (*Walker, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	pageSize := opts.PageSize

@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +23,30 @@ func newTestStore[T testing.TB](t T) *Store {
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
 }
+
+// waitForPoolWaiter yields until a caller queues for one of db's connections
+// after waits was read from db.Stats, until done delivers, or until ctx ends.
+// database/sql reports a queued caller only through its pool statistics. It
+// returns the delivered value and whether done delivered before any caller
+// queued.
+func waitForPoolWaiter[T any](ctx context.Context, db *sql.DB, waits int64, done <-chan T) (T, bool, error) {
+	var zero T
+	for db.Stats().WaitCount == waits {
+		select {
+		case got := <-done:
+			return got, true, nil
+		case <-ctx.Done():
+			return zero, false, ctx.Err()
+		default:
+		}
+		runtime.Gosched()
+	}
+	return zero, false, nil
+}
+
+// poolWaitBudget bounds a stalled waitForPoolWaiter; a passing run never
+// reaches it.
+const poolWaitBudget = 30 * time.Second
 
 func TestStorageMutationDuringReadSnapshot(t *testing.T) {
 	t.Parallel()

@@ -599,6 +599,7 @@ func TestRepackPreservesRawByteBudgetResumeAndCancellation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 3, packed.BlobsPacked)
 	}
+	ageMaintenancePacks(t, vault)
 	trashMaintenanceFiles(t, vault, dead)
 	_, err := vault.GarbageCollect(t.Context(), GCOptions{})
 	require.NoError(t, err)

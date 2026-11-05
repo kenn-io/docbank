@@ -6,16 +6,21 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -35,15 +40,62 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if ready := os.Getenv("DOCBANK_START_TEST_CHILD"); ready != "" && os.Getenv(EnvBackgroundDaemon) == "1" {
-		if err := os.WriteFile(ready, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-			os.Exit(2)
-		}
-		// Stand in for a child that has not published its runtime record yet.
-		time.Sleep(time.Minute) //nolint:kennlint // sleeptest: runs in a child process that stands in for an unready daemon
-		os.Exit(0)
+	if address := os.Getenv("DOCBANK_START_TEST_CHILD"); address != "" && os.Getenv(EnvBackgroundDaemon) == "1" {
+		runUnreadyDaemonChild(address)
 	}
 	os.Exit(packagetest.RunWithLockRegistry(m))
+}
+
+// runUnreadyDaemonChild stands in for a spawned daemon that has not published
+// its runtime record yet. It reports its PID over a connection to the test and
+// keeps the connection open until it exits on SIGTERM or is killed.
+func runUnreadyDaemonChild(address string) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, os.Interrupt)
+	// The child runs from TestMain, which has no caller context.
+	connection, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", address)
+	if err != nil {
+		os.Exit(2)
+	}
+	if _, err := fmt.Fprintf(connection, "%d\n", os.Getpid()); err != nil {
+		os.Exit(2)
+	}
+	<-stop
+	os.Exit(0)
+}
+
+// processExitWaits records the exit waits the stop code asks for, in order.
+type processExitWaits struct {
+	mu      sync.Mutex
+	budgets []time.Duration
+}
+
+func (w *processExitWaits) list() []time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.budgets)
+}
+
+// recordProcessExitWaits replaces waitProcessExit for one test. Windows has no
+// graceful stop request for a detached daemon, so a graceful budget always
+// ends with the process still alive; the fake checks the process once instead
+// of waiting out the real 25-second window. Every other wait expects the
+// process to exit and uses the real wait.
+func recordProcessExitWaits(t *testing.T) *processExitWaits {
+	t.Helper()
+	waits := &processExitWaits{}
+	previous := waitProcessExit
+	waitProcessExit = func(ctx context.Context, rec kitdaemon.RuntimeRecord, timeout time.Duration) (bool, error) {
+		waits.mu.Lock()
+		waits.budgets = append(waits.budgets, timeout)
+		waits.mu.Unlock()
+		if runtime.GOOS == "windows" && timeout == daemon.GracefulExitTimeout {
+			return !kitdaemon.ProcessAlive(rec.PID), ctx.Err()
+		}
+		return waitDead(ctx, rec, timeout)
+	}
+	t.Cleanup(func() { waitProcessExit = previous })
+	return waits
 }
 
 func TestDaemonStartFailureConfigDiagnostic(t *testing.T) {
@@ -69,8 +121,11 @@ func TestDaemonStartFailureConfigDiagnostic(t *testing.T) {
 
 func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	root := t.TempDir()
-	ready := filepath.Join(t.TempDir(), "child-pid")
-	t.Setenv("DOCBANK_START_TEST_CHILD", ready)
+	waits := recordProcessExitWaits(t)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	t.Setenv("DOCBANK_START_TEST_CHILD", listener.Addr().String())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -78,15 +133,14 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 		_, err := Start(ctx, root)
 		done <- err
 	}()
-	var pid int
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(ready)
-		if err != nil {
-			return false
-		}
-		pid, err = strconv.Atoi(string(data))
-		return err == nil
-	}, 10*time.Second, 10*time.Millisecond)
+	// The child reports its PID once it runs, before any runtime record exists.
+	connection, err := listener.Accept()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	line, err := bufio.NewReader(connection).ReadString('\n')
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	require.NoError(t, err)
 	child, err := os.FindProcess(pid)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -103,6 +157,13 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 		t.Fatal("launcher did not return after cancellation")
 	}
 	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
+	want := []time.Duration{daemon.GracefulExitTimeout}
+	if runtime.GOOS == "windows" {
+		// Nothing can ask the child to stop gracefully, so the launcher kills it
+		// after the graceful budget.
+		want = append(want, daemon.ForcedExitTimeout)
+	}
+	assert.Equal(t, want, waits.list())
 }
 
 func TestVerifyRecordProcess(t *testing.T) {
@@ -352,9 +413,6 @@ func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 }
 
 func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows intentionally consumes the full graceful wait before force termination")
-	}
 	root, rec := startUnresponsiveRuntime(t)
 	var leaked atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -619,17 +677,16 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 	t.Cleanup(ts.Close)
 	rec.Address = strings.TrimPrefix(ts.URL, "http://")
 
-	started := time.Now()
+	waits := recordProcessExitWaits(t)
 	require.NoError(t, stopRecord(t.Context(), rec))
-	elapsed := time.Since(started)
+	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 	if runtime.GOOS == "windows" {
-		assert.GreaterOrEqual(t, elapsed, daemon.GracefulExitTimeout-time.Second,
+		assert.Equal(t, []time.Duration{daemon.GracefulExitTimeout, daemon.ForcedExitTimeout}, waits.list(),
 			"Windows must preserve graceful draining before native termination")
 	} else {
-		assert.Less(t, elapsed, 5*time.Second,
-			"a definitive rejection must take the graceful process-signal path immediately")
+		assert.Equal(t, []time.Duration{daemon.GracefulExitTimeout}, waits.list(),
+			"a definitive rejection must take the graceful process-signal path, and SIGTERM stops the process")
 	}
-	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
 func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
@@ -659,6 +716,11 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	//nolint:gosec // os.Args[0] is not user-controlled command text in this test.
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
 	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stdin.Close() })
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
 	done := make(chan struct{})
 	go func() {
@@ -674,12 +736,14 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		}
 	})
 
-	var identity kitdaemon.ProcessIdentity
-	require.Eventually(t, func() bool {
-		var ok bool
-		identity, ok = kitdaemon.ReadProcessIdentity(cmd.Process.Pid)
-		return ok
-	}, 5*time.Second, 10*time.Millisecond)
+	// The helper prints once it runs, so its process identity is readable.
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, unresponsiveHelperReady+"\n", line)
+	identity, ok := kitdaemon.ReadProcessIdentity(cmd.Process.Pid)
+	require.True(t, ok)
+	// Stopping it never waits out a real Windows grace window.
+	recordProcessExitWaits(t)
 
 	root := t.TempDir()
 	rec := kitdaemon.NewRuntimeRecord(Service, version.Version, kitdaemon.Endpoint{
@@ -692,14 +756,35 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		metaAPIKey: "key", metaProtocolVersion: daemonProtocolVersion,
 		metaShutdownToken: "token",
 	}
-	_, err := RuntimeStore(root).Write(rec)
+	_, err = RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	return root, rec
 }
 
+const unresponsiveHelperReady = "unresponsive-helper-ready"
+
+// TestUnresponsiveDaemonHelper stands in for an unresponsive daemon. It runs
+// until a signal or the test kills it.
 func TestUnresponsiveDaemonHelper(_ *testing.T) {
 	if os.Getenv("DOCBANK_UNRESPONSIVE_HELPER") != "1" {
 		return
 	}
-	time.Sleep(30 * time.Second) //nolint:kennlint // sleeptest: runs in a helper process that stands in for an unresponsive daemon
+	fmt.Println(unresponsiveHelperReady)
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: os.Getpid()}, daemon.GracefulExitTimeout)
+		require.NoError(t, err)
+		assert.False(t, dead, "this test process is still running")
+		assert.Equal(t, daemon.GracefulExitTimeout, time.Since(started))
+
+		started = time.Now()
+		dead, err = waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: 0}, daemon.GracefulExitTimeout)
+		require.NoError(t, err)
+		assert.True(t, dead)
+		assert.Zero(t, time.Since(started), "an exited process ends the wait at once")
+	})
 }

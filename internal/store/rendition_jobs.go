@@ -1029,7 +1029,9 @@ func (s *Store) BeginRenditionProviderEgress(
 	ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
 ) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
-	s.providerEgressMu.RLock()
+	if err := s.providerEgressMu.RLock(ctx); err != nil {
+		return ProviderOperationAuthorization{}, nil, err
+	}
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	authorization, err := s.BeginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
 	if err != nil {

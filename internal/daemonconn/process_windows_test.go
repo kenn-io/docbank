@@ -3,15 +3,14 @@
 package daemonconn
 
 import (
+	"io"
 	"math"
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestProcessTerminationTreatsMissingProcessAsStopped(t *testing.T) {
@@ -19,35 +18,33 @@ func TestProcessTerminationTreatsMissingProcessAsStopped(t *testing.T) {
 	require.NoError(t, forceTerminateProcess(math.MaxInt32))
 }
 
+const windowsStopHelperExited = "windows-stop-helper-exited-normally"
+
 func TestGracefulStopDoesNotKillWindowsProcess(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestWindowsGracefulStopHelper$") // #nosec G702 -- os.Args[0] is the trusted current test executable.
 	cmd.Env = append(os.Environ(), "DOCBANK_WINDOWS_STOP_HELPER=1")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	done := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(done)
-	}()
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("helper process did not exit")
-		}
-	})
-	require.Eventually(t, func() bool {
-		return kitdaemon.ProcessAlive(cmd.Process.Pid)
-	}, 5*time.Second, 10*time.Millisecond)
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
 
 	require.NoError(t, requestProcessStop(cmd.Process.Pid))
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: checks that the helper subprocess outlives the no-op Windows stop request
-	assert.True(t, kitdaemon.ProcessAlive(cmd.Process.Pid),
-		"graceful Windows fallback must wait rather than terminate")
+	// The helper exits normally once its input closes. A stop request that
+	// terminated it would end it with a failure code and without the marker.
+	require.NoError(t, stdin.Close())
+	output, err := io.ReadAll(stdout)
+	require.NoError(t, err)
+	require.NoError(t, cmd.Wait(), "graceful Windows fallback must wait rather than terminate")
+	assert.Contains(t, string(output), windowsStopHelperExited)
 }
 
+// TestWindowsGracefulStopHelper runs until its input closes.
 func TestWindowsGracefulStopHelper(_ *testing.T) {
-	if os.Getenv("DOCBANK_WINDOWS_STOP_HELPER") == "1" {
-		time.Sleep(30 * time.Second) //nolint:kennlint // sleeptest: runs in the helper subprocess
+	if os.Getenv("DOCBANK_WINDOWS_STOP_HELPER") != "1" {
+		return
 	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	_, _ = os.Stdout.WriteString(windowsStopHelperExited + "\n")
 }

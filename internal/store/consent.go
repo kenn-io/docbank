@@ -280,7 +280,9 @@ func (s *Store) grantConsentTx(
 func (s *Store) RevokeConsent(
 	ctx context.Context, request ProcessingConsentRevocationRequest,
 ) (ProcessingConsentRevocation, error) {
-	s.providerEgressMu.Lock()
+	if err := s.providerEgressMu.Lock(ctx); err != nil {
+		return ProcessingConsentRevocation{}, err
+	}
 	defer s.providerEgressMu.Unlock()
 
 	principal, err := normalizeConsentLabel("principal", request.Principal)
@@ -335,7 +337,9 @@ func (s *Store) revokeConsentTx(
 // BeginProviderEgress checks durable consent while holding the shared revocation
 // fence. The caller must close the returned fence after provider execution.
 func (s *Store) BeginProviderEgress(ctx context.Context, request ProviderOperationAuthorizationRequest) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
-	s.providerEgressMu.RLock()
+	if err := s.providerEgressMu.RLock(ctx); err != nil {
+		return ProviderOperationAuthorization{}, nil, err
+	}
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	authorization, err := s.AuthorizeProviderOperation(ctx, request)
 	if err != nil {

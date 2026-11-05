@@ -1,13 +1,14 @@
 package mailbox
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -30,16 +31,20 @@ func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
 	output, err := os.CreateTemp(t.TempDir(), "worker.log")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, output.Close()) })
-	f.Logger = slog.New(slog.NewTextHandler(output, nil))
+	logged := make(chan string, 2)
+	f.Logger = slog.New(jobLogHandler{Handler: slog.NewTextHandler(output, nil), jobs: logged})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- f.RunWorker(ctx) }()
 	// The database records failure before the worker writes its error log.
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(output.Name())
-		return err == nil && bytes.Contains(data, []byte("job=second-job"))
-	}, 3*time.Second, 10*time.Millisecond)
+	for job := ""; job != "second-job"; {
+		select {
+		case job = <-logged:
+		case err := <-done:
+			t.Fatalf("worker stopped before logging the second job: %v", err)
+		}
+	}
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
 	data, err := os.ReadFile(output.Name())
@@ -49,8 +54,31 @@ func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
 	require.Contains(t, string(data), "job=second-job")
 }
 
+// jobLogHandler reports the job named by each record after writing it, so a
+// test can wait for a specific log line instead of polling the log file.
+type jobLogHandler struct {
+	slog.Handler
+
+	jobs chan<- string
+}
+
+func (h jobLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	if err := h.Handler.Handle(ctx, record); err != nil {
+		return fmt.Errorf("write log record: %w", err)
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "job" {
+			h.jobs <- attr.Value.String()
+		}
+		return true
+	})
+	return nil
+}
+
 func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sql.DB, error) {
-	options.BusyTimeout = time.Millisecond //nolint:kennlint // deadlinetest: the held SQLite lock must outlast a busy attempt to exercise worker retries
+	// A held SQLite lock fails a statement at once, so contention reaches
+	// the worker's retry loop without SQLite sleeping on the wall clock.
+	options.BusyTimeout = docsqlite.NoBusyWait
 	db, err := d.Driver.Open(path, options)
 	if err == nil {
 		d.dbs = append(d.dbs, db)
@@ -61,85 +89,92 @@ func (d *contentionDriver) Open(path string, options docsqlite.OpenOptions) (*sq
 func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 	for _, phase := range []string{"claim", "watch"} {
 		t.Run(phase, func(t *testing.T) {
-			driver := &contentionDriver{Driver: store.DefaultSQLiteDriver()}
-			f := mailboxFixture(t, driver)
-			r := queuedArchive(t, f, []byte(separator+"Subject: Synthetic\n\nBody\n"), "mbox")
-			// Allow real database and file I/O to finish on slower CI runners.
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			// Only the external locker should cause contention in this fixture.
-			for _, db := range driver.dbs {
-				db.SetMaxOpenConns(1)
-				db.SetMaxIdleConns(0)
-			}
-			locker, err := driver.Driver.Open(filepath.Join(f.Spool, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-			require.NoError(t, err)
-			defer func() { require.NoError(t, locker.Close()) }()
-			locker.SetMaxOpenConns(1)
-			_, err = locker.ExecContext(ctx, "PRAGMA locking_mode=EXCLUSIVE")
-			require.NoError(t, err)
-			ready, resume := make(chan struct{}), make(chan struct{})
-			calls := 0
-			f.Mutate = func(ctx context.Context, fn func() error) error {
-				calls++
-				target := 1
-				if phase == "watch" {
-					target = 2
+			now := time.Now()
+			synctest.Test(t, func(t *testing.T) {
+				// Start the fake clock at the real time the catalog records.
+				time.Sleep(time.Until(now))
+				driver := &contentionDriver{Driver: store.DefaultSQLiteDriver()}
+				f := mailboxFixture(t, driver)
+				r := queuedArchive(t, f, []byte(separator+"Subject: Synthetic\n\nBody\n"), "mbox")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				// Only the external locker should cause contention in this fixture.
+				for _, db := range driver.dbs {
+					db.SetMaxOpenConns(1)
+					db.SetMaxIdleConns(0)
 				}
-				if calls == target {
-					close(ready)
-					select {
-					case <-resume:
-					case <-ctx.Done():
-						return ctx.Err()
+				locker, err := driver.Driver.Open(filepath.Join(f.Spool, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, locker.Close()) }()
+				locker.SetMaxOpenConns(1)
+				_, err = locker.ExecContext(ctx, "PRAGMA locking_mode=EXCLUSIVE")
+				require.NoError(t, err)
+				ready, resume := make(chan struct{}), make(chan struct{})
+				calls := 0
+				f.Mutate = func(ctx context.Context, fn func() error) error {
+					calls++
+					target := 1
+					if phase == "watch" {
+						target = 2
 					}
+					if calls == target {
+						close(ready)
+						select {
+						case <-resume:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+					return fn()
 				}
-				return fn()
-			}
-			done := make(chan struct{})
-			var workerErr error
-			go func() {
-				defer close(done)
-				workerErr = f.RunWorker(ctx)
-			}()
-			defer func() {
-				cancel()
-				<-done
-				require.ErrorIs(t, workerErr, context.Canceled)
-			}()
-			select {
-			case <-ready:
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
-			tx, err := locker.BeginTx(ctx, nil)
-			require.NoError(t, err)
-			defer func() { _ = tx.Rollback() }()
-			_, err = f.Store.MailboxJob(ctx, "one", r.ID)
-			require.True(t, f.Store.RenditionJobErrorRetryable(err), "real read contention: %v", err)
-			if phase == "claim" {
-				close(resume)
-			}
-			// The watcher ticks every 100ms; the real exclusive lock exceeds that.
-			select {
-			case <-done:
-				t.Fatalf("worker exited under temporary contention: %v", workerErr)
-			case <-time.After(350 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the exclusive SQLite lock keeps the worker in contention past several 100ms ticks
-			}
-			require.NoError(t, tx.Rollback())
-			require.NoError(t, locker.Close())
-			// Reuse connections once the exclusive lock is gone, so cancellation
-			// cannot leave a replacement connection opening during cleanup.
-			for _, db := range driver.dbs {
-				db.SetMaxIdleConns(1)
-			}
-			if phase == "watch" {
-				close(resume)
-			}
-			require.Eventually(t, func() bool {
+				done := make(chan struct{})
+				var workerErr error
+				go func() {
+					defer close(done)
+					workerErr = f.RunWorker(ctx)
+				}()
+				defer func() {
+					cancel()
+					<-done
+					require.ErrorIs(t, workerErr, context.Canceled)
+				}()
+				select {
+				case <-ready:
+				case <-done:
+					t.Fatalf("worker exited before contention: %v", workerErr)
+				}
+				tx, err := locker.BeginTx(ctx, nil)
+				require.NoError(t, err)
+				defer func() { _ = tx.Rollback() }()
+				_, err = f.Store.MailboxJob(ctx, "one", r.ID)
+				require.True(t, f.Store.RenditionJobErrorRetryable(err), "real read contention: %v", err)
+				if phase == "claim" {
+					close(resume)
+				}
+				// Several claim polls (250ms) or job watcher ticks (100ms) meet the lock.
+				time.Sleep(time.Second)
+				select {
+				case <-done:
+					t.Fatalf("worker exited under temporary contention: %v", workerErr)
+				default:
+				}
+				require.NoError(t, tx.Rollback())
+				require.NoError(t, locker.Close())
+				// Reuse connections once the exclusive lock is gone, so cancellation
+				// cannot leave a replacement connection opening during cleanup.
+				for _, db := range driver.dbs {
+					db.SetMaxIdleConns(1)
+				}
+				if phase == "watch" {
+					close(resume)
+				}
+				// Give the worker time to finish the import and go idle.
+				time.Sleep(time.Minute)
 				j, err := f.Store.MailboxJob(ctx, "one", r.ID)
-				return err == nil && j.State == "complete" && j.Imported == 1
-			}, 10*time.Second, 10*time.Millisecond)
+				require.NoError(t, err)
+				require.Equal(t, "complete", j.State)
+				require.Equal(t, int64(1), j.Imported)
+			})
 		})
 	}
 }

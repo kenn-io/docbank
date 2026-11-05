@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -22,75 +23,81 @@ import (
 
 func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
-	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+		repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+		require.NoError(t, err)
 
-	extraPath := filepath.Join(t.TempDir(), "catalog.sqlite")
-	prepared := make(chan struct{})
-	resume := make(chan struct{})
-	var resumeOnce sync.Once
-	t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
-	type backupResult struct {
-		snapshot docbank.BackupSnapshot
-		err      error
-	}
-	backupDone := make(chan backupResult, 1)
-	go func() {
-		snapshot, createErr := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
-			AllowPlaintextSecrets: true,
-			Prepare: func(ctx context.Context) error {
-				close(prepared)
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-resume:
-				}
-				return os.WriteFile(extraPath, []byte("host catalog\n"), 0o600)
-			},
-			ExtraFiles: []docbank.BackupExtraFile{{
-				Path: extraPath, RecordAs: "host/catalog.sqlite", Sensitive: true,
-			}},
+		extraPath := filepath.Join(t.TempDir(), "catalog.sqlite")
+		prepared := make(chan struct{})
+		resume := make(chan struct{})
+		var resumeOnce sync.Once
+		t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
+		type backupResult struct {
+			snapshot docbank.BackupSnapshot
+			err      error
+		}
+		backupDone := make(chan backupResult, 1)
+		go func() {
+			snapshot, createErr := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+				AllowPlaintextSecrets: true,
+				Prepare: func(ctx context.Context) error {
+					close(prepared)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-resume:
+					}
+					return os.WriteFile(extraPath, []byte("host catalog\n"), 0o600)
+				},
+				ExtraFiles: []docbank.BackupExtraFile{{
+					Path: extraPath, RecordAs: "host/catalog.sqlite", Sensitive: true,
+				}},
+			})
+			backupDone <- backupResult{snapshot: snapshot, err: createErr}
+		}()
+		select {
+		case <-prepared:
+		case result := <-backupDone:
+			require.FailNow(t, "backup returned before host preparation", "error: %v", result.err)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "backup preparation did not begin")
+		}
+
+		putDone := make(chan error, 1)
+		go func() {
+			_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+				MediaType: "text/plain",
+			})
+			putDone <- putErr
+		}()
+		// Wait until the put is blocked; the paused host preparation holds the freeze.
+		synctest.Wait()
+		select {
+		case putErr := <-putDone:
+			require.FailNow(t, "content mutation completed during host preparation", "error: %v", putErr)
+		default:
+		}
+
+		resumeOnce.Do(func() { close(resume) })
+		result := <-backupDone
+		require.NoError(t, result.err)
+		require.NoError(t, <-putDone)
+
+		target := filepath.Join(t.TempDir(), "restored")
+		restored, err := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
+			SnapshotID: result.snapshot.ID,
+			Target:     target,
 		})
-		backupDone <- backupResult{snapshot: snapshot, err: createErr}
-	}()
-	select {
-	case <-prepared:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "backup preparation did not begin")
-	}
-
-	putDone := make(chan error, 1)
-	go func() {
-		_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
-			MediaType: "text/plain",
-		})
-		putDone <- putErr
-	}()
-	select {
-	case putErr := <-putDone:
-		require.FailNow(t, "content mutation completed during host preparation", "error: %v", putErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the paused host preparation keeps the put blocked
-	}
-
-	resumeOnce.Do(func() { close(resume) })
-	result := <-backupDone
-	require.NoError(t, result.err)
-	require.NoError(t, <-putDone)
-
-	target := filepath.Join(t.TempDir(), "restored")
-	restored, err := vault.RestoreBackup(t.Context(), repository, docbank.BackupRestoreOptions{
-		SnapshotID: result.snapshot.ID,
-		Target:     target,
+		require.NoError(t, err)
+		require.Equal(t, 1, restored.ExtrasFiles)
+		got, err := os.ReadFile(filepath.Join(target, "host", "catalog.sqlite"))
+		require.NoError(t, err)
+		require.Equal(t, "host catalog\n", string(got))
 	})
-	require.NoError(t, err)
-	require.Equal(t, 1, restored.ExtrasFiles)
-	got, err := os.ReadFile(filepath.Join(target, "host", "catalog.sqlite"))
-	require.NoError(t, err)
-	require.Equal(t, "host catalog\n", string(got))
 }
 
 func TestEmbeddedBackupRefusesSensitiveHostFileWithoutPlaintextOptIn(t *testing.T) {
@@ -117,65 +124,71 @@ func TestEmbeddedBackupRefusesSensitiveHostFileWithoutPlaintextOptIn(t *testing.
 
 func TestEmbeddedBackupPreparationFailureReleasesMutationGate(t *testing.T) {
 	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
-	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+		repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+		require.NoError(t, err)
 
-	prepareErr := errors.New("prepare host snapshot")
-	_, err = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
-		Prepare: func(context.Context) error { return prepareErr },
-	})
-	require.ErrorIs(t, err, prepareErr)
-
-	putDone := make(chan error, 1)
-	go func() {
-		_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
-			MediaType: "text/plain",
+		prepareErr := errors.New("prepare host snapshot")
+		_, err = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+			Prepare: func(context.Context) error { return prepareErr },
 		})
-		putDone <- putErr
-	}()
-	select {
-	case putErr := <-putDone:
-		require.NoError(t, putErr)
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "content mutation remained blocked after preparation failed")
-	}
+		require.ErrorIs(t, err, prepareErr)
+
+		putDone := make(chan error, 1)
+		go func() {
+			_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+				MediaType: "text/plain",
+			})
+			putDone <- putErr
+		}()
+		// The workers keep fake time moving, so the timer bounds a put left behind the gate.
+		select {
+		case putErr := <-putDone:
+			require.NoError(t, putErr)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "content mutation remained blocked after preparation failed")
+		}
+	})
 }
 
 func TestEmbeddedBackupPreparationPanicReleasesMutationGate(t *testing.T) {
 	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
-	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+		repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+		require.NoError(t, err)
 
-	var recovered any
-	func() {
-		defer func() { recovered = recover() }()
-		_, _ = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
-			Prepare: func(context.Context) error { panic("prepare host snapshot") },
-		})
-	}()
-	require.Equal(t, "prepare host snapshot", recovered)
+		var recovered any
+		func() {
+			defer func() { recovered = recover() }()
+			_, _ = vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+				Prepare: func(context.Context) error { panic("prepare host snapshot") },
+			})
+		}()
+		require.Equal(t, "prepare host snapshot", recovered)
 
-	putDone := make(chan error, 1)
-	go func() {
-		_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
-			MediaType: "text/plain",
-		})
-		putDone <- putErr
-	}()
-	select {
-	case putErr := <-putDone:
-		require.NoError(t, putErr)
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "content mutation remained blocked after preparation panicked")
-	}
+		putDone := make(chan error, 1)
+		go func() {
+			_, putErr := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+				MediaType: "text/plain",
+			})
+			putDone <- putErr
+		}()
+		// The workers keep fake time moving, so the timer bounds a put left behind the gate.
+		select {
+		case putErr := <-putDone:
+			require.NoError(t, putErr)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "content mutation remained blocked after preparation panicked")
+		}
+	})
 }
 
 func TestEmbeddedBackup(t *testing.T) {
@@ -277,101 +290,112 @@ func TestEmbeddedBackup(t *testing.T) {
 
 func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
 	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	createRangeFixture(t, vault, "/archive/photo.txt", []byte("backup fence content\n"))
-	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		createRangeFixture(t, vault, "/archive/photo.txt", []byte("backup fence content\n"))
+		repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+		require.NoError(t, err)
 
-	paused := make(chan struct{})
-	resume := make(chan struct{})
-	var pauseOnce sync.Once
-	var resumeOnce sync.Once
-	t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
-	backupDone := make(chan error, 1)
-	go func() {
-		_, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
-			Progress: func(progress docbank.BackupProgress) {
-				if progress.Stage == "freeze" && progress.Final {
-					pauseOnce.Do(func() { close(paused) })
-					<-resume
-				}
-			},
-		})
-		backupDone <- err
-	}()
-	select {
-	case <-paused:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "backup did not reach its post-freeze capture")
-	}
+		paused := make(chan struct{})
+		resume := make(chan struct{})
+		var pauseOnce sync.Once
+		var resumeOnce sync.Once
+		t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
+		backupDone := make(chan error, 1)
+		go func() {
+			_, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+				Progress: func(progress docbank.BackupProgress) {
+					if progress.Stage == "freeze" && progress.Final {
+						pauseOnce.Do(func() { close(paused) })
+						<-resume
+					}
+				},
+			})
+			backupDone <- err
+		}()
+		select {
+		case <-paused:
+		case err := <-backupDone:
+			require.FailNow(t, "backup returned before its post-freeze capture", "error: %v", err)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "backup did not reach its post-freeze capture")
+		}
 
-	packDone := make(chan error, 1)
-	go func() {
-		_, err := vault.Pack(t.Context(), docbank.PackOptions{})
-		packDone <- err
-	}()
-	select {
-	case err := <-packDone:
-		require.FailNow(t, "physical maintenance completed during backup capture", "error: %v", err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the paused backup capture keeps the pack blocked
-	}
+		packDone := make(chan error, 1)
+		go func() {
+			_, err := vault.Pack(t.Context(), docbank.PackOptions{})
+			packDone <- err
+		}()
+		// Wait until the pack is blocked; the paused backup capture keeps it out.
+		synctest.Wait()
+		select {
+		case err := <-packDone:
+			require.FailNow(t, "physical maintenance completed during backup capture", "error: %v", err)
+		default:
+		}
 
-	resumeOnce.Do(func() { close(resume) })
-	require.NoError(t, <-backupDone)
-	require.NoError(t, <-packDone)
+		resumeOnce.Do(func() { close(resume) })
+		require.NoError(t, <-backupDone)
+		require.NoError(t, <-packDone)
+	})
 }
 
 func TestEmbeddedBackupAllowsAppendsAfterFreeze(t *testing.T) {
 	t.Parallel()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
-	repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
-	require.NoError(t, err)
-
-	paused := make(chan struct{})
-	resume := make(chan struct{})
-	var pauseOnce sync.Once
-	var resumeOnce sync.Once
-	t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
-	backupDone := make(chan error, 1)
-	go func() {
-		_, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
-			Progress: func(progress docbank.BackupProgress) {
-				if progress.Stage == "freeze" && progress.Final {
-					pauseOnce.Do(func() { close(paused) })
-					<-resume
-				}
-			},
-		})
-		backupDone <- err
-	}()
-	select {
-	case <-paused:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "backup did not reach its post-freeze capture")
-	}
-
-	putDone := make(chan error, 1)
-	go func() {
-		_, err := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
-			MediaType: "text/plain",
-		})
-		putDone <- err
-	}()
-	select {
-	case err := <-putDone:
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: filepath.Join(t.TempDir(), "live")})
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		resumeOnce.Do(func() { close(resume) })
-		require.FailNow(t, "append remained blocked after the backup freeze ended")
-	}
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		createRangeFixture(t, vault, "/archive/photo.txt", []byte("snapshot content\n"))
+		repository, err := docbank.InitBackupRepository(filepath.Join(t.TempDir(), "backups"))
+		require.NoError(t, err)
 
-	resumeOnce.Do(func() { close(resume) })
-	require.NoError(t, <-backupDone)
+		paused := make(chan struct{})
+		resume := make(chan struct{})
+		var pauseOnce sync.Once
+		var resumeOnce sync.Once
+		t.Cleanup(func() { resumeOnce.Do(func() { close(resume) }) })
+		backupDone := make(chan error, 1)
+		go func() {
+			_, err := vault.CreateBackup(t.Context(), repository, docbank.BackupOptions{
+				Progress: func(progress docbank.BackupProgress) {
+					if progress.Stage == "freeze" && progress.Final {
+						pauseOnce.Do(func() { close(paused) })
+						<-resume
+					}
+				},
+			})
+			backupDone <- err
+		}()
+		select {
+		case <-paused:
+		case err := <-backupDone:
+			require.FailNow(t, "backup returned before its post-freeze capture", "error: %v", err)
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "backup did not reach its post-freeze capture")
+		}
+
+		putDone := make(chan error, 1)
+		go func() {
+			_, err := vault.Put(t.Context(), "/archive/later.txt", bytes.NewBufferString("later\n"), docbank.PutOptions{
+				MediaType: "text/plain",
+			})
+			putDone <- err
+		}()
+		// The workers keep fake time moving, so the timer bounds an append left behind the freeze.
+		select {
+		case err := <-putDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			resumeOnce.Do(func() { close(resume) })
+			require.FailNow(t, "append remained blocked after the backup freeze ended")
+		}
+
+		resumeOnce.Do(func() { close(resume) })
+		require.NoError(t, <-backupDone)
+	})
 }
 
 func TestEmbeddedRestoreRejectsLiveVaultOverlap(t *testing.T) {

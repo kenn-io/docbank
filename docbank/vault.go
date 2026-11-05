@@ -30,6 +30,7 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/waitlock"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -147,9 +148,9 @@ type Vault struct {
 	processingErr     error
 	emailSpoolParent  string
 
-	lifecycle    sync.RWMutex
-	mutation     sync.Mutex
-	preservation sync.RWMutex
+	lifecycle    waitlock.RWMutex
+	mutation     waitlock.RWMutex
+	preservation waitlock.RWMutex
 	closed       bool
 
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
@@ -326,6 +327,7 @@ func openVaultWithRootOpener(
 	vault := &Vault{
 		vaultRoot: config.Root, root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
 		emailSpoolParent: layout.BlobTmpDir(),
+		lifecycle:        waitlock.New(), mutation: waitlock.New(), preservation: waitlock.New(),
 	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {
@@ -456,7 +458,9 @@ func (gate embeddedMutationGate) MutateContext(ctx context.Context, fn func() er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	gate.vault.mutation.Lock()
+	if err := gate.vault.mutation.Lock(ctx); err != nil {
+		return err
+	}
 	defer gate.vault.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
@@ -478,7 +482,12 @@ func (v *Vault) Close() error {
 	if v == nil {
 		return nil
 	}
-	v.lifecycle.Lock()
+	// Close has no caller context, and it must outlast cancellation: a vault
+	// left half-closed would keep its storage and hierarchy locks.
+	ctx := context.Background()
+	if err := v.lifecycle.Lock(ctx); err != nil {
+		return err
+	}
 	defer v.lifecycle.Unlock()
 	if v.closed {
 		return nil
@@ -486,7 +495,9 @@ func (v *Vault) Close() error {
 	v.closed = true
 	if v.processingCancel != nil {
 		// Finish admitted mutations before canceling their transaction contexts.
-		v.mutation.Lock()
+		if err := v.mutation.Lock(ctx); err != nil {
+			return err
+		}
 		v.processingCancel()
 		v.mutation.Unlock()
 	}
@@ -516,7 +527,7 @@ func (v *Vault) ID() string {
 
 // Stat resolves a live virtual path to its stable node projection.
 func (v *Vault) Stat(ctx context.Context, virtualPath string) (Node, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return Node{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -532,7 +543,7 @@ func (v *Vault) Stat(ctx context.Context, virtualPath string) (Node, error) {
 func (v *Vault) Children(
 	ctx context.Context, directoryID int64, opts ChildrenOptions,
 ) (ChildrenPage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ChildrenPage{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -556,7 +567,7 @@ func (v *Vault) Children(
 func (v *Vault) Versions(
 	ctx context.Context, nodeID int64, opts VersionsOptions,
 ) (VersionsPage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return VersionsPage{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -579,7 +590,7 @@ func (v *Vault) Versions(
 // of one exact immutable content version. The result includes sensitive local
 // fields; the embedding application is responsible for disclosure policy.
 func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return SourceMetadata{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -597,11 +608,13 @@ func (v *Vault) SourceMetadata(ctx context.Context, versionID string) (SourceMet
 // vault mutation lock for the whole extraction, so writes and maintenance
 // wait behind it.
 func (v *Vault) EnsureSourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return SourceMetadata{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return SourceMetadata{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return SourceMetadata{}, err
@@ -643,7 +656,7 @@ func (v *Vault) EnsureSourceMetadata(ctx context.Context, versionID string) (Sou
 // VisualPreview returns the active canonical preview result for one exact
 // immutable content version, including unsupported and failed outcomes.
 func (v *Vault) VisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return VisualPreview{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -659,11 +672,13 @@ func (v *Vault) VisualPreview(ctx context.Context, versionID string) (VisualPrev
 // built-in recipe has not processed those bytes. A recorded recipe is reused
 // without replacing a head published by another recipe.
 func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return VisualPreview{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return VisualPreview{}, err
+	}
 	defer v.mutation.Unlock()
 	if _, err := internalprocessing.EnsureVisualPreview(ctx, v.metadata, v.blobs, versionID, internalprocessing.CurrentVisualPreviewRecipe()); err != nil {
 		return VisualPreview{}, visualPreviewProcessingError(err)
@@ -678,7 +693,7 @@ func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (Visu
 // OpenVisualPreview opens verified canonical preview bytes for one exact
 // immutable content version. Call VisualPreview to inspect terminal failures.
 func (v *Vault) OpenVisualPreview(ctx context.Context, versionID string) (*VisualPreviewContent, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)
@@ -770,7 +785,7 @@ func (v *Vault) Create(
 func (v *Vault) Provenance(
 	ctx context.Context, nodeID int64, opts ProvenanceOptions,
 ) (ProvenancePage, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProvenancePage{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -798,7 +813,7 @@ func (v *Vault) Provenance(
 func (v *Vault) AppendProvenance(
 	ctx context.Context, nodeID int64, opts ProvenanceAppendOptions,
 ) (ProvenanceAppendReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProvenanceAppendReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -812,7 +827,9 @@ func (v *Vault) AppendProvenance(
 	if opts.IfRevision > 0 {
 		ifRevision = opts.IfRevision
 	}
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return ProvenanceAppendReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return ProvenanceAppendReceipt{}, err
@@ -843,7 +860,7 @@ func provenanceStringPtr(value *time.Time) *string {
 func (v *Vault) MovePath(
 	ctx context.Context, from, to string, opts RevisionOptions,
 ) (MutationReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MutationReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -851,7 +868,9 @@ func (v *Vault) MovePath(
 	if err != nil {
 		return MutationReceipt{}, err
 	}
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return MutationReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return MutationReceipt{}, err
@@ -869,7 +888,7 @@ func (v *Vault) MovePath(
 func (v *Vault) BatchMove(
 	ctx context.Context, moves []BatchMoveItem,
 ) ([]BatchMoveReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -880,7 +899,9 @@ func (v *Vault) BatchMove(
 			DestinationPath: move.DestinationPath,
 		}
 	}
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return nil, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -903,7 +924,7 @@ func (v *Vault) BatchMove(
 func (v *Vault) TrashPath(
 	ctx context.Context, path string, opts RevisionOptions,
 ) (MutationReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MutationReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -911,7 +932,9 @@ func (v *Vault) TrashPath(
 	if err != nil {
 		return MutationReceipt{}, err
 	}
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return MutationReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return MutationReceipt{}, err
@@ -929,7 +952,7 @@ func (v *Vault) TrashPath(
 func (v *Vault) Restore(
 	ctx context.Context, nodeID int64, opts RevisionOptions,
 ) (MutationReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return MutationReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -937,7 +960,9 @@ func (v *Vault) Restore(
 	if err != nil {
 		return MutationReceipt{}, err
 	}
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return MutationReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return MutationReceipt{}, err
@@ -965,7 +990,7 @@ func storeRevision(opts RevisionOptions) (int64, error) {
 func (v *Vault) EmptyTrash(
 	ctx context.Context, opts TrashEmptyOptions,
 ) (TrashEmptyReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return TrashEmptyReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -979,9 +1004,13 @@ func (v *Vault) EmptyTrash(
 	if maxRoots == 0 {
 		maxRoots = DefaultTrashEmptyMaxRoots
 	}
-	v.preservation.Lock()
+	if err := v.preservation.Lock(ctx); err != nil {
+		return TrashEmptyReport{}, err
+	}
 	defer v.preservation.Unlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return TrashEmptyReport{}, err
+	}
 	defer v.mutation.Unlock()
 	if err := ctx.Err(); err != nil {
 		return TrashEmptyReport{}, err
@@ -1005,7 +1034,7 @@ func (v *Vault) EmptyTrash(
 func (v *Vault) RepairContent(
 	ctx context.Context, identity ContentIdentity, trusted io.Reader,
 ) (RepairReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return RepairReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -1020,9 +1049,13 @@ func (v *Vault) RepairContent(
 		return RepairReceipt{}, errors.New("repair content size must not be negative")
 	}
 
-	v.preservation.Lock()
+	if err := v.preservation.Lock(ctx); err != nil {
+		return RepairReceipt{}, err
+	}
 	defer v.preservation.Unlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return RepairReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	var receipt RepairReceipt
 	err = v.blobs.WithMutation(ctx, func() error {
@@ -1101,7 +1134,7 @@ func (v *Vault) write(
 	ctx context.Context, virtualPath string, content io.Reader, opts PutOptions, immutable bool,
 	provenance *ProvenanceSource,
 ) (PutReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return PutReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -1152,7 +1185,9 @@ func (v *Vault) writeHeld(
 		return PutReceipt{}, errors.New("docbank put revision must not be negative")
 	}
 
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return PutReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	if opts.IfRevision > 0 {
 		existing, lookupErr := v.metadata.NodeByPath(ctx, canonicalPath)
@@ -1365,7 +1400,7 @@ func blobPhysical(receipt blob.WriteReceipt) (store.BlobPhysical, error) {
 
 // LooseBacklog reports indexed loose content eligible for explicit packing.
 func (v *Vault) LooseBacklog(ctx context.Context) (LooseBacklog, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return LooseBacklog{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -1403,7 +1438,7 @@ func (v *Vault) removeUnrecordedLoose(ctx context.Context, hash string) error {
 // reader holds a vault lease until Close; bytes are authoritative only after
 // terminal io.EOF or a successful Verify.
 func (v *Vault) OpenContent(ctx context.Context, virtualPath string) (*Content, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	node, err := v.metadata.NodeByPath(ctx, virtualPath)
@@ -1442,7 +1477,7 @@ func (v *Vault) OpenContent(ctx context.Context, virtualPath string) (*Content, 
 // content version. The reader holds a vault lease and uses the same verified
 // read contract as OpenContent.
 func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*VersionContent, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	version, err := v.metadata.ContentVersionByID(ctx, versionID)
@@ -1483,7 +1518,7 @@ func (v *Vault) OpenVersionContent(ctx context.Context, versionID string) (*Vers
 func (v *Vault) OpenVersionContentRange(
 	ctx context.Context, versionID string, opts ContentRangeOptions,
 ) (*VersionContentRange, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	version, err := v.metadata.ContentVersionByID(ctx, versionID)
@@ -1580,13 +1615,17 @@ func closeContentReader(reader packstore.VerifiedReadCloser) error {
 // It also performs the same reconciliation and repair pass as the standalone
 // storage pack operation. Ordinary Put calls remain loose until Pack is called.
 func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return PackReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.preservation.Lock()
+	if err := v.preservation.Lock(ctx); err != nil {
+		return PackReport{}, err
+	}
 	defer v.preservation.Unlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return PackReport{}, err
+	}
 	defer v.mutation.Unlock()
 	report, err := internalmaintenance.Pack(ctx, v.metadata, v.blobs, opts.MaxBytes)
 	out := fromPackStats(report.Stats)
@@ -1594,11 +1633,13 @@ func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) 
 	return out, err
 }
 
-func (v *Vault) begin() error {
+func (v *Vault) begin(ctx context.Context) error {
 	if v == nil {
 		return ErrClosed
 	}
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return err
+	}
 	if v.closed {
 		v.lifecycle.RUnlock()
 		return ErrClosed

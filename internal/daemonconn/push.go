@@ -47,6 +47,25 @@ var errKeyProof = errors.New("daemon endpoint did not prove it holds the API key
 // document bytes cross it, so a listener that captures a forwarded port after
 // the tunnel exits receives neither. Redirects and proxies are not followed.
 func NewPushConnection(origin, key string) (*Connection, error) {
+	return newPushConnection(origin, key, nil)
+}
+
+// NewPushConnectionWithDialer is NewPushConnection for an http origin whose
+// raw connections come from dial instead of TCP. Tests use it to reach a
+// daemon on an in-memory network, where fake time can run. Every connection
+// still proves the key before it carries the key or any document bytes.
+func NewPushConnectionWithDialer(
+	origin, key string, dial func(ctx context.Context, network, address string) (net.Conn, error),
+) (*Connection, error) {
+	if dial == nil {
+		return nil, errors.New("push dialer is required")
+	}
+	return newPushConnection(origin, key, dial)
+}
+
+func newPushConnection(
+	origin, key string, dial func(ctx context.Context, network, address string) (net.Conn, error),
+) (*Connection, error) {
 	parsed, err := url.Parse(origin)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
@@ -67,13 +86,18 @@ func NewPushConnection(origin, key string) (*Connection, error) {
 	}
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	if parsed.Scheme == "http" {
+		if dial == nil {
+			dial = dialer.DialContext
+		}
 		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			conn, err := dialer.DialContext(ctx, network, address)
+			conn, err := dial(ctx, network, address)
 			if err != nil {
 				return nil, fmt.Errorf("dialing daemon: %w", err)
 			}
 			return prover.prove(ctx, conn)
 		}
+	} else if dial != nil {
+		return nil, errors.New("a push dialer requires an http origin")
 	} else {
 		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{
 			ServerName: parsed.Hostname(), NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS12,

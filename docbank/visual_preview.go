@@ -31,7 +31,7 @@ func visualPreviewRecipe(size VisualPreviewSize) (document.VisualPreviewRecipeV1
 
 // VisualPreviewForSize reads the exact selected recipe, including terminal failures.
 func (v *Vault) VisualPreviewForSize(ctx context.Context, versionID string, size VisualPreviewSize) (VisualPreview, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return VisualPreview{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -48,11 +48,13 @@ func (v *Vault) VisualPreviewForSize(ctx context.Context, versionID string, size
 
 // EnsureVisualPreviewForSize produces or reuses the exact selected recipe.
 func (v *Vault) EnsureVisualPreviewForSize(ctx context.Context, versionID string, size VisualPreviewSize) (VisualPreview, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return VisualPreview{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return VisualPreview{}, err
+	}
 	defer v.mutation.Unlock()
 	recipe, _, err := visualPreviewRecipe(size)
 	if err != nil {
@@ -67,7 +69,7 @@ func (v *Vault) EnsureVisualPreviewForSize(ctx context.Context, versionID string
 
 // OpenVisualPreviewForSize streams verified bytes for the exact selected recipe.
 func (v *Vault) OpenVisualPreviewForSize(ctx context.Context, versionID string, size VisualPreviewSize) (*VisualPreviewContent, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	_, fingerprint, err := visualPreviewRecipe(size)

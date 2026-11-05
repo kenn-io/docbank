@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -192,39 +192,40 @@ func TestWalkPageSizeBounds(t *testing.T) {
 
 func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 	t.Parallel()
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 1})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 1})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, walker.Close()) })
 
-	closed := make(chan struct{})
-	var closeErr error
-	go func() {
-		closeErr = vault.Close()
-		close(closed)
-	}()
-	require.Eventually(t, func() bool {
+		closed := make(chan struct{})
+		var closeErr error
+		go func() {
+			closeErr = vault.Close()
+			close(closed)
+		}()
+		// Wait until Close is blocked; the walker's lifecycle lease keeps it queued.
+		synctest.Wait()
 		if vault.lifecycle.TryRLock() {
 			vault.lifecycle.RUnlock()
-			return false
+			require.FailNow(t, "Vault.Close never queued for the lifecycle write lock")
 		}
-		return true
-	}, 30*time.Second, time.Millisecond, "Vault.Close never queued for the lifecycle write lock")
-	select {
-	case <-closed:
-		require.Fail(t, "Vault.Close returned while the walker still held its lifecycle lease")
-	default:
-	}
+		select {
+		case <-closed:
+			require.Fail(t, "Vault.Close returned while the walker still held its lifecycle lease")
+		default:
+		}
 
-	require.NoError(t, walker.Close())
-	require.NoError(t, walker.Close())
-	<-closed
-	require.NoError(t, closeErr)
-	page, err := walker.Next(t.Context())
-	assert.Nil(t, page)
-	require.ErrorIs(t, err, io.EOF)
+		require.NoError(t, walker.Close())
+		require.NoError(t, walker.Close())
+		<-closed
+		require.NoError(t, closeErr)
+		page, err := walker.Next(t.Context())
+		assert.Nil(t, page)
+		require.ErrorIs(t, err, io.EOF)
+	})
 }
 
 func TestWalkCloseReleasesReadTransaction(t *testing.T) {
