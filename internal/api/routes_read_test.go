@@ -335,33 +335,6 @@ func TestContentVersionByteRanges(t *testing.T) {
 	}
 }
 
-func TestContentVersionRawRangeSkipsUnrequestedBytes(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	content := strings.Repeat("synthetic raw content", 512)
-	n := createFileWithChecksum(t, s, "range.txt", content)
-	hash, err := packstore.ParseHash(n.BlobHash)
-	require.NoError(t, err)
-	locations, err := s.ResolveBlobLocations(t.Context(), hash)
-	require.NoError(t, err)
-	require.Len(t, locations.Candidates, 1)
-	location := locations.Candidates[0].Loose
-	require.NotNil(t, location)
-	require.Equal(t, packstore.LooseEncodingRaw, location.Encoding)
-	layout, err := packstore.NewLayout(s.BlobsDir, packstore.LayoutOptions{Staging: packstore.StagingStoreDirectory, StagingDir: "tmp"})
-	require.NoError(t, err)
-	file, err := os.OpenFile(layout.LoosePath(hash), os.O_RDWR, 0)
-	require.NoError(t, err)
-	_, err = file.WriteAt([]byte{content[len(content)-1] ^ 1}, int64(len(content)-1))
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
-	resp, body := get(t, ts, "/api/v1/versions/"+n.CurrentVersionID+"/content", map[string]string{"Range": "bytes=3-8"})
-	require.Equal(t, http.StatusPartialContent, resp.StatusCode, body)
-	require.Equal(t, content[3:9], body)
-	digest := sha256.Sum256([]byte(content[3:9]))
-	require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":", resp.Trailer.Get("Content-Digest"))
-}
-
 func createFileWithChecksum(t *testing.T, s *testStore, name, content string) store.Node {
 	t.Helper()
 	receipt, err := s.Blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))

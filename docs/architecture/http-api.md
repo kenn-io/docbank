@@ -1783,9 +1783,8 @@ The version's `/content` route accepts a single byte `Range`. It returns
 unsatisfiable range. The version, hash, and size headers still identify the
 whole version. The `Content-Digest` trailer covers only the returned window.
 MCP clients verify the assembled bytes against the selected version's size
-and SHA-256. Raw loose originals seek directly;
-compressed and packed windows still decode from the beginning up to the
-requested window.
+and SHA-256. Every window streams from the beginning of the blob up to the
+requested bytes, so a window costs time in proportion to its offset.
 
 `GET /nodes/{id}/provenance` returns the requested file node, its live path when
 one exists, and a bounded newest-ingest-first page from one read snapshot. Each

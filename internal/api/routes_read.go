@@ -128,36 +128,11 @@ func streamContentVersionRange(ctx context.Context, d Deps, version store.Conten
 	if err != nil {
 		return nil, NewError(http.StatusRequestedRangeNotSatisfiable, "invalid_content_range", "content byte range is invalid or unsatisfiable")
 	}
-	hash, err := packstore.ParseHash(version.BlobHash)
-	if err != nil {
-		return nil, FromStoreError(err)
-	}
-	locations, err := d.Store.ResolveBlobLocations(ctx, hash)
-	if err != nil {
-		return nil, FromStoreError(err)
-	}
-	// Only raw loose candidates can seek without materializing the whole blob.
-	// Seekable compressed loose reads copy the whole decoded blob to a temp
-	// file, and packed reads buffer it whole. Streaming to the offset avoids
-	// that work and those writes for every window.
-	rawLoose := len(locations.Candidates) > 0
-	for _, location := range locations.Candidates {
-		rawLoose = rawLoose && location.Loose != nil && location.Loose.Encoding == packstore.LooseEncodingRaw
-	}
-	var reader io.ReadCloser
-	var size int64
-	if rawLoose {
-		var seekable io.ReadSeekCloser
-		seekable, size, err = d.Blobs.OpenSeekableContext(ctx, version.BlobHash)
-		reader = seekable
-		if err == nil {
-			_, err = seekable.Seek(start, io.SeekStart)
-		}
-	} else {
-		reader, size, err = d.Blobs.OpenStreamContext(ctx, version.BlobHash)
-		if err == nil && size == version.Size {
-			_, err = io.CopyN(io.Discard, reader, start)
-		}
+	// Streaming to the offset reads each blob once without materializing it.
+	// Seekable opens copy and verify the whole decoded blob first.
+	reader, size, err := d.Blobs.OpenStreamContext(ctx, version.BlobHash)
+	if err == nil && size == version.Size {
+		_, err = io.CopyN(io.Discard, reader, start)
 	}
 	if err != nil || size != version.Size {
 		if reader != nil {
