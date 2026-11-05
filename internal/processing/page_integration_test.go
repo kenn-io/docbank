@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
@@ -73,120 +74,127 @@ func pageProofPNG() []byte {
 	return append(out, data[33:]...)
 }
 
-func TestRealPageAPIBackupRestoreAndGC(t *testing.T) {
-	t.Parallel()
-	engine := pageWorkerRuntime(t)
-	root := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = catalog.Close() })
-	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = blobs.Close() })
-	cfg := config.Default()
-	cfg.Server.APIKey = "synthetic-page-key"
-	gate := api.NewOperationGate()
-	server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: gate, PageRuntime: engine})
-	t.Cleanup(server.Close)
-	httpServer := httptest.NewServer(server.Handler())
-	t.Cleanup(httpServer.Close)
-	httpClient := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
-	worker, err := processing.NewPageWorker(catalog, blobs, engine, gate)
-	require.NoError(t, err)
-	add := func(name, mediaType string, data []byte) store.PageBinding {
-		hash, size, err := blobs.WriteContext(t.Context(), bytes.NewReader(data))
+func TestRealPageAPIBackupRestoreAndGC(t *testing.T) { //nolint:paralleltest // swaps the process-wide http.DefaultTransport
+	synctest.Test(t, func(t *testing.T) {
+		engine := pageWorkerRuntime(t)
+		root := t.TempDir()
+		catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 		require.NoError(t, err)
-		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, mediaType)
+		t.Cleanup(func() { _ = catalog.Close() })
+		blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 		require.NoError(t, err)
-		return store.PageBinding{NodeID: node.ID, Revision: node.Revision, Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: hash, Size: size}}
-	}
-	selection := add("geometry.pdf", "application/pdf", pageProofPDF())
-	for _, dpi := range []float64{0.5, 1201} {
-		body, err := json.Marshal(api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: []int{1}, DPI: dpi})
+		t.Cleanup(func() { _ = blobs.Close() })
+		cfg := config.Default()
+		cfg.Server.APIKey = "synthetic-page-key"
+		gate := api.NewOperationGate()
+		server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: gate, PageRuntime: engine})
+		t.Cleanup(server.Close)
+		// The in-memory network keeps the daemon's connections inside the
+		// bubble, so the restore's worker pauses can pass on fake time.
+		httpServer := httptest.NewTestServer(t, server.Handler())
+		defaultTransport := http.DefaultTransport
+		http.DefaultTransport = httpServer.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = defaultTransport })
+		// The in-memory network accepts any address; use a loopback one the
+		// daemon's host check allows.
+		httpClient := daemonconn.New("http://127.0.0.1:8080", cfg.Server.APIKey)
+		worker, err := processing.NewPageWorker(catalog, blobs, engine, gate)
 		require.NoError(t, err)
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/api/v1/pages/jobs", bytes.NewReader(body))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Api-Key", cfg.Server.APIKey)
-		response := httptest.NewRecorder()
-		server.Handler().ServeHTTP(response, request)
-		require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
-	}
-	processed, err := worker.RunOne(t.Context())
-	require.NoError(t, err)
-	require.False(t, processed, "rejected DPI must not queue work")
-	run := func(selection store.PageBinding, pages []int, dpi float64) store.PageRenderJob {
-		request := api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: pages, DPI: dpi}
-		job, err := httpClient.CreatePageRenderJob(t.Context(), request)
-		require.NoError(t, err)
-		retry, err := httpClient.CreatePageRenderJob(t.Context(), request)
-		require.NoError(t, err)
-		require.Equal(t, job.ID, retry.ID)
+		add := func(name, mediaType string, data []byte) store.PageBinding {
+			hash, size, err := blobs.WriteContext(t.Context(), bytes.NewReader(data))
+			require.NoError(t, err)
+			node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, hash, size, mediaType)
+			require.NoError(t, err)
+			return store.PageBinding{NodeID: node.ID, Revision: node.Revision, Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: hash, Size: size}}
+		}
+		selection := add("geometry.pdf", "application/pdf", pageProofPDF())
+		for _, dpi := range []float64{0.5, 1201} {
+			body, err := json.Marshal(api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: []int{1}, DPI: dpi})
+			require.NoError(t, err)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/api/v1/pages/jobs", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Api-Key", cfg.Server.APIKey)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
+		}
 		processed, err := worker.RunOne(t.Context())
 		require.NoError(t, err)
-		require.True(t, processed)
-		job, err = httpClient.PageRenderJob(t.Context(), job.ID, selection)
-		require.NoError(t, err)
-		require.Equal(t, "completed", job.State, job.FailureCode)
-		return job
-	}
-	first := run(selection, []int{1, 5}, 144)
-	require.Len(t, first.Results, 2)
-	inventory, err := httpClient.PageInventory(t.Context(), selection)
-	require.NoError(t, err)
-	require.Equal(t, 7, inventory.Inventory.PageCount)
-	require.Len(t, inventory.Inventory.Images, 2)
-	// Capture actual partial authority before the rest of the document is rendered.
-	repo, err := backup.Init(filepath.Join(t.TempDir(), "backup"))
-	require.NoError(t, err)
-	manifest, err := backupapp.Create(t.Context(), repo, "synthetic-page-proof", catalog, blobs, backup.CreateOptions{Jobs: 1})
-	require.NoError(t, err)
-	require.NotNil(t, manifest)
-	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backupapp.Restore(t.Context(), repo, "synthetic-page-proof", backup.RestoreOptions{TargetDir: target, Jobs: 1})
-	require.NoError(t, err)
-	restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = restored.Close() })
-	restoredInventory, err := restored.PageInventory(t.Context(), selection)
-	require.NoError(t, err)
-	require.Len(t, restoredInventory.Frames, 7)
-	require.Len(t, restoredInventory.Images, 2)
-	rest := run(selection, []int{2, 3, 4, 6, 7}, 144)
-	require.Len(t, rest.Results, 5)
-	inventory, err = httpClient.PageInventory(t.Context(), selection)
-	require.NoError(t, err)
-	require.Len(t, inventory.Inventory.Images, 7)
-	expected := map[int][2]int64{1: {1224, 1584}, 2: {1191, 1684}, 3: {1584, 1224}, 4: {321, 461}, 5: {461, 321}, 6: {321, 461}, 7: {461, 321}}
-	for _, receipt := range inventory.Inventory.Images {
-		selected := api.PageImageRequest{NodeID: selection.NodeID, Revision: selection.Revision, VersionID: selection.Source.VersionID, SourceSHA256: selection.Source.SHA256, SourceSize: selection.Source.Size, Page: receipt.Page, RecipeSHA256: receipt.RecipeSHA256, FrameSHA256: receipt.FrameSHA256, ImageSHA256: receipt.SHA256}
-		data, err := httpClient.ReadPageImage(t.Context(), selected)
-		require.NoError(t, err)
-		image, err := png.Decode(bytes.NewReader(data))
-		require.NoError(t, err)
-		require.Equal(t, [2]int64{int64(image.Bounds().Dx()), int64(image.Bounds().Dy())}, expected[receipt.Page])
-		if receipt.Page == 5 {
-			// In a 90-degree rotation source red rectangle x=20..70,y=30..100
-			// maps near output (60,60); blue x=100..160,y=170..240 near (360,240).
-			red, ok := color.NRGBAModel.Convert(image.At(60, 60)).(color.NRGBA)
-			require.True(t, ok)
-			blue, ok := color.NRGBAModel.Convert(image.At(360, 240)).(color.NRGBA)
-			require.True(t, ok)
-			require.Equal(t, color.NRGBA{R: 255, A: 255}, red)
-			require.Equal(t, color.NRGBA{B: 255, A: 255}, blue)
-			if directory := os.Getenv("DOCBANK_PAGE_PROOF_DIR"); directory != "" {
-				require.True(t, filepath.IsAbs(directory))
-				require.NoError(t, os.WriteFile(filepath.Join(directory, "cropped-rotated.png"), data, 0600))
-			}
+		require.False(t, processed, "rejected DPI must not queue work")
+		run := func(selection store.PageBinding, pages []int, dpi float64) store.PageRenderJob {
+			request := api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: pages, DPI: dpi}
+			job, err := httpClient.CreatePageRenderJob(t.Context(), request)
+			require.NoError(t, err)
+			retry, err := httpClient.CreatePageRenderJob(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, retry.ID)
+			processed, err := worker.RunOne(t.Context())
+			require.NoError(t, err)
+			require.True(t, processed)
+			job, err = httpClient.PageRenderJob(t.Context(), job.ID, selection)
+			require.NoError(t, err)
+			require.Equal(t, "completed", job.State, job.FailureCode)
+			return job
 		}
-		selected.FrameSHA256 = selection.Source.SHA256
-		_, err = httpClient.ReadPageImage(t.Context(), selected)
-		require.Error(t, err)
-	}
-	pngSelection := add("density.png", "image/png", pageProofPNG())
-	native := run(pngSelection, []int{1}, 0)
-	require.Equal(t, int64(254), native.Results[0].Width)
-	report, err := maintenance.GarbageCollect(t.Context(), catalog, blobs, maintenance.GCOptions{Budget: maintenance.Budget{MaxObjects: 1000}})
-	require.NoError(t, err)
-	require.Zero(t, report.RemovedBlobs)
-	require.NoError(t, catalog.VerifyPageImageBytes(t.Context(), blobs))
+		first := run(selection, []int{1, 5}, 144)
+		require.Len(t, first.Results, 2)
+		inventory, err := httpClient.PageInventory(t.Context(), selection)
+		require.NoError(t, err)
+		require.Equal(t, 7, inventory.Inventory.PageCount)
+		require.Len(t, inventory.Inventory.Images, 2)
+		// Capture actual partial authority before the rest of the document is rendered.
+		repo, err := backup.Init(filepath.Join(t.TempDir(), "backup"))
+		require.NoError(t, err)
+		manifest, err := backupapp.Create(t.Context(), repo, "synthetic-page-proof", catalog, blobs, backup.CreateOptions{Jobs: 1})
+		require.NoError(t, err)
+		require.NotNil(t, manifest)
+		target := filepath.Join(t.TempDir(), "restored")
+		_, err = backupapp.Restore(t.Context(), repo, "synthetic-page-proof", backup.RestoreOptions{TargetDir: target, Jobs: 1})
+		require.NoError(t, err)
+		restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = restored.Close() })
+		restoredInventory, err := restored.PageInventory(t.Context(), selection)
+		require.NoError(t, err)
+		require.Len(t, restoredInventory.Frames, 7)
+		require.Len(t, restoredInventory.Images, 2)
+		rest := run(selection, []int{2, 3, 4, 6, 7}, 144)
+		require.Len(t, rest.Results, 5)
+		inventory, err = httpClient.PageInventory(t.Context(), selection)
+		require.NoError(t, err)
+		require.Len(t, inventory.Inventory.Images, 7)
+		expected := map[int][2]int64{1: {1224, 1584}, 2: {1191, 1684}, 3: {1584, 1224}, 4: {321, 461}, 5: {461, 321}, 6: {321, 461}, 7: {461, 321}}
+		for _, receipt := range inventory.Inventory.Images {
+			selected := api.PageImageRequest{NodeID: selection.NodeID, Revision: selection.Revision, VersionID: selection.Source.VersionID, SourceSHA256: selection.Source.SHA256, SourceSize: selection.Source.Size, Page: receipt.Page, RecipeSHA256: receipt.RecipeSHA256, FrameSHA256: receipt.FrameSHA256, ImageSHA256: receipt.SHA256}
+			data, err := httpClient.ReadPageImage(t.Context(), selected)
+			require.NoError(t, err)
+			image, err := png.Decode(bytes.NewReader(data))
+			require.NoError(t, err)
+			require.Equal(t, [2]int64{int64(image.Bounds().Dx()), int64(image.Bounds().Dy())}, expected[receipt.Page])
+			if receipt.Page == 5 {
+				// In a 90-degree rotation source red rectangle x=20..70,y=30..100
+				// maps near output (60,60); blue x=100..160,y=170..240 near (360,240).
+				red, ok := color.NRGBAModel.Convert(image.At(60, 60)).(color.NRGBA)
+				require.True(t, ok)
+				blue, ok := color.NRGBAModel.Convert(image.At(360, 240)).(color.NRGBA)
+				require.True(t, ok)
+				require.Equal(t, color.NRGBA{R: 255, A: 255}, red)
+				require.Equal(t, color.NRGBA{B: 255, A: 255}, blue)
+				if directory := os.Getenv("DOCBANK_PAGE_PROOF_DIR"); directory != "" {
+					require.True(t, filepath.IsAbs(directory))
+					require.NoError(t, os.WriteFile(filepath.Join(directory, "cropped-rotated.png"), data, 0600))
+				}
+			}
+			selected.FrameSHA256 = selection.Source.SHA256
+			_, err = httpClient.ReadPageImage(t.Context(), selected)
+			require.Error(t, err)
+		}
+		pngSelection := add("density.png", "image/png", pageProofPNG())
+		native := run(pngSelection, []int{1}, 0)
+		require.Equal(t, int64(254), native.Results[0].Width)
+		report, err := maintenance.GarbageCollect(t.Context(), catalog, blobs, maintenance.GCOptions{Budget: maintenance.Budget{MaxObjects: 1000}})
+		require.NoError(t, err)
+		require.Zero(t, report.RemovedBlobs)
+		require.NoError(t, catalog.VerifyPageImageBytes(t.Context(), blobs))
+	})
 }

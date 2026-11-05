@@ -83,11 +83,7 @@ func TestRedactionPreviewExpiryAndRevocation(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	f.service.RevokeRedactionPreviews("alice")
-	select {
-	case <-reader.Context().Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("revocation did not interrupt the reader")
-	}
+	<-reader.Context().Done()
 	require.ErrorIs(t, reader.Context().Err(), context.Canceled)
 	require.NoError(t, reader.Close())
 	preview, err = f.service.CreateRedactionPreview(t.Context(), "alice", req, runtime, nil)

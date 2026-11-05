@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -100,21 +101,26 @@ func TestSearchRejectsInvalidScopeBeforeEgress(t *testing.T) {
 }
 
 func TestSearchPreservesResponseBodyDeadline(t *testing.T) {
-	root, _, _ := exportFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		if flusher, ok := writer.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		<-request.Context().Done()
-	}))
-	t.Cleanup(server.Close)
-	client := newTestClient(t, server, root, &authorizerStub{}, &authorityStub{}, 1<<20)
-	client.profile.RequestTimeout = 25 * time.Millisecond //nolint:kennlint // deadlinetest: the real HTTP body waits for cancellation, so its request deadline must expire
+	synctest.Test(t, func(t *testing.T) {
+		root, _, _ := exportFixture(t)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			if flusher, ok := writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-request.Context().Done()
+		}))
+		client := newTestClientAt(t, 80, root, &authorizerStub{}, &authorityStub{}, 1<<20)
+		// The in-memory network carries the request, so the deadline runs on the bubble's clock.
+		client.http.Transport = server.Client().Transport
+		client.profile.RequestTimeout = time.Minute
 
-	_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+		started := time.Now()
+		_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, time.Minute, time.Since(started), "only the request deadline ends the open body")
+	})
 }
 
 func TestSearchRejectsUnknownDuplicateOversizedAndStaleResults(t *testing.T) {
@@ -176,6 +182,11 @@ func newTestClient(t *testing.T, server *httptest.Server, root string, authorize
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
+	return newTestClientAt(t, port, root, authorizer, authority, responseBytes)
+}
+
+func newTestClientAt(t *testing.T, port int, root string, authorizer Authorizer, authority Authority, responseBytes int64) *Client {
+	t.Helper()
 	client, err := New(Profile{ID: "qmd-test", CompatibilityEpoch: "qmd-current", SecretBinding: "secret:qmd",
 		EndpointPath: "/query", MaxResponseBytes: responseBytes,
 		EgressPolicy: providerhttp.EgressPolicy{Scheme: "http", Host: "qmd.test", Port: uint16(port),
@@ -332,90 +343,76 @@ func TestSearchAcceptsDistinctActiveProfiles(t *testing.T) {
 func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 	for _, outcome := range []string{"success", "invalid response", "canceled"} {
 		t.Run(outcome, func(t *testing.T) {
-			root, _, _ := exportFixture(t)
-			catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-			authorizer := &consentAuthorizer{catalog: catalog, request: store.ProviderOperationAuthorizationRequest{
-				Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
-				DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
-			}, authorized: make(chan struct{}), proceed: make(chan struct{})}
-			_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
-				Principal: authorizer.request.Principal, Scope: authorizer.request.Scope,
-				ProfileFingerprint: authorizer.request.ProfileFingerprint, DisclosureFingerprint: authorizer.request.DisclosureFingerprint,
-				InputClasses: authorizer.request.InputClasses,
-			})
-			require.NoError(t, err)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			started, finish := make(chan struct{}), make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				writer.Header().Set("Content-Type", "application/json")
-				writer.WriteHeader(http.StatusOK)
-				_ = http.NewResponseController(writer).Flush()
-				close(started)
-				select {
-				case <-finish:
-					if outcome == "invalid response" {
-						_, _ = writer.Write([]byte(`invalid`))
-					} else {
-						_, _ = writer.Write([]byte(`{"results":[]}`))
+			// The fence's waiters block on channels and the endpoint uses the
+			// in-memory network, so synctest.Wait returns while a revocation waits.
+			synctest.Test(t, func(t *testing.T) {
+				root, _, _ := exportFixture(t)
+				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+				authorizer := &consentAuthorizer{catalog: catalog, request: store.ProviderOperationAuthorizationRequest{
+					Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
+					DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
+				}, authorized: make(chan struct{}), proceed: make(chan struct{})}
+				_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+					Principal: authorizer.request.Principal, Scope: authorizer.request.Scope,
+					ProfileFingerprint: authorizer.request.ProfileFingerprint, DisclosureFingerprint: authorizer.request.DisclosureFingerprint,
+					InputClasses: authorizer.request.InputClasses,
+				})
+				require.NoError(t, err)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				started, finish := make(chan struct{}), make(chan struct{})
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					writer.Header().Set("Content-Type", "application/json")
+					writer.WriteHeader(http.StatusOK)
+					_ = http.NewResponseController(writer).Flush()
+					close(started)
+					select {
+					case <-finish:
+						if outcome == "invalid response" {
+							_, _ = writer.Write([]byte(`invalid`))
+						} else {
+							_, _ = writer.Write([]byte(`{"results":[]}`))
+						}
+					case <-request.Context().Done():
 					}
-				case <-request.Context().Done():
+				}))
+				client := newTestClientAt(t, 80, root, authorizer, &authorityStub{}, 1<<20)
+				client.http.Transport = server.Client().Transport
+				done := make(chan error, 1)
+				query := Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5}
+				go func() { _, err := client.Search(ctx, query); done <- err }()
+				<-authorizer.authorized
+				revoked := make(chan error, 1)
+				go func() {
+					_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: "search-user", Scope: "search"})
+					revoked <- err
+				}()
+				synctest.Wait()
+				requireStillWaiting(t, revoked, "revocation completed before the authorized HTTP request")
+				close(authorizer.proceed)
+				<-started
+				synctest.Wait()
+				requireStillWaiting(t, revoked, "revocation completed while reading the response")
+				if outcome == "canceled" {
+					cancel()
+				} else {
+					close(finish)
 				}
-			}))
-			t.Cleanup(server.Close)
-			client := newTestClient(t, server, root, authorizer, &authorityStub{}, 1<<20)
-			done := make(chan error, 1)
-			query := Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 5}
-			go func() { _, err := client.Search(ctx, query); done <- err }()
-			<-authorizer.authorized
-			revoked := make(chan error, 1)
-			go func() {
-				_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: "search-user", Scope: "search"})
-				revoked <- err
-			}()
-			early := false
-			select {
-			case err := <-revoked:
-				t.Errorf("revocation completed before the authorized HTTP request: %v", err)
-				early = true
-			case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized request fence keeps revocation blocked
-			}
-			close(authorizer.proceed)
-			<-started
-			if !early {
-				select {
-				case err := <-revoked:
-					t.Errorf("revocation completed while reading the response: %v", err)
-					early = true
-				case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the open response keeps revocation blocked
+				searchErr := <-done
+				switch outcome {
+				case "success":
+					require.NoError(t, searchErr)
+				case "invalid response":
+					require.ErrorIs(t, searchErr, ErrInvalidResponse)
+				case "canceled":
+					require.ErrorIs(t, searchErr, context.Canceled)
 				}
-			}
-			if outcome == "canceled" {
-				cancel()
-			} else {
-				close(finish)
-			}
-			searchErr := <-done
-			switch outcome {
-			case "success":
-				require.NoError(t, searchErr)
-			case "invalid response":
-				require.ErrorIs(t, searchErr, ErrInvalidResponse)
-			case "canceled":
-				require.ErrorIs(t, searchErr, context.Canceled)
-			}
-			if !early {
-				select {
-				case err := <-revoked:
-					require.NoError(t, err)
-				case <-time.After(time.Second):
-					t.Fatal("search did not release its consent lease")
-				}
-			}
-			_, err = client.Search(t.Context(), query)
-			require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
+				require.NoError(t, <-revoked, "search must release its consent lease")
+				_, err = client.Search(t.Context(), query)
+				require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
+			})
 		})
 	}
 }
@@ -544,5 +541,16 @@ func TestSearchRejectsNonJSONOrFailedResponses(t *testing.T) {
 			_, err := client.Search(t.Context(), Request{Searches: []Search{{Type: SearchLexical, Query: "private"}}, Limit: 1})
 			require.ErrorIs(t, err, ErrInvalidResponse)
 		})
+	}
+}
+
+// requireStillWaiting fails if done has delivered. Call it after
+// synctest.Wait, when every goroutine in the bubble is blocked.
+func requireStillWaiting(t *testing.T, done <-chan error, crossed string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.FailNow(t, crossed, "returned: %v", err)
+	default:
 	}
 }

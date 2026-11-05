@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -190,41 +191,27 @@ func TestWatchCollectionErrorClassification(t *testing.T) {
 }
 
 func TestWatchKnownBlockReportsJobAndClearsOnRecovery(t *testing.T) {
-	watcher, root, ing, source, siblingID := watcherFinalPair(t)
-	watcher.newNotifications = func(root string, _ exclusions) (watchNotificationSource, error) {
-		return newFakeWatchNotificationSource(root), nil
-	}
-	known := filepath.Join(source, "known")
-	require.NoError(t, os.Mkdir(known, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(known, "note.md"), []byte("nested source"), 0o600))
-	require.NoError(t, watcher.scan(t.Context(), root))
-	saved := filepath.Join(t.TempDir(), "saved")
-	require.NoError(t, os.Rename(known, saved))
-	require.NoError(t, os.Symlink(t.TempDir(), known))
-	require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
-	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
-	require.NoError(t, supervisor.Start("watch:notes", func(ctx context.Context) error {
-		return watcher.run(ctx, root, nil)
-	}))
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		require.NoError(t, supervisor.Shutdown(ctx))
+	synctest.Test(t, func(t *testing.T) {
+		watcher, root, ing, source, siblingID := watcherFinalPair(t)
+		watcher.newNotifications = func(root string, _ exclusions) (watchNotificationSource, error) {
+			return newFakeWatchNotificationSource(root), nil
+		}
+		known := filepath.Join(source, "known")
+		require.NoError(t, os.Mkdir(known, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(known, "note.md"), []byte("nested source"), 0o600))
+		require.NoError(t, watcher.scan(t.Context(), root))
+		saved := filepath.Join(t.TempDir(), "saved")
+		require.NoError(t, os.Rename(known, saved))
+		require.NoError(t, os.Symlink(t.TempDir(), known))
+		require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
+		step, _ := stepWatcherFinalRunner(t, watcher, root)
+		require.Contains(t, step().Error, "known")
+		requireSiblingVersions(t, ing, siblingID, 2) // the unrelated sibling still imports
+		require.NoError(t, os.Remove(known))
+		require.NoError(t, os.Rename(saved, known))
+		require.Empty(t, step().Error)
+		requireSiblingVersions(t, ing, siblingID, 2)
 	})
-	require.Eventually(t, func() bool {
-		snap := supervisor.Snapshot()
-		return len(snap) == 1 && snap[0].Status == jobs.StatusRunning &&
-			snap[0].Error != "" && strings.Contains(snap[0].Error, "known")
-	}, 5*time.Second, 20*time.Millisecond)
-	requireSiblingVersions(t, ing, siblingID, 2) // the unrelated sibling still imports
-	require.NoError(t, os.Remove(known))
-	require.NoError(t, os.Rename(saved, known))
-	require.Eventually(t, func() bool {
-		snap := supervisor.Snapshot()
-		_, total, err := ing.Store.ContentVersions(t.Context(), siblingID, 10, 0)
-		return err == nil && total == 2 && len(snap) == 1 &&
-			snap[0].Status == jobs.StatusRunning && snap[0].Error == ""
-	}, 5*time.Second, 20*time.Millisecond)
 }
 
 func TestWatchKnownStructuralVariants(t *testing.T) {
@@ -313,11 +300,12 @@ func TestWatchNestedPermanentJoinedErrorKeepsEvidenceAndSiblingPending(t *testin
 // stepWatcherFinalRunner pauses the real runner before each scan. Advancing to
 // the next pause makes job, log and observation assertions race-free, including
 // when notification failure leaves only periodic reconciliation available.
+// Call it inside a synctest bubble so the runner's scan ticker uses fake time.
 func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (func() jobs.Snapshot, *bytes.Buffer) {
 	t.Helper()
 	var logs bytes.Buffer
 	watcher.logger = slog.New(slog.NewTextHandler(&logs, nil))
-	watcher.config.ScanInterval = config.Duration(time.Millisecond)
+	watcher.config.ScanInterval = config.Duration(time.Second)
 	watcher.newNotifications = func(root string, _ exclusions) (watchNotificationSource, error) {
 		return newFakeWatchNotificationSource(root), nil
 	}
@@ -362,6 +350,10 @@ func stepWatcherFinalRunner(t *testing.T, watcher *Watcher, root *watchRoot) (fu
 }
 
 func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
+	synctest.Test(t, testWatchIncompleteRunnerReportsAndImportsSibling)
+}
+
+func testWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
 	watcher, root, ing, source, siblingID := watcherFinalPair(t)
 	accepted := *watcher.observations["a.md"].accepted
 	require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
@@ -408,33 +400,35 @@ func TestWatchIncompleteRunnerReportsAndImportsSibling(t *testing.T) {
 func TestWatchIncompleteRunnerRecoveryPreservesNotificationError(t *testing.T) {
 	for _, failFirst := range []bool{false, true} {
 		t.Run(map[bool]string{false: "source first", true: "notifications first"}[failFirst], func(t *testing.T) {
-			watcher, root, ing, source, siblingID := watcherFinalPair(t)
-			require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
-			held := !failFirst
-			watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
-				if file.ref == "a.md" && held {
-					return watchFileState{}, ErrSourceChanged
+			synctest.Test(t, func(t *testing.T) {
+				watcher, root, ing, source, siblingID := watcherFinalPair(t)
+				require.NoError(t, os.WriteFile(filepath.Join(source, "b.md"), []byte("changed sibling"), 0o600))
+				held := !failFirst
+				watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+					if file.ref == "a.md" && held {
+						return watchFileState{}, ErrSourceChanged
+					}
+					return file.observe(withChange)
 				}
-				return file.observe(withChange)
-			}
-			step, logs := stepWatcherFinalRunner(t, watcher, root)
-			if !failFirst {
-				require.Contains(t, step().Error, "incomplete")
-			}
-			watcher.notificationErr = errors.New("synthetic notification backend failure")
-			notificationError := step().Error
-			require.Contains(t, notificationError, "notifications")
-			held = true
-			for range 2 {
+				step, logs := stepWatcherFinalRunner(t, watcher, root)
+				if !failFirst {
+					require.Contains(t, step().Error, "incomplete")
+				}
+				watcher.notificationErr = errors.New("synthetic notification backend failure")
+				notificationError := step().Error
+				require.Contains(t, notificationError, "notifications")
+				held = true
+				for range 2 {
+					require.Equal(t, notificationError, step().Error)
+				}
+				held = false
 				require.Equal(t, notificationError, step().Error)
-			}
-			held = false
-			require.Equal(t, notificationError, step().Error)
-			requireSiblingVersions(t, ing, siblingID, 2)
-			require.Equal(t, 1, strings.Count(logs.String(), "watch source blocks reconciliation"))
-			require.Equal(t, 1, strings.Count(logs.String(), "watch source reconciliation restored"))
-			require.Equal(t, 1, strings.Count(logs.String(), "watch notifications unavailable"))
-			require.NotContains(t, logs.String(), "watch notifications restored")
+				requireSiblingVersions(t, ing, siblingID, 2)
+				require.Equal(t, 1, strings.Count(logs.String(), "watch source blocks reconciliation"))
+				require.Equal(t, 1, strings.Count(logs.String(), "watch source reconciliation restored"))
+				require.Equal(t, 1, strings.Count(logs.String(), "watch notifications unavailable"))
+				require.NotContains(t, logs.String(), "watch notifications restored")
+			})
 		})
 	}
 }
@@ -450,47 +444,49 @@ func FuzzWatchRunnerIncompleteReportingTransitions(f *testing.F) {
 	f.Add([]byte{2, 3, 1, 0, 2, 0}, false)
 	f.Add([]byte{2, 3, 1, 0, 2, 0}, true)
 	f.Fuzz(func(t *testing.T, data []byte, prompt bool) {
-		watcher, root, _, _, _ := watcherFinalPair(t)
-		watcher.config.CaptureOnChange = prompt
-		var observationErr error
-		watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
-			if file.ref == "a.md" && observationErr != nil {
-				return watchFileState{}, observationErr
-			}
-			return file.observe(withChange)
-		}
-		step, logs := stepWatcherFinalRunner(t, watcher, root)
-		// Bound filesystem work when materializing the generated sequence.
-		if len(data) > 32 {
-			data = data[:32]
-		}
-		incidents, recoveries := 0, 0
-		incomplete := make([]bool, 0, len(data)+1)
-		for _, value := range data {
-			incomplete = append(incomplete, value%4 != 0)
-		}
-		incomplete = append(incomplete, false) // every generated history recovers
-		for i, failed := range incomplete {
-			observationErr = nil
-			if failed {
-				// Exercise both retryable observation classes and joins of them.
-				observationErr = []error{ErrSourceChanged, fs.ErrNotExist,
-					errors.Join(ErrSourceChanged, fs.ErrNotExist)}[data[i]%3]
-				if i == 0 || !incomplete[i-1] {
-					incidents++
+		synctest.Test(t, func(t *testing.T) {
+			watcher, root, _, _, _ := watcherFinalPair(t)
+			watcher.config.CaptureOnChange = prompt
+			var observationErr error
+			watcher.observeFile = func(file watchSource, withChange bool) (watchFileState, error) {
+				if file.ref == "a.md" && observationErr != nil {
+					return watchFileState{}, observationErr
 				}
-			} else if i > 0 && incomplete[i-1] {
-				recoveries++
+				return file.observe(withChange)
 			}
-			snap := step()
-			if failed {
-				require.Contains(t, snap.Error, "incomplete", "history %v at %d", data, i)
-			} else {
-				require.Empty(t, snap.Error, "history %v at %d", data, i)
+			step, logs := stepWatcherFinalRunner(t, watcher, root)
+			// Bound filesystem work when materializing the generated sequence.
+			if len(data) > 32 {
+				data = data[:32]
 			}
-			require.Equal(t, incidents, strings.Count(logs.String(), "watch source blocks reconciliation"))
-			require.Equal(t, recoveries, strings.Count(logs.String(), "watch source reconciliation restored"))
-		}
+			incidents, recoveries := 0, 0
+			incomplete := make([]bool, 0, len(data)+1)
+			for _, value := range data {
+				incomplete = append(incomplete, value%4 != 0)
+			}
+			incomplete = append(incomplete, false) // every generated history recovers
+			for i, failed := range incomplete {
+				observationErr = nil
+				if failed {
+					// Exercise both retryable observation classes and joins of them.
+					observationErr = []error{ErrSourceChanged, fs.ErrNotExist,
+						errors.Join(ErrSourceChanged, fs.ErrNotExist)}[data[i]%3]
+					if i == 0 || !incomplete[i-1] {
+						incidents++
+					}
+				} else if i > 0 && incomplete[i-1] {
+					recoveries++
+				}
+				snap := step()
+				if failed {
+					require.Contains(t, snap.Error, "incomplete", "history %v at %d", data, i)
+				} else {
+					require.Empty(t, snap.Error, "history %v at %d", data, i)
+				}
+				require.Equal(t, incidents, strings.Count(logs.String(), "watch source blocks reconciliation"))
+				require.Equal(t, recoveries, strings.Count(logs.String(), "watch source reconciliation restored"))
+			}
+		})
 	})
 }
 
