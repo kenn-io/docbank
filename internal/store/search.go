@@ -184,8 +184,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
-			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json,
-			 0 AS clipped_start,0 AS clipped_end
+			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
 			FROM content_fts JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
 			JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
 			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
@@ -195,9 +194,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		if generationID != "" {
 			contentQuery = selectedCTE + `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
-				 ru.locator_json,ls.char_start>0,
-				 EXISTS(SELECT 1 FROM rendition_lexical_segments tail
-					WHERE tail.build_id=ls.build_id AND tail.unit_id=ls.unit_id AND tail.char_end>ls.char_end)
+				 ru.locator_json
 				FROM rendition_lexical_fts ` + selectedJoin + `
 				JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
@@ -324,24 +321,16 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
 	var node Node
 	var locatorJSON string
-	var clippedStart, clippedEnd bool
 	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
 		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
 		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON, &clippedStart, &clippedEnd); err != nil {
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON); err != nil {
 		return Node{}, err
 	}
 	if locatorJSON != "" {
 		if err := json.Unmarshal([]byte(locatorJSON), &candidate.Locator); err != nil {
 			return Node{}, fmt.Errorf("decoding lexical evidence locator: %w", err)
 		}
-	}
-	// FTS sees only this segment. Preserve cuts within its enclosing unit too.
-	if clippedStart && !strings.HasPrefix(candidate.Excerpt, " … ") {
-		candidate.Excerpt = " … " + candidate.Excerpt
-	}
-	if clippedEnd && !strings.HasSuffix(candidate.Excerpt, " … ") {
-		candidate.Excerpt += " … "
 	}
 	candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
 	return node, nil

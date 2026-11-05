@@ -900,57 +900,6 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 	assert.Equal(t, versions[0], candidates[0].Node.CurrentVersionID)
 }
 
-func TestSearchExplainedLexicalCandidatesMarksSegmentCuts(t *testing.T) {
-	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
-	profile := catalogProcessingProfile(t, false)
-	build := lexicalSearchBuild(s, profile, catalogBuildID, "é mercury.")
-	unitID := build.Units[0].ID
-	build.LexicalSegments = []RenditionLexicalSegmentRecord{}
-	start := 0
-	for i, text := range []string{"é mercury.", " Venus.", " Earth."} {
-		end := start + len([]rune(text))
-		build.LexicalSegments = append(build.LexicalSegments, RenditionLexicalSegmentRecord{
-			ID: "lexical_segment_" + testSHA256([]byte(text)), UnitID: unitID, Order: i,
-			CharStart: start, CharEnd: end, Text: text, Checksum: testSHA256([]byte(text)),
-		})
-		start = end
-	}
-	// Another unit's longer text must not mark this unit's final segment.
-	unit := build.Units[0]
-	unit.ID = "rendition_unit_" + testSHA256([]byte("second unit"))
-	unit.EvidenceUnitID = "unit_" + testSHA256([]byte("second evidence unit"))
-	unit.Order = 1
-	unit.Checksum = testSHA256([]byte("second unit"))
-	build.Units = append(build.Units, unit)
-	whole := "Jupiter " + strings.Repeat("é", 40) + "."
-	build.LexicalSegments = append(build.LexicalSegments, RenditionLexicalSegmentRecord{
-		ID: "lexical_segment_" + testSHA256([]byte(whole)), UnitID: unit.ID, Order: 3,
-		CharStart: 0, CharEnd: len([]rune(whole)), Text: whole, Checksum: testSHA256([]byte(whole)),
-	})
-	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
-	generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("segment-cuts"))
-	require.NoError(t, err)
-	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(),
-		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
-	require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{
-		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
-		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
-	for _, tc := range []struct{ query, excerpt string }{
-		{"mercury", "é mercury. … "},
-		{"Venus", " …  Venus. … "},
-		{"Earth", " …  Earth."},
-		{"Jupiter", whole},
-	} {
-		t.Run(tc.query, func(t *testing.T) {
-			hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), tc.query, 10, SearchOptions{}, true)
-			require.NoError(t, err)
-			require.Len(t, hits, 1)
-			require.Equal(t, tc.excerpt, hits[0].Excerpt)
-		})
-	}
-}
-
 func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -2941,8 +2890,7 @@ func TestSearchContentFirstPriority(t *testing.T) {
 	second.ID = "lexical_segment_" + fakeHash("42")
 	second.Order = 1
 	second.Text = "mercury less relevant extra words in a second segment"
-	second.CharStart = build.LexicalSegments[0].CharEnd
-	second.CharEnd = second.CharStart + len([]rune(second.Text))
+	second.CharEnd = len([]rune(second.Text))
 	second.Checksum = testSHA256([]byte(second.Text))
 	build.LexicalSegments = append(build.LexicalSegments, second)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
@@ -2965,7 +2913,7 @@ func TestSearchContentFirstPriority(t *testing.T) {
 		require.Equal(t, "rendition_segment", hits[index].EvidenceKind)
 		require.Equal(t, build.LexicalSegments[0].ID, hits[index].SegmentID)
 		require.Equal(t, build.Units[0].Locator, hits[index].Locator)
-		require.Equal(t, "mercury exact ranked evidence … ", hits[index].Excerpt)
+		require.Equal(t, "mercury exact ranked evidence", hits[index].Excerpt)
 	}
 	require.Equal(t, "node_name", hits[2].EvidenceKind)
 	require.Equal(t, "mercury-tail.txt", hits[2].Node.Name)

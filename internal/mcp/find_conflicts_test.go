@@ -1,13 +1,20 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -16,11 +23,11 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	var identities []api.DocumentIdentity
 	versions := []string{}
 	for _, file := range []struct{ name, sentence string }{
-		{"cooling period 2025.txt", "The cooling period is 7 days."},
+		{"cooling period 2025.txt", strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 7 days. Contact support for help. General terms apply to all accounts."},
 		{"policy-2026.txt", "The cooling period is 15 days."},
 		{"cooling period notes.txt", ""},
 	} {
-		text := "Policy overview. " + file.sentence + " Contact support for help."
+		text := file.sentence
 		member := f.addFile(t, file.name, text)
 		if file.sentence != "" {
 			require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
@@ -35,6 +42,17 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	docs, err := reader.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: identities})
 	require.NoError(t, err)
+	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+	})
+	require.NoError(t, err)
+	var excerpt string
+	for _, hit := range search.report.Results {
+		if hit.Path == "/cooling period 2025.txt" {
+			excerpt = hit.Excerpt
+		}
+	}
+	require.True(t, strings.HasPrefix(excerpt, " … The cooling period is 7 days."), excerpt)
 	for _, scope := range []string{"filters", "content_version_ids"} {
 		t.Run(scope, func(t *testing.T) {
 			args := map[string]any{"query": "cooling period", "profile": profile}
@@ -86,7 +104,7 @@ func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
 	for _, option := range []struct {
 		key   string
 		value any
-	}{{"mode", "semantic"}, {"binding_id", "synthetic-binding"}, {"explain", true}, {"rerank", true}} {
+	}{{"mode", "semantic"}, {"binding_id", "synthetic-binding"}, {"explain", true}, {"rerank", true}, {"limit", 21}} {
 		t.Run(option.key+fmt.Sprint(option.value), func(t *testing.T) {
 			args := map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}, option.key: option.value}
 			wire := exchangeRaw(t, daemon, requestFor("tools/call", map[string]any{"name": "find_conflicts", "arguments": args}))
@@ -95,4 +113,84 @@ func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
 			require.Equal(t, "invalid tool arguments", wireErr.Message)
 		})
 	}
+}
+
+func TestFindConflictsReadsEmailRendition(t *testing.T) {
+	f := newNativeExportFixture(t)
+	body := strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 30 days. Contact support for help."
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+body+"\r\n"))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "policy.eml", hash, size, "message/rfc822")
+	require.NoError(t, err)
+	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	_, err = processing.EnsureEmailTarget(t.Context(), f.catalog, f.blobs, t.TempDir(), store.EmailTarget{Version: version})
+	require.NoError(t, err)
+	member := f.addFile(t, "policy.txt", "The cooling period is 15 days.")
+	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "The cooling period is 15 days."}))
+	daemon, _, profile := newProcessingDocumentServer(t, f)
+	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}})
+	require.Equal(t, "CONFLICTING", out["status"])
+	passages := out["passages"].([]any)
+	require.Len(t, passages, 2)
+	for _, p := range passages {
+		require.Equal(t, true, schemaMap(t, p)["compared"])
+	}
+	figures := schemaMap(t, out["conflicts"].([]any)[0])["figures"].([]any)
+	quotes := map[string]string{}
+	for _, f := range figures {
+		figure := schemaMap(t, f)
+		quotes[figure["value"].(string)] = figure["quote"].(string)
+	}
+	require.Equal(t, map[string]string{"15": "The cooling period is 15 days.", "30": "The cooling period is 30 days."}, quotes)
+}
+
+func TestFindConflictsSkipsTruncatedRendition(t *testing.T) {
+	f := newNativeExportFixture(t)
+	cfg, err := config.Default().WithLocalText()
+	require.NoError(t, err)
+	resolved, err := cfg.ProcessingProfile(config.LocalTextProfile)
+	require.NoError(t, err)
+	profile := resolved.Document
+	profile.Embeddings = nil
+	profile.EvidenceLexical.MaxUnitRunes = len(`The service fee is \$7\.`)
+	profile.EvidenceLexical.MaxSegmentRunes = profile.EvidenceLexical.MaxUnitRunes
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 16 << 20})
+	require.NoError(t, err)
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{"text": {Profile: profile, RenditionProvider: provider}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.WithoutCancel(t.Context()))) })
+	for i, text := range []string{"The service fee is $7.50.", "The service fee is $7.60."} {
+		member := f.addFile(t, fmt.Sprintf("policy-%d.txt", i), text)
+		selector := processing.Selector{NodeID: member.NodeID, ContentVersionID: member.VersionID, Profile: "text"}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		job, err := service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+		view, err := f.catalog.ActiveRendition(t.Context(), member.VersionID, job.ProfileFingerprint)
+		require.NoError(t, err)
+		require.Contains(t, view.Build.Warnings, "truncated")
+	}
+	cfg.Server.APIKey = "synthetic-export-key"
+	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
+	t.Cleanup(apiServer.Close)
+	httpServer := httptest.NewServer(apiServer.Handler())
+	t.Cleanup(httpServer.Close)
+	daemon := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "service fee", Profile: "text", Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, search.report.Results, 2)
+	for _, hit := range search.report.Results {
+		require.Equal(t, `The service fee is \$7\.`, hit.Excerpt)
+	}
+	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "service fee", "profile": "text", "filters": map[string]any{}})
+	require.Equal(t, "NOT_COMPARABLE", out["status"])
+	passages := out["passages"].([]any)
+	require.Len(t, passages, 2)
+	for _, p := range passages {
+		require.Equal(t, false, schemaMap(t, p)["compared"])
+	}
+	require.Empty(t, out["conflicts"])
 }

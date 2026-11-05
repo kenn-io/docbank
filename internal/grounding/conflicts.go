@@ -1,9 +1,11 @@
 package grounding
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
 )
@@ -27,30 +29,30 @@ type Comparison struct {
 	Compared  []bool     `json:"-"`
 }
 
+type Source struct {
+	Text       string
+	Start, End int
+}
+
+var paragraphBreak = regexp.MustCompile(`\n[ \t\r]*\n`)
+
 // Compare returns disagreements only between complete, unambiguous sentences
 // with the same words around a supported figure. Passage references start at 1.
-func Compare(passages []string) Comparison {
-	out := Comparison{Status: "NOT_COMPARABLE", Conflicts: []Conflict{}, Compared: make([]bool, len(passages))}
+func Compare(sources []Source) Comparison {
+	out := Comparison{Status: "NOT_COMPARABLE", Conflicts: []Conflict{}, Compared: make([]bool, len(sources))}
 	type key struct{ kind, unit, subject string }
 	groups := map[key][]ComparedFigure{}
 	var order []key
-	for i, passage := range passages {
-		clippedStart := strings.HasPrefix(strings.TrimSpace(passage), "…")
-		clippedEnd := strings.HasSuffix(strings.TrimSpace(passage), "…")
-		text := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(decodeFigureText(passage)), " …"))
+	for i, source := range sources {
 		local := map[key][]ComparedFigure{}
 		var localOrder []key
-		first := true
-		// Line breaks are hard wraps, never sentence ends.
-		text, state := strings.Join(strings.Fields(text), " "), -1
-		for text != "" {
-			var sentence string
-			sentence, text, state = uniseg.FirstSentenceInString(text, state)
-			quote := strings.TrimSpace(sentence)
-			skip := (first && clippedStart) || (clippedEnd && strings.TrimSpace(text) == "")
-			first = false
-			complete := strings.HasSuffix(quote, ".") || strings.HasSuffix(quote, "!") || strings.HasSuffix(quote, "?")
-			if skip || !complete {
+		for _, sentence := range sourceSentences(source) {
+			quote := decodeFigureText(strings.Join(strings.Fields(sentence), " "))
+			end := strings.TrimRightFunc(quote, func(r rune) bool {
+				return unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r) || r == '\'' || r == '"'
+			})
+			complete := strings.HasSuffix(end, ".") || strings.HasSuffix(end, "!") || strings.HasSuffix(end, "?")
+			if !complete || utf8.RuneCountInString(quote) > 512 {
 				continue
 			}
 			figures := decodedFigures(quote)
@@ -96,6 +98,31 @@ func Compare(passages []string) Comparison {
 		out.Status = "CONFLICTING"
 	}
 	return out
+}
+
+// sourceSentences keeps byte offsets while joining hard wraps within paragraphs.
+func sourceSentences(source Source) []string {
+	var sentences []string
+	if source.Start < 0 || source.End <= source.Start || source.End > len(source.Text) {
+		return sentences
+	}
+	start := 0
+	breaks := paragraphBreak.FindAllStringIndex(source.Text, -1)
+	breaks = append(breaks, []int{len(source.Text), len(source.Text)})
+	for _, boundary := range breaks {
+		text := strings.NewReplacer("\n", " ", "\r", " ").Replace(source.Text[start:boundary[0]])
+		offset, state := start, -1
+		for text != "" {
+			var sentence string
+			sentence, text, state = uniseg.FirstSentenceInString(text, state)
+			if offset < source.End && offset+len(sentence) > source.Start {
+				sentences = append(sentences, sentence)
+			}
+			offset += len(sentence)
+		}
+		start = boundary[1]
+	}
+	return sentences
 }
 
 func comparisonValue(figure normalizedFigure, after string) (kind, unit, value, suffix string) {
