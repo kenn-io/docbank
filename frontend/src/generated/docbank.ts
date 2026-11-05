@@ -4314,7 +4314,7 @@ export type MissLogReceiptReranking = {[key: string]: unknown};
 
 export interface MissLogReceipt {
   actual_mode: MissLogReceiptActualMode;
-  /** @maxLength 256 */
+  /** @maxLength 128 */
   binding_id?: string;
   coverage?: MissLogReceiptCoverage;
   created_at: string;
@@ -4326,7 +4326,7 @@ export interface MissLogReceipt {
   fence_fingerprint?: string;
   filters?: MissLogReceiptFilters;
   id: string;
-  /** @maxLength 256 */
+  /** @maxLength 128 */
   profile?: string;
   query: string;
   requested_mode: MissLogReceiptRequestedMode;
@@ -4375,7 +4375,7 @@ export interface MissLogRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   actual_mode: MissLogRequestActualMode;
-  /** @maxLength 256 */
+  /** @maxLength 128 */
   binding_id?: string;
   coverage?: MissLogRequestCoverage;
   /** @maxItems 64 */
@@ -4385,7 +4385,7 @@ export interface MissLogRequest {
   /** @maxLength 128 */
   fence_fingerprint?: string;
   filters?: MissLogRequestFilters;
-  /** @maxLength 256 */
+  /** @maxLength 128 */
   profile?: string;
   query: string;
   requested_mode: MissLogRequestRequestedMode;

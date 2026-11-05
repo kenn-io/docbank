@@ -171,6 +171,33 @@ func TestMissLogDoesNotWaitForMaintenance(t *testing.T) {
 	require.Empty(t, rows)
 }
 
+func TestMissLogIdentifierLimits(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"profile", "binding_id"} {
+		for _, size := range []int{128, 129, 256} {
+			t.Run(field+"/"+strconv.Itoa(size), func(t *testing.T) {
+				ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+				value := strings.Repeat("x", size)
+				resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, map[string]any{
+					"query": "synthetic miss", "requested_mode": "lexical", "actual_mode": "lexical", "truncated": false, field: value,
+				})
+				rows, err := st.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
+				require.NoError(t, err)
+				if size > 128 {
+					assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+					assert.Empty(t, rows)
+					return
+				}
+				require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+				require.Len(t, rows, 1)
+				var receipt map[string]any
+				require.NoError(t, json.Unmarshal([]byte(rows[0].Receipt), &receipt))
+				assert.Equal(t, value, receipt[field])
+			})
+		}
+	}
+}
+
 func TestMissLogInputLimits(t *testing.T) {
 	t.Parallel()
 	ts, st := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })

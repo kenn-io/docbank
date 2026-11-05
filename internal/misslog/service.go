@@ -19,8 +19,8 @@ import (
 // Request describes the empty result accepted by a submitting client.
 type Request struct {
 	Query            string         `json:"query"`
-	BindingID        string         `json:"binding_id,omitempty" maxLength:"256"`
-	Profile          string         `json:"profile,omitempty" maxLength:"256"`
+	BindingID        string         `json:"binding_id,omitempty" maxLength:"128"`
+	Profile          string         `json:"profile,omitempty" maxLength:"128"`
 	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	ActualMode       string         `json:"actual_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
 	Filters          map[string]any `json:"filters,omitempty"`

@@ -9815,7 +9815,7 @@ components:
             - fuzzy
           type: string
         binding_id:
-          maxLength: 256
+          maxLength: 128
           type: string
         coverage:
           additionalProperties: {}
@@ -9842,7 +9842,7 @@ components:
         id:
           type: string
         profile:
-          maxLength: 256
+          maxLength: 128
           type: string
         query:
           type: string
@@ -9894,7 +9894,7 @@ components:
             - fuzzy
           type: string
         binding_id:
-          maxLength: 256
+          maxLength: 128
           type: string
         coverage:
           additionalProperties: {}
@@ -9916,7 +9916,7 @@ components:
           additionalProperties: {}
           type: object
         profile:
-          maxLength: 256
+          maxLength: 128
           type: string
         query:
           type: string
