@@ -140,7 +140,6 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".photo_description_explicit_waiters,"+schema+".photo_face_scans TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(producer_fingerprint,caption,tags_json,visible_text,rotation,dismissed,awaiting,caption_resolved,resolved_tags_json) ON "+schema+".photo_suggestions TO "+quotedRole+
-		"; GRANT USAGE ON SEQUENCE "+schema+".photo_suggestions_id_seq TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(x,y,width,height,roll,facing,eyes_open,smile,detector_fingerprint,revision) ON "+schema+".photo_faces TO "+quotedRole)
 	require.NoError(t, err)
 

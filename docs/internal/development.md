@@ -563,7 +563,6 @@ GRANT INSERT ON documents.photo_description_explicit_waiters,
 GRANT INSERT, DELETE, UPDATE(producer_fingerprint, caption, tags_json, visible_text,
   rotation, dismissed, awaiting, caption_resolved, resolved_tags_json)
   ON documents.photo_suggestions TO docbank_runtime;
-GRANT USAGE ON SEQUENCE documents.photo_suggestions_id_seq TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(x, y, width, height, roll, facing, eyes_open, smile,
   detector_fingerprint, revision) ON documents.photo_faces TO docbank_runtime;
 GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
@@ -1119,7 +1118,7 @@ the SQLite vault; this qualification covers their Store calls.
 #### Photo descriptions and face detection
 
 Description and face-detection jobs use the shared rendition queue on both
-backends. Discovery pages seek ready grid previews in version order and keep
+backends. Discovery pages return ready grid previews in version order and keep
 active work separate by task: describing a photo does not block face detection.
 Consent, preview identity, claim expiry and the current display photo are checked
 again before publication. An explicit request can replace a dismissed producer;
@@ -1141,7 +1140,10 @@ SQLite still owns its released full-text triggers. PostgreSQL ranked search
 remains separate.
 
 The `photo-analysis` contracts run native description jobs, face reconciliation,
-suggestion responses and indexed discovery. Retained SQLite fixtures cover
+suggestion responses and target discovery. The SQLite plan check proves an
+ordered index seek. The PostgreSQL check disables sequential scans to prove the
+ready-preview index is usable; planner choice on a populated library remains
+unverified. Retained SQLite fixtures cover
 candidate/undo protection and regeneration after restore; they do not qualify
 PostgreSQL people curation or restore. The two worker tables (explicit waiters
 and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
