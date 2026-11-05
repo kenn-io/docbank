@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -20,13 +21,8 @@ func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server,
 	t.Helper()
 	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
 	require.NoError(t, err)
-	return newProcessingDocumentServerWithProfile(t, f, profileName, profile)
-}
-
-func newProcessingDocumentServerWithProfile(t *testing.T, f *nativeExportFixture, profileName string, profile processing.ProfileConfig) (*Server, *processing.Service, string) {
-	t.Helper()
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, service.Shutdown(context.Background())) })
 	cfg := config.Default()
@@ -45,7 +41,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	daemon, service, profileName := newProcessingDocumentServer(t, f)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	embedded := sdkmcp.NewServer(testImplementation(), nil)
-	for _, name := range []string{"get_vault_info", "list_documents", "search_documents", "find_conflicts"} {
+	for _, name := range []string{"get_vault_info", "list_documents", "search_documents"} {
 		tool, err := ReadTool(name)
 		require.NoError(t, err)
 		embedded.AddTool(tool, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
@@ -72,7 +68,6 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 		{"get_vault_info", map[string]any{}},
 		{"search_documents", map[string]any{"query": "alpha", "mode": "lexical", "profile": profileName, "filters": map[string]any{}}},
 		{"search_documents", map[string]any{"query": "alpha", "profile": "missing", "filters": map[string]any{"mime_type": "image/png"}}},
-		{"find_conflicts", map[string]any{"query": "alpha", "profile": profileName, "filters": map[string]any{}}},
 		{"list_documents", map[string]any{"cursor": "invalid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/grounding"
 )
 
@@ -24,14 +23,6 @@ type conflictPassage struct {
 	Compared         bool     `json:"compared"`
 }
 
-type findConflictsInput struct {
-	Query             string                          `json:"query"`
-	Limit             int                             `json:"limit"`
-	Profile           string                          `json:"profile"`
-	ContentVersionIDs []string                        `json:"content_version_ids"`
-	Filters           *api.DocumentSourceFenceFilters `json:"filters"`
-}
-
 type findConflictsOutput struct {
 	privateCache
 	grounding.Comparison
@@ -41,12 +32,13 @@ type findConflictsOutput struct {
 }
 
 func findConflicts(ctx context.Context, session documentReadSession, raw []byte) (findConflictsOutput, []*sdkmcp.ResourceLink, error) {
-	var input findConflictsInput
+	var input searchDocumentsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return findConflictsOutput{}, nil, err
 	}
+	input.Mode = "lexical"
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, c, searchDocumentsInput{Query: input.Query, Mode: "lexical", Limit: input.Limit, Profile: input.Profile, ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters}, true)
+		return runDocumentSearch(ctx, c, input, true)
 	})
 	if err != nil {
 		return findConflictsOutput{}, nil, err
@@ -57,7 +49,7 @@ func findConflicts(ctx context.Context, session documentReadSession, raw []byte)
 			texts[i] = hit.Excerpt
 		}
 	}
-	out := findConflictsOutput{privateCache: newPrivateCache(), Comparison: grounding.Compare(input.Query, texts),
+	out := findConflictsOutput{privateCache: newPrivateCache(), Comparison: grounding.Compare(texts),
 		VaultID: result.vaultID, Truncated: result.report.Truncated,
 		Passages: make([]conflictPassage, len(texts))}
 	for i, hit := range result.report.Results {

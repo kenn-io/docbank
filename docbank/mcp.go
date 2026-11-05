@@ -13,8 +13,8 @@ import (
 // ErrReadScope means the caller did not supply authority for this whole vault.
 var ErrReadScope = errors.New("read scope does not bind this vault")
 
-// CallReadTool executes get_vault_info, list_documents, search_documents, or
-// find_conflicts on this vault with native MCP semantics and validation. It
+// CallReadTool executes get_vault_info, list_documents or search_documents on
+// this vault using the native MCP semantics and input/output validation. It
 // starts no listener, discovers no daemon and reads no owner credentials.
 //
 // vaultID must identify the entire vault admitted by the host for this call.

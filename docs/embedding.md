@@ -16,10 +16,10 @@ Use the HTTP API when independent processes need to share one standalone vault.
 
 ## Run native MCP reads
 
-`Vault.CallReadTool` runs `get_vault_info`, `list_documents`,
-`search_documents`, and `find_conflicts` on the vault your application already owns.
-It uses the same handlers, schemas, authenticated cursors, search scope,
-result bounds and private-cache metadata as the standalone tools. It starts no
+`Vault.CallReadTool` runs `get_vault_info`, `list_documents`, and
+`search_documents` on the vault your application already owns. It uses the same
+handlers, schemas, authenticated cursors, search scope, result
+bounds and private-cache metadata as the standalone tools. It starts no
 listener, discovers no daemon and reads no owner credentials.
 
 Register only the tools your application admits. For example:

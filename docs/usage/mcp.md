@@ -334,10 +334,9 @@ Only version-list searches return `fence`, `fence_fingerprint`, and
 `observed_scope_count`. Version-list searches always return `vault_id`; filter
 searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
-hits. Each excerpt is capped at 512 characters. Content excerpts mark cuts from
-search windows, the character cap, and rendition segments within a text unit
-with ` … ` on each cut side. Name excerpts use the character cap alone.
-Each hit has at most 64 evidence
+hits. Each excerpt is capped at 512 characters. Content excerpts mark cuts at
+rendition segment boundaries within a text unit with ` … `, as they mark cuts
+from search windows. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
 skipped-reason codes of at most 64 characters each.
 
@@ -411,34 +410,29 @@ If matching sentences say "The cooling period is 7 days." and "The cooling
 period is 15 days.", the result is `CONFLICTING`. Each conflict includes the
 figures, their sentences, and passage references starting at 1. Each passage
 includes its document identity, evidence IDs, and `modified_at` from the catalog.
-That timestamp describes the document, not when a policy takes effect.
 
-The tool uses lexical search, so it needs no embedding provider. It accepts
-`query`, `profile`, `limit`, and either `filters` or `content_version_ids`.
-It rejects `mode`, `binding_id`, `explain`, and `rerank`.
+The tool uses lexical search, so it needs no embedding provider. It rejects
+`mode`, `binding_id`, `explain`, and `rerank`.
 
 It compares money in the same currency, percentages written as `%` or `percent`,
 and durations in the same unit from minutes through years. Sentences must match
 exactly after lowercasing, collapsing whitespace, and masking the figure and its
-unit. Punctuation, product names, and qualifiers remain part of that match.
-Each sentence must contain at least one query term as a word prefix and exactly
-one figure. A second figure, including a date, makes the sentence ambiguous.
+unit. Each sentence must contain exactly one figure. A second figure, including
+a date, makes the sentence ambiguous.
 
-Blank lines separate paragraphs. Single line breaks join wrapped text and never
-end a sentence. Sentences need a final `.`, `!`, or `?`, optionally followed by
-closing quotes or brackets. Headings and bullets without an end mark are skipped.
-A leading excerpt marker drops the first sentence, and a trailing marker drops
-the last sentence, even when the cut ends in punctuation such as `$7.` from
-`$7.50`. Complete sentences between those edges remain eligible. Name-only
-evidence is skipped. A passage stating different
-values for the same matching sentence drops that comparison.
-`compared: false` marks passages with no eligible figures.
+Line breaks join wrapped text and never end a sentence. Sentences need a final
+`.`, `!`, or `?`. A leading excerpt marker drops the first sentence, and a
+trailing marker drops the last sentence, even when the cut ends in punctuation
+such as `$7.` from `$7.50`. Complete sentences between those edges remain
+eligible. Name-only evidence is skipped. A passage stating different values for
+the same matching sentence drops that comparison. `compared: false` marks
+passages with no eligible figures.
 
 `NO_CONFLICT` means at least one matching sentence could be compared across
 passages and all comparable figures agreed. `NOT_COMPARABLE` means none could be
 lined up. These statuses cover only the retrieved, eligible sentences. Check
-`truncated` and open the sources to verify disagreements. Identical wording in
-unrelated documents can still produce a lead. The tool chooses no winner.
+`truncated` and open the sources to verify disagreements. The tool chooses no
+winner.
 
 ### Answer questions
 
