@@ -90,8 +90,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	if limit <= 0 {
 		limit = 50
 	}
-	var err error
-	opts, err = s.NormalizeSearchOptions(ctx, opts)
+	opts, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -122,7 +121,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	nameFilterSQL, filterSQL, filterArgs := searchCandidateFiltersSQL(opts)
-	selectedCTE, selectedJoin, attachmentSelection, selectedArgs := "", "", "", []any(nil)
+	selectedCTE, selectedJoin, versionSelection, selectedArgs := "", "", "", []any(nil)
 	if len(opts.SelectedBuilds) != 0 {
 		encoded, err := json.Marshal(opts.SelectedBuilds)
 		if err != nil {
@@ -133,7 +132,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			json_extract(value,'$.build_id') build_id FROM json_each(?)) `
 		// Check each build's pairs before catalog joins to avoid repeating the fence scan.
 		selectedJoin = ` CROSS JOIN selected ON selected.build_id=rendition_lexical_fts.build_id `
-		attachmentSelection = ` AND a.content_version_id=selected.content_version_id `
+		versionSelection = ` AND cv.version_id=selected.content_version_id `
 		selectedArgs = []any{string(encoded)}
 	}
 	var nameHits []SearchHit
@@ -142,9 +141,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		if err != nil {
 			return nil, false, err
 		}
-		nameArgs := names.Args
-		nameArgs = append(nameArgs, filterArgs...)
-		nameArgs = append(nameArgs, limit+1)
+		nameArgs := slices.Concat(names.Args, filterArgs, []any{limit + 1})
 		rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL,
 			"AND n.kind='file' AND cv.version_id IS NOT NULL "+nameFilterSQL), nameArgs...)
 		if err != nil {
@@ -197,12 +194,11 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				CROSS JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
 				CROSS JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
-				CROSS JOIN rendition_attachments a
-				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
+				CROSS JOIN rendition_builds rb ON rb.build_id=rendition_lexical_fts.build_id
+				CROSS JOIN content_versions cv ON cv.blob_hash=rb.source_sha256 ` + versionSelection + ` CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+				CROSS JOIN rendition_attachments a ON a.build_id=rb.build_id AND a.content_version_id=cv.version_id
 				CROSS JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
-				CROSS JOIN content_versions cv ON cv.version_id=a.content_version_id
-				CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
 				 AND n.trashed_at IS NULL ` + filterSQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
@@ -2440,8 +2436,7 @@ func (s *Store) SearchPageWithOptions(
 	if limit <= 0 {
 		limit = 50
 	}
-	var err error
-	opts, err = s.NormalizeSearchOptions(ctx, opts)
+	opts, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -2457,9 +2452,7 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	nameArgs := names.Args
-	nameArgs = append(nameArgs, filterArgs...)
-	nameArgs = append(nameArgs, limit+1)
+	nameArgs := slices.Concat(names.Args, filterArgs, []any{limit + 1})
 	rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL, nameFilterSQL), nameArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)
@@ -2482,9 +2475,12 @@ func (s *Store) SearchPageWithOptions(
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
 		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
+		from, err := smallScopeContentFrom(ctx, queryer, opts.UnderNodeID, from)
+		if err != nil {
+			return err
+		}
 		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
-		contentArgs = append(contentArgs, filterArgs...)
-		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
+		contentArgs = slices.Concat(contentArgs, filterArgs, []any{remaining + len(nameHits) + 1})
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
 		if err != nil {
 			return fmt.Errorf("searching extracted content for %q: %w", query, err)
@@ -2504,13 +2500,10 @@ func (s *Store) SearchPageWithOptions(
 	for _, hit := range nameHits {
 		seen[hit.Node.ID] = struct{}{}
 	}
-	filtered := contentHits[:0]
-	for _, hit := range contentHits {
-		if _, exists := seen[hit.Node.ID]; exists {
-			continue
-		}
-		filtered = append(filtered, hit)
-	}
+	filtered := slices.DeleteFunc(contentHits, func(hit SearchHit) bool {
+		_, exists := seen[hit.Node.ID]
+		return exists
+	})
 	truncated := len(filtered) > remaining
 	if truncated {
 		filtered = filtered[:remaining]
@@ -2605,12 +2598,10 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		opts.pdfPredicate = predicate
 	}
 	if len(opts.ContentVersionIDs) > MaxSearchSourceFenceIDs {
-		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions",
-			MaxSearchSourceFenceIDs)
+		return SearchOptions{}, fmt.Errorf("search source fence exceeds %d content versions", MaxSearchSourceFenceIDs)
 	}
 	if len(opts.ContentVersionIDs) != 0 {
-		ids := slices.Clone(opts.ContentVersionIDs)
-		sort.Strings(ids)
+		ids := slices.Sorted(slices.Values(opts.ContentVersionIDs))
 		for index, id := range ids {
 			if err := validateUUIDv4(id); err != nil {
 				return SearchOptions{}, errors.New("search source fence contains an invalid content version ID")
@@ -2635,11 +2626,10 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, ErrNotFound)
 		}
 	}
-	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
-	if err != nil {
+	var err error
+	if opts.MIMEType, err = NormalizeSearchMIMEType(opts.MIMEType); err != nil {
 		return SearchOptions{}, err
 	}
-	opts.MIMEType = normalizedMIME
 	if opts.UnderNodeID < 0 {
 		return SearchOptions{}, errors.New("search directory node ID must be positive")
 	}
@@ -2656,14 +2646,10 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 			return SearchOptions{}, fmt.Errorf("search scope node %d: %w", opts.UnderNodeID, ErrNotDir)
 		}
 	}
-	modifiedSince, modifiedBefore, err := NormalizeSearchTimeBounds(
-		opts.ModifiedSince, opts.ModifiedBefore,
-	)
+	opts.ModifiedSince, opts.ModifiedBefore, err = NormalizeSearchTimeBounds(opts.ModifiedSince, opts.ModifiedBefore)
 	if err != nil {
 		return SearchOptions{}, err
 	}
-	opts.ModifiedSince = modifiedSince
-	opts.ModifiedBefore = modifiedBefore
 	return opts, nil
 }
 
@@ -2897,21 +2883,40 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 	return nil
 }
 
+// smallScopeContentFrom leads content search from the files of a scope holding
+// at most 1,024 live nodes, instead of from every copy of a matching blob.
+func smallScopeContentFrom(ctx context.Context, queryer rowQuerier, scopeID int64, from string) (string, error) {
+	if scopeID == 0 {
+		return from, nil
+	}
+	var live int
+	err := queryer.QueryRowContext(ctx, `WITH RECURSIVE scoped(id) AS (SELECT ? UNION ALL
+		SELECT child.id FROM nodes child JOIN scoped ON child.parent_id=scoped.id WHERE child.trashed_at IS NULL
+	) SELECT COUNT(*) FROM (SELECT id FROM scoped LIMIT 1025)`, scopeID).Scan(&live)
+	if err != nil || live > 1024 {
+		return from, err
+	}
+	// Without INDEXED BY, the planner leads from nodes_parent and visits trashed children.
+	return strings.ReplaceAll(strings.Replace(from, "nodes n", "nodes n INDEXED BY nodes_live_children", 1), "CROSS JOIN", "JOIN"), nil
+}
+
 // contentSearchMatches shares retained-text ranking and publication bindings with Photos.
+// An attachment's source matches its build's, so live versions of that blob
+// are found before probing attachments, and trashed copies stay unvisited.
 func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
-	args = []any{match}
 	if generation == "" {
 		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM content_fts WHERE content_fts MATCH ? GROUP BY blob_hash)`,
-			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, []any{match}
 	}
 	profileFilter := ""
-	args = append(args, generation)
+	args = []any{match, generation}
 	if profile != nil {
 		profileFilter = ` AND a.profile_fingerprint=?`
 		args = append(args, *profile)
 	}
 	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM rendition_lexical_fts
-  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+  CROSS JOIN rendition_builds rb ON rb.build_id=rendition_lexical_fts.build_id CROSS JOIN content_versions cv ON cv.blob_hash=rb.source_sha256
+  CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id AND n.trashed_at IS NULL CROSS JOIN rendition_attachments a ON a.build_id=rb.build_id AND a.content_version_id=cv.version_id
   JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
   WHERE rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)` + profileFilter + ` GROUP BY a.content_version_id)`,
 		`matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`, `mv.best_rank`, args
