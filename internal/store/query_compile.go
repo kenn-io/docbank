@@ -569,20 +569,17 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	marker := compiledGenerationArgument{}
 	content := compiledQueryFragment{
 		sql: `(
-			(?='' AND EXISTS (
-				SELECT 1 FROM content_fts
-				JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id
-				WHERE content_fts.blob_hash=cv.blob_hash AND content_fts MATCH ?
-			))
-			OR (?<>'' AND EXISTS (
-				SELECT 1 FROM rendition_lexical_fts
+			(?='' AND cv.blob_hash IN (
+				SELECT content_fts.blob_hash FROM content_fts WHERE content_fts MATCH ?
+			) AND EXISTS (SELECT 1 FROM text_searchable_versions tsv WHERE tsv.version_id=cv.version_id))
+			OR (?<>'' AND cv.version_id IN (
+				SELECT a.content_version_id FROM rendition_lexical_fts
 				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
 				JOIN rendition_heads rh
 				  ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint
 				 AND rh.attachment_id=a.attachment_id
-				WHERE a.content_version_id=cv.version_id
-				  AND (? IS NULL OR a.profile_fingerprint=?)
+				WHERE (? IS NULL OR a.profile_fingerprint=?)
 				  AND rendition_lexical_fts MATCH ?
 				  AND EXISTS (
 					SELECT 1 FROM rendition_lexical_generation_builds gb
