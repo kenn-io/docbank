@@ -159,3 +159,66 @@ func TestRenditionAttachmentBuildIndexAddedOnReopen(t *testing.T) {
 	detail := explainQueryPlan(t, reopened, `SELECT attachment_id FROM rendition_attachments WHERE build_id=?`, catalogBuildID)
 	assert.Contains(t, detail, "rendition_attachments_build")
 }
+
+func TestScopedCopiedBlobUsesSmallFolderPlan(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	scope, err := s.Mkdir(ctx, s.RootID(), "scope")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, scope.ID, "inside.txt", fakeHash("b2"), 4, "text/plain")
+	require.NoError(t, err)
+	for i := range 8 {
+		_, err = s.CreateFile(ctx, s.RootID(), "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: file.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury"}))
+	detail := scopedContentQueryPlan(t, s, scope.ID, "", false)
+	// A one-file scope must probe its current version, rather than expand every copy of the matching blob.
+	assert.NotContains(t, detail, "content_versions_blob")
+}
+
+func scopedContentQueryPlan(t *testing.T, s *Store, scopeID int64, generationID string, explained bool) string {
+	t.Helper()
+	var query string
+	func() {
+		readDB := s.db
+		release := make(chan struct{})
+		close(release)
+		s.db = sql.OpenDB(photoSearchBeginConnector{db: readDB, start: func() {}, release: release, query: func(sql string) {
+			if strings.Contains(sql, "content_fts MATCH") || strings.Contains(sql, "rendition_lexical_fts MATCH") {
+				query = sql
+			}
+		}})
+		defer func() {
+			require.NoError(t, s.db.Close())
+			s.db = readDB
+		}()
+		opts := SearchOptions{UnderNodeID: scopeID}
+		if explained {
+			hits, more, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 50, opts, false)
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+			assert.Equal(t, "inside.txt", hits[0].Node.Name)
+			assert.False(t, more)
+		} else {
+			hits, more, err := s.SearchPageWithOptions(t.Context(), "mercury", 50, opts)
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+			assert.Equal(t, "inside.txt", hits[0].Node.Name)
+			assert.False(t, more)
+		}
+	}()
+	require.NotEmpty(t, query)
+	args := []any{ftsQuery("mercury")}
+	if generationID != "" {
+		args = append(args, generationID)
+	}
+	if scopeID != 0 {
+		args = append(args, scopeID)
+	}
+	if !explained {
+		args = append(args, 51)
+	}
+	return explainQueryPlan(t, s, query, args...)
+}
