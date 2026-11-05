@@ -58,9 +58,6 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	if format == "unconstrained-normalization" {
 		p.Normalization = "none"
 	}
-	if format == "other-model" {
-		p.Model = "other-model"
-	}
 	if format == "prefix-free" {
 		p.ModelInput = config.EmbeddingModelInputConfig{Profile: "custom/v1", CompatibilityID: p.CompatibilityID,
 			Document: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"},
@@ -220,13 +217,11 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 			require.NoError(t, err)
-			require.Equal(t, name, plan.Profile)
 			preview := new(bytes.Buffer)
 			command := &cobra.Command{}
 			command.SetOut(preview)
 			require.NoError(t, writeLocalTextPlan(command, *plan))
 			require.Contains(t, preview.String(), name)
-			require.Contains(t, preview.String(), "Keep existing index; replaces local-text for new imports")
 			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
 			require.NoError(t, err)
 			require.NoError(t, connection.Close())

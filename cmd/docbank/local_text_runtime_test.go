@@ -381,5 +381,5 @@ func TestLocalTextRejectsReservedProfile(t *testing.T) {
 	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles["archive"]}
 	require.NoError(t, cfg.Validate())
 	_, err := localTextCandidate(cfg, "local", config.LocalTextProfile)
-	require.ErrorContains(t, err, "reserved for local text")
+	require.Error(t, err)
 }

@@ -156,14 +156,10 @@ func TestLocalTextSelection(t *testing.T) {
 	require.Equal(t, "local-text (separate; adds missing content)", continued.VectorEffect)
 	setup.Selected = ""
 	process(service, "archive")
-	_, _, err = fixture.catalog.Trash(t.Context(), node.ID, store.UnconditionalRev)
-	require.NoError(t, err)
 	plan, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.Equal(t, "archive", plan.Profile, "skip an unindexed recipe")
 	require.Equal(t, "Keep existing index", plan.VectorEffect)
-	_, _, err = fixture.catalog.Restore(t.Context(), node.ID, store.UnconditionalRev)
-	require.NoError(t, err)
 	setup.Service, err = setup.Candidate("local", "archive")
 	require.NoError(t, err)
 	setup.Selected = "archive"

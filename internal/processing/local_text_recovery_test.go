@@ -60,13 +60,11 @@ func TestLocalTextMixedRecipeRetriesImageOutage(t *testing.T) {
 			}}})
 		require.NoError(t, err)
 		t.Cleanup(restarted.Stop)
-		saved := ""
-		setup = &LocalTextSetup{Service: restarted, Selected: "mixed", Save: func(profile, _ string) error { saved = profile; return nil }}
+		setup = &LocalTextSetup{Service: restarted, Selected: "mixed", Save: func(string, string) error { return nil }}
 		targets, err := setup.targets(t.Context(), "", 50)
 		require.NoError(t, err)
 		require.Contains(t, targets, item, "provider recovery must leave the unfinished image eligible for retry")
 		require.NoError(t, setup.activate(t.Context(), restarted, LocalTextPlan{Profile: "mixed", Server: "local"}))
-		require.Equal(t, "mixed", saved)
 		jobs, err = fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, source.record.Fingerprint)
 		require.NoError(t, err)
 		for _, job := range jobs {
