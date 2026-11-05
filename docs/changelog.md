@@ -10,6 +10,169 @@ pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
 later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
+## [v0.17.0](https://github.com/kenn-io/docbank/releases/tag/v0.17.0) — 2026-11-05
+
+### Upgrading
+
+- Claim each existing backup repository with `docbank backup claim` after
+  upgrading.
+- Run `docbank processing probe` again for any capability manifest made for the
+  retired `mistral-ocr-4-0` model, then review consent.
+- Many commands moved under `document`, `vault`, `email`, and `report`, such as
+  `docbank document add` for `docbank add`. The
+  [older spellings](cli-reference.md#command-groups-and-older-spellings) still
+  work for at least one release and print a warning, so update scripts now.
+
+### New features
+
+- Read PDFs and Markdown inside Docbank. The PDF reader includes search,
+  selectable text, thumbnails, zoom, and printing.
+- Review and redact a PDF in the browser using the reader's navigation and zoom.
+  Draw masks, inspect verified pages and sanitized text, then confirm a ZIP
+  download. The original stays unchanged.
+- Produce reviewed redactions with Bates numbers and unique page identifiers,
+  and recover retained PDFs by number through Productions. Number reservation
+  requires keeping the unredacted original indefinitely.
+- Verify saved redaction ZIPs offline against their review files, including
+  masks and searchable text. Package completed numbered deliveries with
+  recipient load files using `docbank redaction package`.
+- Inspect PDF encryption, signature coverage, embedded files, JavaScript, and
+  launch actions. Search these recorded facts with `--pdf-filter` or web Query
+  syntax. Signature coverage checks byte ranges without validating certificates
+  or cryptographic signatures.
+- Add web documents with
+  `docbank document add https://example.com/filing.pdf --dest /inbox`. Docbank
+  records the requested and final URLs, fetch time, and supplied cache headers.
+  Repeating the import skips unchanged bytes.
+- Upload whole folders, including subfolders, from the browser.
+- Search Photos by image content with Meaning or Hybrid. When image search is
+  unavailable, Photos returns metadata matches and explains why.
+- Review suggested photo captions, tags, visible text, and rotation corrections
+  after configuring a vision provider and granting consent. Accept or dismiss
+  suggestions, with Undo for your decisions.
+- Find and name faces in photos. Draw faces manually or enable detection with
+  consent, then browse, rename, and merge people on the People page.
+- Review suggested keeper frames within burst stacks, groups of neighboring
+  shots. Library and Cull, the photo review view, support accepting or
+  dismissing proposals together and undoing the decision.
+- Sync photo ratings, captions, rotation, keywords, and other decisions through
+  XMP sidecars, metadata files kept beside originals in the vault. Separate
+  edits merge, and conflicting values require your choice. Source folders
+  remain untouched.
+- Schedule automatic backups with retention for scheduled captures. Change the
+  interval, retention count, and Hidden photo unlock lifetime without restarting
+  the daemon.
+- Configure watched inboxes to apply existing tags and queue profile processing,
+  such as OCR. Missing tags hold new imports until the tags exist. Processing
+  requires current consent and runs only for versions imported while consent is
+  active.
+- Capture watched saves promptly with `capture_on_change = true` or
+  `docbank push --watch --capture-on-change`. Exclude temporary file families
+  with glob-based `exclude_patterns`. Prompt capture is optional and best
+  effort.
+- Follow vault changes with `docbank changes --follow --json`, HTTP, or MCP
+  `list_changes`. Saved cursors resume after disconnects. Clients with expired
+  cursors must rescan the vault.
+- Gather question evidence with MCP `answer_question`, including matched
+  passages and reasons search coverage is incomplete. The tool returns evidence
+  for the caller to assess.
+- Check answer figures against saved citations with MCP `check_answer`. The
+  check recognizes equivalent date and currency spellings, but a match
+  establishes only that the figure appears in cited text.
+- Request consented reranking through MCP `search_documents` and receive its
+  status and relevance scores.
+- Connect clients using configuration printed by
+  `docbank mcp config --client claude-code` or `--client codex`. The daemon also
+  supports optional read-only MCP HTTP hosting with a separate bearer
+  credential.
+- Expose vault summaries, document lists, and search from embedded Go
+  applications through `Vault.CallReadTool`, without starting a daemon. Calls
+  require whole-vault access.
+- Quote verified document passages into Kata issues and check later whether the
+  source is unchanged, changed, or gone. MCP writes require
+  `--allow-kata-writes`.
+- Run Mistral OCR profiles through the daemon and create capability manifests
+  with `docbank processing probe`.
+- Process password-protected PDFs through Docling and Mistral using
+  `[media].pdf_passwords_file`. The archived original stays encrypted. Docling
+  jobs also accept selected PDF page ranges.
+
+### Improvements
+
+- Navigate Documents and Photos through a shared layout with preview, details,
+  history, and tags together. Searches, Productions, Imports, and Trash open as
+  pages with browser history support.
+- Open links to an exact document version after sign-in, including versions
+  beyond the newest 1,000 listed in history.
+- Search vaults with more than 4,096 live files by meaning through the CLI,
+  terminal browser, web app, and MCP filter searches.
+- Run semantic and similar-document searches with shorter preparation delays and
+  less memory use in large vaults. Semantic and hybrid searches also stop
+  blocking imports while loading their indexes.
+- Read documents faster through MCP in large vaults. In a measured 100,001-file
+  vault, reading a 4 MiB PDF drops from 205.8 seconds to 0.95 seconds.
+- Add files and import photos faster into large folders. Synthetic SQLite
+  measurements reduce per-file add cost in a 100,000-file folder from 60 ms to
+  0.04 ms.
+- Add text files without repeating whole-vault text work. Publishing a 2 KB text
+  file takes about 1.5 ms with CGO SQLite at both 1,000 and 10,000 text
+  documents.
+- Browse large folders and photo libraries faster. Load time for each photo page
+  no longer grows with every photo already loaded.
+- Move documents, assign heavily used tags, page through audit history, and
+  empty trash faster in large vaults. Background storage cleanup also holds up
+  other writes for less time.
+- Build embeddings with less slowdown as completed work accumulates. Idle vaults
+  skip repeated embedding discovery, and unchanged vaults avoid blocking writes
+  during text-extraction checks at restart.
+- Keep open photo views current after changes from other tabs, imports, workers,
+  or the CLI while preserving selection, scroll position, and metadata drafts.
+- Jump to a year or month in Library and albums while keeping the current search
+  and filters. Date navigation requires capture-date sorting.
+- Find commands in grouped `document`, `vault`, `email`, and `report` help. Help
+  and errors provide clearer recovery steps.
+- Hide archived documents whose watched source is known to be gone with
+  `--source-present`, without deleting them.
+- Reuse matching saved vectors after supported endpoint, timeout, or
+  batch-policy changes. Grant consent and explicitly select documents under the
+  updated profile.
+
+### Bug fixes
+
+- Preserve a watched document's history across unambiguous renames observed
+  while the daemon runs. Watched folders also detect timestamp-preserving edits
+  on filesystems with independent change times.
+- Keep `push --watch` from rereading unchanged file contents on every scan. On
+  filesystems whose change time follows modification time, same-size edits that
+  restore modification time can remain undetected.
+- Import more Fast Web View PDFs and PDFs saved by Word or Excel without false
+  cross-reference errors. Some Fast Web View PDFs with large first-page tables
+  remain unsupported.
+- Avoid memory refusals caused by accumulated retired runtimes during multi-page
+  native PDF reviews and redactions.
+- Give `docbank push` up to five minutes to receive each committed upload
+  receipt, preventing premature failures on slow or busy storage.
+- Keep live daemons discoverable in containers and report a busy vault before
+  attempting to start a second daemon from a sandbox.
+- Stop canceled vault opens, database operations, and queued mutation waits when
+  the caller gives up.
+- Start web and HTTP MCP launchers despite mistakes in unrelated configuration
+  sections. Daemon configuration failures identify the section and reason.
+- Open double-tapped photos fitted to the screen on touch devices.
+- Retry email publication release after temporary database lock contention
+  clears.
+- Direct Homebrew installations to `brew upgrade docbank` so self-update does
+  not overwrite the package-managed binary.
+- Avoid excessive memory allocation when decoding crafted VP8L images.
+
+### Contributors
+
+Thank you to [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
+[Rod Boev (@rodboev)](https://github.com/rodboev),
+[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.17.0.
+See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.16.0...v0.17.0).
+
 ## [v0.16.0](https://github.com/kenn-io/docbank/releases/tag/v0.16.0) — 2026-10-23
 
 Docbank 0.16.0 builds with Go 1.27.3, which stops trusting a small set of
