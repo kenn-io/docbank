@@ -22,7 +22,7 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 		{"premium.txt", "The premium cooling period is 30 days."},
 		{"cooling period notes.txt", ""},
 	} {
-		text := strings.Repeat("Background material describes the policy and its administration. ", 10) + file.sentence + " Additional material describes how customers can contact the service team for help with their account."
+		text := "Policy overview. " + file.sentence + " Contact support for help."
 		member := f.addFile(t, file.name, text)
 		if file.sentence != "" {
 			require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
@@ -45,7 +45,8 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	for _, hit := range report.Results {
 		if hit.Path == "/cooling period 2025.txt" {
 			require.True(t, answerContentExcerpt(hit))
-			require.True(t, strings.HasPrefix(strings.TrimSpace(hit.Excerpt), "… The cooling period"), hit.Excerpt)
+			require.True(t, strings.HasPrefix(hit.Excerpt, "Policy overview."), hit.Excerpt)
+			require.Contains(t, hit.Excerpt, "The cooling period is 7 days.")
 		}
 	}
 	for _, scope := range []string{"filters", "content_version_ids"} {

@@ -38,6 +38,7 @@ func Compare(query string, passages []string) Comparison {
 	var order []key
 	terms := comparisonWords(query)
 	for i, passage := range passages {
+		clippedStart := strings.HasPrefix(strings.TrimSpace(passage), "…")
 		text := strings.TrimLeft(strings.TrimRight(decodeFigureText(passage), " \t…"), " \t\r\n…")
 		local := map[key][]ComparedFigure{}
 		var localOrder []key
@@ -47,17 +48,20 @@ func Compare(query string, passages []string) Comparison {
 			sentence, text, state = uniseg.FirstSentenceInString(text, state)
 			quote := strings.TrimSpace(sentence)
 			initial, _ := utf8.DecodeRuneInString(quote)
-			skip := first && unicode.IsLower(initial)
+			skip := first && clippedStart || unicode.IsLower(initial)
 			first = false
-			complete := strings.HasSuffix(quote, ".") || strings.HasSuffix(quote, "!") || strings.HasSuffix(quote, "?") ||
+			ending := strings.TrimRightFunc(quote, func(r rune) bool {
+				return r == '\'' || r == '"' || unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r)
+			})
+			complete := strings.HasSuffix(ending, ".") || strings.HasSuffix(ending, "!") || strings.HasSuffix(ending, "?") ||
 				strings.HasSuffix(sentence, "\n") || strings.HasSuffix(sentence, "\r")
 			if skip || quote == "" || text == "" && !complete {
 				continue
 			}
 			words := comparisonWords(quote)
-			matches := len(terms) > 0
+			matches := false
 			for _, term := range terms {
-				matches = matches && slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, term) })
+				matches = matches || slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, term) })
 			}
 			if !matches {
 				continue

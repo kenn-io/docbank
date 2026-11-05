@@ -414,11 +414,13 @@ The tool compares money in the same currency, percentages written as `%` or
 `percent`, and durations in the same unit from minutes through years. Subjects
 must have exactly the same lowercase letter-words after removing the figure
 and its unit. Product names and qualifiers remain part of the subject.
-Each sentence must contain every query term as a word prefix and exactly one
-figure. A second figure, including a date, makes the sentence ambiguous.
+Each sentence must contain at least one query term as a word prefix and exactly
+one figure. A second figure, including a date, makes the sentence ambiguous.
 
-Name-only evidence, a lowercase first sentence, and an unfinished final sentence
-are skipped. Complete sentences after a leading excerpt marker remain eligible.
+Name-only evidence, sentences starting with a lowercase letter, and an unfinished
+final sentence are skipped. A leading excerpt marker drops the first fragment
+regardless of capitalization. Later complete sentences remain eligible. Sentence
+punctuation before closing quotes or brackets counts as a complete ending.
 A passage stating different values for the same subject drops that subject.
 `compared: false` marks passages with no eligible figures.
 

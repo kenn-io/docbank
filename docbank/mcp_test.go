@@ -33,7 +33,7 @@ func TestVaultReadTools(t *testing.T) {
 	require.NoError(t, err)
 	var mu sync.Mutex
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "embedded-vault", Version: "1"}, nil)
-	for _, name := range []string{"get_vault_info", "list_documents", "search_documents"} {
+	for _, name := range []string{"get_vault_info", "list_documents", "search_documents", "find_conflicts"} {
 		tool, err := catalog.ReadTool(name)
 		require.NoError(t, err)
 		server.AddTool(tool, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
@@ -96,6 +96,16 @@ func TestVaultReadTools(t *testing.T) {
 	resultItem, ok := results[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "/alpha.txt", resultItem["path"])
+	comparison := payload("find_conflicts", map[string]any{"query": "alpha", "mode": "lexical", "profile": "local", "filters": map[string]any{}})
+	assert.Equal(t, vault.ID(), comparison["vault_id"])
+	assert.Equal(t, "NOT_COMPARABLE", comparison["status"])
+	passages, ok := comparison["passages"].([]any)
+	require.True(t, ok)
+	require.Len(t, passages, 1)
+	passage, ok := passages[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "/alpha.txt", passage["path"])
+	assert.Equal(t, false, passage["compared"])
 	// An admitted whole-vault binding cannot be replaced with zero or another vault.
 	for _, id := range []uuid.UUID{uuid.Nil(), uuid.NewV4()} {
 		mu.Lock()

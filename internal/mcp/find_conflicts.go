@@ -10,7 +10,7 @@ import (
 var findConflictsTool = toolDefinition{
 	name: "find_conflicts", title: "Find differing figures",
 	description: "Compare money, percentages, and durations in search excerpts with exactly matching subjects. Returns disagreements as leads to inspect, with source dates and evidence IDs. Skips ambiguous or incomplete sentences and name-only evidence; never chooses a winner.",
-	schemas:     findConflictsSchemas, idempotent: true,
+	schemas:     findConflictsSchemas, openWorld: true,
 }
 
 type conflictPassage struct {
