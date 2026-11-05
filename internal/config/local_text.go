@@ -76,8 +76,7 @@ func (c Config) WithLocalText() (Config, error) {
 // LocalTextEmbedding keeps the model and input identity while moving its transport.
 func LocalTextEmbedding(p EmbeddingProfileConfig, mode string) (EmbeddingProfileConfig, error) {
 	if p.Runtime == nil || p.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" ||
-		p.Metric != "cosine" ||
-		p.Normalization != "unit_length" || p.Runtime.ProviderRevisionHeader != "" {
+		p.Runtime.ProviderRevisionHeader != "" {
 		return p, errors.New("model or input contract differs from local Nomic")
 	}
 	p.Runtime = new(*p.Runtime)

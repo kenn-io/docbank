@@ -335,11 +335,18 @@ func writeDaemonEmbeddingConfig(t *testing.T, root string, cfg config.Config) {
 	var encoded bytes.Buffer
 	profiles := maps.Clone(cfg.EmbeddingProfiles)
 	for name, p := range profiles {
-		p.Runtime = nil
+		p.Runtime, p.Embedder = nil, nil
 		profiles[name] = p
 	}
 	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{"embedding_profiles": profiles}))
 	for name, p := range cfg.EmbeddingProfiles {
+		if e := p.Embedder; e != nil {
+			fmt.Fprintf(&encoded, "[embedding_profiles.%s.embedder]\n", name)
+			require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{
+				"base_url": e.BaseURL, "model": e.Model, "dims": e.Dims, "fingerprint_salt": e.FingerprintSalt,
+				"batch_size": e.BatchSize, "timeout_seconds": e.TimeoutSeconds, "api_key": e.APIKey,
+			}))
+		}
 		runtime := p.Runtime
 		fmt.Fprintf(&encoded, "[embedding_profiles.%s.runtime]\n", name)
 		require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{

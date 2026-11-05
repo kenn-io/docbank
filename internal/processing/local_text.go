@@ -83,6 +83,9 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			return LocalTextPlan{}, nil, err
 		}
 		name, effect, service = candidate, "Keep existing index", trial
+		if setup.Selected == config.LocalTextProfile {
+			effect += "; replaces local-text for new imports"
+		}
 		break
 	}
 	if service == nil {

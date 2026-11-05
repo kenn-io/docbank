@@ -186,6 +186,7 @@ func TestLocalTextSelection(t *testing.T) {
 	fallback, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.Equal(t, "aaa-unused", fallback.Profile, "a saved fallback never outranks an indexed configured recipe")
+	require.Equal(t, "Keep existing index; replaces local-text for new imports", fallback.VectorEffect)
 }
 
 type localTextGrantGate struct {

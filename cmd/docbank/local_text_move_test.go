@@ -27,7 +27,9 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedlocal"
+	"go.kenn.io/kit/secretref"
 )
 
 func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnvironment string) config.Config {
@@ -47,6 +49,15 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	p.Runtime.ModelRevision = revision
 	p.Runtime.DeploymentEpoch = p.Runtime.ModelRevision
 	p.Chunk.MaxTokens, p.Chunk.OverlapTokens = 800, 100
+	p.AuthorizationFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-source-authorization")))
+	p.DisclosureFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-source-disclosure")))
+	p.CredentialBinding = "credential:source-embedding"
+	if format == "dot-product" {
+		p.Metric = "dot_product"
+	}
+	if format == "unconstrained-normalization" {
+		p.Normalization = "none"
+	}
 	if format == "other-model" {
 		p.Model = "other-model"
 	}
@@ -65,13 +76,20 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 	require.NoError(t, err)
 	p.DescriptorFingerprint = descriptor.Fingerprint
 	cfg.EmbeddingProfiles = map[string]config.EmbeddingProfileConfig{"semantic": p}
-	cfg.CredentialBindings = map[string]config.CredentialBindingConfig{"local-text": {EnvironmentVariable: credentialEnvironment}}
+	cfg.CredentialBindings = map[string]config.CredentialBindingConfig{"source-embedding": {EnvironmentVariable: credentialEnvironment}}
 	return cfg
 }
 
 func TestLocalTextKeepsOllamaVectors(t *testing.T) {
-	for _, binding := range []string{"semantic", config.LocalTextProfile} {
-		t.Run(binding, func(t *testing.T) {
+	for _, variant := range []struct{ name, binding, format string }{
+		{"semantic", "semantic", "prefix-free"},
+		{"local-text", config.LocalTextProfile, "prefix-free"},
+		{"dot-product", "semantic", "dot-product"},
+		{"unconstrained-normalization", "semantic", "unconstrained-normalization"},
+		{"kit-embedder", "semantic", "kit-embedder"},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			binding := variant.binding
 			const name, credentialEnvironment = "archive", "DOCBANK_TEST_MOVE_KEY"
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv(credentialEnvironment, "synthetic-key")
@@ -127,7 +145,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 			require.NoError(t, err)
 			defer func() { require.NoError(t, blobs.Close()) }()
-			cfg := localTextSourceConfig(t, ollama.URL, "ollama-nomic-september", "prefix-free", credentialEnvironment)
+			cfg := localTextSourceConfig(t, ollama.URL, "ollama-nomic-september", variant.format, credentialEnvironment)
 			if binding == config.LocalTextProfile {
 				cfg.EmbeddingProfiles[binding] = cfg.EmbeddingProfiles["semantic"]
 				delete(cfg.EmbeddingProfiles, "semantic")
@@ -136,6 +154,16 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 				recipe.MaxSegmentRunes = 2048
 				cfg.ProcessingProfiles[name] = recipe
 			}
+			if variant.format == "kit-embedder" {
+				p := cfg.EmbeddingProfiles[binding]
+				p.Embedder = &embedconfig.Embedder{BaseURL: p.Runtime.Endpoint + "/v1", Model: p.Model, Dims: p.Dimensions, FingerprintSalt: p.Runtime.ModelRevision,
+					BatchSize: p.MaxBatchItems, TimeoutSeconds: int(p.Runtime.RequestTimeout.Std() / time.Second), APIKey: secretref.Ref{Env: credentialEnvironment}}
+				cfg.EmbeddingProfiles[binding] = p
+				writeDaemonEmbeddingConfig(t, layout.Root, cfg)
+				cfg, err = config.Load(layout.Root)
+				require.NoError(t, err)
+			}
+			require.NoError(t, cfg.Validate())
 			serviceFor := func(cfg config.Config) *processing.Service {
 				bundle, err := configureEmbeddingRuntimeBundle(cfg)
 				require.NoError(t, err)
@@ -198,6 +226,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			command.SetOut(preview)
 			require.NoError(t, writeLocalTextPlan(command, *plan))
 			require.Contains(t, preview.String(), name)
+			require.Contains(t, preview.String(), "Keep existing index; replaces local-text for new imports")
 			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
 			require.NoError(t, err)
 			require.NoError(t, connection.Close())
