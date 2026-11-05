@@ -56,6 +56,7 @@ type LocalTextSetup struct {
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
 	name, effect := "", "local-text (separate; adds missing content)"
+	var service *Service
 	names := slices.Sorted(maps.Keys(setup.Service.profiles))
 	if setup.Selected != "" && setup.Selected != config.LocalTextProfile {
 		names = append([]string{setup.Selected}, names...)
@@ -75,7 +76,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			continue
 		}
 		trial, err := setup.Candidate(mode, candidate)
-		if trial != nil {
+		if err != nil && trial != nil {
 			trial.Stop()
 		}
 		if errors.Is(err, ErrProfileNotConfigured) {
@@ -87,15 +88,16 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 		if err != nil {
 			return LocalTextPlan{}, nil, err
 		}
-		name, effect = candidate, "Keep existing index"
+		name, effect, service = candidate, "Keep existing index", trial
 		break
 	}
-	if name == "" {
+	if service == nil {
 		name = config.LocalTextProfile
-	}
-	service, err := setup.Candidate(mode, name)
-	if err != nil {
-		return LocalTextPlan{}, nil, err
+		var err error
+		service, err = setup.Candidate(mode, name)
+		if err != nil {
+			return LocalTextPlan{}, nil, err
+		}
 	}
 	keep := false
 	defer func() {
