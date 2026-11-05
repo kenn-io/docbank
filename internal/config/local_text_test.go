@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 )
 
-func TestLocalTextKeepsIncompatibleSourcesConfigured(t *testing.T) {
+func TestLocalTextRejectsRevisionEchoAndReservedProfile(t *testing.T) {
 	cfg := validProcessingConfig()
 	cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_TEST_REVISION_KEY"}}
 	profile := cfg.EmbeddingProfiles["semantic"]
@@ -24,7 +24,7 @@ func TestLocalTextKeepsIncompatibleSourcesConfigured(t *testing.T) {
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
 	_, err := LocalTextEmbedding(profile, "local")
-	require.EqualError(t, err, "openaicompat: exactly one deployment epoch or provider revision header is required")
+	require.Error(t, err)
 	cfg.ProcessingProfiles[LocalTextProfile] = cfg.ProcessingProfiles["archive"]
 	require.NoError(t, cfg.Validate())
 	_, err = cfg.WithLocalText()

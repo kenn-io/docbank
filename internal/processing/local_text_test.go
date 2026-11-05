@@ -65,10 +65,19 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.ErrorIs(t, err, gateFailure)
 	require.Equal(t, "previous-profile", saved)
+	nextConfig := config
 	setup.Candidate = func(string, string) (*Service, error) {
-		s, err := NewService(t.Context(), config)
+		s, err := NewService(t.Context(), nextConfig)
 		return s, err
 	}
+	changed := config.Profiles["local-text"]
+	changed.Profile.Rendition = new(*changed.Profile.Rendition)
+	changed.Profile.Rendition.AuthorizationFingerprint = workerHash("changed-before-approval")
+	nextConfig.Profiles = map[string]ProfileConfig{"local-text": changed}
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	require.ErrorIs(t, err, ErrPlanChanged)
+	require.Equal(t, "previous-profile", saved)
+	nextConfig = config
 	startupFailure := errors.New("synthetic startup failure")
 	setup.Startup = func(context.Context, bool, string) error { return startupFailure }
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
@@ -88,6 +97,10 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.NoError(t, err, "consent remains saved when the selection write fails")
 	}
+	setup.Save = func(name, _ string) error { saved = name; return nil }
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, "local-text", saved)
 }
 
 func TestLocalTextSelection(t *testing.T) {
@@ -111,8 +124,6 @@ func TestLocalTextSelection(t *testing.T) {
 	}
 	service := serviceFor(map[string]ProfileConfig{"archive": profileFor("archive"),
 		"aaa-unused": profileFor("unused"), "bbb-incompatible": profileFor("other")})
-	var saved string
-	secondRevision := ""
 	setup := &LocalTextSetup{Service: service,
 		Candidate: func(_ string, name string) (*Service, error) {
 			if name == "" {
@@ -125,13 +136,8 @@ func TestLocalTextSelection(t *testing.T) {
 			if name != "local-text" {
 				identity += "-managed"
 			}
-			if name == "archive" {
-				identity += secondRevision
-			}
 			return serviceFor(map[string]ProfileConfig{name: profileFor(identity)}), nil
-		},
-		Startup: func(context.Context, bool, string) error { return nil },
-		Save:    func(name string, _ string) error { saved = name; return nil }}
+		}}
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
 	require.NoError(t, err)
 	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "indexed.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
@@ -171,13 +177,6 @@ func TestLocalTextSelection(t *testing.T) {
 	rerun, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.Equal(t, "archive", rerun.Profile, "keep the approved recipe when an earlier name gains an index")
-	secondRevision = "-changed"
-	_, err = setup.Apply(t.Context(), "local", rerun.Fingerprint)
-	require.ErrorIs(t, err, ErrPlanChanged)
-	secondRevision = ""
-	_, err = setup.Apply(t.Context(), "local", rerun.Fingerprint)
-	require.NoError(t, err)
-	require.Equal(t, "archive", saved)
 	setup.Service, setup.Selected = service, "local-text"
 	fallback, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)

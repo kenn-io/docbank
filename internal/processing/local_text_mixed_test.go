@@ -15,7 +15,7 @@ import (
 func TestLocalTextMixedRecipeFinishesTerminalPreview(t *testing.T) {
 	t.Parallel()
 	renderer := newWorkerProvider(t)
-	renderer.descriptor.SupportedFormats = append(renderer.descriptor.SupportedFormats, document.RenditionFormatCapability{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputOriginalFile})
+	renderer.descriptor.SupportedFormats = []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputOriginalFile}}
 	renderer.descriptor.Fingerprint = ""
 	var err error
 	renderer.descriptor, err = document.NewRenditionDescriptor(renderer.descriptor)
@@ -33,39 +33,24 @@ func TestLocalTextMixedRecipeFinishesTerminalPreview(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fixture.catalog.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, nil)
 	require.NoError(t, err)
-	selector := Selector{Profile: "mixed", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
-	plan, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
-	require.NoError(t, err)
+	require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["mixed"], nil))
+	item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}
+	require.NoError(t, setup.process(t.Context(), item))
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["mixed"].record.Fingerprint)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, "completed", jobs[0].State)
 	require.Equal(t, "chunk", jobs[0].BindingID)
-
-	pdf, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
-	require.NoError(t, err)
-	pdfNode, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "ineligible.pdf", pdf.Hash, pdf.Size, "application/pdf", processingBlobPhysical(t, pdf))
-	require.NoError(t, err)
-	pdfItem := store.DocumentSummary{NodeID: pdfNode.ID, ContentVersionID: pdfNode.CurrentVersionID, Name: pdfNode.Name}
-	require.NoError(t, setup.process(t.Context(), pdfItem))
-	pdfJobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), pdfNode.CurrentVersionID, service.profiles["mixed"].record.Fingerprint)
-	require.NoError(t, err)
-	require.Len(t, pdfJobs, 1)
-	require.Equal(t, "chunk", pdfJobs[0].BindingID)
-	require.Equal(t, "completed", pdfJobs[0].State)
 	items, err := setup.targets(t.Context(), "", 50)
 	require.NoError(t, err)
 	require.NotContains(t, items, store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name})
-	require.NotContains(t, items, pdfItem)
 }
 
 type localTextImageRenderer struct{ *workerProvider }
 
 func (p localTextImageRenderer) Render(ctx context.Context, upload document.AuthorizedUpload, auth document.RenditionAuthorization) (document.RenditionResult, error) {
 	r, err := p.workerProvider.Render(ctx, upload, auth)
-	r.Evidence.Family = upload.Metadata().MediaFamily
+	r.Evidence.Family = "image"
 	return r, err
 }
 

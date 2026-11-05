@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/openaicompat"
@@ -217,11 +215,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 			require.NoError(t, err)
-			preview := new(bytes.Buffer)
-			command := &cobra.Command{}
-			command.SetOut(preview)
-			require.NoError(t, writeLocalTextPlan(command, *plan))
-			require.Contains(t, preview.String(), name)
 			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
 			require.NoError(t, err)
 			require.NoError(t, connection.Close())

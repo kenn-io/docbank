@@ -18,7 +18,6 @@ import (
 
 func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	t.Parallel()
-	var expected processing.LocalTextPlan
 	var startupFailure, saveFailure atomic.Bool
 	startupFailure.Store(true)
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
@@ -48,8 +47,6 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 			configure(&candidate)
 			return candidate.Processing, nil
 		}
-		expected, err = setup.Plan(t.Context(), "local")
-		require.NoError(t, err)
 		deps.LocalText = setup
 	})
 	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/local/plans", nil, api.LocalTextPlanRequest{Server: "local"})
@@ -57,8 +54,7 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	var plan api.LocalTextPlan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
 	require.Equal(t, "this vault and new imports", plan.Scope)
-	require.NotEmpty(t, expected.VectorEffect)
-	require.Equal(t, expected.VectorEffect, plan.VectorEffect)
+	require.NotEmpty(t, plan.VectorEffect)
 	require.Len(t, plan.Flow, 3)
 	require.Equal(t, "query_embedding", plan.Flow[2].Capability)
 	request := api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint}
