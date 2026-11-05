@@ -655,8 +655,9 @@ jobs:
 
       - name: Download ARM64 C compiler
         if: matrix.goarch == 'arm64'
+        timeout-minutes: 10
         shell: bash
-        run: kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
+        run: kit-retry 3 30 kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
 
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'

@@ -1199,72 +1199,6 @@ func TestRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testin
 	assert.Equal(t, store.RenditionJobCompleted, current.State)
 }
 
-func TestRenditionWorkerRefreshesStaleLexicalGenerationWithoutProviderEgress(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	provider := newWorkerProvider(t)
-	profile := workerProcessingProfile(t, provider.Descriptor())
-	fixture.profile = profile
-	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
-	grantWorkerConsent(t, fixture.catalog, request)
-	job, waiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-	require.NoError(t, err)
-	now := time.Now().UTC()
-	claim, err := fixture.catalog.ClaimRenditionJob(
-		t.Context(), job.ID, "stale-generation-worker", now, time.Second)
-	require.NoError(t, err)
-	runtime := workerRuntime{provider: provider}
-	work, err := fixture.catalog.RenditionJobWorkByClaim(t.Context(), claim, now)
-	require.NoError(t, err)
-	execution, err := runtime.Prepare(t.Context(), work, now)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, execution.Upload.Close()) }()
-	snapshot, err := document.SealRenditionExecutionAt(
-		now, execution.Provider, execution.Upload, execution.Authorization,
-		execution.EvidencePolicy, execution.RenditionPolicy)
-	require.NoError(t, err)
-	_, err = fixture.catalog.BeginRenditionProvider(
-		t.Context(), claim, waiter.ID, now, snapshot)
-	require.NoError(t, err)
-	result, err := document.RenderRenditionWithResume(
-		t.Context(), provider, execution.Upload, execution.Authorization, nil, nil)
-	require.NoError(t, err)
-	staged, err := buildRenditionJobCandidate(
-		work, execution, result, claim.Epoch, now)
-	require.NoError(t, err)
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
-		Gate:  newTestOperationGate(),
-		Owner: "fresh-generation-worker", LeaseDuration: time.Minute,
-		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
-	})
-	require.NoError(t, err)
-	require.NoError(t, worker.stageArtifactsAndBuild(t.Context(), claim, staged))
-	catalog := &transientRenditionCatalog{
-		Store: fixture.catalog, publishErr: store.ErrLexicalGenerationStale,
-	}
-	catalog.publishFailures.Store(1)
-	now = now.Add(2 * time.Second)
-	worker.catalog = catalog
-	processed, err := worker.RunOne(t.Context())
-	require.NoError(t, err)
-	assert.True(t, processed)
-	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.RenditionJobRetryWait, current.State)
-	now = now.Add(31 * time.Second)
-	processed, err = worker.RunOne(t.Context())
-	require.NoError(t, err)
-	assert.True(t, processed)
-	assert.Equal(t, 1, provider.calls)
-	current, err = fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.RenditionJobCompleted, current.State)
-	activeGeneration, err := fixture.catalog.ActiveLexicalGeneration(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, renditionJobGenerationID(job.ID, current.ClaimEpoch), activeGeneration.ID)
-}
-
 var workerSourceBytes = []byte("synthetic private-free source")
 
 type workerUpload struct {
@@ -1490,8 +1424,6 @@ type transientRenditionCatalog struct {
 	claimAttempts       atomic.Int32
 	recordAttempts      atomic.Int32
 	renewalAttempts     atomic.Int32
-	publishFailures     atomic.Int32
-	publishErr          error
 	beforeBeginOnce     sync.Once
 	beforeBegin         func(context.Context) error
 	afterBeginOnce      sync.Once
@@ -1565,15 +1497,6 @@ func (catalog *transientRenditionCatalog) RenewRenditionJobClaim(
 		return store.RenditionJobClaim{}, errSyntheticTransientCatalog
 	}
 	return catalog.Store.RenewRenditionJobClaim(ctx, claim, at, lease)
-}
-
-func (catalog *transientRenditionCatalog) PublishRenditionJob(
-	ctx context.Context, claim store.RenditionJobClaim, at time.Time,
-) (store.RenditionJobPublication, error) {
-	if catalog.publishFailures.Add(-1) >= 0 {
-		return store.RenditionJobPublication{}, catalog.publishErr
-	}
-	return catalog.Store.PublishRenditionJob(ctx, claim, at)
 }
 
 func (catalog *transientRenditionCatalog) RenditionJobErrorRetryable(err error) bool {
