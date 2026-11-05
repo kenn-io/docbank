@@ -542,6 +542,13 @@ func effectiveSearchMode(mode string) string {
 	return mode
 }
 
+func effectiveEmptySearchMode(mode string) string {
+	if mode == "semantic" || mode == "hybrid" {
+		return mode
+	}
+	return "lexical"
+}
+
 type getDocumentInput struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
@@ -903,10 +910,24 @@ func boundedToolSuccess(
 	return result, nil
 }
 
-// searchResolvedDocuments delegates a resolved fence, including an empty one,
-// so the document API owns mode and coverage resolution.
+// searchResolvedDocuments validates empty scopes without issuing an unscoped search.
 func searchResolvedDocuments(ctx context.Context, c documentClient, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-	return c.SearchDocuments(ctx, req)
+	if len(req.Fence.ContentVersionIDs) > 0 {
+		return c.SearchDocuments(ctx, req)
+	}
+	err := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+		Query: req.Query, Mode: req.Mode, Limit: req.Limit, Profile: req.Profile,
+		BindingID: req.BindingID, Explain: req.Explain, Rerank: req.Rerank, ContentFirst: req.ContentFirst,
+	})
+	var reranking *api.DocumentSearchRerankingReceipt
+	if req.Rerank {
+		reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+	}
+	return api.DocumentSearchReport{
+		Reranking: reranking, RequestedMode: effectiveSearchMode(req.Mode), ActualMode: effectiveEmptySearchMode(req.Mode),
+		Coverage:     api.DocumentSearchCoverage{State: "complete"},
+		Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
+	}, err
 }
 
 func resolveSearchSummaries(ctx context.Context, c documentClient, results []api.DocumentSearchResult) ([]api.DocumentSummary, error) {
