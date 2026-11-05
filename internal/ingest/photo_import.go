@@ -476,7 +476,8 @@ func (r PhotoImportRunner) Start(supervisor *jobs.Supervisor, operationID string
 	if supervisor == nil {
 		return errors.New("photo import runner requires a job supervisor")
 	}
-	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
+	// A worker job lets Supervisor.Settle wait until the import finishes.
+	return supervisor.StartWorker("storage:"+operationID, func(ctx context.Context) error {
 		return jobs.RetryStorageOperation(ctx, time.Second, func() error { return r.Run(ctx, operationID) })
 	})
 }

@@ -307,7 +307,7 @@ func observeTransactionLocks(t *testing.T, driver docsqlite.Driver, baseDir stri
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 	})
 	immediateTwo := openAndPing(t, driver, immediatePath, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: 50 * time.Millisecond, //nolint:kennlint // deadlinetest: the held immediate transaction must make this write reach SQLite's busy timeout
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred, BusyTimeout: docsqlite.NoBusyWait,
 	})
 	immediateTx, err := immediateOne.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
