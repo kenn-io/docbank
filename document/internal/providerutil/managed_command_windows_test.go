@@ -4,11 +4,11 @@ package providerutil
 
 import (
 	"errors"
+	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
-	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -71,13 +71,16 @@ func TestManagedProcessTreeWindowsErrorBoundaries(t *testing.T) {
 }
 
 func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "heartbeat")
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	stdinReader, _ := testPipe(t)
+	stdoutReader, stdoutWriter := testPipe(t)
 	command := exec.CommandContext(t.Context(), executable,
-		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "process", marker)
+		"-test.run=^TestManagedCommandStopsOnCancellation$", "--", "block")
+	command.Stdin = stdinReader
+	command.Stdout = stdoutWriter
 	tree, err := newManagedProcessTree(command)
 	if err != nil {
 		t.Fatal(err)
@@ -86,19 +89,56 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 		_ = tree.close()
 		t.Fatal(err)
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- command.Wait() }()
 	t.Cleanup(func() {
 		_ = tree.kill()
 		_ = command.Process.Kill()
-		_ = command.Wait()
+		<-exited
 		_ = tree.close()
 	})
 
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: gives a suspended helper subprocess time to run if suspension failed
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("suspended process ran before Job Object assignment: %v", err)
+	// A thread created suspended reports a suspend count of at least one. A
+	// count of zero means the helper could already run outside the Job Object.
+	if count := primaryThreadSuspendCount(t, command.Process.Pid); count == 0 {
+		t.Fatal("process ran before Job Object assignment")
 	}
 	if err := tree.attach(command.Process); err != nil {
 		t.Fatal(err)
 	}
-	waitForFile(t, marker)
+	waitForHelperReady(t, stdoutReader, exited)
+}
+
+var procSuspendThread = windows.NewLazySystemDLL("kernel32.dll").NewProc("SuspendThread")
+
+// primaryThreadSuspendCount reads the suspend count of the process's thread
+// by suspending it once more and then undoing that suspension.
+func primaryThreadSuspendCount(t *testing.T, pid int) uint32 {
+	t.Helper()
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(snapshot) }()
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	for err = windows.Thread32First(snapshot, &entry); err == nil; err = windows.Thread32Next(snapshot, &entry) {
+		if entry.OwnerProcessID != uint32(pid) { // #nosec G115 -- pid comes from the uint32 Windows process ID returned by os.Process.
+			continue
+		}
+		thread, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = windows.CloseHandle(thread) }()
+		previous, _, suspendErr := procSuspendThread.Call(uintptr(thread))
+		if uint32(previous) == math.MaxUint32 {
+			t.Fatalf("suspend helper thread: %v", suspendErr)
+		}
+		if _, err := windows.ResumeThread(thread); err != nil {
+			t.Fatalf("restore helper thread suspend count: %v", err)
+		}
+		return uint32(previous)
+	}
+	t.Fatalf("helper process thread was not found: %v", err)
+	return 0
 }

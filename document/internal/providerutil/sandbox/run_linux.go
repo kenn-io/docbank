@@ -40,6 +40,7 @@ const (
 	launcherRuntimeMismatchStatus = byte(5)
 	launcherRuntimeSpecialStatus  = byte(6)
 	launcherPrivateRootStatus     = byte(7)
+	launcherChildStartedStatus    = byte(8)
 	launcherRestartStatusBase     = byte(16)
 	childDrainWindow              = 250 * time.Millisecond
 )
@@ -50,7 +51,11 @@ type Runner interface {
 	Run(ctx context.Context, request Request) (Result, error)
 }
 
-type nativeRunner struct{}
+type nativeRunner struct {
+	// observeStdout also receives the child's stdout as it arrives. It lets
+	// tests see when a sandboxed helper is running; production leaves it nil.
+	observeStdout io.Writer
+}
 
 // NewNativeRunner returns the enforcing runner for the current platform.
 func NewNativeRunner() (Runner, error) {
@@ -68,7 +73,7 @@ func Run(ctx context.Context, request Request) (Result, error) {
 
 func (nativeRunner) Identity() string { return NativeRunnerIdentity }
 
-func (nativeRunner) Run(ctx context.Context, request Request) (result Result, err error) {
+func (runner nativeRunner) Run(ctx context.Context, request Request) (result Result, err error) {
 	if err := request.validate(); err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
@@ -123,6 +128,9 @@ func (nativeRunner) Run(ctx context.Context, request Request) (result Result, er
 	command.Env = slices.Clone(request.Policy.Environment)
 	command.Stdin = bytes.NewReader(request.Stdin)
 	command.Stdout = output
+	if runner.observeStdout != nil {
+		command.Stdout = io.MultiWriter(output, runner.observeStdout)
+	}
 	diagnostics := providerutil.NewBoundedBuffer(16<<10, nil)
 	command.Stderr = diagnostics
 	command.ExtraFiles = []*os.File{executable, control, statusWriter}
@@ -142,7 +150,7 @@ func (nativeRunner) Run(ctx context.Context, request Request) (result Result, er
 	_ = statusWriter.Close()
 
 	launcherStatus := make(chan launcherRunStatus, 1)
-	go func() { launcherStatus <- launcherStatusRead(statusReader) }()
+	go func() { launcherStatus <- launcherStatusRead(statusReader, request.ChildStarted) }()
 	// CommandContext kills the launcher when ctx ends.
 	runErr := command.Wait()
 	status := <-launcherStatus
@@ -195,26 +203,55 @@ type launcherRunStatus struct {
 	restarts int
 }
 
-func launcherStatusRead(reader io.Reader) launcherRunStatus {
-	data, err := io.ReadAll(io.LimitReader(reader, 3))
-	if err != nil || len(data) == 0 {
+// launcherStatusLimit bounds the status bytes one launcher may write: ready,
+// an optional child-started notice, and one final status.
+const launcherStatusLimit = 4
+
+// launcherStatusRead reads the launcher's status bytes until the launcher
+// exits. It calls childStarted as soon as the launcher reports that the
+// supervised child started, before the final status arrives.
+func launcherStatusRead(reader io.Reader, childStarted func()) launcherRunStatus {
+	data := make([]byte, 0, launcherStatusLimit)
+	buffer := make([]byte, launcherStatusLimit)
+	notified := false
+	for len(data) < launcherStatusLimit {
+		n, err := reader.Read(buffer[:launcherStatusLimit-len(data)])
+		data = append(data, buffer[:n]...)
+		if !notified && len(data) >= 2 && data[0] == launcherReadyStatus && data[1] == launcherChildStartedStatus {
+			notified = true
+			if childStarted != nil {
+				childStarted()
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return launcherRunStatus{}
+		}
+	}
+	if len(data) == 0 {
 		return launcherRunStatus{}
 	}
 	if data[0] != launcherReadyStatus {
 		return launcherRunStatus{detail: data[0]}
 	}
 	status := launcherRunStatus{ready: true}
-	if len(data) < 2 {
+	final := data[1:]
+	if len(final) > 0 && final[0] == launcherChildStartedStatus {
+		final = final[1:]
+	}
+	if len(final) == 0 {
 		return status
 	}
-	switch data[1] {
+	switch final[0] {
 	case launcherRestartStatusBase:
 		status.restarts = 0
 	case launcherFailureStatus, launcherChildFailureStatus, launcherOutputFailureStatus:
-		status.detail = data[1]
+		status.detail = final[0]
 	default:
-		if data[1] >= launcherRestartStatusBase {
-			status.restarts = int(data[1] - launcherRestartStatusBase)
+		if final[0] >= launcherRestartStatusBase {
+			status.restarts = int(final[0] - launcherRestartStatusBase)
 		} else {
 			status.detail = launcherFailureStatus
 		}

@@ -11,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -54,42 +56,34 @@ func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
 
 func TestReleaseDoesNotBlockSnapshotWhileWaitingForSpoolReservation(t *testing.T) {
 	prepared := prepareTestDocument(t, testPolicy(t, 1024, 10), testPDF("release-lock"))
-	releaseLock, err := acquireSpoolReservationLock(t.Context(), filepath.Dir(prepared.path))
-	require.NoError(t, err)
-	locked := true
-	defer func() {
-		if locked {
-			releaseLock()
-		}
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		releaseLock, err := acquireSpoolReservationLock(t.Context(), filepath.Dir(prepared.path))
+		require.NoError(t, err)
+		locked := true
+		defer func() {
+			if locked {
+				releaseLock()
+			}
+		}()
 
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		close(started)
-		done <- prepared.Release()
-	}()
-	<-started
-	require.Eventually(t, func() bool {
-		if !prepared.mu.TryLock() {
-			return false
+		done := make(chan error, 1)
+		go func() { done <- prepared.Release() }()
+		// Release is now waiting between attempts to take the held lock.
+		synctest.Wait()
+		_, err = prepared.snapshot()
+		require.ErrorContains(t, err, "released")
+		time.Sleep(3 * spoolLockRetryInterval)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("Release completed while the spool reservation was held: %v", err)
+		default:
 		}
-		defer prepared.mu.Unlock()
-		return prepared.released
-	}, time.Second, time.Millisecond)
-	_, err = prepared.snapshot()
-	require.ErrorContains(t, err, "released")
-	select {
-	case err := <-done:
+
 		releaseLock()
 		locked = false
-		t.Fatalf("Release completed while the spool reservation was held: %v", err)
-	case <-time.After(2 * spoolLockRetryInterval): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the held spool reservation lock keeps Release blocked
-	}
-
-	releaseLock()
-	locked = false
-	require.NoError(t, <-done)
+		require.NoError(t, <-done)
+	})
 }
 
 func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
@@ -190,43 +184,39 @@ func TestPrepareCancellationClosesBlockedSourceRead(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
 	directory := filepath.Join(t.TempDir(), "spool")
 	makePrivateDirectory(t, directory)
-	ctx, cancel := context.WithCancel(t.Context())
-	source, writer := io.Pipe()
-	t.Cleanup(func() {
-		_ = source.Close()
-		_ = writer.Close()
-	})
-
-	result := make(chan error, 1)
-	go func() {
-		_, err := Prepare(ctx, source, policy, PrepareOptions{
-			Directory: directory, DeclaredMediaType: mediaTypePDF,
-			ExpectedSize: 1, ExpectedSHA256: zeroSHA256(),
-			MaxSpoolBytes: 2048, MinFreeBytes: 1,
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		pipeReader, writer := io.Pipe()
+		t.Cleanup(func() {
+			_ = pipeReader.Close()
+			_ = writer.Close()
 		})
-		result <- err
-	}()
-	require.Eventually(t, func() bool {
-		matches, err := filepath.Glob(filepath.Join(directory, spoolFilenamePrefix+"*"))
-		if err != nil {
-			return false
-		}
-		for _, match := range matches {
-			if filepath.Base(match) != spoolReservationFile {
-				return true
-			}
-		}
-		return false
-	}, time.Second, time.Millisecond)
-	cancel()
+		entered := make(chan struct{})
+		source := &enteredReadCloser{ReadCloser: pipeReader, entered: entered}
 
-	select {
-	case err := <-result:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("Prepare did not return after cancellation closed its blocked source")
-	}
-	requireOnlySpoolReservationFile(t, directory)
+		result := make(chan error, 1)
+		go func() {
+			_, err := Prepare(ctx, source, policy, PrepareOptions{
+				Directory: directory, DeclaredMediaType: mediaTypePDF,
+				ExpectedSize: 1, ExpectedSHA256: zeroSHA256(),
+				MaxSpoolBytes: 2048, MinFreeBytes: 1,
+			})
+			result <- err
+		}()
+		<-entered
+		matches, err := filepath.Glob(filepath.Join(directory, spoolFilenamePrefix+"*"))
+		require.NoError(t, err)
+		partial := false
+		for _, match := range matches {
+			partial = partial || filepath.Base(match) != spoolReservationFile
+		}
+		require.True(t, partial, "Prepare must stage a partial file before reading the source")
+		cancel()
+
+		// A Prepare that kept waiting on its source would deadlock the bubble.
+		require.ErrorIs(t, <-result, context.Canceled)
+		requireOnlySpoolReservationFile(t, directory)
+	})
 }
 
 func TestInspectPreparedContentCanceledDuringRead(t *testing.T) {
@@ -263,34 +253,40 @@ func TestPrepareSerializesQuotaReservations(t *testing.T) {
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: int64(len(content)), MinFreeBytes: 1,
 	}
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	firstResult := make(chan prepareCallResult, 1)
-	go func() {
-		prepared, err := Prepare(t.Context(), &gatedReadCloser{
-			Reader: bytes.NewReader(content), entered: entered, release: release,
-		}, policy, options)
-		firstResult <- prepareCallResult{prepared: prepared, err: err}
-	}()
-	<-entered
-	secondResult := make(chan prepareCallResult, 1)
-	go func() {
-		prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
-		secondResult <- prepareCallResult{prepared: prepared, err: err}
-	}()
-	select {
-	case result := <-secondResult:
+	synctest.Test(t, func(t *testing.T) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		firstResult := make(chan prepareCallResult, 1)
+		go func() {
+			prepared, err := Prepare(t.Context(), &gatedReadCloser{
+				Reader: bytes.NewReader(content), entered: entered, release: release,
+			}, policy, options)
+			firstResult <- prepareCallResult{prepared: prepared, err: err}
+		}()
+		<-entered
+		secondResult := make(chan prepareCallResult, 1)
+		go func() {
+			prepared, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
+			secondResult <- prepareCallResult{prepared: prepared, err: err}
+		}()
+		// The second Prepare is now waiting between attempts to take the
+		// reservation lock the gated first Prepare holds.
+		time.Sleep(3 * spoolLockRetryInterval)
+		synctest.Wait()
+		select {
+		case result := <-secondResult:
+			close(release)
+			t.Fatalf("second preparation returned before the first reservation completed: %v", result.err)
+		default:
+		}
 		close(release)
-		t.Fatalf("second preparation returned before the first reservation completed: %v", result.err)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the gated first reservation keeps the second Prepare blocked
-	}
-	close(release)
-	first := <-firstResult
-	require.NoError(t, first.err)
-	t.Cleanup(func() { require.NoError(t, first.prepared.Release()) })
-	second := <-secondResult
-	require.ErrorIs(t, second.err, ErrSpoolCapacity)
-	assert.Nil(t, second.prepared)
+		first := <-firstResult
+		require.NoError(t, first.err)
+		t.Cleanup(func() { require.NoError(t, first.prepared.Release()) })
+		second := <-secondResult
+		require.ErrorIs(t, second.err, ErrSpoolCapacity)
+		assert.Nil(t, second.prepared)
+	})
 }
 
 func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
@@ -420,4 +416,18 @@ func (*gatedReadCloser) Close() error { return nil }
 type prepareCallResult struct {
 	prepared *PreparedDocument
 	err      error
+}
+
+// enteredReadCloser reports its first Read before delegating to the wrapped
+// reader.
+type enteredReadCloser struct {
+	io.ReadCloser
+
+	entered chan<- struct{}
+	once    sync.Once
+}
+
+func (reader *enteredReadCloser) Read(buffer []byte) (int, error) {
+	reader.once.Do(func() { close(reader.entered) })
+	return reader.ReadCloser.Read(buffer)
 }

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -122,18 +123,16 @@ func TestEmbeddingProviderRejectsMalformedIndexedResponsesPrivately(t *testing.T
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				writer.Header().Set("Content-Type", "application/json")
-				_, _ = writer.Write(test.body)
-			}))
-			local := profile
-			local.Endpoint, local.EgressPolicy = endpoint, egress
-			local = refingerprintVoyageProfile(t, local)
-			provider, err := newVoyageEmbeddingTestProvider(t, local, embeddingSecrets{"credential:voyage": "PRIVATE_SECRET"}, resolver)
-			require.NoError(t, err)
-			_, err = provider.Embed(t.Context(), inputs, voyageAuthorization(local.Descriptor))
-			require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-			assert.NotContains(t, err.Error(), "PRIVATE")
+			// The malformed-response retry backs off on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "PRIVATE_SECRET"}, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = writer.Write(test.body)
+				}))
+				_, err := provider.Embed(t.Context(), inputs, voyageAuthorization(profile.Descriptor))
+				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+				assert.NotContains(t, err.Error(), "PRIVATE")
+			})
 		})
 	}
 }
@@ -153,26 +152,27 @@ func TestEmbeddingProviderClassifiesCapacityAndExhaustedTransient(t *testing.T) 
 		{"request timeout", http.StatusRequestTimeout, voyage.ErrTransientResponse},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var calls atomic.Int32
-			endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				writer.WriteHeader(test.status)
-				_, _ = writer.Write([]byte("PRIVATE_BODY"))
-			}))
-			profile := voyageTextProfile(t, voyage.EmbeddingModeText)
-			profile.Endpoint, profile.EgressPolicy, profile.MaxRetries, profile.RetryBaseDelay = endpoint, egress, 2, time.Millisecond
-			profile = refingerprintVoyageProfile(t, profile)
-			provider, err := newVoyageEmbeddingTestProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, resolver)
-			require.NoError(t, err)
-			_, err = provider.Embed(t.Context(), input, voyageAuthorization(profile.Descriptor))
-			require.ErrorIs(t, err, test.kind)
-			assert.NotContains(t, err.Error(), "PRIVATE_BODY")
-			metrics := voyage.MetricsFromError(err)
-			assert.Equal(t, int(calls.Load()), metrics.Requests)
-			if errors.Is(test.kind, voyage.ErrTransientResponse) {
-				assert.Equal(t, 2, metrics.Requests)
-				assert.Equal(t, 1, metrics.Retries)
-			}
+			// Retry backoff runs on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+				profile.MaxRetries = 2
+				profile = refingerprintVoyageProfile(t, profile)
+				provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					writer.WriteHeader(test.status)
+					_, _ = writer.Write([]byte("PRIVATE_BODY"))
+				}))
+				_, err := provider.Embed(t.Context(), input, voyageAuthorization(profile.Descriptor))
+				require.ErrorIs(t, err, test.kind)
+				assert.NotContains(t, err.Error(), "PRIVATE_BODY")
+				metrics := voyage.MetricsFromError(err)
+				assert.Equal(t, int(calls.Load()), metrics.Requests)
+				if errors.Is(test.kind, voyage.ErrTransientResponse) {
+					assert.Equal(t, 2, metrics.Requests)
+					assert.Equal(t, 1, metrics.Retries)
+				}
+			})
 		})
 	}
 }
@@ -198,19 +198,20 @@ func TestVoyageEmbeddingRejectsIdentityDrift(t *testing.T) {
 func TestVoyageEmbeddingResponseLimitCancellationAndTransportFailure(t *testing.T) {
 	input := []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "PRIVATE_INPUT"}}
 	t.Run("response limit", func(t *testing.T) {
-		endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(strings.Repeat("x", 4097)))
-		}))
-		profile := voyageTextProfile(t, voyage.EmbeddingModeText)
-		profile.Endpoint, profile.EgressPolicy, profile.MaxResponseBytes = endpoint, egress, 4096
-		profile = refingerprintVoyageProfile(t, profile)
-		provider, err := newVoyageEmbeddingTestProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, resolver)
-		require.NoError(t, err)
-		authorization := voyageAuthorization(profile.Descriptor)
-		authorization.MaxResponseBytes = 4096
-		_, err = provider.Embed(t.Context(), input, authorization)
-		require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+		// The malformed-response retry backs off on fake time.
+		synctest.Test(t, func(t *testing.T) {
+			profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+			profile.MaxResponseBytes = 4096
+			profile = refingerprintVoyageProfile(t, profile)
+			provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "secret"}, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(strings.Repeat("x", 4097)))
+			}))
+			authorization := voyageAuthorization(profile.Descriptor)
+			authorization.MaxResponseBytes = 4096
+			_, err := provider.Embed(t.Context(), input, authorization)
+			require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+		})
 	})
 	t.Run("cancellation", func(t *testing.T) {
 		endpoint, egress, resolver := voyageFixture(t, http.NotFoundHandler())
@@ -226,14 +227,18 @@ func TestVoyageEmbeddingResponseLimitCancellationAndTransportFailure(t *testing.
 		assert.NotContains(t, err.Error(), "PRIVATE_INPUT")
 	})
 	t.Run("transport exhaustion", func(t *testing.T) {
-		profile := voyageTextProfile(t, voyage.EmbeddingModeText)
-		profile.MaxRetries, profile.RetryBaseDelay = 2, time.Millisecond
-		profile = refingerprintVoyageProfile(t, profile)
-		provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "secret"}, failingEmbeddingResolver{})
-		require.NoError(t, err)
-		_, err = provider.Embed(t.Context(), input, voyageAuthorization(profile.Descriptor))
-		require.ErrorIs(t, err, voyage.ErrTransientResponse)
-		assert.Equal(t, 2, voyage.MetricsFromError(err).Requests)
+		// The resolver fails without network I/O, so the retry backoff runs on
+		// fake time.
+		synctest.Test(t, func(t *testing.T) {
+			profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+			profile.MaxRetries = 2
+			profile = refingerprintVoyageProfile(t, profile)
+			provider, err := voyage.NewEmbeddingProvider(profile, embeddingSecrets{"credential:voyage": "secret"}, failingEmbeddingResolver{})
+			require.NoError(t, err)
+			_, err = provider.Embed(t.Context(), input, voyageAuthorization(profile.Descriptor))
+			require.ErrorIs(t, err, voyage.ErrTransientResponse)
+			assert.Equal(t, 2, voyage.MetricsFromError(err).Requests)
+		})
 	})
 }
 

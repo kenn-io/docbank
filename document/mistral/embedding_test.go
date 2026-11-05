@@ -5,11 +5,12 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,26 +132,30 @@ func TestMistralEmbeddingClassifiesCapacityPermanentAndTransient(t *testing.T) {
 		kind   error
 	}{{"capacity", http.StatusRequestEntityTooLarge, ErrEmbeddingCapacity}, {"permanent", http.StatusBadRequest, ErrPermanentResponse}, {"rate limit", http.StatusTooManyRequests, ErrTransientResponse}, {"transient", http.StatusServiceUnavailable, ErrTransientResponse}} {
 		t.Run(test.name, func(t *testing.T) {
-			var calls atomic.Int32
-			endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				writer.WriteHeader(test.status)
-				_, _ = writer.Write([]byte("PRIVATE_BODY"))
-			}))
-			profile := testEmbeddingProfile(t)
-			profile.Endpoint, profile.EgressPolicy, profile.MaxRetries, profile.MaxRetryDelay = endpoint, egress, 2, time.Millisecond
-			recomputeMistralEmbeddingProfile(t, &profile)
-			provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, resolver)
-			require.NoError(t, err)
-			_, err = provider.Embed(t.Context(), input, embeddingAuthorization(profile.Descriptor))
-			require.ErrorIs(t, err, test.kind)
-			assert.NotContains(t, err.Error(), "PRIVATE_BODY")
-			metrics := MetricsFromError(err)
-			assert.Equal(t, int(calls.Load()), metrics.Requests)
-			if errors.Is(test.kind, ErrTransientResponse) {
-				assert.Equal(t, 2, metrics.Requests)
-				assert.Equal(t, 1, metrics.Retries)
-			}
+			// Transient responses wait out the fallback retry backoff on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					writer.WriteHeader(test.status)
+					_, _ = writer.Write([]byte("PRIVATE_BODY"))
+				}))
+				profile := testEmbeddingProfile(t)
+				profile.MaxRetries = 2
+				recomputeMistralEmbeddingProfile(t, &profile)
+				provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, nil)
+				require.NoError(t, err)
+				provider.http = server.Client()
+				_, err = provider.Embed(t.Context(), input, embeddingAuthorization(profile.Descriptor))
+				require.ErrorIs(t, err, test.kind)
+				assert.NotContains(t, err.Error(), "PRIVATE_BODY")
+				metrics := MetricsFromError(err)
+				assert.Equal(t, int(calls.Load()), metrics.Requests)
+				if errors.Is(test.kind, ErrTransientResponse) {
+					assert.Equal(t, 2, metrics.Requests)
+					assert.Equal(t, 1, metrics.Retries)
+				}
+			})
 		})
 	}
 }
@@ -191,14 +196,18 @@ func TestMistralEmbeddingResponseLimitAndTransportExhaustion(t *testing.T) {
 		require.ErrorIs(t, err, ErrPermanentResponse)
 	})
 	t.Run("transport exhaustion", func(t *testing.T) {
-		profile := testEmbeddingProfile(t)
-		profile.MaxRetries, profile.MaxRetryDelay = 2, time.Millisecond
-		recomputeMistralEmbeddingProfile(t, &profile)
-		provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, failingMistralEmbeddingResolver{})
-		require.NoError(t, err)
-		_, err = provider.Embed(t.Context(), input, embeddingAuthorization(profile.Descriptor))
-		require.ErrorIs(t, err, ErrTransientResponse)
-		assert.Equal(t, 2, MetricsFromError(err).Requests)
+		// The failed lookup never touches the network, so the fallback retry
+		// backoff runs on fake time.
+		synctest.Test(t, func(t *testing.T) {
+			profile := testEmbeddingProfile(t)
+			profile.MaxRetries = 2
+			recomputeMistralEmbeddingProfile(t, &profile)
+			provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, failingMistralEmbeddingResolver{})
+			require.NoError(t, err)
+			_, err = provider.Embed(t.Context(), input, embeddingAuthorization(profile.Descriptor))
+			require.ErrorIs(t, err, ErrTransientResponse)
+			assert.Equal(t, 2, MetricsFromError(err).Requests)
+		})
 	})
 }
 

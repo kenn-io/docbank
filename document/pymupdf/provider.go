@@ -63,6 +63,9 @@ type Provider struct {
 	maxResponseBytes int64
 	maxPages         int
 	timeout          time.Duration
+	// withDeadline arms the operation deadline. Tests replace it to expire
+	// the deadline while a child is running.
+	withDeadline func(context.Context, time.Time) (context.Context, context.CancelFunc)
 }
 
 // New constructs one immutable local-process provider profile.
@@ -116,6 +119,7 @@ func New(profile Profile) (*Provider, error) {
 		pinnedExecutable: pinnedExecutable,
 		runtimeIdentity:  profile.RuntimeIdentity, maxDocumentBytes: profile.MaxDocumentBytes,
 		maxResponseBytes: profile.MaxResponseBytes, maxPages: profile.MaxPages, timeout: profile.Timeout,
+		withDeadline: context.WithDeadline,
 	}, nil
 }
 
@@ -153,7 +157,7 @@ func (provider *Provider) Render(
 		deadline = expiresAt
 		expiryDeadline = true
 	}
-	operationCtx, cancel := context.WithDeadline(ctx, deadline)
+	operationCtx, cancel := provider.withDeadline(ctx, deadline)
 	defer cancel()
 	if err := operationCtx.Err(); err != nil {
 		return document.RenditionResult{}, provider.contextError(ctx, expiryDeadline, err)

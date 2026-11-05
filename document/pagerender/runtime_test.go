@@ -10,12 +10,13 @@ import (
 	"hash/crc32"
 	"image/color"
 	"image/png"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -281,8 +282,57 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = engine.command(t.Context(), compiled, nil, 2<<30, 1024)
 	require.ErrorIs(t, err, ErrUnsupported, "3 GiB allocation must fail under the actual 2 GiB pre-exec limit")
-	timeout, stop := context.WithTimeout(t.Context(), 200*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the probe's wait mode runs until it is killed
-	defer stop()
-	_, _, err = engine.command(timeout, compiled, nil, 2<<30, 1024, "wait")
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// The probe's wait mode connects back and then runs until it is killed.
+	// Expire the caller's deadline only once the probe is running.
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	deadline := newExpiringContext(t.Context())
+	finished := make(chan error, 1)
+	go func() {
+		_, _, commandErr := engine.command(deadline, compiled, []byte(listener.Addr().String()), 2<<30, 1024, "wait")
+		finished <- commandErr
+	}()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if connection, acceptErr := listener.Accept(); acceptErr == nil {
+			accepted <- connection
+		}
+	}()
+	var connection net.Conn
+	select {
+	case connection = <-accepted:
+		t.Cleanup(func() { _ = connection.Close() })
+	case err := <-finished:
+		t.Fatalf("probe finished before it was running: %v", err)
+	}
+	deadline.expire()
+	require.ErrorIs(t, <-finished, context.DeadlineExceeded)
+	_, err = connection.Read(make([]byte, 1))
+	require.Error(t, err, "the probe must be killed when the deadline expires")
 }
+
+// expiringContext reports an expired deadline when the test calls expire.
+type expiringContext struct {
+	context.Context
+
+	done chan struct{}
+	once sync.Once
+}
+
+func newExpiringContext(parent context.Context) *expiringContext {
+	return &expiringContext{Context: parent, done: make(chan struct{})}
+}
+
+func (ctx *expiringContext) Done() <-chan struct{} { return ctx.done }
+
+func (ctx *expiringContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (ctx *expiringContext) expire() { ctx.once.Do(func() { close(ctx.done) }) }
