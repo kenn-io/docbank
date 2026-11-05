@@ -68,7 +68,11 @@ var supersedeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Document validity updated: %s (changed: %t)\n", formatNodeSelector(next.ID), receipt.Changed)
+		status := "unchanged"
+		if receipt.Changed {
+			status = "updated"
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Document validity %s: %s\n", status, formatNodeSelector(next.ID))
 		if err != nil {
 			return fmt.Errorf("writing document validity update: %w", err)
 		}
@@ -128,7 +132,11 @@ var effectiveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Effective window updated: %s (changed: %t)\n", formatNodeSelector(receipt.Node.ID), receipt.Changed)
+		status := "unchanged"
+		if receipt.Changed {
+			status = "updated"
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Effective window %s: %s\n", status, formatNodeSelector(receipt.Node.ID))
 		if err != nil {
 			return fmt.Errorf("writing effective window update: %w", err)
 		}
