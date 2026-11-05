@@ -178,6 +178,40 @@ func TestScopedCopiedBlobUsesSmallFolderPlan(t *testing.T) {
 	assert.NotContains(t, detail, "content_versions_blob")
 }
 
+func TestPublishedSearchChecksLivenessBeforeAttachments(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	file, err := s.CreateFile(ctx, s.RootID(), "inside.txt", fakeHash("b2"), 4, "text/plain")
+	require.NoError(t, err)
+	trash, err := s.Mkdir(ctx, s.RootID(), "trash")
+	require.NoError(t, err)
+	for i := range 8 {
+		_, err = s.CreateFile(ctx, trash.ID, "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: file.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury"}))
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trash.ID, UnconditionalRev)
+	require.NoError(t, err)
+	var generationID string
+	require.NoError(t, s.withLexicalGenerationRead(ctx, func(_ metadataQuerier, generation LexicalGeneration) error {
+		generationID = generation.ID
+		return nil
+	}))
+	require.NotEmpty(t, generationID)
+	for _, explained := range []bool{false, true} {
+		detail := scopedContentQueryPlan(t, s, 0, generationID, explained)
+		liveNode := strings.Index(detail, "SEARCH n ")
+		attachments := strings.Index(detail, "SEARCH a ")
+		require.NotEqual(t, -1, liveNode, detail)
+		require.NotEqual(t, -1, attachments, detail)
+		// Reject trashed copies before expanding their published attachments, including before grouping in plain search.
+		assert.Less(t, liveNode, attachments, "explained=%v\n%s", explained, detail)
+	}
+}
+
 func scopedContentQueryPlan(t *testing.T, s *Store, scopeID int64, generationID string, explained bool) string {
 	t.Helper()
 	var query string
