@@ -984,13 +984,54 @@ func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
 	node := browsePhotoNode(t, s, "ada.jpg", fakeHash("ada-photo"), "image/jpeg")
 	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 	require.NoError(t, err)
-	for _, recent := range []bool{false, true} {
-		for _, prefix := range []string{"", "ada"} {
-			rows, _, err := s.PeopleByDisplayName(ctx, prefix, "", "", 24, true, PeopleSearchOptions{PhotoSummary: true, RecentFirst: recent})
-			require.NoError(t, err)
-			require.Len(t, rows, 1)
-			require.Equal(t, person.PersonID, rows[0].PersonID)
-			require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+	faceOnly, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, faceOnly.PersonID)
+	require.NoError(t, err)
+	retired, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, retired.PersonID, "")
+	require.NoError(t, err)
+	retired, _, err = s.PersonByID(ctx, retired.PersonID)
+	require.NoError(t, err)
+	_, err = s.RetirePerson(ctx, retired.PersonID, retired.Revision)
+	require.NoError(t, err)
+	hiddenOnly, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	hidden := browsePhotoNode(t, s, "ada-hidden.jpg", fakeHash("ada-hidden"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, hidden.CurrentVersionID, hiddenOnly.PersonID, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	for _, hiddenToken := range []string{"", token} {
+		want := []string{person.PersonID, faceOnly.PersonID}
+		if hiddenToken != "" {
+			want = append(want, hiddenOnly.PersonID)
+		}
+		slices.Sort(want)
+		for _, recent := range []bool{false, true} {
+			for _, prefix := range []string{"", "ada"} {
+				rows, _, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, hiddenToken), prefix, "", "", 24, true, PeopleSearchOptions{PhotoSummary: true, RecentFirst: recent})
+				require.NoError(t, err)
+				var ids []string
+				for _, row := range rows {
+					ids = append(ids, row.PersonID)
+					if row.PersonID == person.PersonID {
+						require.Equal(t, int64(1), row.PhotoSummary.LibraryCount)
+					}
+					if row.PersonID == faceOnly.PersonID {
+						require.Equal(t, int64(1), row.PhotoSummary.LibraryCount)
+						require.NotNil(t, row.PhotoSummary.Face)
+						require.Equal(t, face.Box, *row.PhotoSummary.Face.Box)
+					}
+				}
+				require.Equal(t, want, ids)
+			}
 		}
 	}
 }

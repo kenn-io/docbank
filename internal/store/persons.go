@@ -331,9 +331,11 @@ func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []an
 // already checked its person's photo, so only namesakes need the list.
 func personHasPhotoSQL(unlocked bool, walkerAlias string) string {
 	joins, where := personPhotoSource(unlocked)
-	clause := `persons.person_id IN (SELECT assertion.person_id FROM person_document_assertions assertion
+	clause := `persons.person_id IN (SELECT depicted.person_id FROM person_document_assertions depicted
+ WHERE depicted.role='depicted' AND depicted.action='assert'
+ GROUP BY depicted.person_id HAVING EXISTS (SELECT 1 FROM person_document_assertions assertion
  CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
- AND assertion.action='assert' AND assertion.role='depicted')`
+ AND assertion.person_id=depicted.person_id AND assertion.action='assert' AND assertion.role='depicted'))`
 	if walkerAlias != "" {
 		clause = "(persons.person_id=" + walkerAlias + ".person_id OR " + clause + ")"
 	}
@@ -509,7 +511,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		}
 		slices.SortFunc(people, comparePeopleRecent)
 	}
-	if len(people) < limit {
+	if !photosOnly && len(people) < limit {
 		if prefix != "" {
 			// The cursor can skip ranked groups. Exclude those groups from the
 			// existing unranked tail as well as groups returned on this page.
@@ -531,9 +533,6 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		}
 		// Exhausting the walk identifies all eligible ranked groups. The rest
 		// use the name index and stop as soon as the page fills.
-		if photosOnly {
-			candidates += personHasPhotoSQL(!hideLocked, "") + " AND "
-		}
 		unrankedNames := make([]string, 0, len(names))
 		for name := range names {
 			unrankedNames = append(unrankedNames, name)
