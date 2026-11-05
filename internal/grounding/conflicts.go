@@ -140,12 +140,12 @@ func comparisonValue(figure normalizedFigure, after string) (kind, unit, value, 
 		return "", "", "", ""
 	}
 	if number, ok := strings.CutSuffix(figure.text, "%"); ok {
-		if value = amountValue(number); value != "" {
+		if value = decimalValue(number); value != "" {
 			return "percent", "%", value, ""
 		}
 		return "", "", "", ""
 	}
-	value = amountValue(figure.text)
+	value = decimalValue(figure.text)
 	if value == "" {
 		return "", "", "", ""
 	}

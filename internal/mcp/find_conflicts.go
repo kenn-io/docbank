@@ -62,7 +62,7 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 				return result, err
 			}
 			needle := strings.Trim(hit.Excerpt, " …")
-			if at := strings.Index(text, needle); needle != "" && at >= 0 {
+			if at := strings.Index(text, needle); needle != "" && at >= 0 && !strings.Contains(text[at+1:], needle) {
 				sources[i] = grounding.Source{Text: text, Start: at, End: at + len(needle)}
 			}
 		}

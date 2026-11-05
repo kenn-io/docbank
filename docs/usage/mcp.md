@@ -422,8 +422,8 @@ a date, makes the sentence ambiguous.
 The tool reads each hit's retained Markdown or original plain text through a
 verified read. Each quote is a whole sentence from that source, located by the
 search excerpt. It skips truncated renditions, unsupported or malformed rendition
-envelopes, sources over 256 KiB, unreadable sources, and hits whose excerpt cannot
-be found in the source. A cancelled call fails rather than returning partial
+envelopes, sources over 256 KiB, unreadable sources, and hits whose excerpt is absent
+from the source or occurs more than once. A cancelled call fails rather than returning partial
 results.
 
 Every sentence touched by the excerpt is eligible, including sentences beside

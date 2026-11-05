@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -105,6 +106,43 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	}
 }
 
+func TestFindConflictsSkipsRepeatedExcerpt(t *testing.T) {
+	f := newNativeExportFixture(t)
+	shared := strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 7 days. " + strings.Repeat("Contact support for help with your account. ", 6)
+	repeated := "Premium terms.\n\n" + shared + "\n\nStandard terms.\n\n" + shared
+	for _, file := range []struct{ name, text string }{
+		{"repeated.txt", repeated},
+		{"policy.txt", "The cooling period is 15 days."},
+	} {
+		member := f.addFile(t, file.name, file.text)
+		require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
+			BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1,
+			Status: store.ExtractionOK, Text: file.text,
+		}))
+	}
+	daemon, _, profile := newProcessingDocumentServer(t, f)
+	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+	})
+	require.NoError(t, err)
+	var excerpt string
+	for _, hit := range search.report.Results {
+		if hit.Path == "/repeated.txt" {
+			excerpt = strings.Trim(hit.Excerpt, " …")
+		}
+	}
+	require.NotEmpty(t, excerpt)
+	require.Equal(t, 2, strings.Count(repeated, excerpt), excerpt)
+	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}})
+	require.Equal(t, "NOT_COMPARABLE", out["status"])
+	passages := conflictField[[]any](t, out, "passages")
+	require.Len(t, passages, 2)
+	for _, p := range passages {
+		require.Equal(t, false, schemaMap(t, p)["compared"])
+	}
+	require.Empty(t, out["conflicts"])
+}
+
 func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
 	for _, option := range []struct {
 		key   string
@@ -129,7 +167,9 @@ func TestFindConflictsReadsEmailRendition(t *testing.T) {
 	require.NoError(t, err)
 	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
-	_, err = processing.EnsureEmailTarget(t.Context(), f.catalog, f.blobs, t.TempDir(), store.EmailTarget{Version: version})
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	_, err = processing.EnsureEmailTarget(t.Context(), f.catalog, f.blobs, spool, store.EmailTarget{Version: version})
 	require.NoError(t, err)
 	member := f.addFile(t, "policy.txt", "The cooling period is 15 days.")
 	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "The cooling period is 15 days."}))
