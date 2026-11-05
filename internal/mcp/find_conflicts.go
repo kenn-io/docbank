@@ -34,6 +34,7 @@ type conflictPassage struct {
 type findConflictsOutput struct {
 	privateCache
 	grounding.Comparison
+
 	VaultID   string            `json:"vault_id,omitempty"`
 	Truncated bool              `json:"truncated"`
 	Passages  []conflictPassage `json:"passages"`
@@ -84,7 +85,10 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 	return out, documentResourceLinks(result.vaultID, result.documents), nil
 }
 
-const conflictSourceLimit = 256 << 10
+const (
+	conflictSourceLimit = 256 << 10
+	conflictKindField   = "kind"
+)
 
 func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentSearchResult, summary api.DocumentSummary) string {
 	for _, evidence := range hit.Evidence {
@@ -136,7 +140,7 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 
 func findConflictsSchemas() (schema, schema) {
 	input, _ := searchDocumentsSchemas()
-	properties := input["properties"].(schema)
+	properties, _ := input["properties"].(schema)
 	properties["limit"] = integerSchema(1, 20)
 	delete(properties, "explain")
 	delete(properties, "rerank")
@@ -146,14 +150,14 @@ func findConflictsSchemas() (schema, schema) {
 		"passage": integerSchema(1, 100), "text": stringSchema(512), "value": stringSchema(512), "quote": stringSchema(512),
 	}, "passage", "text", "value", "quote")
 	conflict := objectSchema(schema{
-		"kind": enumSchema("money", "percent", "duration"), "unit": stringSchema(512),
+		conflictKindField: enumSchema("money", "percent", "duration"), "unit": stringSchema(512),
 		"figures": arraySchema(figure, 0),
-	}, "kind", "unit", "figures")
+	}, conflictKindField, "unit", "figures")
 	passage := objectSchema(schema{
-		"rank": integerSchema(1, 100), "node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
-		"path":        schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
+		"rank": integerSchema(1, 100), "node_id": integerSchema(1, 0), versionField: uuidSchema(), //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+		"path":        schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"}, //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 		"modified_at": dateTimeSchema(), "evidence_ids": arraySchema(stringSchema(1024), 64), "compared": booleanSchema(),
-	}, "rank", "node_id", "content_version_id", "path", "modified_at", "evidence_ids", "compared")
+	}, "rank", "node_id", versionField, "path", "modified_at", "evidence_ids", "compared")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"status": enumSchema("CONFLICTING", "NO_CONFLICT", "NOT_COMPARABLE"), "vault_id": uuidSchema(),
 		"truncated": booleanSchema(),

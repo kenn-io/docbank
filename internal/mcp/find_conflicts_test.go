@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -69,11 +70,11 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 			}
 			out := exportCall(t, daemon, "find_conflicts", args)
 			require.Equal(t, "CONFLICTING", out["status"])
-			passages := out["passages"].([]any)
+			passages := conflictField[[]any](t, out, "passages")
 			require.Len(t, passages, 4)
 			for _, entry := range passages {
 				p := schemaMap(t, entry)
-				path := p["path"].(string)
+				path := conflictField[string](t, p, "path")
 				require.Equal(t, path == "/cooling period 2025.txt" || path == "/policy-2026.txt", p["compared"])
 				require.NotEmpty(t, p["evidence_ids"])
 				for _, doc := range docs {
@@ -84,20 +85,20 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 					}
 				}
 			}
-			conflicts := out["conflicts"].([]any)
+			conflicts := conflictField[[]any](t, out, "conflicts")
 			require.Len(t, conflicts, 1)
 			conflict := schemaMap(t, conflicts[0])
 			require.Equal(t, "duration", conflict["kind"])
 			require.Equal(t, "day", conflict["unit"])
-			figures := conflict["figures"].([]any)
+			figures := conflictField[[]any](t, conflict, "figures")
 			require.Len(t, figures, 2)
 			quotes := map[string]string{}
 			for _, entry := range figures {
 				figure := schemaMap(t, entry)
-				quotes[figure["value"].(string)] = figure["quote"].(string)
-				index := int(figure["passage"].(float64)) - 1
+				quotes[conflictField[string](t, figure, "value")] = conflictField[string](t, figure, "quote")
+				index := int(conflictField[float64](t, figure, "passage")) - 1
 				p := schemaMap(t, passages[index])
-				require.Equal(t, map[string]string{"7": "/cooling period 2025.txt", "15": "/policy-2026.txt"}[figure["value"].(string)], p["path"])
+				require.Equal(t, map[string]string{"7": "/cooling period 2025.txt", "15": "/policy-2026.txt"}[conflictField[string](t, figure, "value")], p["path"])
 			}
 			require.Equal(t, map[string]string{"7": "The cooling period is 7 days.", "15": "The cooling period is 15 days."}, quotes)
 		})
@@ -135,16 +136,16 @@ func TestFindConflictsReadsEmailRendition(t *testing.T) {
 	daemon, _, profile := newProcessingDocumentServer(t, f)
 	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}})
 	require.Equal(t, "CONFLICTING", out["status"])
-	passages := out["passages"].([]any)
+	passages := conflictField[[]any](t, out, "passages")
 	require.Len(t, passages, 2)
 	for _, p := range passages {
 		require.Equal(t, true, schemaMap(t, p)["compared"])
 	}
-	figures := schemaMap(t, out["conflicts"].([]any)[0])["figures"].([]any)
+	figures := conflictField[[]any](t, schemaMap(t, conflictField[[]any](t, out, "conflicts")[0]), "figures")
 	quotes := map[string]string{}
 	for _, f := range figures {
 		figure := schemaMap(t, f)
-		quotes[figure["value"].(string)] = figure["quote"].(string)
+		quotes[conflictField[string](t, figure, "value")] = conflictField[string](t, figure, "quote")
 	}
 	require.Equal(t, map[string]string{"15": "The cooling period is 15 days.", "30": "The cooling period is 30 days."}, quotes)
 }
@@ -157,7 +158,7 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 	bodyHash := sha256.Sum256([]byte(sentence))
 	rendered, _, err := document.EnvelopeRenditionV1(document.RenditionV1{
 		ContractVersion: document.RenditionContractV1, Completeness: document.EvidenceComplete,
-		EvidenceChecksum: buildID, Markdown: []byte(sentence), MarkdownChecksum: fmt.Sprintf("%x", bodyHash),
+		EvidenceChecksum: buildID, Markdown: []byte(sentence), MarkdownChecksum: hex.EncodeToString(bodyHash[:]),
 		Units: []document.NormalizedUnitV1{{EvidenceUnitID: "section:000000", Text: sentence,
 			Locator: document.EvidenceLocatorV1{Kind: document.EvidenceLocatorSection, IndexOrigin: document.EvidenceIndexOriginNone}}},
 	}, document.RenditionEnvelopeV1{BuildID: buildID, SourceSHA256: attachmentID,
@@ -192,7 +193,7 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 				w.Header().Set(api.RenditionProfileHeader, buildID)
 				w.Header().Set(api.RenditionCompletenessHeader, "complete")
 				w.Header().Set(api.ContentVersionHeader, versionID)
-				w.Header().Set(api.BlobHashHeader, fmt.Sprintf("%x", digest))
+				w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
 				w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(tc.text)))
 				w.Header().Set("Trailer", "Content-Digest")
 				_, _ = w.Write([]byte(tc.text))
@@ -260,10 +261,17 @@ func TestFindConflictsSkipsTruncatedRendition(t *testing.T) {
 	}
 	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "service fee", "profile": "text", "filters": map[string]any{}})
 	require.Equal(t, "NOT_COMPARABLE", out["status"])
-	passages := out["passages"].([]any)
+	passages := conflictField[[]any](t, out, "passages")
 	require.Len(t, passages, 2)
 	for _, p := range passages {
 		require.Equal(t, false, schemaMap(t, p)["compared"])
 	}
 	require.Empty(t, out["conflicts"])
+}
+
+func conflictField[T any](t *testing.T, object map[string]any, key string) T {
+	t.Helper()
+	value, ok := object[key].(T)
+	require.True(t, ok, "%s is %T", key, object[key])
+	return value
 }

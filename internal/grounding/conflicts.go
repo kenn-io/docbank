@@ -137,10 +137,10 @@ func comparisonValue(figure normalizedFigure, after string) (kind, unit, value, 
 		return "money", unit, value, ""
 	}
 	if figure.kind != "" {
-		return
+		return "", "", "", ""
 	}
-	if strings.HasSuffix(figure.text, "%") {
-		if value = amountValue(strings.TrimSuffix(figure.text, "%")); value != "" {
+	if number, ok := strings.CutSuffix(figure.text, "%"); ok {
+		if value = amountValue(number); value != "" {
 			return "percent", "%", value, ""
 		}
 		return "", "", "", ""
