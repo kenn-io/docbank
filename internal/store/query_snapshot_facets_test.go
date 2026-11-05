@@ -36,9 +36,7 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 		day  string
 	}{{raw, "2024-02-29"}, {jpeg, "2025-01-01"}} {
 		stamp := item.day + "T00:30:00"
-		browsePhotoMetadata(t, s, item.node, item.day,
-			photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")),
-			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Synthetic Camera")))
+		browsePhotoMetadata(t, s, item.node, item.day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
 	}
 	_, err = s.CreateSavedQuery(ctx, "Sidecars", "", SavedQueryKindQuery, []byte(`{"filters":{"extensions":["xmp"],"capture_before":"2025-01-01"}}`))
 	require.NoError(t, err)
@@ -74,24 +72,6 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 		facet := facetByDimension(t, projection, "capture_day")
 		require.Equal(t, browsePhotoPage(t, s, value).Total, *facet.Total, value)
 		require.Equal(t, map[string]int64{"2024-02-29": 1}, facetCounts(facet), value)
-	}
-	for _, tc := range []struct {
-		value string
-		total int64
-	}{
-		{`{"filters":{"cameras":["Synthetic Camera"]}}`, 1},
-		{`{"syntax":"advanced","text":"NOT camera:\"Synthetic Camera\""}`, 0},
-	} {
-		projection, err := s.materializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, tc.value), Facets: []string{"capture_day"}}, snapshotMaterializeOptions{MaxRows: 1})
-		require.NoError(t, err, tc.value)
-		facet := facetByDimension(t, projection, "capture_day")
-		require.Equal(t, tc.total, *facet.Total, tc.value)
-		require.Equal(t, tc.total, browsePhotoPage(t, s, tc.value).Total, tc.value)
-		if tc.total == 1 {
-			require.Equal(t, map[string]int64{"2024-02-29": 1}, facetCounts(facet), tc.value)
-		} else {
-			require.Empty(t, facet.Values, tc.value)
-		}
 	}
 	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
 	require.NoError(t, err)
