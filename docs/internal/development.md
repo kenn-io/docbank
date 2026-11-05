@@ -1615,6 +1615,13 @@ replaying them. Keep work, ordering, blockers, and acceptance state outside
 the design documentation; these pages carry resulting capability and durable
 rationale.
 
+### Waiting for background work
+
+`jobs.Supervisor.Settle` waits for workers registered with `StartWorker`,
+including local-text backfill and vector-index publication. Polling workers
+use `jobs.Idle` or `jobs.Park` to report each completed pass. Registering a
+backfill with `Start` lets settling return while that backfill still has work.
+
 ### Timing checks
 
 `make lint` runs kit's `sleeptest` and `deadlinetest` analyzers through the

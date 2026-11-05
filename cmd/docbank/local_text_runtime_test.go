@@ -226,8 +226,28 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			}()
 			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
 			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"500ms\"\n"), 0600))
-			stop := startServe(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			daemonReady := make(chan serveReady, 1)
+			daemonDone := make(chan error, 1)
+			go func() {
+				daemonDone <- serveDaemon(ctx, func(ready serveReady) { daemonReady <- ready })
+			}()
+			stop := sync.OnceFunc(func() {
+				cancel()
+				select {
+				case err := <-daemonDone:
+					require.NoError(t, err)
+				case <-time.After(daemonShutdownTimeout):
+					t.Fatal("daemon did not shut down")
+				}
+			})
 			defer stop()
+			var daemon serveReady
+			select {
+			case daemon = <-daemonReady:
+			case <-time.After(daemonStartTimeout):
+				t.Fatal("daemon did not become ready")
+			}
 			if result.lateImport {
 				waitForDaemon(t, root)
 				source := filepath.Join(t.TempDir(), "new.txt")
@@ -251,22 +271,28 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			_, _, found, err := daemonconn.Find(t.Context(), root)
 			require.NoError(t, err)
 			require.True(t, found, "the daemon remains discoverable during an embedding request")
+			blockedCtx, blockedCancel := context.WithTimeout(t.Context(), time.Second)
+			err = daemon.jobs.Settle(blockedCtx)
+			blockedCancel()
+			require.ErrorIs(t, err, context.DeadlineExceeded, "settling waits for the blocked embedding request")
+			require.ErrorContains(t, err, "embed:local-text")
 			releaseRequest()
+			settleCtx, settleCancel := context.WithTimeout(t.Context(), daemonStartTimeout)
+			defer settleCancel()
+			require.NoError(t, daemon.jobs.Settle(settleCtx))
 			catalog, err := store.Open(t.Context(), layout.DBPath())
 			require.NoError(t, err)
 			defer func() { require.NoError(t, catalog.Close()) }()
-			require.Eventually(t, func() bool {
-				spaces, err := catalog.ListVectorIndexSpaces(t.Context())
-				if err != nil || len(spaces) != 1 {
-					return false
-				}
-				source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
-				if err != nil || len(source.Members) == 0 {
-					return false
-				}
-				generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
-				return err == nil && generation.SourceManifestChecksum == source.ManifestChecksum && generation.RowCount > 0
-			}, 5*time.Second, 10*time.Millisecond, "completed embeddings become search-visible before idle shutdown")
+			spaces, err := catalog.ListVectorIndexSpaces(t.Context())
+			require.NoError(t, err)
+			require.Len(t, spaces, 1)
+			source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
+			require.NoError(t, err)
+			require.NotEmpty(t, source.Members)
+			generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
+			require.NoError(t, err)
+			require.Equal(t, source.ManifestChecksum, generation.SourceManifestChecksum, "settling publishes completed embeddings before idle shutdown")
+			require.Positive(t, generation.RowCount)
 			records, err := daemonconn.RuntimeStore(root).List()
 			require.NoError(t, err)
 			require.Len(t, records, 1, "the daemon stays discoverable through vector publication")
