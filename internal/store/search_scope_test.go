@@ -117,23 +117,20 @@ func TestRenditionAttachmentBuildIndexAddedOnReopen(t *testing.T) {
 	assert.Contains(t, detail, "rendition_attachments_build")
 }
 
-func TestPublishedSearchVisitsNodesBeforeAttachments(t *testing.T) {
+func TestPublishedSearchLooksUpAttachmentsBeforeUnprocessedCopies(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(ctx, s.RootID(), "inside.txt", fakeHash("b2"), 4, "text/plain")
 	require.NoError(t, err)
-	trash, err := s.Mkdir(ctx, s.RootID(), "trash")
-	require.NoError(t, err)
-	for i := range 8 {
-		_, err = s.CreateFile(ctx, trash.ID, "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
-		require.NoError(t, err)
-	}
 	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: file.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury"}))
 	_, err = s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, trash.ID, UnconditionalRev)
-	require.NoError(t, err)
+	// Copies imported after publication have no rendition attachment.
+	for i := range 8 {
+		_, err = s.CreateFile(ctx, s.RootID(), "copy-"+strconv.Itoa(i)+".txt", file.BlobHash, 4, "text/plain")
+		require.NoError(t, err)
+	}
 	var generationID string
 	require.NoError(t, s.withLexicalGenerationRead(ctx, func(_ metadataQuerier, generation LexicalGeneration) error {
 		generationID = generation.ID
@@ -142,13 +139,23 @@ func TestPublishedSearchVisitsNodesBeforeAttachments(t *testing.T) {
 	require.NotEmpty(t, generationID)
 	for _, explained := range []bool{false, true} {
 		detail := scopedSearchQueryPlans(t, s, 0, generationID, explained)[1]
-		node := strings.Index(detail, "SEARCH n ")
-		attachments := strings.Index(detail, "SEARCH a ")
-		require.NotEqual(t, -1, node, detail)
+		versions := strings.Index(detail, "SEARCH cv ")
+		attachments := strings.Index(detail, "SEARCH a USING INDEX rendition_attachments_build ")
+		require.NotEqual(t, -1, versions, detail)
 		require.NotEqual(t, -1, attachments, detail)
-		// Visit nodes before attachments, including before grouping in plain search.
-		assert.Less(t, node, attachments, "explained=%v\n%s", explained, detail)
+		// Expand only attached versions, rather than every copy of the source blob.
+		assert.Less(t, attachments, versions, "explained=%v\n%s", explained, detail)
 	}
+	hits, more, err := s.SearchPage(ctx, "mercury", 50)
+	require.NoError(t, err)
+	assert.False(t, more)
+	require.Len(t, hits, 1)
+	assert.Equal(t, file.ID, hits[0].Node.ID)
+	explained, more, err := s.SearchExplainedLexicalCandidates(ctx, "mercury", 50, SearchOptions{}, false)
+	require.NoError(t, err)
+	assert.False(t, more)
+	require.Len(t, explained, 1)
+	assert.Equal(t, file.ID, explained[0].Node.ID)
 }
 
 func scopedSearchQueryPlans(t *testing.T, s *Store, scopeID int64, generationID string, explained bool) []string {
