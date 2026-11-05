@@ -1,6 +1,7 @@
 package emailpdf
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -151,6 +152,8 @@ func TestRuntimeRealLimits(t *testing.T) {
 		require.Equal(t, slice, filepath.Base(filepath.Dir(groupPath)))
 		events := filepath.Join("/sys/fs/cgroup", filepath.Dir(groupPath), "memory.events")
 		cmd := r.command(ctx, dir, unit, "/runtime/worker", r.workerArgs()...)
+		var diagnostics bytes.Buffer
+		cmd.Stderr = &diagnostics
 		cmd.Args = slices.Insert(cmd.Args, 1, "--slice="+slice)
 		// Retain only the terminal unit's accounting for inspection. Every
 		// execution/resource property and the real worker remain unchanged.
@@ -187,6 +190,9 @@ func TestRuntimeRealLimits(t *testing.T) {
 		}
 		oomKills := oomKillCount(t, events) - oomKillsBefore
 		require.Error(t, err)
+		if oomKills == 0 {
+			t.Logf("worker exited before an OOM event: %s", diagnostics.String())
+		}
 		anchorState, stateErr := exec.CommandContext(ctx, "systemctl", "--user", "show", anchor, "--property=ActiveState", "--value").Output()
 		require.NoError(t, stateErr)
 		require.Equal(t, "active", strings.TrimSpace(string(anchorState)), "the idle slice anchor must not be the OOM victim")
