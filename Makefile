@@ -90,7 +90,8 @@ backend-coverage:
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
 	$(call gotestsum,$(PG_SUITE)-pgschema,./internal/store/pgschema) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)"
-	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	# The full Store contract suite includes photo edits and XMP synchronization.
+	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 5m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
