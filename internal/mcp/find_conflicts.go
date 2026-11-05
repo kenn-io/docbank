@@ -97,7 +97,10 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 				continue
 			}
 			defer func() { _ = stream.Close() }()
-			if stream.BuildID != evidence.BuildID || slices.Contains(stream.Warnings, "truncated") {
+			if stream.BuildID != evidence.BuildID {
+				continue
+			}
+			if slices.Contains(stream.Warnings, "truncated") {
 				return ""
 			}
 			var data bytes.Buffer
@@ -107,6 +110,8 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 			body := data.Bytes()
 			if _, stripped, err := document.ParseRenditionFrontMatterV1(body); err == nil {
 				body = stripped
+			} else if bytes.HasPrefix(body, []byte("---\n")) {
+				return ""
 			}
 			return string(body)
 		}

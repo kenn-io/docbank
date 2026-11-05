@@ -61,6 +61,10 @@ func TestCompareSourceSpans(t *testing.T) {
 		compared                                        []bool
 	}{
 		{"decimal cut", "The fee is $7.50.", "The fee is $7.", "The fee is $7.60.", "The fee is $7.50.", "7.5", "CONFLICTING", []bool{true, true}},
+		{"email opening fence", "```\nThe cooling period is 30 days. Contact support.\n```", "The cooling period is 30 days.", "The cooling period is 15 days.", "The cooling period is 30 days.", "30", "CONFLICTING", []bool{true, true}},
+		{"long fence", "````\nThe cooling period is 30 days.\n````", "The cooling period is 30 days.", "The cooling period is 15 days.", "The cooling period is 30 days.", "30", "CONFLICTING", []bool{true, true}},
+		{"tilde fence", "~~~\r\nThe cooling period is 30 days.\r\n~~~", "The cooling period is 30 days.", "The cooling period is 15 days.", "The cooling period is 30 days.", "30", "CONFLICTING", []bool{true, true}},
+		{"fence separates incomplete sentence", "The cooling period is 30\n```\ndays.", "The cooling period is 30", "The cooling period is 15 days.", "", "", "NOT_COMPARABLE", []bool{false, true}},
 		{"capitalized segment start", "For premium plans, The fee is $7.50.", "The fee is $7.50.", "For standard plans, The fee is $7.60.", "", "", "NOT_COMPARABLE", []bool{true, true}},
 		{"closing quote", `"The cooling period is 7 days."`, `"The cooling period is 7 days."`, `"The cooling period is 15 days."`, `"The cooling period is 7 days."`, "7", "CONFLICTING", []bool{true, true}},
 		{"heading", "The fee is $5\n\nTerms apply.", "The fee is $5", "The fee is $6.", "", "", "NOT_COMPARABLE", []bool{false, true}},

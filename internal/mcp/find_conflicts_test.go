@@ -1,15 +1,21 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
@@ -117,7 +123,7 @@ func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
 
 func TestFindConflictsReadsEmailRendition(t *testing.T) {
 	f := newNativeExportFixture(t)
-	body := strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 30 days. Contact support for help."
+	body := "The cooling period is 30 days. Contact support for help."
 	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+body+"\r\n"))
 	require.NoError(t, err)
 	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "policy.eml", hash, size, "message/rfc822")
@@ -143,6 +149,84 @@ func TestFindConflictsReadsEmailRendition(t *testing.T) {
 		quotes[figure["value"].(string)] = figure["quote"].(string)
 	}
 	require.Equal(t, map[string]string{"15": "The cooling period is 15 days.", "30": "The cooling period is 30 days."}, quotes)
+}
+
+func TestFindConflictsRenditionSource(t *testing.T) {
+	const sentence = "The cooling period is 30 days."
+	const versionID = "11111111-1111-4111-8111-111111111111"
+	attachmentID, buildID := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	otherAttachment, otherBuild := strings.Repeat("c", 64), strings.Repeat("d", 64)
+	bodyHash := sha256.Sum256([]byte(sentence))
+	rendered, _, err := document.EnvelopeRenditionV1(document.RenditionV1{
+		ContractVersion: document.RenditionContractV1, Completeness: document.EvidenceComplete,
+		EvidenceChecksum: buildID, Markdown: []byte(sentence), MarkdownChecksum: fmt.Sprintf("%x", bodyHash),
+		Units: []document.NormalizedUnitV1{{EvidenceUnitID: "section:000000", Text: sentence,
+			Locator: document.EvidenceLocatorV1{Kind: document.EvidenceLocatorSection, IndexOrigin: document.EvidenceIndexOriginNone}}},
+	}, document.RenditionEnvelopeV1{BuildID: buildID, SourceSHA256: attachmentID,
+		SourceFormat: "txt", SourceMediaType: "text/plain", RenditionRequestFingerprint: buildID,
+		EvidenceLexicalFingerprint: buildID, NormalizedEvidenceContract: document.NormalizedEvidenceContractV1,
+		UnitKind: document.EvidenceUnitSection})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, text, want string
+		mismatchFirst    bool
+	}{
+		{"v1 envelope", string(rendered.Markdown), sentence, false},
+		{"future envelope", strings.Replace(string(rendered.Markdown), "docbank-sanitized-markdown/v1", "docbank-sanitized-markdown/v2", 1), "", false},
+		{"malformed envelope", "---\ndocbank: invalid\n---\n" + sentence, "", false},
+		{"email without envelope", "```\n" + sentence + "\n```", "```\n" + sentence + "\n```", false},
+		{"later matching build", string(rendered.Markdown), sentence, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			digest := sha256.Sum256([]byte(tc.text))
+			requests := make(chan string, 4)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- r.URL.Path
+				id := strings.TrimPrefix(r.URL.Path, "/api/v1/renditions/")
+				if r.Method != http.MethodGet || (id != attachmentID && id != otherAttachment) {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+				w.Header().Set(api.RenditionAttachmentHeader, id)
+				w.Header().Set(api.RenditionBuildHeader, buildID)
+				w.Header().Set(api.RenditionArtifactHeader, attachmentID)
+				w.Header().Set(api.RenditionProfileHeader, buildID)
+				w.Header().Set(api.RenditionCompletenessHeader, "complete")
+				w.Header().Set(api.ContentVersionHeader, versionID)
+				w.Header().Set(api.BlobHashHeader, fmt.Sprintf("%x", digest))
+				w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(tc.text)))
+				w.Header().Set("Trailer", "Content-Digest")
+				_, _ = w.Write([]byte(tc.text))
+				w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+			}))
+			t.Cleanup(server.Close)
+			c := daemonconn.New(server.URL, "synthetic-export-key")
+			t.Cleanup(func() { require.NoError(t, c.Close()) })
+			// Establish that rejection is about the envelope, not transport integrity.
+			stream, err := c.Rendition(t.Context(), attachmentID, conflictSourceLimit)
+			require.NoError(t, err)
+			var verified bytes.Buffer
+			_, err = stream.ContentStream.CopyVerified(&verified)
+			require.NoError(t, err)
+			require.NoError(t, stream.Close())
+			require.Equal(t, tc.text, verified.String())
+			require.Equal(t, "/api/v1/renditions/"+attachmentID, <-requests)
+			hit := api.DocumentSearchResult{ContentVersionID: versionID, Evidence: []api.DocumentEvidenceReference{{BuildID: buildID}}}
+			summary := api.DocumentSummary{MediaType: "text/plain", ActiveRenditions: []api.DocumentRenditionIdentity{{AttachmentID: attachmentID, BuildID: buildID}}}
+			wantRequests := []string{"/api/v1/renditions/" + attachmentID}
+			if tc.mismatchFirst {
+				hit.Evidence = append([]api.DocumentEvidenceReference{{BuildID: otherBuild}}, hit.Evidence...)
+				summary.ActiveRenditions = append([]api.DocumentRenditionIdentity{{AttachmentID: otherAttachment, BuildID: otherBuild}}, summary.ActiveRenditions...)
+				wantRequests = append([]string{"/api/v1/renditions/" + otherAttachment}, wantRequests...)
+			}
+			require.Equal(t, tc.want, sourceText(t.Context(), c, hit, summary))
+			require.Len(t, requests, len(wantRequests))
+			for _, path := range wantRequests {
+				require.Equal(t, path, <-requests)
+			}
+		})
+	}
 }
 
 func TestFindConflictsSkipsTruncatedRendition(t *testing.T) {

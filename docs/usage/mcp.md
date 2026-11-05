@@ -407,7 +407,8 @@ Call `find_conflicts` with search terms and a source selector. For example:
 If matching sentences say "The cooling period is 7 days." and "The cooling
 period is 15 days.", the result is `CONFLICTING`. Each conflict includes the
 figures, their sentences, and passage references starting at 1. Each passage
-includes its document identity, evidence IDs, and `modified_at` from the catalog.
+includes its document identity, evidence IDs, and `modified_at`, the catalog
+modification time, not a date from the source text.
 
 The tool uses lexical search, so it needs no embedding provider. It rejects
 `mode`, `binding_id`, `explain`, and `rerank`. Its result limit is capped at 20.
@@ -420,14 +421,16 @@ a date, makes the sentence ambiguous.
 
 The tool reads each hit's retained Markdown or original plain text through a
 verified read. Each quote is a whole sentence from that source, located by the
-search excerpt. It skips truncated renditions, sources over 256 KiB, unreadable
-sources, and hits whose excerpt cannot be found in the source. A cancelled call
-fails rather than returning partial results.
+search excerpt. It skips truncated renditions, unsupported or malformed rendition
+envelopes, sources over 256 KiB, unreadable sources, and hits whose excerpt cannot
+be found in the source. A cancelled call fails rather than returning partial
+results.
 
 Every sentence touched by the excerpt is eligible, including sentences beside
-the query match. Line breaks join hard-wrapped text; blank lines end paragraphs
-and keep sentences separate. Sentences need a final `.`, `!`, or `?`, optionally
-followed by a closing quote or bracket, and must fit within 512 characters.
+the query match. Line breaks join hard-wrapped text; blank lines and lines
+containing only a code fence end paragraphs and keep sentences separate.
+Sentences need a final `.`, `!`, or `?`, optionally followed by a closing quote or
+bracket, and must fit within 512 characters.
 Name-only evidence is skipped. A passage stating different values for the same
 matching sentence drops that comparison. `compared: false` marks hits with no
 eligible figures, so open those sources for inspection.

@@ -34,7 +34,10 @@ type Source struct {
 	Start, End int
 }
 
-var paragraphBreak = regexp.MustCompile(`\n[ \t\r]*\n`)
+var (
+	paragraphBreak = regexp.MustCompile("(?m)\\n[ \\t\\r]*\\n|^[ \\t]*(?:`{3,}|~{3,})[ \\t\\r]*(?:\\n|$)")
+	hardWrap       = strings.NewReplacer("\n", " ", "\r", " ")
+)
 
 // Compare returns disagreements only between complete, unambiguous sentences
 // with the same words around a supported figure. Passage references start at 1.
@@ -101,6 +104,7 @@ func Compare(sources []Source) Comparison {
 }
 
 // sourceSentences keeps byte offsets while joining hard wraps within paragraphs.
+// Bare code fences separate paragraphs without becoming sentence text.
 func sourceSentences(source Source) []string {
 	var sentences []string
 	if source.Start < 0 || source.End <= source.Start || source.End > len(source.Text) {
@@ -110,7 +114,7 @@ func sourceSentences(source Source) []string {
 	breaks := paragraphBreak.FindAllStringIndex(source.Text, -1)
 	breaks = append(breaks, []int{len(source.Text), len(source.Text)})
 	for _, boundary := range breaks {
-		text := strings.NewReplacer("\n", " ", "\r", " ").Replace(source.Text[start:boundary[0]])
+		text := hardWrap.Replace(source.Text[start:boundary[0]])
 		offset, state := start, -1
 		for text != "" {
 			var sentence string
