@@ -250,7 +250,7 @@ resource links, is capped at 1 MiB.
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
-| `find_conflicts` | Uses the same query, profile, mode, limit, binding, and source selectors as `search_documents`, without `explain` or `rerank`. Compares money, percentages, and durations in content excerpts and returns source dates and evidence IDs. |
+| `find_conflicts` | Uses the query, profile, limit, and source selectors from `search_documents`. Retrieval is lexical only. Compares money, percentages, and durations in content excerpts and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -334,7 +334,8 @@ Only version-list searches return `fence`, `fence_fingerprint`, and
 `observed_scope_count`. Version-list searches always return `vault_id`; filter
 searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
-hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
+hits. Each excerpt is capped at 512 characters. A cut excerpt starts or ends
+with ` … ` at the cut boundary. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
 skipped-reason codes of at most 64 characters each.
 
@@ -410,24 +411,30 @@ figures, their sentences, and passage references starting at 1. Each passage
 includes its document identity, evidence IDs, and `modified_at` from the catalog.
 That timestamp describes the document, not when a policy takes effect.
 
-The tool compares money in the same currency, percentages written as `%` or
-`percent`, and durations in the same unit from minutes through years. Subjects
-must have exactly the same lowercase letter-words after removing the figure
-and its unit. Product names and qualifiers remain part of the subject.
+The tool uses lexical search, so it needs no embedding provider. It accepts
+`query`, `profile`, `limit`, and either `filters` or `content_version_ids`.
+It rejects `mode`, `binding_id`, `explain`, and `rerank`.
+
+It compares money in the same currency, percentages written as `%` or `percent`,
+and durations in the same unit from minutes through years. Sentences must match
+exactly after lowercasing, collapsing whitespace, and masking the figure and its
+unit. Punctuation, product names, and qualifiers remain part of that match.
 Each sentence must contain at least one query term as a word prefix and exactly
 one figure. A second figure, including a date, makes the sentence ambiguous.
 
-Name-only evidence, sentences starting with a lowercase letter, and an unfinished
-final sentence are skipped. A leading excerpt marker drops the first fragment
-regardless of capitalization. Later complete sentences remain eligible. Sentence
-punctuation before closing quotes or brackets counts as a complete ending.
-A passage stating different values for the same subject drops that subject.
+Blank lines separate paragraphs. Single line breaks join wrapped text and never
+end a sentence. Sentences need a final `.`, `!`, or `?`, optionally followed by
+closing quotes or brackets. Headings and bullets without an end mark are skipped.
+A leading excerpt marker drops the first fragment. Later complete sentences
+remain eligible. Name-only evidence is skipped. A passage stating different
+values for the same matching sentence drops that comparison.
 `compared: false` marks passages with no eligible figures.
 
-`NO_CONFLICT` means at least one subject could be compared across passages and
-all comparable figures agreed. `NOT_COMPARABLE` means none could be lined up.
-These statuses cover the retrieved excerpts only. Check coverage and truncation,
-and open the sources to verify disagreements. The tool chooses no winner.
+`NO_CONFLICT` means at least one matching sentence could be compared across
+passages and all comparable figures agreed. `NOT_COMPARABLE` means none could be
+lined up. These statuses cover only the retrieved, eligible sentences. Check
+`truncated` and open the sources to verify disagreements. Identical wording in
+unrelated documents can still produce a lead. The tool chooses no winner.
 
 ### Answer questions
 

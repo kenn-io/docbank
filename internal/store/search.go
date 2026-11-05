@@ -338,14 +338,27 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 
 func boundedExplainedSearchExcerpt(value string) string {
 	runes := []rune(value)
+	start, end := 0, len(runes)
+	const marker = " … "
 	if len(runes) > maxExplainedSearchExcerptRunes {
 		match := max(slices.Index(runes, rune(1)), 0)
-		start := max(0, min(match-maxExplainedSearchExcerptRunes/2,
-			len(runes)-maxExplainedSearchExcerptRunes))
-		runes = runes[start : start+maxExplainedSearchExcerptRunes]
+		start = max(0, min(match-maxExplainedSearchExcerptRunes/2, len(runes)-maxExplainedSearchExcerptRunes))
+		end = start + maxExplainedSearchExcerptRunes
+		if start > 0 {
+			start += len([]rune(marker))
+		}
+		if end < len(runes) {
+			end -= len([]rune(marker))
+		}
 	}
-	runes = slices.DeleteFunc(runes, func(value rune) bool { return value == 1 || value == 2 })
-	return string(runes)
+	excerpt := string(slices.DeleteFunc(runes[start:end], func(value rune) bool { return value == 1 || value == 2 }))
+	if start > 0 {
+		excerpt = marker + excerpt
+	}
+	if end < len(runes) {
+		excerpt += marker
+	}
+	return excerpt
 }
 
 // SearchOptions selects a filter-only page or narrows ranked search without
@@ -997,7 +1010,7 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 	var excerpt string
 	err := queryer.QueryRowContext(ctx, `SELECT substr(text, 1, ?) FROM extracted_text
 		WHERE status='ok' AND blob_hash=(SELECT blob_hash FROM content_versions WHERE version_id=? LIMIT 1)
-		ORDER BY extractor LIMIT 1`, maxExplainedSearchExcerptRunes, versionID).Scan(&excerpt)
+		ORDER BY extractor LIMIT 1`, maxExplainedSearchExcerptRunes+1, versionID).Scan(&excerpt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

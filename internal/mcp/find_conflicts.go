@@ -4,13 +4,14 @@ import (
 	"context"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/grounding"
 )
 
 var findConflictsTool = toolDefinition{
 	name: "find_conflicts", title: "Find differing figures",
-	description: "Compare money, percentages, and durations in search excerpts with exactly matching subjects. Returns disagreements as leads to inspect, with source dates and evidence IDs. Skips ambiguous or incomplete sentences and name-only evidence; never chooses a winner.",
-	schemas:     findConflictsSchemas, openWorld: true,
+	description: "Compare money, percentages, and durations in lexical search excerpts with otherwise identical sentence text. Returns disagreements as leads to inspect, with source dates and evidence IDs. Skips ambiguous or incomplete sentences and name-only evidence; never chooses a winner.",
+	schemas:     findConflictsSchemas,
 }
 
 type conflictPassage struct {
@@ -23,24 +24,29 @@ type conflictPassage struct {
 	Compared         bool     `json:"compared"`
 }
 
+type findConflictsInput struct {
+	Query             string                          `json:"query"`
+	Limit             int                             `json:"limit"`
+	Profile           string                          `json:"profile"`
+	ContentVersionIDs []string                        `json:"content_version_ids"`
+	Filters           *api.DocumentSourceFenceFilters `json:"filters"`
+}
+
 type findConflictsOutput struct {
 	privateCache
 	grounding.Comparison
-	VaultID    string               `json:"vault_id,omitempty"`
-	ActualMode string               `json:"actual_mode"`
-	Coverage   searchCoverageOutput `json:"coverage"`
-	Truncated  bool                 `json:"truncated"`
-	Passages   []conflictPassage    `json:"passages"`
+	VaultID   string            `json:"vault_id,omitempty"`
+	Truncated bool              `json:"truncated"`
+	Passages  []conflictPassage `json:"passages"`
 }
 
 func findConflicts(ctx context.Context, session documentReadSession, raw []byte) (findConflictsOutput, []*sdkmcp.ResourceLink, error) {
-	var input searchDocumentsInput
+	var input findConflictsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return findConflictsOutput{}, nil, err
 	}
-	input.Mode = effectiveSearchMode(input.Mode)
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, c, input, true)
+		return runDocumentSearch(ctx, c, searchDocumentsInput{Query: input.Query, Mode: "lexical", Limit: input.Limit, Profile: input.Profile, ContentVersionIDs: input.ContentVersionIDs, Filters: input.Filters}, true)
 	})
 	if err != nil {
 		return findConflictsOutput{}, nil, err
@@ -52,9 +58,7 @@ func findConflicts(ctx context.Context, session documentReadSession, raw []byte)
 		}
 	}
 	out := findConflictsOutput{privateCache: newPrivateCache(), Comparison: grounding.Compare(input.Query, texts),
-		VaultID: result.vaultID, ActualMode: result.report.ActualMode, Truncated: result.report.Truncated,
-		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
-			ScopedDocuments: result.report.Coverage.ScopedDocuments, CompleteDocuments: result.report.Coverage.CompleteDocuments, State: result.report.Coverage.State},
+		VaultID: result.vaultID, Truncated: result.report.Truncated,
 		Passages: make([]conflictPassage, len(texts))}
 	for i, hit := range result.report.Results {
 		ids, err := encodeSearchEvidenceIDs(hit.Evidence)
@@ -68,18 +72,19 @@ func findConflicts(ctx context.Context, session documentReadSession, raw []byte)
 }
 
 func findConflictsSchemas() (schema, schema) {
-	input, searchOutput := searchDocumentsSchemas()
+	input, _ := searchDocumentsSchemas()
 	properties := input["properties"].(schema)
 	delete(properties, "explain")
 	delete(properties, "rerank")
-	searchProperties := searchOutput["properties"].(schema)
+	delete(properties, "mode")
+	delete(properties, "binding_id")
 	figure := objectSchema(schema{
 		"passage": integerSchema(1, 100), "text": stringSchema(512), "value": stringSchema(512), "quote": stringSchema(512),
 	}, "passage", "text", "value", "quote")
 	conflict := objectSchema(schema{
-		"kind": enumSchema("money", "percent", "duration"), "unit": stringSchema(512), "subject": stringSchema(512),
+		"kind": enumSchema("money", "percent", "duration"), "unit": stringSchema(512),
 		"figures": arraySchema(figure, 0),
-	}, "kind", "unit", "subject", "figures")
+	}, "kind", "unit", "figures")
 	passage := objectSchema(schema{
 		"rank": integerSchema(1, 100), "node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
 		"path":        schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
@@ -87,8 +92,8 @@ func findConflictsSchemas() (schema, schema) {
 	}, "rank", "node_id", "content_version_id", "path", "modified_at", "evidence_ids", "compared")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"status": enumSchema("CONFLICTING", "NO_CONFLICT", "NOT_COMPARABLE"), "vault_id": uuidSchema(),
-		"actual_mode": searchProperties["actual_mode"], "coverage": searchProperties["coverage"], "truncated": booleanSchema(),
-		"passages": arraySchema(passage, 100), "conflicts": arraySchema(conflict, 0),
-	}), cacheRequired("status", "actual_mode", "coverage", "truncated", "passages", "conflicts")...)
+		"truncated": booleanSchema(),
+		"passages":  arraySchema(passage, 100), "conflicts": arraySchema(conflict, 0),
+	}), cacheRequired("status", "truncated", "passages", "conflicts")...)
 	return input, output
 }

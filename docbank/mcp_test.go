@@ -96,7 +96,7 @@ func TestVaultReadTools(t *testing.T) {
 	resultItem, ok := results[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "/alpha.txt", resultItem["path"])
-	comparison := payload("find_conflicts", map[string]any{"query": "alpha", "mode": "lexical", "profile": "local", "filters": map[string]any{}})
+	comparison := payload("find_conflicts", map[string]any{"query": "alpha", "profile": "local", "filters": map[string]any{}})
 	assert.Equal(t, vault.ID(), comparison["vault_id"])
 	assert.Equal(t, "NOT_COMPARABLE", comparison["status"])
 	passages, ok := comparison["passages"].([]any)

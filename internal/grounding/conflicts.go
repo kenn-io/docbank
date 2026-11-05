@@ -1,10 +1,10 @@
 package grounding
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
 )
@@ -19,7 +19,6 @@ type ComparedFigure struct {
 type Conflict struct {
 	Kind    string           `json:"kind"`
 	Unit    string           `json:"unit"`
-	Subject string           `json:"subject"`
 	Figures []ComparedFigure `json:"figures"`
 }
 
@@ -28,6 +27,8 @@ type Comparison struct {
 	Conflicts []Conflict `json:"conflicts"`
 	Compared  []bool     `json:"-"`
 }
+
+var comparisonParagraphs = regexp.MustCompile(`\r?\n[ \t]*\r?\n`)
 
 // Compare returns disagreements only between complete, unambiguous sentences
 // with the same words around a supported figure. Passage references start at 1.
@@ -39,49 +40,51 @@ func Compare(query string, passages []string) Comparison {
 	terms := comparisonWords(query)
 	for i, passage := range passages {
 		clippedStart := strings.HasPrefix(strings.TrimSpace(passage), "…")
-		text := strings.TrimLeft(strings.TrimRight(decodeFigureText(passage), " \t…"), " \t\r\n…")
+		text := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(decodeFigureText(passage)), " …"))
 		local := map[key][]ComparedFigure{}
 		var localOrder []key
-		state, first := -1, true
-		for text != "" {
-			var sentence string
-			sentence, text, state = uniseg.FirstSentenceInString(text, state)
-			quote := strings.TrimSpace(sentence)
-			initial, _ := utf8.DecodeRuneInString(quote)
-			skip := first && clippedStart || unicode.IsLower(initial)
-			first = false
-			ending := strings.TrimRightFunc(quote, func(r rune) bool {
-				return r == '\'' || r == '"' || unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r)
-			})
-			complete := strings.HasSuffix(ending, ".") || strings.HasSuffix(ending, "!") || strings.HasSuffix(ending, "?") ||
-				strings.HasSuffix(sentence, "\n") || strings.HasSuffix(sentence, "\r")
-			if skip || quote == "" || text == "" && !complete {
-				continue
+		first := true
+		// Blank lines separate paragraphs; single line breaks are hard wraps.
+		for _, paragraph := range comparisonParagraphs.Split(text, -1) {
+			text, state := strings.Join(strings.Fields(paragraph), " "), -1
+			for text != "" {
+				var sentence string
+				sentence, text, state = uniseg.FirstSentenceInString(text, state)
+				quote := strings.TrimSpace(sentence)
+				skip := first && clippedStart
+				first = false
+				ending := strings.TrimRightFunc(quote, func(r rune) bool {
+					return r == '\'' || r == '"' || unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r)
+				})
+				complete := strings.HasSuffix(ending, ".") || strings.HasSuffix(ending, "!") || strings.HasSuffix(ending, "?")
+				if skip || !complete {
+					continue
+				}
+				words := comparisonWords(quote)
+				matches := false
+				for _, term := range terms {
+					matches = matches || slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, term) })
+				}
+				if !matches {
+					continue
+				}
+				figures := decodedFigures(quote)
+				if len(figures) != 1 {
+					continue
+				}
+				figure := figures[0]
+				before, after, _ := strings.Cut(quote, figure.text)
+				kind, unit, value, suffix := comparisonValue(figure, after)
+				if kind == "" {
+					continue
+				}
+				subject := strings.Join(strings.Fields(strings.ToLower(before+"#"+strings.TrimPrefix(after, suffix))), " ")
+				k := key{kind, unit, subject}
+				if _, ok := local[k]; !ok {
+					localOrder = append(localOrder, k)
+				}
+				local[k] = append(local[k], ComparedFigure{Passage: i + 1, Text: figure.text + suffix, Value: value, Quote: quote})
 			}
-			words := comparisonWords(quote)
-			matches := false
-			for _, term := range terms {
-				matches = matches || slices.ContainsFunc(words, func(word string) bool { return strings.HasPrefix(word, term) })
-			}
-			if !matches {
-				continue
-			}
-			figures := decodedFigures(quote)
-			if len(figures) != 1 {
-				continue
-			}
-			figure := figures[0]
-			before, after, _ := strings.Cut(quote, figure.text)
-			kind, unit, value, suffix := comparisonValue(figure, after)
-			if kind == "" {
-				continue
-			}
-			subject := strings.Join(strings.FieldsFunc(strings.ToLower(before+" "+strings.TrimPrefix(after, suffix)), func(r rune) bool { return !unicode.IsLetter(r) }), " ")
-			k := key{kind, unit, subject}
-			if _, ok := local[k]; !ok {
-				localOrder = append(localOrder, k)
-			}
-			local[k] = append(local[k], ComparedFigure{Passage: i + 1, Text: figure.text + suffix, Value: value, Quote: quote})
 		}
 		for _, k := range localOrder {
 			figures := local[k]
@@ -102,7 +105,7 @@ func Compare(query string, passages []string) Comparison {
 		}
 		out.Status = "NO_CONFLICT"
 		if slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Value != figures[0].Value }) {
-			out.Conflicts = append(out.Conflicts, Conflict{Kind: k.kind, Unit: k.unit, Subject: k.subject, Figures: figures})
+			out.Conflicts = append(out.Conflicts, Conflict{Kind: k.kind, Unit: k.unit, Figures: figures})
 		}
 	}
 	if len(out.Conflicts) > 0 {

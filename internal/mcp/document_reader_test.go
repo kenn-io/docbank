@@ -68,7 +68,7 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 		{"get_vault_info", map[string]any{}},
 		{"search_documents", map[string]any{"query": "alpha", "mode": "lexical", "profile": profileName, "filters": map[string]any{}}},
 		{"search_documents", map[string]any{"query": "alpha", "profile": "missing", "filters": map[string]any{"mime_type": "image/png"}}},
-		{"find_conflicts", map[string]any{"query": "alpha", "mode": "lexical", "profile": profileName, "filters": map[string]any{}}},
+		{"find_conflicts", map[string]any{"query": "alpha", "profile": profileName, "filters": map[string]any{}}},
 		{"list_documents", map[string]any{"cursor": "invalid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
