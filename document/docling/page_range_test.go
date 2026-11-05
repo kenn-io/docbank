@@ -222,8 +222,8 @@ func renderRange(
 	return client.RenderPageRange(t.Context(), fixture.upload(), fixture.authorization, pages)
 }
 
-func rangeResponse(markdown string, content map[string]any, options ...resultOption) map[string]any {
-	response := doclingResultResponse("range.pdf", markdown, nil, options...)
+func rangeResponse(markdown string, content map[string]any) map[string]any {
+	response := doclingResultResponse("range.pdf", markdown, nil)
 	doc, ok := response["document"].(map[string]any)
 	if !ok {
 		panic("Docling result fixture document must be an object")

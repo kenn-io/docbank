@@ -656,9 +656,9 @@ provenance can be mapped. Its description or classification stays an omission.
 
 Other formats use bounded Markdown with explicitly degraded provenance. The
 existing upload authorization, sanitization, publication, and lexical indexing
-checks still apply. Original bytes remain unchanged. After changing the descriptor,
-queued work fails with `stale_authority`; plan and consent to the changed profile
-before retrying.
+checks still apply. Original bytes remain unchanged. After changing the
+descriptor, queued work fails with `stale_authority`; plan and consent to the
+changed profile before retrying.
 
 ### Document OCR with Mistral
 
