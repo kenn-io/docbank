@@ -118,7 +118,7 @@ func startVisionDaemonWithPhoto(t *testing.T, task, reply string) (*daemonconn.C
 	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
 	require.Empty(t, plan.RenditionIneligibleReason)
-	_, err = daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	return daemon, node, asset
 }
