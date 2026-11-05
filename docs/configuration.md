@@ -1536,7 +1536,7 @@ retention_days = 90
 max_records = 5000
 ```
 
-`retention_days` accepts 1–365 days. `max_records` accepts 1–100000 records. These bounds apply when recording is enabled.
+`retention_days` accepts 1–365 days. `max_records` accepts 1–100000 records.
 
 The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show no results, including searches with no documents in scope and web searches with advanced syntax or filters. The daemon stores these receipts. Name and folder matches count as results. Errors, refreshes, Run again, re-freezes, reranking requests, and in-document finds create no record. Running a saved search or opening a photo smart set, with or without query text, records nothing. Hidden photo searches, bare search API calls, and embedded library calls create no record.
 
