@@ -845,7 +845,8 @@ func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.E
 	}
 	spaces, err := catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
-	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: catalog.Store, Owner: "syntax-images", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, Mutate: api.NewOperationGate().MutateContext, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+	// The fixture calls Rebuild directly; IdleDelay only paces Run, which never starts here.
+	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: catalog.Store, Owner: "syntax-images", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Minute, Mutate: api.NewOperationGate().MutateContext, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 		reader, err := catalog.Blobs.OpenContext(ctx, member.PayloadBlobHash)
 		if err != nil {
 			return nil, err

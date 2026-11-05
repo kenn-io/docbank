@@ -70,9 +70,11 @@ func TestEmailPDFMetadataDoesNotReadPDFBytes(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var job document.EmailPDFJob
 	require.NoError(t, json.Unmarshal([]byte(body), &job))
+	// RunJob runs the one job directly; the idle delay only paces the claim
+	// loop, which this test never starts.
 	worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
 		Catalog: s.Store, Blobs: s.Blobs, Runtime: runtime, Gate: gate,
-		Owner: "email-pdf-api-test", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+		Owner: "email-pdf-api-test", LeaseDuration: time.Minute, IdleDelay: time.Minute,
 	})
 	require.NoError(t, err)
 	_, err = worker.RunJob(t.Context(), job.JobID)

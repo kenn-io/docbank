@@ -664,7 +664,7 @@ func TestBackupScheduleSettingsReadRetry(t *testing.T) {
 				if tc.futureSnapshot {
 					seedFutureScheduledSnapshot(t, &d, repo)
 				}
-				db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: time.Millisecond})
+				db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: sqlite.NoBusyWait})
 				require.NoError(t, err)
 				defer func() { require.NoError(t, db.Close()) }()
 				db.SetMaxOpenConns(1)
@@ -837,7 +837,7 @@ func TestBackupScheduleReadRecoveryKeepsCleanupFailure(t *testing.T) {
 		cleanup := d.Jobs.Snapshot()[0].Error
 		require.Contains(t, cleanup, "forgetting scheduled backups")
 
-		db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: time.Millisecond})
+		db, err := driver.Driver.Open(filepath.Join(d.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate, BusyTimeout: sqlite.NoBusyWait})
 		require.NoError(t, err)
 		defer func() { _ = db.Close() }()
 		db.SetMaxOpenConns(1)
@@ -873,7 +873,9 @@ type backupReadContentionDriver struct {
 }
 
 func (d *backupReadContentionDriver) Open(path string, opts sqlite.OpenOptions) (*sql.DB, error) {
-	opts.BusyTimeout = time.Millisecond //nolint:kennlint // deadlinetest: this driver runs only inside the backup schedule synctest bubble
+	// A held lock fails a statement at once instead of SQLite sleeping on the
+	// wall clock, which the surrounding synctest bubble cannot fake.
+	opts.BusyTimeout = sqlite.NoBusyWait
 	db, err := d.Driver.Open(path, opts)
 	if err == nil {
 		d.dbs = append(d.dbs, db)

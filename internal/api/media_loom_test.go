@@ -2,13 +2,10 @@ package api_test
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +17,9 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
-func configureLoomManualTestService(t *testing.T) func(*api.Deps) {
+// configureLoomManualTestService binds worker, when it is not nil, to the
+// rendition worker the test drives.
+func configureLoomManualTestService(t *testing.T, worker *renditionTestWorker) func(*api.Deps) {
 	t.Helper()
 	return func(deps *api.Deps) {
 		gate := api.NewOperationGate()
@@ -36,21 +35,16 @@ func configureLoomManualTestService(t *testing.T) func(*api.Deps) {
 		})
 		require.NoError(t, err)
 		deps.Processing = service
-		worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: service.RenditionRuntimes(), Gate: gate,
-			Owner: "loom-manual-test-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
-		})
-		require.NoError(t, err)
-		workerContext, cancelWorker := context.WithCancel(context.Background())
-		var workers sync.WaitGroup
-		workers.Go(func() { _ = worker.Run(workerContext) })
-		t.Cleanup(func() { cancelWorker(); workers.Wait() })
+		if worker != nil {
+			worker.bind(t, deps, service, gate, "loom-manual-test-worker")
+		}
 	}
 }
 
 func TestLoomManualExportHTTP(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureLoomManualTestService(t))
+	var worker renditionTestWorker
+	ts, catalog := newTestServer(t, configureLoomManualTestService(t, &worker))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	remote, err := client.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
 		OperationID: "00000000-0000-4000-8000-000000000551", ReferenceURL: "https://private.invalid/loom-http",
@@ -106,11 +100,10 @@ func TestLoomManualExportHTTP(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "queued", queued.OperationState)
 
-	var status api.MediaReceipt
-	require.Eventually(t, func() bool {
-		status, err = client.MediaStatus(t.Context(), remote.SourceID)
-		return err == nil && status.OperationState == "succeeded" && status.CoverageState == "transcribed"
-	}, 30*time.Second, 20*time.Millisecond)
+	worker.runQueued(t)
+	status, err := client.MediaStatus(t.Context(), remote.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{status.OperationState, status.CoverageState})
 	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
 	results, err := client.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: "http second cue", Mode: "lexical", Profile: processing.SuppliedCaptionProfileName, Limit: 10,
@@ -167,7 +160,7 @@ func TestLoomManualExportHTTPRejectsOversizeVideoBeforeStaging(t *testing.T) {
 
 func TestLoomManualExportHTTPReplaysArtifactAfterRevocation(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureLoomManualTestService(t))
+	ts, _ := newTestServer(t, configureLoomManualTestService(t, nil))
 	client := daemonconn.New(ts.URL, testAPIKey)
 	remote, err := client.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
 		OperationID: "00000000-0000-4000-8000-000000000558", ReferenceURL: "https://private.invalid/loom-replay",
