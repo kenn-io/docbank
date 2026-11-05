@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,11 +68,10 @@ func TestStatCLIShowsEmbeddedSourceMetadata(t *testing.T) {
 	source := writeSourceFile(t, "report.pdf", statMetadataPDF())
 	_, err := runCLI(t, "add", source, "--dest", "/archive")
 	require.NoError(t, err)
-	var out string
-	require.Eventually(t, func() bool {
-		out, err = runCLI(t, "stat", "/archive/report.pdf")
-		return err == nil && strings.Contains(out, `"Synthetic report"`)
-	}, 5*time.Second, 25*time.Millisecond)
+	settleDaemon(t)
+	out, err := runCLI(t, "stat", "/archive/report.pdf")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"Synthetic report"`)
 	assert.Regexp(t, `metadata:\s+source-metadata/v1`, out)
 	assert.Regexp(t, `page_count:\s+2`, out)
 }

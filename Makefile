@@ -59,7 +59,7 @@ override GOFLAGS += -trimpath
 endif
 export GOFLAGS
 
-.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci check-timing-suppressions tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
@@ -155,11 +155,18 @@ $(CUSTOM_GCL): .custom-gcl.yml
 	fi
 	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl
 
-lint: $(CUSTOM_GCL)
+lint: $(CUSTOM_GCL) check-timing-suppressions
 	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...
 
-lint-ci: $(CUSTOM_GCL) lint-workflow-retries
+lint-ci: $(CUSTOM_GCL) lint-workflow-retries check-timing-suppressions
 	"$(CUSTOM_GCL)" run --allow-serial-runners ./...
+
+# Tests never wait on the real clock, so the timing analyzers allow no suppressions.
+check-timing-suppressions:
+	@if git grep -nE 'nolint:.*kennlint.*(sleeptest|deadlinetest)' -- '*.go'; then \
+		echo "Do not suppress sleeptest or deadlinetest. See docs/internal/development.md#timing-checks." >&2; \
+		exit 1; \
+	fi
 
 tidy:
 	go mod tidy

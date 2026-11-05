@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json/v2"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,26 +32,26 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	}
 	writeClosedSession(first)
 
-	// The pack interval also limits each pass, including real disk I/O on CI.
+	// The pack interval only enables packing, and capture_on_change imports
+	// without waiting out settle_time; Settle starts each pass and scan. The
+	// sessions are old enough for minimum_age.
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(
-		"[server]\nidle_timeout = \"30ms\"\n"+
-			"[backup]\nrepo = \""+filepath.ToSlash(repo)+"\"\n"+
-			"[storage]\npack_interval = \"5s\"\npack_max_bytes = 1048576\n"+
+		"[backup]\nrepo = \""+filepath.ToSlash(repo)+"\"\n"+
+			"[storage]\npack_interval = \"24h\"\npack_max_bytes = 1048576\n"+
 			"[[watch]]\nname = \"agent-sessions\"\nsource = \""+filepath.ToSlash(source)+"\"\n"+
-			"destination = \"/archives/agents\"\nsettle_time = \"20ms\"\n"+
-			"minimum_age = \"24h\"\nscan_interval = \"10ms\"\n",
+			"destination = \"/archives/agents\"\nminimum_age = \"24h\"\ncapture_on_change = true\n",
 	), 0o600))
 	t.Setenv("DOCBANK_HOME", home)
 	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 	startTestDaemon(t, home)
+	settleDaemon(t)
 
 	virtualPath := "/archives/agents/codex/project-alpha/2026-07/session-01.jsonl"
-	require.Eventually(t, func() bool {
-		out, err := runCLI(t, "cat", virtualPath)
-		return err == nil && out == string(first)
-	}, 5*time.Second, 25*time.Millisecond)
+	out, err := runCLI(t, "cat", virtualPath)
+	require.NoError(t, err)
+	require.Equal(t, string(first), out)
 
-	out, err := runCLI(t, "versions", "list", virtualPath, "--json")
+	out, err = runCLI(t, "versions", "list", virtualPath, "--json")
 	require.NoError(t, err)
 	var firstVersions api.ContentVersionPage
 	require.NoError(t, json.Unmarshal([]byte(out), &firstVersions))
@@ -60,10 +59,10 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	firstVersionID := firstVersions.Items[0].ID
 
 	writeClosedSession(final)
-	require.Eventually(t, func() bool {
-		out, catErr := runCLI(t, "cat", virtualPath)
-		return catErr == nil && out == string(final)
-	}, 5*time.Second, 25*time.Millisecond)
+	settleDaemon(t)
+	out, err = runCLI(t, "cat", virtualPath)
+	require.NoError(t, err)
+	require.Equal(t, string(final), out)
 
 	out, err = runCLI(t, "versions", "list", virtualPath, "--json")
 	require.NoError(t, err)
@@ -72,15 +71,13 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	require.Len(t, versions.Items, 2)
 	assert.Equal(t, firstVersionID, versions.Items[1].ID)
 
-	require.Eventually(t, func() bool {
-		out, searchErr := runCLI(t, "search", "quasar", "--json")
-		if searchErr != nil {
-			return false
-		}
-		var report api.SearchReport
-		return json.Unmarshal([]byte(out), &report) == nil && len(report.Hits) == 1 &&
-			report.Hits[0].Path == virtualPath && report.Hits[0].Match == "content"
-	}, 5*time.Second, 100*time.Millisecond)
+	out, err = runCLI(t, "search", "quasar", "--json")
+	require.NoError(t, err)
+	var report api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Len(t, report.Hits, 1)
+	assert.Equal(t, virtualPath, report.Hits[0].Path)
+	assert.Equal(t, "content", report.Hits[0].Match)
 
 	out, err = runCLI(t, "provenance", virtualPath, "--json")
 	require.NoError(t, err)
@@ -93,33 +90,22 @@ func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	require.NotNil(t, provenance.Items[0].OriginalMTime)
 	assert.Equal(t, oldMTime.Format(time.RFC3339Nano), *provenance.Items[0].OriginalMTime)
 
-	require.Eventually(t, func() bool {
-		out, statusErr := runCLI(t, "storage", "status", "--json")
-		if statusErr != nil {
-			return false
-		}
-		var status api.StorageStatus
-		return json.Unmarshal([]byte(out), &status) == nil &&
-			status.LooseBlobs == 0 && status.PackedBlobs == 2
-	}, 30*time.Second, 100*time.Millisecond)
+	out, err = runCLI(t, "storage", "status", "--json")
+	require.NoError(t, err)
+	var status api.StorageStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Zero(t, status.LooseBlobs)
+	assert.Equal(t, int64(2), status.PackedBlobs)
 
 	_, err = runCLI(t, "backup", "init")
 	require.NoError(t, err)
-	var snapshot api.BackupSnapshot
-	// Retrying maintenance contention also waits for the real backup's disk I/O.
-	require.Eventually(t, func() bool {
-		out, createErr := runCLI(t, "backup", "create", "--tag", "agent-sessions", "--json")
-		if errors.Is(createErr, daemonconn.ErrMaintenanceBusy) {
-			return false
-		}
-		if createErr != nil {
-			err = createErr
-			return true
-		}
-		err = json.Unmarshal([]byte(out), &snapshot)
-		return true
-	}, 30*time.Second, 25*time.Millisecond)
+	// Settled workers hold no maintenance work, so the backup does not meet
+	// a busy vault.
+	settleDaemon(t)
+	out, err = runCLI(t, "backup", "create", "--tag", "agent-sessions", "--json")
 	require.NoError(t, err)
+	var snapshot api.BackupSnapshot
+	require.NoError(t, json.Unmarshal([]byte(out), &snapshot))
 	require.NotEmpty(t, snapshot.ID)
 
 	out, err = runCLI(t, "backup", "verify", snapshot.ID, "--json")

@@ -575,11 +575,10 @@ func TestDaemonEPUBAndPlaintextProcessing(t *testing.T) {
 				require.ErrorContains(t, err, "rendition job is terminal")
 			} else {
 				require.NoError(t, err)
-				require.EventuallyWithT(t, func(collect *assert.CollectT) {
-					status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
-					require.NoError(collect, statusErr)
-					require.Equal(collect, "completed", status.State, "%+v", status)
-				}, 10*time.Second, 20*time.Millisecond)
+				// StartProcessing returns after the run's terminal status.
+				status, statusErr := daemon.ProcessingStatus(t.Context(), job.ID)
+				require.NoError(t, statusErr)
+				require.Equal(t, "completed", status.State, "%+v", status)
 			}
 			original, err := daemon.VersionContent(t.Context(), selector.ContentVersionID)
 			require.NoError(t, err)

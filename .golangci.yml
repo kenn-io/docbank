@@ -119,10 +119,12 @@ linters:
         original-url: go.kenn.io/kit/lint/nolintdirective
       kennlint:
         type: module
-        description: Kit sleeptest and deadlinetest, wall-clock sleeps and sub-second budgets in tests outside synctest.
+        description: Kit sleeptest and deadlinetest, wall-clock sleeps, polling assertions, and sub-second budgets in tests outside synctest.
         original-url: go.kenn.io/kit/lint
         settings:
           disable: [errtext, nohttpmux, rowserrcheck, sqlcheck, sqlclosecheck, testifyhelper]
+          sleeptest:
+            eventually: true
 
     errorlint:
       comparison: true

@@ -85,6 +85,9 @@ Instructions for autonomous coding agents working in this repository.
 - Tests use `t.Context()` or `b.Context()`. A `t.Cleanup` function uses
   `context.WithoutCancel(t.Context())` because the test context is already
   canceled. Inside `synctest.Test`, use the bubble's `t`.
+- Tests never wait on the real clock. Run waits inside `testing/synctest` or
+  drive the event directly, and never suppress `sleeptest` or `deadlinetest`.
+  See [Timing checks](docs/internal/development.md#timing-checks).
 - `make lint` enforces the mechanical rules with `noctx`, `fatcontext`,
   `usetesting` and `govet`; `.golangci.yml` records why `containedctx` and
   `contextcheck` stay off.

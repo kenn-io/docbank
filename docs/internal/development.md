@@ -1617,23 +1617,28 @@ rationale.
 
 ### Timing checks
 
+Tests never wait on the real clock. A wait on the wall clock passes on a quiet
+machine and fails on a busy CI runner.
+
 `make lint` runs kit's `sleeptest` and `deadlinetest` analyzers through the
-`kennlint` plugin. They report `time.Sleep`, and `context.WithTimeout`,
-`time.After`, timers, or `Eventually` calls with a budget below one second, in
-tests outside a synctest bubble. A short positive `Never` window is allowed,
-since it can only check less.
+`kennlint` plugin. Outside a synctest bubble, `sleeptest` reports every
+`time.Sleep` and every testify `Eventually`, `EventuallyWithT`, or `Never`.
+`deadlinetest` reports `context.WithTimeout`, `time.After`, and timers with a
+budget below one second. Never suppress these findings. `make lint` and CI
+reject a `//nolint:kennlint` directive that names either analyzer.
 
-A deadline finding may carry `//nolint:kennlint // deadlinetest: reason` in three cases: the
-asserted result is the deadline expiring; a `select` on a timer shows that an
-event does not happen; or the call sits in a helper that runs only inside a
-bubble the analyzer can't see across the call. The reason names the case and
-what holds the wait. A sleep finding's reason names the real-clock dependency
-that keeps it out of a bubble.
+Run every wait inside `testing/synctest`, where time is fake and advances only
+when the bubble is blocked. When the clock lives outside the bubble, drive the
+event directly. Examples are a subprocess, a real socket, SQLite, and the
+operating system. Stop the daemon instead of waiting for it to idle out. Cancel
+the context instead of letting a deadline expire. Make a fake block until the
+test releases it. To show that something does not happen, check the condition
+that prevents it, or advance fake time past the deadline inside a bubble.
 
-Use `testing/synctest` for channels, callbacks, timers, goroutines, and readers
-owned by a test. Keep waits for provider HTTP, managed commands, daemons,
-sockets, files, OS locks, SQLite, blob stores, process-global state, and held
-mutexes on the real clock.
+The analyzers cannot read durations in configuration text, such as an
+`idle_timeout` written to `config.toml`. The same rule applies to them. A
+budget of one second or more may bound a hung test, but the test must never
+wait for it to expire.
 
 ## Verification contract
 

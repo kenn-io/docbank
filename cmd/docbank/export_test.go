@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"image/color"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/spf13/cobra"
@@ -66,11 +66,11 @@ func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
 func TestExportCLIHistoricalVersionsAndExplicitRelease(t *testing.T) {
 	waitCLIExport := func(t *testing.T, id string) {
 		t.Helper()
+		settleDaemon(t)
+		out, err := runCLI(t, "export", "status", id, "--json")
+		require.NoError(t, err)
 		var job bundle.Job
-		require.Eventually(t, func() bool {
-			out, err := runCLI(t, "export", "status", id, "--json")
-			return err == nil && json.Unmarshal([]byte(out), &job) == nil && (job.State == "completed" || job.State == "failed")
-		}, 30*time.Second, 25*time.Millisecond)
+		require.NoError(t, json.Unmarshal([]byte(out), &job))
 		require.Equal(t, "completed", job.State, job.Failure)
 	}
 
@@ -184,16 +184,25 @@ func TestExportCLIHistoricalVersionsAndExplicitRelease(t *testing.T) {
 	assertExportOriginals(t, destination, old, current)
 }
 
+// waitDaemonRequestsDone waits until every request the in-process daemon for
+// DOCBANK_HOME has received has returned from its handler.
+func waitDaemonRequestsDone(t *testing.T) {
+	t.Helper()
+	value, _ := testDaemons.Load(os.Getenv("DOCBANK_HOME"))
+	daemon, ok := value.(serveReady)
+	require.True(t, ok, "no in-process daemon serves DOCBANK_HOME")
+	// The timeout is a safety net for a hung handler; the wait never needs it.
+	ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
+	defer cancel()
+	require.NoError(t, daemon.tracker.WaitQuiet(ctx))
+}
+
 func releaseCLIExport(t *testing.T, id string) string {
 	t.Helper()
-	var output string
-	var err error
-	// The client can finish downloading before the server releases its lease.
-	require.Eventually(t, func() bool {
-		output, err = runCLI(t, "export", "release", id, "--json")
-		code, _ := daemonconn.ProblemCode(err)
-		return code != "export_retained"
-	}, 30*time.Second, 25*time.Millisecond)
+	// The client can finish downloading before the server's download handler
+	// returns and releases its archive lease.
+	waitDaemonRequestsDone(t)
+	output, err := runCLI(t, "export", "release", id, "--json")
 	require.NoError(t, err)
 	return output
 }

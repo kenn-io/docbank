@@ -202,12 +202,10 @@ func qualifyRecipientPackage(t *testing.T) {
 	require.NoError(t, err, out)
 	var job api.PackageImportJob
 	require.NoError(t, json.Unmarshal([]byte(out), &job))
-	require.Eventually(t, func() bool {
-		out, err = runCLI(t, "package", "import", "status", job.OperationID, "--json")
-		require.NoError(t, err, out)
-		require.NoError(t, json.Unmarshal([]byte(out), &job))
-		return job.State == "complete" || job.State == "partial" || job.State == "failed"
-	}, time.Minute, 50*time.Millisecond)
+	settleDaemon(t)
+	out, err = runCLI(t, "package", "import", "status", job.OperationID, "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &job))
 	require.Equal(t, "complete", job.State, out)
 	out, err = runCLI(t, "package", "members", job.PackageID, "--json")
 	require.NoError(t, err, out)

@@ -225,8 +225,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				}
 			}()
 			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
-			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \"500ms\"\n"), 0600))
-			stop := startServe(t)
+			stop, daemon := startServeReady(t)
 			defer stop()
 			if result.lateImport {
 				waitForDaemon(t, root)
@@ -247,34 +246,29 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("embedding request never started")
 			}
-			time.Sleep(time.Second) //nolint:kennlint // sleeptest: the real daemon idle ticker and loopback listener use wall time
+			// The idle watcher stops the daemon only once the tracker is quiet,
+			// and the backfill holds it for the whole request.
+			require.Zero(t, daemon.tracker.IdleFor(), "an embedding request holds the daemon open")
 			_, _, found, err := daemonconn.Find(t.Context(), root)
 			require.NoError(t, err)
 			require.True(t, found, "the daemon remains discoverable during an embedding request")
 			releaseRequest()
+			settleDaemon(t)
 			catalog, err := store.Open(t.Context(), layout.DBPath())
 			require.NoError(t, err)
 			defer func() { require.NoError(t, catalog.Close()) }()
-			require.Eventually(t, func() bool {
-				spaces, err := catalog.ListVectorIndexSpaces(t.Context())
-				if err != nil || len(spaces) != 1 {
-					return false
-				}
-				source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
-				if err != nil || len(source.Members) == 0 {
-					return false
-				}
-				generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
-				return err == nil && generation.SourceManifestChecksum == source.ManifestChecksum && generation.RowCount > 0
-			}, 5*time.Second, 10*time.Millisecond, "completed embeddings become search-visible before idle shutdown")
-			records, err := daemonconn.RuntimeStore(root).List()
+			spaces, err := catalog.ListVectorIndexSpaces(t.Context())
 			require.NoError(t, err)
-			require.Len(t, records, 1, "the daemon stays discoverable through vector publication")
-			require.Eventually(t, func() bool {
-				records, err := daemonconn.RuntimeStore(root).List()
-				return err == nil && len(records) == 0
-			}, 8*time.Second, 20*time.Millisecond)
+			require.Len(t, spaces, 1)
+			source, err := catalog.CaptureVectorIndexSource(t.Context(), spaces[0])
+			require.NoError(t, err)
+			require.NotEmpty(t, source.Members)
+			generation, err := catalog.ActiveVectorIndexGeneration(t.Context(), spaces[0])
+			require.NoError(t, err)
+			require.Equal(t, source.ManifestChecksum, generation.SourceManifestChecksum, "completed embeddings become search-visible")
+			require.Positive(t, generation.RowCount)
 			stop()
+			waitForDaemonStop(t, root)
 			jobs, err := catalog.EmbeddingJobsForVersionProfile(t.Context(), version, profileFingerprint)
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
