@@ -194,7 +194,7 @@ func checkPhotoEditRetainedSuggestionsPostgres(t *testing.T) {
 	node := requireNodeByID(t, source, asset.Files[0].NodeID)
 	publishPhotoDescription(t, source, asset, producerA, false, document.PhotoDescription{Caption: "River", Tags: []string{"Travel"}, Rotation: new(90)})
 	require.NoError(t, source.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(1.5707963267948966)}}}, time.Now())
+		return source.publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(1.5707963267948966)}}}, time.Now())
 	}))
 	require.NoError(t, source.ValidateMetadata(ctx))
 	target, _ := copyRetentionStore(t, source)

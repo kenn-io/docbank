@@ -1558,7 +1558,7 @@ func (s *Store) publishRenditionJob(
 				if err := json.Unmarshal(result.Artifacts[0].Payload, &detection, json.RejectUnknownMembers(true)); err != nil || detection.Faces == nil {
 					return ErrInvalidPhotoDescriptionResult
 				}
-				if err := publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
+				if err := s.publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
 					return err
 				}
 			} else {

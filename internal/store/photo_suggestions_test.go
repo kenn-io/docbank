@@ -168,9 +168,10 @@ func TestHiddenPhotoSuggestionRequiresUnlock(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
+func checkPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "accept.jpg")
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast", "sunset"}, VisibleText: "QUAYSIDE"})
@@ -222,10 +223,11 @@ func TestPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t *testing.T) {
 	require.Empty(t, photoSuggestionValues(t, s, asset.ID))
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, s, proposal))
 	require.ErrorIs(t, err, ErrPhotoSuggestionConflict)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 }
 
-func TestPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t *testing.T) {
+func checkPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	response := func(proposal PhotoSuggestion, kind string) PhotoSuggestionResponse {
 		request := PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: kind}
@@ -237,13 +239,13 @@ func TestPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t *testing.T) {
 	dismissal := func(proposal PhotoSuggestion) PhotoSuggestionResponse { return response(proposal, "dismissed") }
 	dismissed := func(s *Store, proposal PhotoSuggestion) bool {
 		var value bool
-		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT dismissed FROM photo_suggestions WHERE suggestion_id=?`, proposal.ID).Scan(&value))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT dismissed FROM photo_suggestions WHERE suggestion_id=$1`, proposal.ID).Scan(&value))
 		return value
 	}
 	for _, kind := range []string{"accepted", "dismissed"} {
 		t.Run("file moved to another photo, "+kind, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			source := albumAsset(t, s, "moved-from.jpg")
 			target := albumAsset(t, s, "moved-to.jpg")
@@ -279,7 +281,7 @@ func TestPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t *testing.T) {
 	}
 	t.Run("revisions moved on", func(t *testing.T) {
 		t.Parallel()
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := albumAsset(t, s, "dismiss-stale.jpg")
 		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor."})
@@ -457,7 +459,8 @@ func TestPhotoSnapshotSearchKeepsItsRowsWhenASuggestionIsDecidedBetweenPages(t *
 	require.Equal(t, first.Rows, back.Rows)
 }
 
-func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
+func checkPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		owned, suggested string
@@ -469,7 +472,7 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 	} {
 		t.Run(tc.owned, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "owned.jpg")
 			proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: tc.tags})
@@ -511,7 +514,7 @@ func TestPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t *testing.T) {
 			publishPhotoDescription(t, s, early, producerA, false, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"Coast", "sunset"}})
 			// Reading filters owned values again, so check what publication stored.
 			var caption, tags string
-			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE id=?)`, early.Files[0].NodeID).Scan(&caption, &tags))
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT caption,tags_json FROM photo_suggestions WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE id=$1)`, early.Files[0].NodeID).Scan(&caption, &tags))
 			require.Empty(t, caption, "publication leaves out the authored caption")
 			require.JSONEq(t, `["sunset"]`, tags, "publication leaves out the assigned tag")
 		})
@@ -740,6 +743,11 @@ func TestPhotoDescriptionPredicates(t *testing.T) {
 // carries for the version's displayed photo.
 func photoDescriptionJobRequest(t *testing.T, s *Store, versionID, producer string, explicit bool) RenditionJobRequest {
 	t.Helper()
+	return photoVisionJobRequest(t, s, versionID, producer, explicit, "synthetic-rendition")
+}
+
+func photoVisionJobRequest(t *testing.T, s *Store, versionID, producer string, explicit bool, provider string) RenditionJobRequest {
+	t.Helper()
 	ctx := t.Context()
 	version, err := s.ContentVersionByID(ctx, versionID)
 	require.NoError(t, err)
@@ -748,12 +756,14 @@ func photoDescriptionJobRequest(t *testing.T, s *Store, versionID, producer stri
 	preview, err := s.PublishVisualPreviewGeneration(ctx, version.ID, readyVisualPreviewWithRecipe(t, version.BlobHash, fakeHash("c3"), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
 	require.NoError(t, err)
 	profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) {
+		p.Rendition.Descriptor.ID = provider
 		p.Rendition.AdapterContract = document.VisionAdapterContract
 		p.Rendition.DeploymentFingerprint = producer
 		p.RetentionDisclosure.RetainSanitizedMarkdown = false
 		p.RetentionDisclosure.RetainTypedArtifacts = false
 	})
 	request := renditionJobTestRequest(version.ID, profile)
+	request.ExecutionIdentity.Authorization.ProviderID = provider
 	request.ExecutionIdentity.Authorization.SourceSHA256 = version.BlobHash
 	request.ExecutionIdentity.Upload.SHA256 = version.BlobHash
 	request.CapturedArtifactPolicy = []byte(`{"roles":[{"max_count":1,"min_count":1,"role":"normalized_evidence"}],"version":1}`)
@@ -782,9 +792,10 @@ func startPhotoDescription(t *testing.T, s *Store, request RenditionJobRequest, 
 	return job, waiter, claim
 }
 
-func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
+func checkPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "job.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -804,7 +815,7 @@ func TestPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T) {
 	require.Equal(t, node.ID, changes[0].NodeID)
 	require.Equal(t, 1, publication.PublishedWaiterCount)
 	require.Equal(t, "A harbor.", photoSuggestionValues(t, s, asset.ID)[0].Value.Caption)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 
 	joined, waiter, err := s.EnqueueRenditionJob(ctx, request)
 	require.NoError(t, err)
@@ -864,9 +875,10 @@ func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *
 	require.Zero(t, snapshot.Renditions.Rebuilding, "a queued description is not a rendition being rebuilt")
 }
 
-func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
+func checkPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	var versions []string
 	for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
@@ -894,13 +906,17 @@ func TestPhotoDescriptionTargetsReadsOnePageInOrder(t *testing.T) {
 	require.Equal(t, versions[2:], ids(rest), "the cursor resumes after the last version read")
 }
 
-func TestPhotoDescriptionTargetsRespectActiveTaskScope(t *testing.T) {
+func checkPhotoDescriptionTargetsRespectActiveTaskScope(t *testing.T, postgres bool) {
+	t.Helper()
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "overlap.jpg")
 	publishPhotoDescription(t, s, asset, producerB, true, document.PhotoDescription{Caption: "From B.", Tags: []string{"coast"}})
 	restored := restorePhotoSuggestionStore(t, s)
+	if postgres {
+		restored, _ = copyRetentionStore(t, restored)
+	}
 	node, err := restored.NodeByID(ctx, asset.Files[0].NodeID)
 	require.NoError(t, err)
 
@@ -922,9 +938,10 @@ func TestPhotoDescriptionTargetsRespectActiveTaskScope(t *testing.T) {
 	require.Len(t, targets, 1, "description work leaves face detection eligible")
 }
 
-func TestPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T) {
+func checkPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "renewed.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -975,12 +992,13 @@ func TestPhotoDescriptionAnswerForPhotoHiddenAtPublishIsRefused(t *testing.T) {
 	require.Empty(t, prepared.Suggestions)
 }
 
-func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
+func checkPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, joined := range []bool{false, true} {
 		t.Run(fmt.Sprintf("explicit_waiter_%t", joined), func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "shared.jpg")
 			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -1013,7 +1031,7 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 	}
 	t.Run("enqueue", func(t *testing.T) {
 		t.Parallel()
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := albumAsset(t, s, "explicit.jpg")
 		proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "From A."})
@@ -1034,7 +1052,7 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 	})
 	t.Run("explicit then automatic", func(t *testing.T) {
 		t.Parallel()
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		asset := albumAsset(t, s, "joined.jpg")
 		node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -1066,9 +1084,10 @@ func TestPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t *testing.T) {
 	})
 }
 
-func TestPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t *testing.T) {
+func checkPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "lease.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -1111,11 +1130,12 @@ func TestDerivativePurgeLeavesPhotoSuggestionsButVersionPurgeRemovesThem(t *test
 	require.NotContains(t, exported.String(), proposal.ID, "purging the photo removes its decision record")
 }
 
-func TestPhotoRotationResponses(t *testing.T) {
+func checkPhotoRotationResponses(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, response := range []string{"accepted", "dismissed"} {
 		t.Run(response, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			asset := albumAsset(t, s, "sideways.jpg")
 			publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Caption: "A harbor.", Rotation: new(90)})
 			proposals := photoSuggestionValues(t, s, asset.ID)
@@ -1156,7 +1176,7 @@ func TestPhotoRotationCurrentFaces(t *testing.T) {
 	node, err := s.NodeByID(t.Context(), fileByID(asset.Files, *asset.DisplayFileID).NodeID)
 	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{
+		return s.publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, producerA, document.FaceDetection{Faces: []document.FaceObservation{
 			{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(1.5707963267948966)},
 			{Box: document.FaceBox{X: .6, Y: .6, Width: .2, Height: .2}},
 			{Box: document.FaceBox{X: .8, Y: .1, Width: .1, Height: .1}, Roll: new(3.141592653589793)},
@@ -1193,20 +1213,21 @@ func TestPhotoRotationCurrentFaces(t *testing.T) {
 	require.Equal(t, "description", proposals[0].RotationSource, "dismissing the last face immediately reveals the retained fallback")
 }
 
-func TestPhotoRotationResetsOnRepublish(t *testing.T) {
+func checkPhotoRotationResetsOnRepublish(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		answer *int
 	}{{"missing", nil}, {"upright", new(0)}} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			asset := albumAsset(t, s, "harbor.jpg")
 			publishPhotoDescription(t, s, asset, producerA, false, document.PhotoDescription{Rotation: new(90)})
 			// Only the older dismissed answer holds rotation; publication overwrites the newest row.
-			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_suggestions SET rotation=NULL WHERE producer_fingerprint=?`, producerA)
+			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_suggestions SET rotation=NULL WHERE producer_fingerprint=$1`, producerA)
 			require.NoError(t, err)
-			result, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,rotation,dismissed,created_at) SELECT '00000000-0000-4000-8000-000000000001',content_version_id,?,90,1,'2000-01-01T00:00:00Z' FROM photo_suggestions WHERE producer_fingerprint=?`, producerB, producerA)
+			result, err := s.db.ExecContext(t.Context(), `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,rotation,dismissed,created_at) SELECT '00000000-0000-4000-8000-000000000001',content_version_id,$1,90,1,'2000-01-01T00:00:00Z' FROM photo_suggestions WHERE producer_fingerprint=$2`, producerB, producerA)
 			require.NoError(t, err)
 			inserted, err := result.RowsAffected()
 			require.NoError(t, err)
@@ -1309,7 +1330,7 @@ func TestPhotoRotationBackup(t *testing.T) {
 				t.Helper()
 				ctx := t.Context()
 				require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-					return publishFaceDetectionTx(ctx, tx, version, producerA, document.FaceDetection{Faces: []document.FaceObservation{
+					return s.publishFaceDetectionTx(ctx, tx, version, producerA, document.FaceDetection{Faces: []document.FaceObservation{
 						{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}, Roll: new(1.5707963267948966)},
 					}}, time.Now())
 				}))
@@ -1352,9 +1373,10 @@ func TestPhotoRotationBackup(t *testing.T) {
 	}
 }
 
-func TestPhotoRotationResponseRequiresCurrentProposal(t *testing.T) {
+func checkPhotoRotationResponseRequiresCurrentProposal(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	asset := albumAsset(t, s, "sideways.jpg")
 	node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
 	require.NoError(t, err)
@@ -1368,11 +1390,12 @@ func TestPhotoRotationResponseRequiresCurrentProposal(t *testing.T) {
 	require.Zero(t, got.Targets[0].Values.Confirmed&PhotoConfirmedRotation)
 }
 
-func TestPhotoDescriptionExplicitRefreshKeepsTextDecisions(t *testing.T) {
+func checkPhotoDescriptionExplicitRefreshKeepsTextDecisions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, decision := range []string{"pending", "accepted"} {
 		t.Run(decision, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "harbor.jpg")
 			proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})

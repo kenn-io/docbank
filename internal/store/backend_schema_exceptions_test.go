@@ -3,17 +3,15 @@ package store
 // These exact exceptions describe the current boundary, not permission to omit
 // future objects. The comparison fails when an exception is stale or resolved.
 var sqliteOnlyBackendTables = map[string]string{
-	"vector_membership_epochs":           "vector index lifecycle is unqualified",
-	"photo_description_explicit_waiters": "description worker publication is unqualified",
-	"photo_face_scans":                   "face detection publication is unqualified",
-	"photo_timeline_pending":             "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
-	"photo_xmp_unsettled_pending":        "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
-	"storage_operation_stores":           "multi-store operations are unqualified",
-	"vector_index_build_jobs":            "vector index lifecycle is unqualified",
-	"vector_index_generations":           "vector index lifecycle is unqualified",
-	"vector_index_heads":                 "vector index lifecycle is unqualified",
-	"vector_index_reader_leases":         "vector index lifecycle is unqualified",
-	"vector_index_unavailable_coverage":  "vector index lifecycle is unqualified",
+	"vector_membership_epochs":          "vector index lifecycle is unqualified",
+	"photo_timeline_pending":            "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
+	"photo_xmp_unsettled_pending":       "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
+	"storage_operation_stores":          "multi-store operations are unqualified",
+	"vector_index_build_jobs":           "vector index lifecycle is unqualified",
+	"vector_index_generations":          "vector index lifecycle is unqualified",
+	"vector_index_heads":                "vector index lifecycle is unqualified",
+	"vector_index_reader_leases":        "vector index lifecycle is unqualified",
+	"vector_index_unavailable_coverage": "vector index lifecycle is unqualified",
 }
 
 // Secondary access paths await their query/workload qualification. Tables also
@@ -50,7 +48,6 @@ var deferredBackendIndexes = map[string]string{
 	"photo_set_members_added":                     "photo_set_members",
 	"photo_set_members_asset":                     "photo_set_members",
 	"term_report_history_recent":                  "term_report_history",
-	"visual_preview_generations_ready":            "visual_preview_generations",
 	// This is a write invariant, not a deferred access optimization. The
 	// multi-store port must enforce active evacuation uniqueness in Go; copying
 	// SQLite's closed state list into the new schema is forbidden.

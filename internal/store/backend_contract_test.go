@@ -22,6 +22,77 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "photo-analysis", postgres: "native operations", scope: "Description and face-detection jobs and suggestion responses; excludes provider network calls, people curation, hidden sessions and quality scoring.", scenarios: []backendScenario{
+		{"PhotoFaceDetectionJob", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionJob(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionJob(t, newPostgresQueryStore) }},
+		{"PhotoAnalysisTargetPlan", func(t *testing.T) { t.Helper(); checkPhotoAnalysisTargetPlan(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAnalysisTargetPlan(t, newPostgresQueryStore) }},
+		{"PhotoAnalysisPublicationRollback", nil, checkPhotoAnalysisPublicationRollbackPostgres},
+		{"PhotoSuggestionResponseRollback", nil, checkPhotoSuggestionResponseRollbackPostgres},
+		{"PhotoFaceDetectionStableOverlap", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionStableOverlap(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionStableOverlap(t, newPostgresQueryStore) }},
+		{"PhotoFaceDetectionProtectsCandidatesAndUndoReceipts", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t, false) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t, true) }},
+		{"PhotoDescriptionTargetsRespectActiveTaskScope", func(t *testing.T) { t.Helper(); checkPhotoDescriptionTargetsRespectActiveTaskScope(t, false) }, func(t *testing.T) { t.Helper(); checkPhotoDescriptionTargetsRespectActiveTaskScope(t, true) }},
+
+		{"PhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest", func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t, newPostgresQueryStore)
+		}},
+		{"PhotoSuggestionResponseChecksTheAssetItWasReviewedUnder", func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t, newPostgresQueryStore)
+		}},
+		{"PhotoSuggestionOffersNothingTheOwnerAlreadyHas", func(t *testing.T) { t.Helper(); checkPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionJobPublishesOneSuggestionAndSettles", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionJobPublishesOneSuggestionAndSettles(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionJobPublishesOneSuggestionAndSettles(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionTargetsReadsOnePageInOrder", func(t *testing.T) { t.Helper(); checkPhotoDescriptionTargetsReadsOnePageInOrder(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionTargetsReadsOnePageInOrder(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionWaitersKeepTheirOwnDismissalRule", func(t *testing.T) { t.Helper(); checkPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t, newPostgresQueryStore)
+		}},
+		{"PhotoRotationResponses", func(t *testing.T) { t.Helper(); checkPhotoRotationResponses(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRotationResponses(t, newPostgresQueryStore) }},
+		{"PhotoRotationResetsOnRepublish", func(t *testing.T) { t.Helper(); checkPhotoRotationResetsOnRepublish(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRotationResetsOnRepublish(t, newPostgresQueryStore) }},
+		{"PhotoRotationResponseRequiresCurrentProposal", func(t *testing.T) { t.Helper(); checkPhotoRotationResponseRequiresCurrentProposal(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoRotationResponseRequiresCurrentProposal(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionExplicitRefreshKeepsTextDecisions", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExplicitRefreshKeepsTextDecisions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExplicitRefreshKeepsTextDecisions(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceDetectionCapacityRollback", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionCapacityRollback(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionCapacityRollback(t, newPostgresQueryStore) }},
+	}},
 	{name: "photo-import", postgres: "native operations", scope: "Grouped RAW/JPEG/sidecar ingestion, source replay, explicit pairing, browser continuation and import progress; excludes authored editing and XMP publication.", scenarios: []backendScenario{
 		{"PhotoImportRollback", nil, checkPhotoImportRollbackPostgres},
 		{"PhotoImportAcceptedSidecar", nil, checkPhotoImportAcceptedSidecarPostgres},
@@ -1025,7 +1096,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "People/face publication, best-shot/representative choices, hidden-session management, photo review and checkout remain unqualified. Photo query selection is covered by the search boundary."},
+	{name: "photo-editing", postgres: "unqualified", scope: "People curation, best-shot/representative choices, hidden-session management, photo review and checkout remain unqualified. Photo query selection is covered by the search boundary."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
