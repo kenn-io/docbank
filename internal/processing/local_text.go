@@ -65,9 +65,6 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 		if candidate == config.LocalTextProfile {
 			continue
 		}
-		if _, configured := setup.Service.profiles[candidate]; !configured {
-			continue
-		}
 		indexed, err := setup.indexedText(ctx, candidate)
 		if err != nil {
 			return LocalTextPlan{}, nil, err
@@ -76,9 +73,6 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			continue
 		}
 		trial, err := setup.Candidate(mode, candidate)
-		if err != nil && trial != nil {
-			trial.Stop()
-		}
 		if errors.Is(err, ErrProfileNotConfigured) {
 			if indexed && setup.Selected != config.LocalTextProfile {
 				effect = "Rebuild required: model or text format differs from Nomic"
