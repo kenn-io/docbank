@@ -74,11 +74,11 @@ settled reading positions retain their exact scroll offsets.
 
 ## Share the Go build cache across worktrees
 
-Make targets and CI compile Go with `-trimpath`, so binaries record
-module-relative source paths instead of absolute ones. Without it, Go caches
-every package separately for each checkout directory, and each git worktree
-grows the build cache by another full copy. With it, identical source in any
-checkout reuses the same cache entries.
+Make targets, CI, and the container image compile Go with `-trimpath`, so
+binaries record module-relative source paths instead of absolute ones. Without
+it, Go caches every package separately for each checkout directory, and each
+git worktree grows the build cache by another full copy. With it,
+identical source in any checkout reuses the same cache entries.
 
 - Run `make <target> GOFLAGS=-trimpath=false` to opt out for one command.
 - Plain `go` commands outside Make do not add the flag. Run
