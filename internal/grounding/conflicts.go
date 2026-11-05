@@ -55,7 +55,7 @@ func Compare(sources []Source) Comparison {
 				return unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r) || r == '\'' || r == '"'
 			})
 			complete := strings.HasSuffix(end, ".") || strings.HasSuffix(end, "!") || strings.HasSuffix(end, "?")
-			if !complete || utf8.RuneCountInString(quote) > 512 {
+			if !complete || strings.HasSuffix(end, "...") || strings.HasSuffix(end, "…") || utf8.RuneCountInString(quote) > 512 {
 				continue
 			}
 			figures := decodedFigures(quote)

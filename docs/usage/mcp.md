@@ -423,14 +423,14 @@ Headings, titles, and neighbouring paragraphs are outside the match, so sentence
 The tool reads each hit's retained Markdown or original plain text through a
 verified read. Each quote is a whole sentence from that source, located by the
 search excerpt. It skips truncated renditions, sources over 256 KiB, unreadable
-sources, and hits whose excerpt is absent from the source. A cancelled call fails
+sources, and hits whose excerpt is absent from or repeated in the source. A cancelled call fails
 rather than returning partial results.
 
 Every sentence touched by the excerpt is eligible, including sentences beside
 the query match. Line breaks join hard-wrapped text; blank lines and lines
 containing only a code fence end paragraphs and keep sentences separate.
 Sentences need a final `.`, `!`, or `?`, optionally followed by a closing quote or
-bracket, and must fit within 512 characters.
+bracket, and must fit within 512 characters. A trailing `...` or `…` marks an incomplete sentence.
 Name-only evidence is skipped. A passage stating different values for the same
 matching sentence drops that comparison. `compared: false` marks hits whose
 eligible figures matched no other hit, so open those sources.

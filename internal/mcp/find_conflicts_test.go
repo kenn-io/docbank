@@ -153,6 +153,45 @@ func TestFindConflictsReadsEmailRendition(t *testing.T) {
 	require.Equal(t, map[string]string{"15": "The cooling period is 15 days.", "30": "The cooling period is 30 days."}, quotes)
 }
 
+func TestFindConflictsSkipsRepeatedRenditionExcerpt(t *testing.T) {
+	f := newNativeExportFixture(t)
+	block := strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 30 days. " + strings.Repeat("Contact support for help with your account. ", 6)
+	body := "Premium plans.\n\n" + block + "\n\nStandard plans.\n\n" + block
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+body+"\r\n"))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "policy.eml", hash, size, "message/rfc822")
+	require.NoError(t, err)
+	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	spool, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	_, err = processing.EnsureEmailTarget(t.Context(), f.catalog, f.blobs, spool, store.EmailTarget{Version: version})
+	require.NoError(t, err)
+	member := f.addFile(t, "policy.txt", "The cooling period is 15 days.")
+	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "The cooling period is 15 days."}))
+	daemon, _, profile := newProcessingDocumentServer(t, f)
+	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+	})
+	require.NoError(t, err)
+	var repeatedExcerpt string
+	for _, hit := range search.report.Results {
+		if hit.NodeID == node.ID {
+			repeatedExcerpt = strings.Trim(hit.Excerpt, " …")
+		}
+	}
+	require.NotEmpty(t, repeatedExcerpt)
+	require.Greater(t, strings.Count(body, repeatedExcerpt), 1, repeatedExcerpt)
+	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}})
+	require.Equal(t, "NOT_COMPARABLE", out["status"])
+	require.Empty(t, out["conflicts"])
+	passages := conflictField[[]any](t, out, "passages")
+	require.Len(t, passages, 2)
+	for _, p := range passages {
+		require.Equal(t, false, schemaMap(t, p)["compared"])
+	}
+}
+
 func TestFindConflictsRenditionSource(t *testing.T) {
 	const sentence = "The cooling period is 30 days."
 	const versionID = "11111111-1111-4111-8111-111111111111"
