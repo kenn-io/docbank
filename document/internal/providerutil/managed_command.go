@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+
+	"go.kenn.io/kit/consolewindow"
 )
 
 // ManagedCommand gives a CommandContext the platform process scope used for
@@ -18,11 +20,13 @@ type ManagedCommand struct {
 	finished bool
 }
 
-// NewManagedCommand prepares a CommandContext for process-tree cleanup.
+// NewManagedCommand prepares a CommandContext for process-tree cleanup and
+// keeps the provider from opening a console window on Windows.
 func NewManagedCommand(command *exec.Cmd) (*ManagedCommand, error) {
 	if command == nil {
 		return nil, errors.New("managed command is required")
 	}
+	consolewindow.Hide(command)
 	tree, err := newManagedProcessTree(command)
 	if err != nil {
 		return nil, fmt.Errorf("prepare managed process tree: %w", err)
