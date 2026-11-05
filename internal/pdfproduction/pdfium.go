@@ -683,7 +683,7 @@ func renderPage(instance pdfium.Pdfium, ref requests.Page, page redaction.Page, 
 	if err != nil {
 		return Raster{}, fmt.Errorf("read PDF page dimensions: %w", err)
 	}
-	if math.Abs(size.Width-physicalPoints(page.Width)) > 0.001 || math.Abs(size.Height-physicalPoints(page.Height)) > 0.001 {
+	if !sourceDimensionMatches(size.Width, page.Width) || !sourceDimensionMatches(size.Height, page.Height) {
 		return Raster{}, errors.New("PDF page dimensions differ from declared frame")
 	}
 	rendered, err := instance.RenderPageInPixels(&requests.RenderPageInPixels{Page: ref, Width: w, Height: h, RenderForm: true})

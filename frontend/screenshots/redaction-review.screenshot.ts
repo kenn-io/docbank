@@ -1,3 +1,4 @@
+import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
 import { croppedReviewPDF } from "./redaction-review-fixture.js";
 import { expect, test, type Route, type Locator } from "@playwright/test";
 import { execFile } from "node:child_process";
@@ -8,7 +9,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { RedactionPreview } from "../src/generated/docbank.js";
-import type { PluginRegistry, ViewportPlugin } from "@embedpdf/svelte-pdf-viewer";
+import type {
+  PluginRegistry,
+  ViewportPlugin,
+  DocumentManagerPlugin,
+} from "@embedpdf/svelte-pdf-viewer";
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captures = process.env.DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR;
@@ -910,13 +915,51 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); t=z.read('redacted.txt'); assert b'SECRET' not in t; assert t.count(b'KEEP') == 4; assert t.count(b'[REDACTED]') == 4",
       cropFile,
     ]);
+    const checkReaderBoxes = async (target: Locator, fixture: (typeof geometry)[number]) => {
+      const observed = await target.locator("embedpdf-container").evaluate(async (host) => {
+        const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+          .registry;
+        return registry
+          .getPlugin<DocumentManagerPlugin>("document-manager")!
+          .provides()
+          .getActiveDocument()!
+          .pages.map((p) => {
+            const { media, crop } = p.boxes!;
+            return {
+              media: [media.left, media.bottom, media.right, media.top],
+              crop: [crop.left, crop.bottom, crop.right, crop.top],
+            };
+          });
+      });
+      // Same literals are observed through the server PDFium APIs in TestNativeSourceGeometry.
+      expect(observed).toEqual(
+        Array(4).fill({ media: fixture.observedMedia, crop: fixture.observedCrop }),
+      );
+      await writeFile(
+        path.join(captures!, `${fixture.name}-browser-boxes.json`),
+        JSON.stringify(observed),
+      );
+    };
+    await writeFile(path.join(scratch, "quantized.pdf"), croppedReviewPDF("quantized"));
+    await run("add", path.join(scratch, "quantized.pdf"), "--dest", "/", "--json");
+    await open("quantized.pdf");
+    const quantized = page.getByRole("dialog", { name: "Redact quantized.pdf", exact: true });
+    await originalPage(1, quantized);
+    await checkReaderBoxes(quantized, geometry[0]!);
+    await quantized.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(quantized).toBeHidden();
     // A four-decimal crop over 1,024 points exercises PDFium's float32 boxes
     // against the server's retained integer geometry, on every intrinsic rotation.
-    await writeFile(path.join(scratch, "fractional.pdf"), croppedReviewPDF(true));
+    await writeFile(path.join(scratch, "fractional.pdf"), croppedReviewPDF("fractional"));
     await run("add", path.join(scratch, "fractional.pdf"), "--dest", "/", "--json");
     await open("fractional.pdf");
     const fractional = page.getByRole("dialog", { name: "Redact fractional.pdf", exact: true });
     await originalPage(1, fractional);
+    await checkReaderBoxes(fractional, geometry[1]!);
+    await fractional.screenshot({
+      path: path.join(captures!, "redaction-fractional-crop.png"),
+      animations: "disabled",
+    });
     await setZoom("200", fractional);
     const fractionalLayer = fractional.locator('[data-review-page="1"]');
     const beforeScroll = await scrollPage(fractionalLayer, 200, 200, fractional);
