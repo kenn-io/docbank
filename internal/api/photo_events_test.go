@@ -59,51 +59,61 @@ func TestPhotoEventsReachLockedStream(t *testing.T) {
 
 func TestPhotoEventsStreamLimitAndShutdown(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	var bodies []io.ReadCloser
-	defer func() {
-		for _, body := range bodies {
-			_ = body.Close()
+	synctest.Test(t, func(t *testing.T) {
+		ts, s := newBubbleTestServer(t, nil)
+		var bodies []io.ReadCloser
+		defer func() {
+			for _, body := range bodies {
+				_ = body.Close()
+			}
+		}()
+		open := func(ctx context.Context) *http.Response {
+			t.Helper()
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
+			require.NoError(t, err)
+			response, err := ts.Client().Do(request)
+			require.NoError(t, err)
+			return response
 		}
-	}()
-	for range 128 {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
-		require.NoError(t, err)
-		response, err := ts.Client().Do(request)
-		require.NoError(t, err)
+		streams, stopStreams := context.WithCancel(t.Context())
+		defer stopStreams()
+		// Canceling a request disconnects it at once. Closing an unread body
+		// alone lets the client keep draining the connection for a while.
+		first, disconnect := context.WithCancel(streams)
+		defer disconnect()
+		for i := range 128 {
+			ctx := streams
+			if i == 0 {
+				ctx = first
+			}
+			response := open(ctx)
+			bodies = append(bodies, response.Body)
+			require.Equal(t, http.StatusOK, response.StatusCode)
+		}
+		response, body := get(t, ts, "/api/v1/photos/events", nil)
+		require.Equal(t, http.StatusTooManyRequests, response.StatusCode, body)
+		var problem api.Error
+		require.NoError(t, json.Unmarshal([]byte(body), &problem))
+		require.Equal(t, "photo_event_stream_limit", problem.Code)
+		// A disconnected client frees its slot once its handler returns.
+		disconnect()
+		require.NoError(t, bodies[0].Close())
+		bodies = bodies[1:]
+		synctest.Wait()
+		response = open(streams)
 		bodies = append(bodies, response.Body)
 		require.Equal(t, http.StatusOK, response.StatusCode)
-	}
-	response, body := get(t, ts, "/api/v1/photos/events", nil)
-	require.Equal(t, http.StatusTooManyRequests, response.StatusCode, body)
-	var problem api.Error
-	require.NoError(t, json.Unmarshal([]byte(body), &problem))
-	require.Equal(t, "photo_event_stream_limit", problem.Code)
-	// A disconnected client frees its slot.
-	require.NoError(t, bodies[0].Close())
-	bodies = bodies[1:]
-	require.Eventually(t, func() bool {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/events", nil)
-		require.NoError(t, err)
-		response, err := ts.Client().Do(request)
-		if err != nil {
-			return false
+		s.Server.Close()
+		// Shutdown must end every stream. A stream it misses would keep
+		// sending keepalives on fake time, so disconnect it to fail the read.
+		timer := time.AfterFunc(5*time.Second, stopStreams)
+		defer timer.Stop()
+		for _, body := range bodies {
+			remaining, err := io.ReadAll(body)
+			require.NoError(t, err)
+			require.Empty(t, remaining)
 		}
-		if response.StatusCode != http.StatusOK {
-			_ = response.Body.Close()
-			return false
-		}
-		bodies = append(bodies, response.Body)
-		return true
-	}, 5*time.Second, 50*time.Millisecond)
-	s.Server.Close()
-	for _, body := range bodies {
-		timer := time.AfterFunc(5*time.Second, func() { _ = body.Close() })
-		remaining, err := io.ReadAll(body)
-		timer.Stop()
-		require.NoError(t, err)
-		require.Empty(t, remaining)
-	}
+	})
 }
 
 func TestPhotoEventsStreamOutlivesRequestTimeout(t *testing.T) {

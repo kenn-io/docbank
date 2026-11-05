@@ -8,84 +8,74 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoImportRoutes(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Jobs = jobs.New(t.Context(), nil)
-		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			require.NoError(t, d.Jobs.Shutdown(ctx))
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
+		ts, _ := newBubbleTestServer(t, func(d *api.Deps) {
+			d.Jobs = jobs.New(t.Context(), nil)
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
+				defer cancel()
+				require.NoError(t, d.Jobs.Shutdown(ctx))
+			})
 		})
+		body, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
+		require.NoError(t, err)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(body))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := ts.Client().Do(request)
+		require.NoError(t, err)
+		defer func() { _ = response.Body.Close() }()
+		require.Equal(t, http.StatusAccepted, response.StatusCode)
+		var started api.StorageOperation
+		require.NoError(t, json.UnmarshalRead(response.Body, &started))
+		require.NotEmpty(t, started.ID)
+		assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
+		assert.Equal(t, "queued", started.State)
+
+		// The import runs as a supervisor job that first waits for the source
+		// files to settle. Advance fake time past that interval; Wait then
+		// returns once the job has finished or is durably blocked.
+		time.Sleep(ingest.DefaultPhotoImportSettleInterval)
+		synctest.Wait()
+		jobResponse, text := get(t, ts, "/api/v1/jobs/"+started.ID, nil)
+		require.Equal(t, http.StatusOK, jobResponse.StatusCode, text)
+		var latest api.StorageOperation
+		require.NoError(t, json.Unmarshal([]byte(text), &latest))
+		require.NotEmpty(t, latest.FinishedAt, "photo import did not finish: %+v", latest)
+		assert.Equal(t, "completed", latest.State)
+		assert.Equal(t, int64(1), latest.CompletedObjects)
+		receiptJSON, receiptErr := json.Marshal(latest.Receipt)
+		require.NoError(t, receiptErr)
+		var receipt store.PhotoImportReceipt
+		require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+		assert.Equal(t, int64(1), receipt.Added)
+
+		for _, test := range []struct{ source, message string }{
+			{"relative", "absolute daemon-host path"},
+			{filepath.Join(root, "missing"), "not an existing daemon-host folder"},
+			{filepath.Join(root, "capture.JPG"), "not an existing daemon-host folder"},
+		} {
+			response, text := do(t, ts, http.MethodPost, "/api/v1/photos/imports", nil,
+				api.PhotoImportStartRequest{SourceRoot: test.source, Destination: "/photos"})
+			assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, text)
+			assert.Contains(t, text, test.message)
+		}
 	})
-	body, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
-	require.NoError(t, err)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(body))
-	require.NoError(t, err)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := ts.Client().Do(request)
-	require.NoError(t, err)
-	defer func() { _ = response.Body.Close() }()
-	require.Equal(t, http.StatusAccepted, response.StatusCode)
-	var started api.StorageOperation
-	require.NoError(t, json.UnmarshalRead(response.Body, &started))
-	require.NotEmpty(t, started.ID)
-	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
-	assert.Equal(t, "queued", started.State)
-
-	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancelPoll()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	var latest api.StorageOperation
-	for {
-		pollRequest, requestErr := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
-		require.NoError(t, requestErr)
-		get, getErr := ts.Client().Do(pollRequest)
-		require.NoError(t, getErr, "last observed operation: %+v", latest)
-		var output api.StorageOperation
-		decodeErr := json.UnmarshalRead(get.Body, &output)
-		_ = get.Body.Close()
-		require.NoError(t, decodeErr, "last observed operation: %+v", latest)
-		latest = output
-		if latest.FinishedAt != "" {
-			break
-		}
-		select {
-		case <-pollCtx.Done():
-			require.FailNow(t, "photo import did not finish", "last observed operation: %+v", latest)
-		case <-ticker.C:
-		}
-	}
-	assert.Equal(t, "completed", latest.State)
-	assert.Equal(t, int64(1), latest.CompletedObjects)
-	receiptJSON, receiptErr := json.Marshal(latest.Receipt)
-	require.NoError(t, receiptErr)
-	var receipt store.PhotoImportReceipt
-	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
-	assert.Equal(t, int64(1), receipt.Added)
-
-	for _, test := range []struct{ source, message string }{
-		{"relative", "absolute daemon-host path"},
-		{filepath.Join(root, "missing"), "not an existing daemon-host folder"},
-		{filepath.Join(root, "capture.JPG"), "not an existing daemon-host folder"},
-	} {
-		response, text := do(t, ts, http.MethodPost, "/api/v1/photos/imports", nil,
-			api.PhotoImportStartRequest{SourceRoot: test.source, Destination: "/photos"})
-		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, text)
-		assert.Contains(t, text, test.message)
-	}
 }
 
 func TestPhotoImportCancelThroughJobs(t *testing.T) {

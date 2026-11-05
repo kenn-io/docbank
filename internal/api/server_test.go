@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -56,6 +57,43 @@ const testWebURL = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43
 // or wrong-key path set X-Api-Key explicitly (even to "") to opt out.
 func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
 	tb.Helper()
+	s, key := newTestAPIServer(tb, mutate)
+	ts := httptest.NewServer(s.Server.Handler())
+	tb.Cleanup(ts.Close)
+	ts.Client().Transport = &apiKeyTransport{key: key, next: ts.Client().Transport}
+	return ts, s
+}
+
+// newBubbleTestServer builds the daemon newTestServer builds, but serves it
+// over httptest's in-memory network. Call it inside synctest.Test: the
+// store, server, and network then belong to the bubble, so the server's
+// timers run on fake time and synctest.Wait returns once its handlers are
+// idle. A real loopback listener would block in network I/O and keep the
+// bubble's clock from advancing. The in-memory network has no loopback
+// address, so requests reach the daemon as a loopback client on 127.0.0.1,
+// and the client sends the test API key, as newTestServer's client does.
+func newBubbleTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
+	t.Helper()
+	s, key := newTestAPIServer(t, mutate)
+	handler := s.Server.Handler()
+	ts := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = "127.0.0.1:1234"
+		handler.ServeHTTP(w, r)
+	}))
+	client := ts.Client()
+	client.Transport = &apiKeyTransport{key: key, next: client.Transport}
+	// The in-memory network accepts any address; use the loopback host the
+	// daemon's Host check allows.
+	ts.URL = "http://127.0.0.1"
+	return ts, s
+}
+
+// newTestAPIServer builds the same daemon API as newTestServer without a
+// network listener, and returns its API key. A test that builds it inside a
+// synctest bubble owns every wait the server makes, so time in the bubble
+// advances once the handlers block; send requests with serveLoopback.
+func newTestAPIServer(tb testing.TB, mutate func(*api.Deps)) (*testStore, string) {
+	tb.Helper()
 	dir, err := filepath.EvalSymlinks(tb.TempDir())
 	require.NoError(tb, err)
 	dbPath := filepath.Join(dir, "docbank.db")
@@ -77,12 +115,22 @@ func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *te
 	}
 	apiServer := api.NewServer(d)
 	tb.Cleanup(apiServer.Close)
-	ts := httptest.NewServer(apiServer.Handler())
-	tb.Cleanup(ts.Close)
-	ts.Client().Transport = &apiKeyTransport{key: d.Cfg.Server.APIKey, next: ts.Client().Transport}
-	return ts, &testStore{
+	return &testStore{
 		Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath, Server: apiServer,
+	}, d.Cfg.Server.APIKey
+}
+
+// serveLoopback sends one request from a loopback client straight to
+// handler on the calling goroutine and returns the recorded response.
+func serveLoopback(ctx context.Context, handler http.Handler, method, path string, header map[string]string, body io.Reader) *httptest.ResponseRecorder {
+	request := httptest.NewRequestWithContext(ctx, method, "http://127.0.0.1"+path, body)
+	request.RemoteAddr = "127.0.0.1:1234"
+	for key, value := range header {
+		request.Header.Set(key, value)
 	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 // apiKeyTransport injects key as X-Api-Key on any request that doesn't
@@ -103,6 +151,14 @@ func (a *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		next = http.DefaultTransport
 	}
 	return next.RoundTrip(req)
+}
+
+// CloseIdleConnections lets httptest.Server.Close release the pooled
+// connections of the transport this one wraps.
+func (a *apiKeyTransport) CloseIdleConnections() {
+	if closer, ok := a.next.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
 }
 
 // testHash returns a sha256 hex digest of seed. The store only validates

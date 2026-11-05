@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -200,75 +201,81 @@ func TestPhotoCheckoutOperationRoutesStartFailure(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T) {
-	t.Parallel()
-	supervisor := jobs.New(t.Context(), nil)
-	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-	var service checkout.Service
-	ts, catalog := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor; service = api.NewPhotoCheckoutService(*d) })
-	hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("photo"))
-	require.NoError(t, err)
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	second, err := catalog.CreateFile(t.Context(), catalog.RootID(), "second.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	secondAsset, err := catalog.PhotoAssetForNode(t.Context(), second.ID)
-	require.NoError(t, err)
-	c, _, _, root, err := service.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID, secondAsset.ID}}, t.TempDir(), 100)
-	require.NoError(t, err)
-	require.NoError(t, service.Run(t.Context(), c, root))
-	require.NoError(t, root.Close())
-	t.Run("missing destination", func(t *testing.T) {
-		moved := c.Destination + "-moved"
-		require.NoError(t, os.Rename(c.Destination, moved))
-		defer func() { require.NoError(t, os.Rename(moved, c.Destination)) }()
+// Checkout preparation and scans share a process-wide semaphore. A bubbled
+// goroutine waiting on it must not be woken by a parallel test outside the
+// bubble, which the runtime rejects as a fatal error.
+func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T) { //nolint:paralleltest // shares checkout's process-wide semaphore from a synctest bubble
+	synctest.Test(t, func(t *testing.T) {
+		supervisor := jobs.New(t.Context(), nil)
+		defer func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) }()
+		var service checkout.Service
+		ts, catalog := newBubbleTestServer(t, func(d *api.Deps) { d.Jobs = supervisor; service = api.NewPhotoCheckoutService(*d) })
+		hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("photo"))
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		second, err := catalog.CreateFile(t.Context(), catalog.RootID(), "second.jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		secondAsset, err := catalog.PhotoAssetForNode(t.Context(), second.ID)
+		require.NoError(t, err)
+		c, _, _, root, err := service.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID, secondAsset.ID}}, t.TempDir(), 100)
+		require.NoError(t, err)
+		require.NoError(t, service.Run(t.Context(), c, root))
+		require.NoError(t, root.Close())
+		func() { // A scan of a moved destination is rejected before any job starts.
+			moved := c.Destination + "-moved"
+			require.NoError(t, os.Rename(c.Destination, moved))
+			defer func() { require.NoError(t, os.Rename(moved, c.Destination)) }()
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/scan", nil, nil)
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Contains(t, body, "invalid_photo_checkout")
+		}()
 		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/scan", nil, nil)
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-		require.Contains(t, body, "invalid_photo_checkout")
-	})
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/scan", nil, nil)
-	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
-	var inspected api.PhotoCheckoutCreateResult
-	require.NoError(t, json.Unmarshal([]byte(body), &inspected))
-	require.Eventually(t, func() bool {
+		require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+		var inspected api.PhotoCheckoutCreateResult
+		require.NoError(t, json.Unmarshal([]byte(body), &inspected))
+		// The scan runs as a supervisor job; Wait returns once it has finished
+		// or is durably blocked.
+		synctest.Wait()
 		op, err := catalog.StorageOperation(t.Context(), inspected.Operation.ID)
-		return err == nil && op.State == store.StorageOperationCompleted
-	}, 30*time.Second, 20*time.Millisecond)
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, `"processed_bytes":10`)
-	require.Contains(t, body, `"checkout_results":{"clean":2}`)
-	var inspectedJobs api.JobList
-	require.NoError(t, json.Unmarshal([]byte(body), &inspectedJobs))
-	for _, job := range inspectedJobs.Items {
-		require.Equal(t, "photo_checkout", job.Lane)
-	}
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+inspected.Operation.ID, nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, `"checkout_results":{"clean":2}`)
-	require.NotContains(t, body, `"entries":[`)
-
-	_, err = catalog.SetLaneControl(t.Context(), store.LaneControl{Lane: "photo_checkout", Paused: true, Concurrency: 1}, 1)
-	require.NoError(t, err)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/commit", nil, nil)
-	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
-	var committed api.PhotoCheckoutCreateResult
-	require.NoError(t, json.Unmarshal([]byte(body), &committed))
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var list api.JobList
-	require.NoError(t, json.Unmarshal([]byte(body), &list))
-	found := false
-	for _, job := range list.Items {
-		if job.OperationID == committed.Operation.ID {
-			found = true
+		require.NoError(t, err)
+		require.Equal(t, store.StorageOperationCompleted, op.State)
+		response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.Contains(t, body, `"processed_bytes":10`)
+		require.Contains(t, body, `"checkout_results":{"clean":2}`)
+		var inspectedJobs api.JobList
+		require.NoError(t, json.Unmarshal([]byte(body), &inspectedJobs))
+		for _, job := range inspectedJobs.Items {
 			require.Equal(t, "photo_checkout", job.Lane)
-			require.True(t, job.Controllable)
-			require.True(t, job.Paused)
-			require.Equal(t, "queued", job.Status)
 		}
-	}
-	require.True(t, found, "commit operation must appear in Jobs")
+		response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+inspected.Operation.ID, nil, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.Contains(t, body, `"checkout_results":{"clean":2}`)
+		require.NotContains(t, body, `"entries":[`)
+
+		_, err = catalog.SetLaneControl(t.Context(), store.LaneControl{Lane: "photo_checkout", Paused: true, Concurrency: 1}, 1)
+		require.NoError(t, err)
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/commit", nil, nil)
+		require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+		var committed api.PhotoCheckoutCreateResult
+		require.NoError(t, json.Unmarshal([]byte(body), &committed))
+		response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var list api.JobList
+		require.NoError(t, json.Unmarshal([]byte(body), &list))
+		found := false
+		for _, job := range list.Items {
+			if job.OperationID == committed.Operation.ID {
+				found = true
+				require.Equal(t, "photo_checkout", job.Lane)
+				require.True(t, job.Controllable)
+				require.True(t, job.Paused)
+				require.Equal(t, "queued", job.Status)
+			}
+		}
+		require.True(t, found, "commit operation must appear in Jobs")
+	})
 }
