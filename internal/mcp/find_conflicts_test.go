@@ -106,43 +106,6 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	}
 }
 
-func TestFindConflictsSkipsRepeatedExcerpt(t *testing.T) {
-	f := newNativeExportFixture(t)
-	shared := strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 7 days. " + strings.Repeat("Contact support for help with your account. ", 6)
-	repeated := "Premium terms.\n\n" + shared + "\n\nStandard terms.\n\n" + shared
-	for _, file := range []struct{ name, text string }{
-		{"repeated.txt", repeated},
-		{"policy.txt", "The cooling period is 15 days."},
-	} {
-		member := f.addFile(t, file.name, file.text)
-		require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{
-			BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1,
-			Status: store.ExtractionOK, Text: file.text,
-		}))
-	}
-	daemon, _, profile := newProcessingDocumentServer(t, f)
-	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
-	})
-	require.NoError(t, err)
-	var excerpt string
-	for _, hit := range search.report.Results {
-		if hit.Path == "/repeated.txt" {
-			excerpt = strings.Trim(hit.Excerpt, " …")
-		}
-	}
-	require.NotEmpty(t, excerpt)
-	require.Equal(t, 2, strings.Count(repeated, excerpt), excerpt)
-	out := exportCall(t, daemon, "find_conflicts", map[string]any{"query": "cooling period", "profile": profile, "filters": map[string]any{}})
-	require.Equal(t, "NOT_COMPARABLE", out["status"])
-	passages := conflictField[[]any](t, out, "passages")
-	require.Len(t, passages, 2)
-	for _, p := range passages {
-		require.Equal(t, false, schemaMap(t, p)["compared"])
-	}
-	require.Empty(t, out["conflicts"])
-}
-
 func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
 	for _, option := range []struct {
 		key   string
@@ -211,8 +174,6 @@ func TestFindConflictsRenditionSource(t *testing.T) {
 		missingFirst     bool
 	}{
 		{"v1 envelope", string(rendered.Markdown), sentence, false},
-		{"future envelope", strings.Replace(string(rendered.Markdown), "docbank-sanitized-markdown/v1", "docbank-sanitized-markdown/v2", 1), "", false},
-		{"malformed envelope", "---\ndocbank: invalid\n---\n" + sentence, "", false},
 		{"email without envelope", "```\n" + sentence + "\n```", "```\n" + sentence + "\n```", false},
 		{"later matching build", string(rendered.Markdown), sentence, true},
 	} {

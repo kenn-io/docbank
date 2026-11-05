@@ -153,9 +153,6 @@ func comparisonValue(figure normalizedFigure, after string) (kind, unit, value, 
 	if trimmed == after {
 		return "", "", "", ""
 	}
-	if strings.HasPrefix(trimmed, "%") {
-		return "percent", "%", value, after[:len(after)-len(trimmed)+1]
-	}
 	word := strings.TrimLeftFunc(trimmed, unicode.IsLetter)
 	suffix = after[:len(after)-len(word)]
 	unit = strings.ToLower(trimmed[:len(trimmed)-len(word)])

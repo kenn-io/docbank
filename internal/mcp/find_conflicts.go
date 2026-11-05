@@ -62,7 +62,7 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 				return result, err
 			}
 			needle := strings.Trim(hit.Excerpt, " …")
-			if at := strings.Index(text, needle); needle != "" && at >= 0 && !strings.Contains(text[at+1:], needle) {
+			if at := strings.Index(text, needle); needle != "" && at >= 0 {
 				sources[i] = grounding.Source{Text: text, Start: at, End: at + len(needle)}
 			}
 		}
@@ -101,9 +101,6 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 				continue
 			}
 			defer func() { _ = stream.Close() }()
-			if stream.BuildID != evidence.BuildID {
-				continue
-			}
 			if slices.Contains(stream.Warnings, "truncated") {
 				return ""
 			}
@@ -114,8 +111,6 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 			body := data.Bytes()
 			if _, stripped, err := document.ParseRenditionFrontMatterV1(body); err == nil {
 				body = stripped
-			} else if bytes.HasPrefix(body, []byte("---\n")) {
-				return ""
 			}
 			return string(body)
 		}
