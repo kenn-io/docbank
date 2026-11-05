@@ -558,6 +558,13 @@ GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
     copied_objects, copied_bytes, cancel_requested, error, receipt_json,
     updated_at, finished_at, retention_until)
     ON documents.storage_operations TO docbank_runtime;
+GRANT INSERT ON documents.photo_description_explicit_waiters,
+  documents.photo_face_scans TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(producer_fingerprint, caption, tags_json, visible_text,
+  rotation, dismissed, awaiting, caption_resolved, resolved_tags_json)
+  ON documents.photo_suggestions TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(x, y, width, height, roll, facing, eyes_open, smile,
+  detector_fingerprint, revision) ON documents.photo_faces TO docbank_runtime;
 GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
 GRANT INSERT, UPDATE(generation_id, published_at)
     ON documents.visual_preview_heads TO docbank_runtime;
@@ -1104,12 +1111,48 @@ The existing receipt lookup expressions keep their engine-specific indexes.
 
 The `photo-edit` contracts exercise native writes, stale plans, both conflict
 choices, generated sidecars, undo, audit history, queue invalidation and rollback.
-Retained face and description records also participate in metadata preparation;
-that read coverage does not qualify their producers. Query-based selections,
+Face and description records also participate in metadata preparation; their
+native processing lifecycle is covered by the `photo-analysis` suite below. Query-based selections,
 `SkipUnavailable`, best-shot/representative choices, hidden-session management,
 photo review and checkout, and public PostgreSQL vault opening remain unqualified.
 The processing worker's XML encoding and filesystem publication still run through
 the SQLite vault; this qualification covers their Store calls.
+
+#### Photo descriptions and face detection
+
+Description and face-detection jobs use the shared rendition queue on both
+backends. Discovery pages return ready grid previews in version order and keep
+active work separate by task: describing a photo does not block face detection.
+Consent, preview identity, claim expiry and the current display photo are checked
+again before publication. An explicit request can replace a dismissed producer;
+automatic work preserves the dismissal.
+
+Publication commits suggestions or face observations, completion, waiter state
+and change events together. A failed write leaves the claim available to retry
+without partial results. Face reconciliation keeps matching IDs and preserves
+manual faces, person assignments, candidates and references retained for undo.
+Unknown roll or expression measurements remain distinct from observed zero or
+false. A new detector with identical observations updates provenance without
+announcing a content change.
+
+Accepting caption, tag or rotation suggestions uses the existing authored-edit
+transaction, including revisions, undo receipts and export work. Rejecting a
+stale response or failing its final suggestion update leaves authored values and
+pending suggestions unchanged. PostgreSQL keeps the relational suggestions;
+SQLite still owns its released full-text triggers. PostgreSQL ranked search
+remains separate.
+
+The `photo-analysis` contracts run native description jobs, face reconciliation,
+suggestion responses and target discovery. The SQLite plan check proves an
+ordered index seek. The PostgreSQL check disables sequential scans to prove the
+ready-preview index is usable; planner choice on a populated library remains
+unverified. Retained SQLite fixtures cover
+candidate/undo protection and regeneration after restore; they do not qualify
+PostgreSQL people curation or restore. The two worker tables (explicit waiters
+and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
+sequence; a future metadata importer must advance it past imported IDs.
+Provider network execution, quality scoring, hidden-session management, people
+curation and public PostgreSQL vault opening remain unqualified.
 
 #### Recoverable deletion
 

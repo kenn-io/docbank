@@ -139,6 +139,11 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(generation_id,published_at) ON "+schema+".visual_preview_heads TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".photo_description_explicit_waiters,"+schema+".photo_face_scans TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(producer_fingerprint,caption,tags_json,visible_text,rotation,dismissed,awaiting,caption_resolved,resolved_tags_json) ON "+schema+".photo_suggestions TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(x,y,width,height,roll,facing,eyes_open,smile,detector_fingerprint,revision) ON "+schema+".photo_faces TO "+quotedRole)
+	require.NoError(t, err)
+
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	require.NoError(t, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

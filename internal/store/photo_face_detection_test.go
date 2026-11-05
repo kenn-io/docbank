@@ -106,34 +106,46 @@ func TestPhotoFaceDetectionReconciliation(t *testing.T) {
 	require.Empty(t, read())
 }
 
-func TestPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t *testing.T) {
+func checkPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t *testing.T, postgres bool) {
+	t.Helper()
 	t.Parallel()
-	for _, action := range []string{"name", "candidate"} {
-		t.Run(map[string]string{"name": "undone name receipt", "candidate": "candidate"}[action], func(t *testing.T) {
+	for _, action := range []string{"manual", "named", "undone name", "candidate"} {
+		t.Run(action, func(t *testing.T) {
 			fixture := newFaceDetectionTestFixture(t)
 			s, version := fixture.s, fixture.version
 			scan, read := fixture.scan, fixture.read
 			ctx := t.Context()
 			observation := document.FaceObservation{Box: document.FaceBox{Width: .2, Height: .2}, Facing: new(.9)}
-			require.NoError(t, scan("b1", observation))
+			if action == "manual" {
+				_, _, err := s.CreatePhotoFace(ctx, version, uuid.New().String(), observation.Box, "")
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, scan("b1", observation))
+			}
 			face := read()[0]
 			person, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
 			var receipt PhotoFaceDecisionReceipt
 			switch action {
+			case "manual":
+				// The manually placed box has no detector or person assignment.
 			case "candidate":
 				buildFaceMatchCandidateForTest(t, s, version, face.FaceID, 0, 0)
 			default:
-				decision := action
+				decision := "name"
 				request := PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: decision}
 				request.PersonID = person.PersonID
 				receipt, err = s.DecidePhotoFace(ctx, version, request)
 				require.NoError(t, err)
 			}
-			if action == "name" {
+			if action == "undone name" {
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
 				require.Empty(t, read()[0].AssertionID)
+			}
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
+				fixture.s = s
 			}
 			before := read()
 			_, checkpoint, err := s.VaultChanges(ctx, "", 500)
@@ -147,14 +159,15 @@ func TestPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t *testing.T) {
 			changes, _, err := s.VaultChanges(ctx, checkpoint, 500)
 			require.NoError(t, err)
 			require.Empty(t, changes)
-			require.NoError(t, s.ValidateMetadata(ctx))
+			checkRetentionMetadata(t, s)
 		})
 	}
 }
 
-func TestPhotoFaceDetectionCapacityRollback(t *testing.T) {
+func checkPhotoFaceDetectionCapacityRollback(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	version := node.CurrentVersionID
@@ -169,7 +182,7 @@ func TestPhotoFaceDetectionCapacityRollback(t *testing.T) {
 	}))
 	scan := func() error {
 		return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			return publishFaceDetectionTx(ctx, tx, version, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: automatic.Box, Facing: new(.4)}, {Box: document.FaceBox{X: .8, Y: .8, Width: .1, Height: .1}}}}, time.Now())
+			return s.publishFaceDetectionTx(ctx, tx, version, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: automatic.Box, Facing: new(.4)}, {Box: document.FaceBox{X: .8, Y: .8, Width: .1, Height: .1}}}}, time.Now())
 		})
 	}
 	require.ErrorIs(t, scan(), ErrPhotoFaceLimit)
@@ -215,18 +228,19 @@ func TestPhotoFaceDetectionReleasedFaces(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceDetectionStableOverlap(t *testing.T) {
+func checkPhotoFaceDetectionStableOverlap(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, shift := range []float64{.15, .16} {
 		t.Run(fmt.Sprint(shift), func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 			original := PhotoFace{FaceID: "10000000-0000-4000-8000-000000000001", ContentVersionID: node.CurrentVersionID, Box: document.FaceBox{Width: .2, Height: .2}, Revision: 1, CreatedAt: nowRFC3339(), DetectorFingerprint: fakeHash("b1")}
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return insertPhotoFaceTx(ctx, tx, original) }))
 			observation := document.FaceObservation{Box: document.FaceBox{X: shift, Width: .2, Height: .2}, Facing: new(.3)}
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b2"), document.FaceDetection{Faces: []document.FaceObservation{observation}}, time.Now())
+				return s.publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b2"), document.FaceDetection{Faces: []document.FaceObservation{observation}}, time.Now())
 			}))
 			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
@@ -238,7 +252,7 @@ func TestPhotoFaceDetectionStableOverlap(t *testing.T) {
 			}
 		})
 	}
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	ids := []string{"10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"}
@@ -249,7 +263,7 @@ func TestPhotoFaceDetectionStableOverlap(t *testing.T) {
 				return err
 			}
 		}
-		return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b2"), document.FaceDetection{Faces: []document.FaceObservation{{Box: box, Facing: new(.3)}, {Box: box, Facing: new(.7)}}}, time.Now())
+		return s.publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b2"), document.FaceDetection{Faces: []document.FaceObservation{{Box: box, Facing: new(.3)}, {Box: box, Facing: new(.7)}}}, time.Now())
 	}))
 	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
@@ -291,7 +305,7 @@ func TestPhotoFaceDetectionLooseManualBox(t *testing.T) {
 				observations[i].Box = box
 			}
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{Faces: observations}, time.Now())
+				return s.publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{Faces: observations}, time.Now())
 			}))
 			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
@@ -323,7 +337,7 @@ func newFaceDetectionTestFixture(t *testing.T) *faceDetectionTestFixture {
 
 func (f *faceDetectionTestFixture) scan(detector string, observations ...document.FaceObservation) error {
 	return f.s.withStorageTx(f.t.Context(), func(tx *sql.Tx) error {
-		return publishFaceDetectionTx(f.t.Context(), tx, f.version, fakeHash(detector), document.FaceDetection{Faces: observations}, time.Now())
+		return f.s.publishFaceDetectionTx(f.t.Context(), tx, f.version, fakeHash(detector), document.FaceDetection{Faces: observations}, time.Now())
 	})
 }
 

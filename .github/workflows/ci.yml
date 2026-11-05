@@ -22,7 +22,7 @@ env:
 jobs:
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -55,7 +55,7 @@ jobs:
     needs: changes
     if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 11
     strategy:
       fail-fast: false
@@ -111,7 +111,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'docs')) }}
     name: Public documentation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 16
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
@@ -136,7 +136,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "26.12.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -220,7 +220,7 @@ jobs:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
     name: Web application
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 12
     steps:
       - name: Check out repository
@@ -231,7 +231,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "26.12.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -251,7 +251,7 @@ jobs:
 
   released-schemas:
     name: Released storage schemas
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check out full repository history
@@ -269,7 +269,7 @@ jobs:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
     name: Browser reports and original exports
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -291,7 +291,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "26.12.1"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -346,7 +346,7 @@ jobs:
     needs: changes
     if: *go-changed
     name: Linux tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 38
     steps:
       - name: Check out repository
@@ -450,7 +450,7 @@ jobs:
     needs: changes
     if: *go-changed
     name: Pure-Go SQLite
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 36
     env:
       CGO_ENABLED: "0"
@@ -496,7 +496,7 @@ jobs:
     if: *go-changed
     # Exercises the kqueue watch backend and other darwin-only code paths.
     name: macOS tests
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -539,7 +539,7 @@ jobs:
     needs: changes
     if: *go-changed
     name: golangci-lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 23
     steps:
       - name: Check out repository

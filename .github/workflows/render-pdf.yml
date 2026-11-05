@@ -66,7 +66,7 @@ jobs:
 
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -102,7 +102,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 26.12.1
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
@@ -143,7 +143,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 26.12.1
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
@@ -256,7 +256,7 @@ jobs:
           go test -tags fts5 -v ./document/pagerender/ ./internal/processing/ -run '^(TestRealRuntimeInspectAndRenderPDFAndPNG|TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs|TestRealPageAPIBackupRestoreAndGC)$' -count=1
           go test -tags fts5 -v -p 1 \
             ./internal/production/ ./internal/pdfproduction/ ./internal/processing/ \
-            ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedaction|TestNativeRedactionRender|TestNumberedRedaction|TestNumberedDownload)' -count=1
+            ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestNativeSource|TestNativeGeometryPipeline|TestInspectNativeTextFromInspection|TestRedaction|TestNativeRedactionRender|TestNumberedRedaction|TestNumberedDownload)' -count=1
           if ! go test -tags fts5 -json ./cmd/docbank/ -run '^(TestNativePDF(Preparation|Redaction|RedactionRecovery)CLI|TestNumberedNativePDFCLI|TestNumberedRecipientPackageCLI)$' -count=1 > /tmp/native-redaction-proof.jsonl; then
             cat /tmp/native-redaction-proof.jsonl
             exit 1

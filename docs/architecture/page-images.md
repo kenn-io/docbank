@@ -17,6 +17,23 @@ right and y down. Finite PDF coordinates are rounded half away from zero.
 Invalid crops, non-default UserUnit, and unsupported precision fail. Page
 dimensions are never guessed from a filename or a default paper size.
 
+Native redaction admission compares page boxes at PDFium's binary32 precision.
+For each stored point/10,000 coordinate `q`, it computes
+`p = round(float32(q / 10000) * 10000)`, with ties away from zero. It requires
+`abs(p - q) <= 1` and the observed coordinate to round to exactly `p`. This is
+an exact projection check, not a tolerance for any neighboring coordinate.
+The original frame, its digest and its mask transform remain unchanged.
+Coordinates whose projection moves farther are refused, even on a small crop.
+
+Source widths and heights are rounded forward from points into the frame's
+inch/10,000 units. This preserves dimensions such as a 168pt crop that becomes
+23333 units, rather than rejecting it after converting that rounded value back
+to points. Saved and freshly written PDFs retain their separate output checks.
+Previously admitted boxes stay admitted: the nearest binary32 value to
+`q / 10000` is at least as close as the previously accepted engine value, so
+both quantize to `q`. The former .001pt dimension tolerance lies inside the
+.0036pt half-unit boundary of forward rounding.
+
 Still PNGs need one CRC-valid, metre-based pHYs chunk before image data, with
 equal nonzero horizontal and vertical density. Animation, EXIF orientation,
 missing density, and unequal density are unsupported. PNG rendering retains the
@@ -359,7 +376,9 @@ reading and review. Original downloads use the latest observed node revision.
 Metadata changes retry unfinished downloads without replacing verified bytes.
 Original pixels are an unchecked browser rendering. Page
 count, boxes, intrinsic rotation and dimensions must match preparation before
-marking is enabled. Crop-relative rectangles are transformed through the
+marking is enabled. Box matching uses the same bounded binary32 projection as
+native admission. The browser and server use different pinned PDFium builds;
+a disagreement disables marking rather than substituting browser geometry. Crop-relative rectangles are transformed through the
 preparation's rational affine transform; all four corners are rounded outward
 into physical mask coordinates. Coverage and expansion overlays never enter the
 library's pending-redaction list. Docbank owns committed masks and never invokes

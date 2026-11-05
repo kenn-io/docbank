@@ -1,5 +1,8 @@
+import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
 // Independent PDF authoring keeps crop/rotation expectations literal in the browser test.
-export function croppedReviewPDF(fractional = false): Buffer {
+export function croppedReviewPDF(kind: "control" | "fractional" | "quantized" = "control"): Buffer {
+  const fractional = kind === "fractional";
+  const fixture = kind === "control" ? undefined : geometry[fractional ? 1 : 0]!;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "",
@@ -10,10 +13,10 @@ export function croppedReviewPDF(fractional = false): Buffer {
     const id = objects.length + 1;
     kids.push(id);
     const stream = fractional
-      ? "BT /F1 12 Tf 72.5511 781.1234 Td (SECRET) Tj 72 0 Td (KEEP) Tj ET\n"
+      ? "BT /F1 12 Tf 72.5512 781.1234 Td (SECRET) Tj 72 0 Td (KEEP) Tj ET\n"
       : "BT /F1 12 Tf 48 72 Td (SECRET) Tj 72 0 Td (KEEP) Tj ET\n";
-    const boxes = fractional
-      ? "/MediaBox [0 0 1296 1008] /CropBox [38.5511 25.1234 1190.5511 817.1234]"
+    const boxes = fixture
+      ? `/MediaBox [${fixture.media.join(" ")}] /CropBox [${fixture.crop.join(" ")}]`
       : "/MediaBox [0 0 216 144] /CropBox [24 36 168 108]";
     // The fractional fixture also has an annotation outside the crop. The
     // server still requires a whole-page mask, even though the reader shows no ink.
