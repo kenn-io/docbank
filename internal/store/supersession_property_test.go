@@ -22,11 +22,11 @@ func TestSupersessionOmittedNoteAfterSuccessorTrashRestoreProperty(t *testing.T)
 		sequence++
 		noteLength := hegel.Draw(ht, hegel.Integers(1, maxSupersessionNote))
 		note := strings.Repeat("n", noteLength)
-		old, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("old-%d.txt", iteration), fakeHash(fmt.Sprintf("old-%d", iteration)), 1, "text/plain")
+		old, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("old-%d.txt", iteration), fakeHash(fmt.Sprintf("%x", 2*iteration)), 1, "text/plain")
 		if err != nil {
 			ht.Fatalf("create predecessor: %v", err)
 		}
-		next, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("next-%d.txt", iteration), fakeHash(fmt.Sprintf("next-%d", iteration)), 1, "text/plain")
+		next, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("next-%d.txt", iteration), fakeHash(fmt.Sprintf("%x", 2*iteration+1)), 1, "text/plain")
 		if err != nil {
 			ht.Fatalf("create successor: %v", err)
 		}
