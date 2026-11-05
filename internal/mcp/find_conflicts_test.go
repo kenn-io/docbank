@@ -32,6 +32,7 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 		{"cooling period 2025.txt", strings.Repeat("General policy information applies to all accounts. ", 6) + "The cooling period is 7 days. Contact support for help. General terms apply to all accounts."},
 		{"policy-2026.txt", "The cooling period is 15 days."},
 		{"cooling period notes.txt", ""},
+		{"premium-policy.txt", "The premium cooling period is 30 days."},
 	} {
 		text := file.sentence
 		member := f.addFile(t, file.name, text)
@@ -70,11 +71,11 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 			out := exportCall(t, daemon, "find_conflicts", args)
 			require.Equal(t, "CONFLICTING", out["status"])
 			passages := out["passages"].([]any)
-			require.Len(t, passages, 3)
+			require.Len(t, passages, 4)
 			for _, entry := range passages {
 				p := schemaMap(t, entry)
 				path := p["path"].(string)
-				require.Equal(t, path != "/cooling period notes.txt", p["compared"])
+				require.Equal(t, path == "/cooling period 2025.txt" || path == "/policy-2026.txt", p["compared"])
 				require.NotEmpty(t, p["evidence_ids"])
 				for _, doc := range docs {
 					if doc.Path == path {

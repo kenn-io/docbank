@@ -80,7 +80,6 @@ func Compare(sources []Source) Comparison {
 			if slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Value != figures[0].Value }) {
 				continue
 			}
-			out.Compared[i] = true
 			if _, ok := groups[k]; !ok {
 				order = append(order, k)
 			}
@@ -91,6 +90,9 @@ func Compare(sources []Source) Comparison {
 		figures := groups[k]
 		if !slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Passage != figures[0].Passage }) {
 			continue
+		}
+		for _, figure := range figures {
+			out.Compared[figure.Passage-1] = true
 		}
 		out.Status = "NO_CONFLICT"
 		if slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Value != figures[0].Value }) {
@@ -150,6 +152,9 @@ func comparisonValue(figure normalizedFigure, after string) (kind, unit, value, 
 	trimmed := strings.TrimLeft(after, " \t")
 	if trimmed == after {
 		return "", "", "", ""
+	}
+	if strings.HasPrefix(trimmed, "%") {
+		return "percent", "%", value, after[:len(after)-len(trimmed)+1]
 	}
 	word := strings.TrimLeftFunc(trimmed, unicode.IsLetter)
 	suffix = after[:len(after)-len(word)]

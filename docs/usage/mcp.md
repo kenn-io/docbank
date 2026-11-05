@@ -432,8 +432,8 @@ containing only a code fence end paragraphs and keep sentences separate.
 Sentences need a final `.`, `!`, or `?`, optionally followed by a closing quote or
 bracket, and must fit within 512 characters.
 Name-only evidence is skipped. A passage stating different values for the same
-matching sentence drops that comparison. `compared: false` marks hits with no
-eligible figures, so open those sources for inspection.
+matching sentence drops that comparison. `compared: false` marks hits whose
+eligible figures matched no other hit, so open those sources.
 
 `NO_CONFLICT` means at least one matching sentence could be compared across
 passages and all comparable figures agreed. `NOT_COMPARABLE` means none could be
