@@ -148,7 +148,7 @@ func TestPhotoEventsSignalWhatPhotosRead(t *testing.T) {
 	}{
 		{"detected face", func() error {
 			return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				return publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{Width: .2, Height: .3}}}}, time.Now())
+				return s.publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{Width: .2, Height: .3}}}}, time.Now())
 			})
 		}},
 		{"caption edit", func() error {
@@ -200,7 +200,7 @@ func TestPhotoEventsIgnoreBookkeeping(t *testing.T) {
 	for name, write := range map[string]func(){
 		"empty face scan": func() {
 			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-				return publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{}, now)
+				return s.publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, fakeHash("b1"), document.FaceDetection{}, now)
 			}))
 		},
 		"queue tick": func() {

@@ -21,16 +21,25 @@ func (s *Store) RequireFaceDetectionSupported(ctx context.Context) error {
 
 func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string) (bool, error) {
 	var settled bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_face_scans WHERE content_version_id=? AND detector_fingerprint=?)`, version, detector).Scan(&settled)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_face_scans WHERE content_version_id=$1 AND detector_fingerprint=$2)`, version, detector).Scan(&settled)
 	return settled, err
 }
 
 // protectedDetectionFacesTx includes references retained for undo, even when a
 // face no longer has an active assignment or candidate.
-func protectedDetectionFacesTx(ctx context.Context, tx *sql.Tx, version string) (map[string]bool, error) {
+func (s *Store) protectedDetectionFacesTx(ctx context.Context, tx *sql.Tx, version string) (map[string]bool, error) {
 	protected := map[string]bool{}
-	rows, err := tx.QueryContext(ctx, `SELECT face_id FROM person_candidate_faces WHERE content_version_id=?
- UNION SELECT json_extract(j.value,'$.face_id') FROM photo_change_receipts r INDEXED BY photo_change_receipts_face_version,json_each(r.before_json,'$.faces') j WHERE r.operation='face_decision' AND json_extract(r.before_json,'$.content_version_id')=?`, version, version)
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	receipts := "photo_change_receipts r INDEXED BY photo_change_receipts_face_version"
+	faces := "json_each(r.before_json,'$.faces')"
+	versionKey := d.text("r.before_json", "content_version_id")
+	if d.postgres {
+		receipts = "photo_change_receipts r"
+		faces = "jsonb_array_elements(r.before_json::jsonb -> 'faces')"
+		versionKey = d.indexedText("r.before_json", "content_version_id")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT face_id FROM person_candidate_faces WHERE content_version_id=$1
+ UNION SELECT `+d.text("j.value", "face_id")+` FROM `+receipts+`,`+faces+` j WHERE r.operation='face_decision' AND `+versionKey+`=$1`, version)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +80,7 @@ func faceMatchScores(box document.FaceBox, observations []document.FaceObservati
 }
 
 // publishFaceDetectionTx reconciles an authorized scan and commits its completion together.
-func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector string, result document.FaceDetection, at time.Time) error {
+func (s *Store) publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector string, result document.FaceDetection, at time.Time) error {
 	settled, err := faceScanSettledTx(ctx, tx, version, detector)
 	if err != nil || settled {
 		return err
@@ -80,7 +89,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 	if err != nil {
 		return err
 	}
-	protected, err := protectedDetectionFacesTx(ctx, tx, version)
+	protected, err := s.protectedDetectionFacesTx(ctx, tx, version)
 	if err != nil {
 		return err
 	}
@@ -126,7 +135,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		}
 		j, matched := matchedFaces[i]
 		if !matched {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_faces WHERE face_id=?`, face.FaceID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_faces WHERE face_id=$1`, face.FaceID); err != nil {
 				return err
 			}
 			changed = true
@@ -138,13 +147,13 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		if face.DetectorFingerprint == detector && !observationChanged {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET x=?,y=?,width=?,height=?,roll=?,facing=?,eyes_open=?,smile=?,detector_fingerprint=?,revision=revision+1 WHERE face_id=?`, o.Box.X, o.Box.Y, o.Box.Width, o.Box.Height, o.Roll, o.Facing, o.EyesOpen, o.Smile, detector, face.FaceID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET x=$1,y=$2,width=$3,height=$4,roll=$5,facing=$6,eyes_open=$7,smile=$8,detector_fingerprint=$9,revision=revision+1 WHERE face_id=$10`, o.Box.X, o.Box.Y, o.Box.Width, o.Box.Height, o.Roll, o.Facing, nullableBoolInt(o.EyesOpen), nullableBoolInt(o.Smile), detector, face.FaceID); err != nil {
 			return err
 		}
 		changed = changed || observationChanged
 	}
 	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces WHERE content_version_id=?`, version).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces WHERE content_version_id=$1`, version).Scan(&count); err != nil {
 		return err
 	}
 	for j, o := range result.Faces {
@@ -161,7 +170,7 @@ func publishFaceDetectionTx(ctx context.Context, tx *sql.Tx, version, detector s
 		}
 		changed = true
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, version, detector)
+	_, err = tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES($1,$2)`, version, detector)
 	if err != nil || !changed {
 		return err
 	}

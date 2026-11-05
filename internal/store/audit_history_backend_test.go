@@ -235,8 +235,8 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		}
 		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
-		if table == "extracted_text" {
-			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('extracted_text','id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM extracted_text`)
+		if table == "extracted_text" || table == "photo_suggestions" {
+			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence($1,'id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM `+table, table)
 			require.NoError(t, err)
 		}
 	}

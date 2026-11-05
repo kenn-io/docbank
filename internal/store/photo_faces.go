@@ -95,7 +95,7 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
  JOIN nodes n ON n.id=cv.node_id
  JOIN photo_files member ON member.node_id=cv.node_id
  JOIN photo_assets a ON a.asset_id=member.asset_id
- WHERE cv.version_id=? AND a.kind='photo' AND n.kind='file' AND member.role IN ('image','raw') AND `+liveIncludedDisplayPredicate, versionID).Scan(&assetID, &role, &node.ID, &node.Name, &node.MimeType)
+ WHERE cv.version_id=$1 AND a.kind='photo' AND n.kind='file' AND member.role IN ('image','raw') AND `+liveIncludedDisplayPredicate, versionID).Scan(&assetID, &role, &node.ID, &node.Name, &node.MimeType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -218,7 +218,7 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,a.photo_mark,p.display_name,p.state FROM person_document_assertions a JOIN persons p ON p.person_id=a.person_id WHERE a.content_version_id=? AND a.role='depicted' AND (a.action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) ORDER BY a.person_id,a.assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
+		rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,a.photo_mark,p.display_name,p.state FROM person_document_assertions a JOIN persons p ON p.person_id=a.person_id WHERE a.content_version_id=$1 AND a.role='depicted' AND (a.action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) ORDER BY a.person_id,a.assertion_id LIMIT $2`, versionID, document.MaxPhotoRecordsPerVersion+1)
 		if err != nil {
 			return err
 		}
@@ -246,7 +246,7 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]P
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at,roll,facing,eyes_open,smile,detector_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt, face.Roll, face.Facing, face.EyesOpen, face.Smile, nullableString(face.DetectorFingerprint))
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,assertion_id,created_at,roll,facing,eyes_open,smile,detector_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, face.FaceID, face.ContentVersionID, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt, face.Roll, face.Facing, nullableBoolInt(face.EyesOpen), nullableBoolInt(face.Smile), nullableString(face.DetectorFingerprint))
 	return err
 }
 
@@ -434,4 +434,12 @@ func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, exis
 	var count int
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=? AND a.role='depicted' AND a.assertion_id<>? AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
 	return count, err
+}
+
+// nullableBoolInt preserves unknown detector observations separately from false.
+func nullableBoolInt(value *bool) *int {
+	if value == nil {
+		return nil
+	}
+	return new(boolInt(*value))
 }
