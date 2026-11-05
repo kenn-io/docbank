@@ -417,8 +417,12 @@ It compares money in the same currency, percentages written as `%` or `percent`,
 and durations in the same unit from minutes through years. Sentences must match
 exactly after lowercasing, collapsing whitespace, and masking the figure and its
 unit. Each sentence must contain exactly one figure. A second figure, including
-a date, makes the sentence ambiguous.
-Headings, titles, and neighbouring paragraphs are outside the match, so sentences that differ only in that context can appear as conflicts to inspect, while list items joined to a sentence by hard wraps produce a sentence with several figures, which is skipped.
+a date, makes the sentence ambiguous. The text outside the figure and its unit
+must contain at least one letter.
+Headings, titles, and neighbouring paragraphs are outside the match, so
+sentences that differ only in that context can appear as conflicts to inspect,
+while list items joined to a sentence by hard wraps produce a sentence with
+several figures, which is skipped.
 
 The tool reads each hit's retained Markdown or original plain text through a
 verified read. Each quote is a whole sentence from that source, located by the
@@ -430,7 +434,9 @@ Every sentence touched by the excerpt is eligible, including sentences beside
 the query match. Line breaks join hard-wrapped text; blank lines and lines
 containing only a code fence end paragraphs and keep sentences separate.
 Sentences need a final `.`, `!`, or `?`, optionally followed by a closing quote or
-bracket, and must fit within 512 characters. A trailing `...` or `…` marks an incomplete sentence.
+bracket, and must fit within 512 characters. A trailing `...` or `…` marks an
+incomplete sentence, as does a final period after a capital letter followed by
+up to three letters, such as `Dr.` or `Ltd.`.
 Name-only evidence is skipped. A passage stating different values for the same
 matching sentence drops that comparison. `compared: false` marks hits whose
 eligible figures matched no other hit, so open those sources.

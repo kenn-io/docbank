@@ -16,6 +16,12 @@ func TestCompare(t *testing.T) {
 	}{
 		{"duration conflict", "The cooling period is 7 days.", "The cooling period is 15 days.", "CONFLICTING", "duration", "day", []string{"7", "15"}, []bool{true, true}, nil},
 		{"duration agreement", "The cooling period is 7 days.", "The cooling period is 7 days.", "NO_CONFLICT", "", "", nil, []bool{true, true}, nil},
+		{"subjectless duration", "7 days.", "15 days.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
+		{"subjectless money", "$7.", "$15.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
+		{"subjectless percent", "7 percent.", "15 percent.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
+		{"trailing abbreviation", "The cooling period is 7 days for Dr.", "The cooling period is 15 days for Dr.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
+		{"trailing four letter abbreviation", "The cooling period is 7 days for Corp.", "The cooling period is 15 days for Corp.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
+		{"trailing initial", "The cooling period is 7 days for A.", "The cooling period is 15 days for A.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
 		{"product variants", "The premium service fee is $5.", "The standard service fee is $6.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
 		{"qualifiers", "The warranty is 12 months for parts.", "The warranty is 24 months for labor.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
 		{"escaped decimals", `The service fee is $5\.50\.`, `The service fee is $6\.50\.`, "CONFLICTING", "money", "USD", []string{"5.5", "6.5"}, []bool{true, true}, []string{"The service fee is $5.50.", "The service fee is $6.50."}},

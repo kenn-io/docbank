@@ -35,8 +35,9 @@ type Source struct {
 }
 
 var (
-	paragraphBreak = regexp.MustCompile("(?m)\\n[ \\t\\r]*\\n|^[ \\t]*(?:`{3,}|~{3,})[ \\t\\r]*(?:\\n|$)")
-	hardWrap       = strings.NewReplacer("\n", " ", "\r", " ")
+	paragraphBreak       = regexp.MustCompile("(?m)\\n[ \\t\\r]*\\n|^[ \\t]*(?:`{3,}|~{3,})[ \\t\\r]*(?:\\n|$)")
+	trailingAbbreviation = regexp.MustCompile(`(?:^|[^\p{L}])\p{Lu}\p{L}{0,3}\.$`)
+	hardWrap             = strings.NewReplacer("\n", " ", "\r", " ")
 )
 
 // Compare returns disagreements only between complete, unambiguous sentences
@@ -58,6 +59,9 @@ func Compare(sources []Source) Comparison {
 			if !complete || strings.HasSuffix(end, "...") || strings.HasSuffix(end, "…") || utf8.RuneCountInString(quote) > 512 {
 				continue
 			}
+			if trailingAbbreviation.MatchString(end) {
+				continue
+			}
 			figures := decodedFigures(quote)
 			if len(figures) != 1 {
 				continue
@@ -69,6 +73,9 @@ func Compare(sources []Source) Comparison {
 				continue
 			}
 			subject := strings.Join(strings.Fields(strings.ToLower(before+"#"+strings.TrimPrefix(after, suffix))), " ")
+			if !strings.ContainsFunc(subject, unicode.IsLetter) {
+				continue
+			}
 			k := key{kind, unit, subject}
 			if _, ok := local[k]; !ok {
 				localOrder = append(localOrder, k)
