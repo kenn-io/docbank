@@ -502,8 +502,7 @@ func searchDocuments(
 			if input.Mode != "lexical" {
 				if attempt.failure != "" {
 					result.report.Degradations = append(result.report.Degradations, attempt.failure)
-				}
-				if len(selected.QueryEmbeddingBindings) == 0 {
+				} else if len(selected.QueryEmbeddingBindings) == 0 {
 					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
 				}
 			}

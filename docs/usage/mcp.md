@@ -336,13 +336,11 @@ searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
 hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
-skipped reasons of at most 2,048 characters each.
+skipped reasons of at most 2,048 characters each. The `skipped_reasons` array may contain both failure codes and setup guidance.
 
-With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
+With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. It may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
 
-With no profile, `auto` may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable.
-
-An unknown profile returns `processing_profile_unavailable` with the available names. If a profile has no query-capable binding, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance.
+An unknown profile returns `processing_profile_unavailable` with the available names. When no query binding was attempted, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. When all query candidates fail, lexical fallback reports the first failure code. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
@@ -403,7 +401,7 @@ secrets, daemon keys, or unrequested document text.
 
 ### Find differing figures
 
-Call `find_conflicts` with search terms and a source selector. For example:
+Call `find_conflicts` with search terms, an explicit profile, and a source selector. Profile discovery is available only in `search_documents`. For example:
 
 ```json
 {"name":"find_conflicts","arguments":{"query":"cooling period","profile":"supplied-captions","filters":{}}}
