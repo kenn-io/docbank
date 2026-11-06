@@ -653,6 +653,8 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 				request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50, Facets: []string{"tags", "size"}}
 				fixture := newSnapshotTailFixture(t, request)
 				s, frozen := fixture.store, fixture.frozen
+				handoff, releaseHandoff := make(chan struct{}), make(chan struct{})
+				unblockHandoff := sync.OnceFunc(func() { close(releaseHandoff) })
 				started, release := make(chan struct{}), make(chan struct{})
 				var unblock sync.Once
 				var charges int
@@ -660,6 +662,11 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 					Now: fixture.now,
 					ChargeHook: func(ctx context.Context, _ string, _, _ int64) error {
 						charges++
+						if charges == fixture.chargesBeforeTail {
+							// The last first-page charge precedes tail hydration.
+							close(handoff)
+							<-releaseHandoff
+						}
 						if charges == fixture.chargesBeforeTail+1 {
 							close(started)
 							select {
@@ -672,12 +679,32 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 					},
 				})
 				t.Cleanup(func() {
+					unblockHandoff()
 					unblock.Do(func() { close(release) })
 					require.NoError(t, service.Close())
 				})
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				first, err := service.Create(ctx, "owner", request)
+				created := make(chan struct{})
+				var first SnapshotPage
+				var err error
+				go func() {
+					first, err = service.Create(ctx, "owner", request)
+					close(created)
+				}()
+				<-handoff
+				if action == "freeze" {
+					node, err := s.NodeByPath(t.Context(), "/50.txt")
+					require.NoError(t, err)
+					tag, err := s.CreateTag(t.Context(), "after creation")
+					require.NoError(t, err)
+					assigned, err := s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
+					require.NoError(t, err)
+					_, _, err = s.Move(t.Context(), node.ID, s.RootID(), "renamed.txt", assigned.Node.Revision)
+					require.NoError(t, err)
+				}
+				unblockHandoff()
+				<-created
 				require.NoError(t, err)
 				require.Len(t, first.Rows, 50)
 				require.NotEmpty(t, first.NextCursor)
@@ -695,16 +722,7 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 					assert.Equal(t, snapshotCacheStats{}, service.stats())
 					return
 				}
-				if action == "freeze" {
-					node, err := s.NodeByPath(t.Context(), "/50.txt")
-					require.NoError(t, err)
-					tag, err := s.CreateTag(t.Context(), "after creation")
-					require.NoError(t, err)
-					assigned, err := s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
-					require.NoError(t, err)
-					_, _, err = s.Move(t.Context(), node.ID, s.RootID(), "renamed.txt", assigned.Node.Revision)
-					require.NoError(t, err)
-				} else {
+				if action == "cancel request and waiter" {
 					cancel()
 					waitCtx, stopWait := context.WithCancel(t.Context())
 					waiting := make(chan error, 1)
