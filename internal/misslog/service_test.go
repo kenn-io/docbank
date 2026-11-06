@@ -79,21 +79,52 @@ func TestRecordingSanitizesDirectoryFailures(t *testing.T) {
 	require.Contains(t, logs.String(), "miss_log_write_failed")
 }
 
+type purgeContext struct {
+	context.Context
+	beforeErr func()
+}
+
+func (ctx purgeContext) Err() error {
+	ctx.beforeErr()
+	return ctx.Context.Err()
+}
+
 func TestPurgeRemovesUnindexedFiles(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default().MissLog
 	cfg.Enabled = true
 	svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
 	svc.Record(t.Context(), Request{Query: "indexed secret"})
+	svc.Record(t.Context(), Request{Query: "another indexed secret"})
+	rows, err := svc.List(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	survivor := rows[0]
 	dir := filepath.Join(root, "miss-log")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	removedPath := filepath.Join(dir, entries[0].Name())
 	for _, name := range []string{".receipt.json.tmp-interrupted", "unindexed.json"} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("synthetic query bytes"), 0600))
 	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// Cancel after an indexed receipt is deleted, with another still on disk.
+	err = svc.Purge(purgeContext{Context: ctx, beforeErr: func() {
+		if _, err := os.Stat(removedPath); errors.Is(err, os.ErrNotExist) {
+			cancel()
+		}
+	}})
+	require.ErrorIs(t, err, context.Canceled)
+	rows, err = svc.List(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, []Receipt{survivor}, rows)
 	require.NoError(t, svc.Purge(t.Context()))
-	entries, err := os.ReadDir(dir)
+	entries, err = os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries)
-	rows, err := svc.List(t.Context(), 10, 0)
+	rows, err = svc.List(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }

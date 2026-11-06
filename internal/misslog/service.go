@@ -213,6 +213,9 @@ func (s *Service) Purge(ctx context.Context) error {
 		if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+		if i, found := slices.BinarySearch(s.files, entry.Name()); found {
+			s.files = slices.Delete(s.files, i, i+1)
+		}
 	}
 	s.files = nil
 	return nil
