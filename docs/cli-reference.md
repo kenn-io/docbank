@@ -563,8 +563,10 @@ path or `id:<positive-decimal>`. `--remove` cannot be combined with `--note`;
 at least one date. Omit `--note` to keep an existing note, or pass
 `--note ""` to clear it. To remove a link to a trashed successor, select that
 successor by ID; paths resolve only live nodes. The predecessor must still be
-live. Declaring a link requires both files to be live. `validity --json` prints
-the full validity response.
+live. Declaring a link requires both files to be live. The `supersede` receipt
+names the predecessor whose revision it checks. Plain `validity` output includes
+each link's nonempty note after its node ID. `validity --json` prints the full
+validity response.
 See [Document validity](usage/organizing.md#document-validity).
 
 ## docbank document provenance
