@@ -68,6 +68,54 @@ func TestProcessingSearchValidityOnReturnedPage(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidSupersession)
 }
 
+func TestProcessingSearchValidityUndatedSuccessor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		end   string
+		asOf  string
+		state document.ValidityState
+	}{
+		{"before end", "2025-06-01", "2025-05-31", document.ValidityCurrent},
+		{"on end", "2025-06-01", "2025-06-01", document.ValidityCurrent},
+		{"after end", "2025-06-01", "2025-06-02", document.ValiditySuperseded},
+		{"open end", "", "2025-06-01", document.ValiditySuperseded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newMediaStateFixture(t)
+			ctx := t.Context()
+			old, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "renewal-a", processingHash("old"), 1, "text/plain")
+			require.NoError(t, err)
+			next, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "renewal-b", processingHash("new"), 1, "text/plain")
+			require.NoError(t, err)
+			if tc.end != "" {
+				change, err := f.catalog.PutEffectiveWindow(ctx, old.ID, old.Revision, "", tc.end)
+				require.NoError(t, err)
+				old = change.Node
+			}
+			_, err = f.catalog.PutSupersession(ctx, next.ID, old.ID, old.Revision, new(""))
+			require.NoError(t, err)
+			report, err := f.service.Search(ctx, SearchRequest{Query: "renewal", Mode: "lexical", Profile: "speech", Limit: 2, AsOf: tc.asOf, Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{old.CurrentVersionID, next.CurrentVersionID}}})
+			require.NoError(t, err)
+			require.Len(t, report.Results, 2)
+			index := 0
+			if tc.state == document.ValiditySuperseded {
+				index = 1
+			}
+			require.Equal(t, old.ID, report.Results[index].Document.NodeID)
+			validity := report.Results[index].Validity
+			require.NotNil(t, validity)
+			require.Equal(t, tc.state, validity.State)
+			if tc.state == document.ValidityCurrent {
+				require.Empty(t, validity.SupersededBy)
+			} else {
+				require.Equal(t, []retrieval.ValiditySuccessor{{NodeID: next.ID, Path: "/renewal-b"}}, validity.SupersededBy)
+			}
+		})
+	}
+}
+
 func TestProcessingSearchValidityAllLiveScopeExcludesOutOfScopeSuccessor(t *testing.T) {
 	t.Parallel()
 	f := newMediaStateFixture(t)

@@ -33,6 +33,9 @@ func (service *Service) applyValidity(ctx context.Context, results []retrieval.R
 		state, _ := document.EvaluateValidity(asOf, n.Window, starts)
 		v := &retrieval.ResultValidity{State: state, EffectiveFrom: n.Window.From, EffectiveTo: n.Window.To, SupersededBy: []retrieval.ValiditySuccessor{}}
 		for _, next := range n.Successors {
+			if next.EffectiveFrom == "" && n.Window.To != "" && asOf <= n.Window.To {
+				continue
+			}
 			if next.EffectiveFrom == "" || next.EffectiveFrom <= asOf {
 				v.SupersededBy = append(v.SupersededBy, retrieval.ValiditySuccessor{NodeID: next.NodeID, Path: next.Path, EffectiveFrom: next.EffectiveFrom})
 			}
