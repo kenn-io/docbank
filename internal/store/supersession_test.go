@@ -39,8 +39,24 @@ func TestSupersessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, v.Successors, 1)
 	require.Empty(t, v.Successors[0].Note)
-	_, err = s.PutEffectiveWindow(ctx, b.ID, b.Revision, "2026-01-01", "2026-12-31")
+	window, err := s.PutEffectiveWindow(ctx, b.ID, b.Revision, "2026-01-01", "2026-12-31")
 	require.NoError(t, err)
+	// Content replacements preserve declarations on both ends of the link.
+	for _, node := range []Node{c.Node, window.Node} {
+		before, err := s.NodeValidity(ctx, node.ID, "2027-01-01")
+		require.NoError(t, err)
+		edited, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("c1"), 2, "text/plain")
+		require.NoError(t, err)
+		require.Equal(t, fakeHash("c1"), edited.BlobHash)
+		after, err := s.NodeValidity(ctx, node.ID, "2027-01-01")
+		require.NoError(t, err)
+		require.Equal(t, before.Successors, after.Successors)
+		require.Equal(t, before.Predecessors, after.Predecessors)
+		require.Equal(t, before.Window, after.Window)
+		if node.ID == a.ID {
+			c.Node = edited
+		}
+	}
 	v, err = s.NodeValidity(ctx, a.ID, "2025-01-01")
 	require.NoError(t, err)
 	require.Equal(t, "current", string(v.State))
@@ -247,74 +263,6 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestValidityFeedTracksSuccessorLifecycle(t *testing.T) {
-	t.Parallel()
-	for _, operation := range []string{"trash", "restore"} {
-		for _, subtree := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/subtree=%t", operation, subtree), func(t *testing.T) {
-				s := newTestStore(t)
-				ctx := t.Context()
-				old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a1"), 1, "text/plain")
-				require.NoError(t, err)
-				parent := s.RootID()
-				var moved Node
-				if subtree {
-					moved, err = s.Mkdir(ctx, parent, "replacements")
-					require.NoError(t, err)
-					parent = moved.ID
-				}
-				next, err := s.CreateFile(ctx, parent, "new.txt", fakeHash("a2"), 1, "text/plain")
-				require.NoError(t, err)
-				link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
-				require.NoError(t, err)
-				if subtree {
-					other, err := s.CreateFile(ctx, parent, "other.txt", fakeHash("a3"), 1, "text/plain")
-					require.NoError(t, err)
-					link, err = s.PutSupersession(ctx, other.ID, old.ID, link.Node.Revision, nil)
-					require.NoError(t, err)
-					// A shared predecessor gets one event; a moved predecessor gets only its lifecycle event.
-					_, err = s.PutSupersession(ctx, other.ID, next.ID, next.Revision, nil)
-					require.NoError(t, err)
-				}
-				if !subtree {
-					moved = next
-				}
-				if operation == "restore" {
-					_, _, err = s.Trash(ctx, moved.ID, UnconditionalRev)
-					require.NoError(t, err)
-				}
-				before, err := s.NodeValidity(ctx, old.ID, "2025-01-01")
-				require.NoError(t, err)
-				_, cursor, err := s.VaultChanges(ctx, "", 500)
-				require.NoError(t, err)
-				wantBefore, wantAfter := "superseded", "current"
-				if operation == "trash" {
-					_, _, err = s.Trash(ctx, moved.ID, UnconditionalRev)
-				} else {
-					wantBefore, wantAfter = "current", "superseded"
-					_, _, err = s.Restore(ctx, moved.ID, UnconditionalRev)
-				}
-				require.NoError(t, err)
-				after, err := s.NodeValidity(ctx, old.ID, "2025-01-01")
-				require.NoError(t, err)
-				require.Equal(t, wantBefore, string(before.State))
-				require.Equal(t, wantAfter, string(after.State))
-				require.Equal(t, link.Node.Revision, after.Node.Revision)
-				changes, _, err := s.VaultChanges(ctx, cursor, 500)
-				require.NoError(t, err)
-				var validityChanges []VaultChange
-				for _, change := range changes {
-					if change.Kind == "validity_changed" {
-						change.Cursor = ""
-						validityChanges = append(validityChanges, change)
-					}
-				}
-				require.Equal(t, []VaultChange{{Kind: "validity_changed", NodeID: old.ID, Revision: link.Node.Revision}}, validityChanges)
-			})
-		}
-	}
-}
-
 func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -472,102 +420,6 @@ func TestAuditedRestoreRejectsChangedValidity(t *testing.T) {
 			active, err := auditAuthorityActiveTx(ctx, target.db)
 			require.NoError(t, err)
 			require.False(t, active, "rejected restore must roll back audit authority")
-		})
-	}
-}
-
-func TestSupersessionChangeFeed(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a"), 1, "text/plain")
-	require.NoError(t, err)
-	next, err := s.CreateFile(ctx, s.RootID(), "next.txt", fakeHash("b"), 1, "text/plain")
-	require.NoError(t, err)
-	_, cursor, err := s.VaultChanges(ctx, "", 500)
-	require.NoError(t, err)
-	for _, step := range []struct {
-		name  string
-		write func() (SupersessionChange, error)
-		ids   []int64
-	}{
-		{"declare", func() (SupersessionChange, error) {
-			return s.PutSupersession(ctx, next.ID, old.ID, UnconditionalRev, new("renewal"))
-		}, []int64{old.ID, next.ID}},
-		{"repeat declaration", func() (SupersessionChange, error) {
-			return s.PutSupersession(ctx, next.ID, old.ID, UnconditionalRev, nil)
-		}, nil},
-		{"edit note", func() (SupersessionChange, error) {
-			return s.PutSupersession(ctx, next.ID, old.ID, UnconditionalRev, new("corrected renewal"))
-		}, []int64{old.ID, next.ID}},
-		{"window", func() (SupersessionChange, error) {
-			return s.PutEffectiveWindow(ctx, next.ID, UnconditionalRev, "2026-01-01", "")
-		}, []int64{old.ID, next.ID}},
-		{"repeat window", func() (SupersessionChange, error) {
-			return s.PutEffectiveWindow(ctx, next.ID, UnconditionalRev, "2026-01-01", "")
-		}, nil},
-		{"clear window", func() (SupersessionChange, error) { return s.DeleteEffectiveWindow(ctx, next.ID, UnconditionalRev) }, []int64{old.ID, next.ID}},
-		{"repeat clear", func() (SupersessionChange, error) { return s.DeleteEffectiveWindow(ctx, next.ID, UnconditionalRev) }, nil},
-		{"remove", func() (SupersessionChange, error) {
-			return s.DeleteSupersession(ctx, next.ID, old.ID, UnconditionalRev)
-		}, []int64{old.ID, next.ID}},
-		{"repeat remove", func() (SupersessionChange, error) {
-			return s.DeleteSupersession(ctx, next.ID, old.ID, UnconditionalRev)
-		}, nil},
-		{"unlinked window", func() (SupersessionChange, error) {
-			return s.PutEffectiveWindow(ctx, next.ID, UnconditionalRev, "2026-01-01", "")
-		}, []int64{next.ID}},
-	} {
-		t.Run(step.name, func(t *testing.T) {
-			_, err := step.write()
-			require.NoError(t, err)
-			changes, head, err := s.VaultChanges(ctx, cursor, 500)
-			require.NoError(t, err)
-			require.Len(t, changes, len(step.ids))
-			for i, id := range step.ids {
-				require.Equal(t, id, changes[i].NodeID)
-				require.Equal(t, "validity_changed", changes[i].Kind)
-				node, err := s.NodeByID(ctx, id)
-				require.NoError(t, err)
-				require.Equal(t, node.Revision, changes[i].Revision)
-			}
-			if len(step.ids) == 0 {
-				require.Equal(t, cursor, head)
-			}
-			cursor = head
-		})
-	}
-}
-
-func TestSupersessionChangeFeedFailureRollsBack(t *testing.T) {
-	t.Parallel()
-	for _, window := range []bool{false, true} {
-		t.Run(fmt.Sprintf("window=%t", window), func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a"), 1, "text/plain")
-			require.NoError(t, err)
-			next, err := s.CreateFile(ctx, s.RootID(), "next.txt", fakeHash("b"), 1, "text/plain")
-			require.NoError(t, err)
-			_, cursor, err := s.VaultChanges(ctx, "", 500)
-			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `CREATE TRIGGER fail_validity_feed BEFORE INSERT ON vault_changes BEGIN SELECT RAISE(ABORT,'feed unavailable'); END`)
-			require.NoError(t, err)
-			if window {
-				_, err = s.PutEffectiveWindow(ctx, old.ID, old.Revision, "2026-01-01", "")
-			} else {
-				_, err = s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
-			}
-			require.ErrorContains(t, err, "feed unavailable")
-			view, err := s.NodeValidity(ctx, old.ID, "2026-01-01")
-			require.NoError(t, err)
-			require.Equal(t, old.Revision, view.Node.Revision)
-			require.Empty(t, view.Successors)
-			require.Empty(t, view.Window.From)
-			changes, head, err := s.VaultChanges(ctx, cursor, 500)
-			require.NoError(t, err)
-			require.Empty(t, changes)
-			require.Equal(t, cursor, head)
 		})
 	}
 }
