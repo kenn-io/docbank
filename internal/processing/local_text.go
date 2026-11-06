@@ -149,16 +149,10 @@ func (setup *LocalTextSetup) Plan(ctx context.Context, mode string) (LocalTextPl
 	}
 	defer service.Stop()
 	if plan.Profile != config.LocalTextProfile {
-		profile := service.profiles[plan.Profile]
-		bindings := 0
-		for _, binding := range profile.portable.Embeddings {
-			if binding.InputKind != document.EmbeddingInputImage {
-				bindings++
-			}
-		}
+		fill := &LocalTextSetup{Service: service, Selected: plan.Profile}
 		count, after := 0, ""
-		for bindings > 0 {
-			items, err := service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000)
+		for {
+			items, err := fill.pendingTargets(ctx, after, 1000, false)
 			if err != nil {
 				return plan, err
 			}
@@ -236,6 +230,11 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limi
 			return nil, nil
 		}
 	}
+	return setup.pendingTargets(ctx, after, limit, sweep)
+}
+
+func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, limit int, sweep bool) ([]store.DocumentSummary, error) {
+	profile := setup.Service.profiles[setup.Selected]
 	bindings := 0
 	for _, binding := range profile.portable.Embeddings {
 		if binding.InputKind != document.EmbeddingInputImage {
