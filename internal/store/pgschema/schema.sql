@@ -12,14 +12,6 @@ CREATE TABLE {{schema}}.node_allocation (
     singleton SMALLINT PRIMARY KEY,
     high_water BIGINT NOT NULL
 );
--- Private local records are excluded from portable metadata.
-CREATE TABLE {{schema}}.miss_log_records (
-    id TEXT COLLATE "C" PRIMARY KEY,
-    created_at TEXT COLLATE "C" NOT NULL,
-    receipt TEXT COLLATE "C" NOT NULL
-);
-CREATE INDEX miss_log_records_created ON {{schema}}.miss_log_records(created_at DESC, id DESC);
-
 -- Text uses SQLite byte order, independent of the database locale.
 CREATE TABLE {{schema}}.nodes (
     id                 BIGINT PRIMARY KEY,

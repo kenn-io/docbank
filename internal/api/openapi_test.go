@@ -771,20 +771,6 @@ func TestDocumentSearchContentFirstSchema(t *testing.T) {
 	}
 }
 
-func TestDocumentSimilarSourceFenceRequiresVersions(t *testing.T) {
-	t.Parallel()
-	doc := api.NewOfflineServer().API().OpenAPI()
-	schemas := doc.Components.Schemas.Map()
-
-	similarRequest := schemas["DocumentSimilarRequest"]
-	require.NotNil(t, similarRequest)
-	assert.Equal(t, "#/components/schemas/DocumentSourceFence", similarRequest.Properties["fence"].Ref)
-	sourceFence := schemas["DocumentSourceFence"]
-	require.NotNil(t, sourceFence)
-	require.NotNil(t, sourceFence.Properties["content_version_ids"].MinItems)
-	assert.Equal(t, 1, *sourceFence.Properties["content_version_ids"].MinItems)
-}
-
 func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()

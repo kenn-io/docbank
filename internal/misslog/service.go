@@ -7,13 +7,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/atomicfile"
 )
 
 // Request describes the empty result accepted by a submitting client.
@@ -43,30 +49,35 @@ type Receipt struct {
 
 // Service belongs to one vault owner and one daemon lifetime.
 type Service struct {
-	store        *store.Store
-	config       config.MissLogConfig
-	logger       *slog.Logger
-	mutate       func(context.Context, func() error) error
-	recordMutate func(context.Context, func() error) error
+	mu       sync.Mutex
+	dir      string
+	vaultUID string
+	files    []string // Oldest first, ordered by creation time and ID.
+	config   config.MissLogConfig
+	logger   *slog.Logger
 }
 
-// New prunes on enabled startup only. Failures never expose sensitive payloads.
-func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutators ...func(context.Context, func() error) error) *Service {
+const fileTimeLayout = "20060102T150405.000000000Z"
+
+// New loads the file index and prunes only when recording is enabled.
+func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Service{store: st, config: cfg, logger: logger, mutate: func(_ context.Context, fn func() error) error { return fn() }}
-	if len(mutators) > 0 && mutators[0] != nil {
-		s.mutate = mutators[0]
+	s := &Service{dir: filepath.Join(root, "miss-log"), vaultUID: vaultUID, config: cfg, logger: logger}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.Warn("miss_log_load_failed")
+		return s
 	}
-	s.recordMutate = s.mutate
-	if len(mutators) > 1 && mutators[1] != nil {
-		s.recordMutate = mutators[1]
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			s.files = append(s.files, entry.Name())
+		}
 	}
-	if cfg.Enabled && st != nil {
-		if err := s.mutate(context.Background(), func() error {
-			return st.PruneMissLogRecords(context.Background(), time.Now(), cfg.RetentionDays, cfg.MaxRecords)
-		}); err != nil {
+	slices.Sort(s.files)
+	if cfg.Enabled {
+		if err := s.prune(ctx, time.Now().UTC()); err != nil {
 			logger.Warn("miss_log_prune_failed")
 		}
 	}
@@ -75,7 +86,7 @@ func New(st *store.Store, cfg config.MissLogConfig, logger *slog.Logger, mutator
 
 // Record stores a bounded receipt. Failures leave the search usable.
 func (s *Service) Record(ctx context.Context, request Request) {
-	if s == nil || !s.config.Enabled || s.store == nil || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
+	if s == nil || !s.config.Enabled || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
 		return
 	}
 	if utf8.RuneCountInString(request.Query) > 32768 || len(request.Profile) > 128 || len(request.BindingID) > 128 {
@@ -87,19 +98,123 @@ func (s *Service) Record(ctx context.Context, request Request) {
 		s.logger.Warn("miss_log_write_failed")
 		return
 	}
-	receipt := Receipt{Request: request, ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), VaultUID: s.store.VaultID()}
+	receipt := Receipt{Request: request, ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
 	encoded, err := json.Marshal(receipt)
 	if err != nil || len(encoded) > 64<<10 {
 		s.logger.Warn("miss_log_write_failed")
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	defer cancel()
-	if err = s.recordMutate(ctx, func() error {
-		return s.store.AddMissLogRecord(ctx, store.MissLogRecord{ID: receipt.ID, CreatedAt: receipt.CreatedAt, Receipt: string(encoded)}, receipt.CreatedAt, s.config.RetentionDays, s.config.MaxRecords)
-	}); err != nil {
-		s.logger.Warn("miss_log_write_failed")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return
 	}
+	if err := os.MkdirAll(s.dir, 0700); err != nil {
+		s.logger.Warn("miss_log_write_failed")
+		return
+	}
+	name := receipt.CreatedAt.Format(fileTimeLayout) + "-" + receipt.ID + ".json"
+	if err := atomicfile.WriteFile(filepath.Join(s.dir, name), encoded, atomicfile.WithPrivate()); err != nil {
+		s.logger.Warn("miss_log_write_failed")
+		return
+	}
+	index, _ := slices.BinarySearch(s.files, name)
+	s.files = slices.Insert(s.files, index, name)
+	if err := s.prune(ctx, receipt.CreatedAt); err != nil {
+		s.logger.Warn("miss_log_prune_failed")
+	}
+}
+
+func (s *Service) prune(ctx context.Context, now time.Time) error {
+	cutoff := now.AddDate(0, 0, -s.config.RetentionDays).Format(fileTimeLayout)
+	for len(s.files) > 0 && (len(s.files) > s.config.MaxRecords || s.files[0] < cutoff) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(s.dir, s.files[0])); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		s.files = s.files[1:]
+	}
+	return nil
+}
+
+// List returns visible receipts newest first, including retained records when disabled.
+func (s *Service) List(ctx context.Context, limit, offset int) ([]Receipt, error) {
+	items := []Receipt{}
+	if s == nil {
+		return items, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := ""
+	if s.config.Enabled {
+		cutoff = time.Now().UTC().AddDate(0, 0, -s.config.RetentionDays).Format(fileTimeLayout)
+	}
+	for i := len(s.files) - 1; i >= 0 && len(items) < limit; i-- {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if s.files[i] < cutoff {
+			break
+		}
+		if offset > 0 {
+			offset--
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.dir, s.files[i]))
+		if err != nil {
+			return nil, err
+		}
+		var receipt Receipt
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	return items, nil
+}
+
+// Delete removes the receipt whose ID matches the request.
+func (s *Service) Delete(ctx context.Context, id string) error {
+	if s == nil {
+		return fs.ErrNotExist
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, name := range s.files {
+		if !strings.HasSuffix(name, "-"+id+".json") {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(s.dir, name)); err != nil {
+			return err
+		}
+		s.files = slices.Delete(s.files, i, i+1)
+		return nil
+	}
+	return fs.ErrNotExist
+}
+
+// Purge removes all indexed receipts, including expired records.
+func (s *Service) Purge(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.files) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(s.dir, s.files[0])); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		s.files = s.files[1:]
+	}
+	return nil
 }
 
 // ReceiptScope projects search options or outcomes without large source lists.

@@ -24,7 +24,6 @@ const (
 // not attempted. err keeps a failure that has no stable daemon problem code.
 type automaticSearchOutcome struct {
 	report  *api.DocumentSearchReport
-	request api.DocumentSearchRequest
 	receipt misslog.Request
 	reason  string
 	err     error
@@ -70,7 +69,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		report, searchErr := c.SearchDocuments(ctx, request)
 		if searchErr == nil {
 			receipt := api.DocumentSearchMiss(query, candidate.Profile, request, report)
-			return automaticSearchOutcome{report: &report, request: request, receipt: receipt}, nil
+			return automaticSearchOutcome{report: &report, receipt: receipt}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
@@ -157,13 +156,4 @@ func writeSearchDegradation(cmd *cobra.Command, outcome automaticSearchOutcome) 
 		return fmt.Errorf("writing search degradation: %w", err)
 	}
 	return nil
-}
-
-// finalizeAutomaticSearchMiss builds the receipt for the accepted result page.
-// The caller records it only after a submitted search completes successfully.
-func finalizeAutomaticSearchMiss(outcome *automaticSearchOutcome, empty bool) {
-	if !empty || outcome.report == nil {
-		return
-	}
-	outcome.receipt = api.DocumentSearchMiss(outcome.request.Query, outcome.request.Profile, outcome.request, *outcome.report)
 }

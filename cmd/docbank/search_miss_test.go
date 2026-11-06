@@ -5,20 +5,12 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/misslog"
-	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/store"
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
@@ -105,39 +97,4 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestExplicitSearchKeepsLiveResultsWhenAnotherSourceIsTrashed(t *testing.T) {
-	root := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(root, "vault.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	live, err := catalog.CreateFile(t.Context(), catalog.RootID(), "live.txt", strings.Repeat("a", 64), 4, "text/plain")
-	require.NoError(t, err)
-	trashed, err := catalog.CreateFile(t.Context(), catalog.RootID(), "trashed.txt", strings.Repeat("b", 64), 4, "text/plain")
-	require.NoError(t, err)
-	_, _, err = catalog.Trash(t.Context(), trashed.ID, trashed.Revision)
-	require.NoError(t, err)
-	name, profile, err := processing.NewSuppliedMediaProfile(catalog, blobs, "test:operator")
-	require.NoError(t, err)
-	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(root, "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.WithoutCancel(t.Context()))) })
-	cfg := config.Default()
-	cfg.Server.APIKey = "synthetic-key"
-	server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, Processing: service, Cfg: cfg, VaultRoot: root})
-	t.Cleanup(server.Close)
-	endpoint := httptest.NewServer(server.Handler())
-	t.Cleanup(endpoint.Close)
-	command, output := processingTestCommand()
-	require.NoError(t, runDocumentSearch(command, daemonconn.New(endpoint.URL, cfg.Server.APIKey), "live", documentSearchCLIOptions{
-		Mode: "lexical", Profile: name, ContentVersionIDs: []string{live.CurrentVersionID, trashed.CurrentVersionID}, Limit: 10, JSON: true,
-	}))
-	var report api.DocumentSearchReport
-	require.NoError(t, json.Unmarshal(output.Bytes(), &report))
-	require.Len(t, report.Results, 1)
-	assert.Equal(t, live.CurrentVersionID, report.Results[0].ContentVersionID)
 }

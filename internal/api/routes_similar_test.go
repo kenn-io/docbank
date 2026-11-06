@@ -91,8 +91,8 @@ func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
 		code   string
 	}{
 		{"/api/v1/search/similar", request, http.StatusConflict, "stale_index"},
-		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: api.DocumentSearchFenceFromSourceFence(request.Fence)}, http.StatusConflict, "stale_index"},
-		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "hybrid", Profile: "private", BindingID: "semantic", Limit: 20, Fence: api.DocumentSearchFenceFromSourceFence(request.Fence)}, http.StatusConflict, "stale_index"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusConflict, "stale_index"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "hybrid", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusConflict, "stale_index"},
 	} {
 		name := test.path + "/stale_index"
 		if request, ok := test.body.(api.DocumentSearchRequest); ok {

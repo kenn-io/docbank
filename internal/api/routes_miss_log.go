@@ -2,16 +2,13 @@ package api
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
+	"io/fs"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/store"
 )
 
 const missLogCacheControlNoStore = "no-store"
@@ -34,14 +31,7 @@ func missLogFailure() error {
 	return NewError(http.StatusInternalServerError, "miss_log_unavailable", "miss log operation failed")
 }
 
-func missLogCutoff(cfg config.MissLogConfig) time.Time {
-	if cfg.Enabled && cfg.RetentionDays > 0 {
-		return time.Now().UTC().AddDate(0, 0, -cfg.RetentionDays)
-	}
-	return time.Time{}
-}
-
-func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
+func registerMissLogRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent, MaxBodyBytes: 64 << 10}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
 		d.MissLog.Record(ctx, in.Body)
 		return &struct{}{}, nil
@@ -57,18 +47,11 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		if err := requireMissLogOwner(ctx); err != nil {
 			return nil, err
 		}
-		rows, err := d.Store.ListMissLogRecords(ctx, missLogCutoff(d.Cfg.MissLog), in.Limit, in.Offset)
+		items, err := d.MissLog.List(ctx, in.Limit, in.Offset)
 		if err != nil {
 			return nil, missLogFailure()
 		}
-		page := MissLogPage{Items: []misslog.Receipt{}, Limit: in.Limit, Offset: in.Offset}
-		for _, row := range rows {
-			var receipt misslog.Receipt
-			if err := json.Unmarshal([]byte(row.Receipt), &receipt); err != nil {
-				return nil, missLogFailure()
-			}
-			page.Items = append(page.Items, receipt)
-		}
+		page := MissLogPage{Items: items, Limit: in.Limit, Offset: in.Offset}
 		return &pageOutput{CacheControl: missLogCacheControlNoStore, Body: page}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "deleteMissLogRecord", Method: http.MethodDelete, Path: "/api/v1/miss-log/{id}", Summary: "Delete one private search miss (operator only)"}, func(ctx context.Context, in *struct {
@@ -77,16 +60,11 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		if err := requireMissLogOwner(ctx); err != nil {
 			return nil, err
 		}
-		if err := g.mutate(ctx, func() error {
-			if err := d.Store.DeleteMissLogRecord(ctx, in.ID); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					return NewError(http.StatusNotFound, "not_found", "miss log record not found")
-				}
-				return missLogFailure()
+		if err := d.MissLog.Delete(ctx, in.ID); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, NewError(http.StatusNotFound, "not_found", "miss log record not found")
 			}
-			return nil
-		}); err != nil {
-			return nil, err
+			return nil, missLogFailure()
 		}
 		return &struct{}{}, nil
 	})
@@ -94,13 +72,8 @@ func registerMissLogRoutes(api huma.API, d Deps, g *OperationGate) {
 		if err := requireMissLogOwner(ctx); err != nil {
 			return nil, err
 		}
-		if err := g.mutate(ctx, func() error {
-			if err := d.Store.PurgeMissLogRecords(ctx); err != nil {
-				return missLogFailure()
-			}
-			return nil
-		}); err != nil {
-			return nil, err
+		if err := d.MissLog.Purge(ctx); err != nil {
+			return nil, missLogFailure()
 		}
 		return &struct{}{}, nil
 	})

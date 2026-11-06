@@ -1879,56 +1879,6 @@ func TestDocumentSearchAllLiveEmptyExplain(t *testing.T) {
 	}
 }
 
-func TestDocumentSearchEmptyFenceReturnsEmptyReport(t *testing.T) {
-	t.Parallel()
-	provider := newProcessingTestEmbeddingProvider(t)
-	provider.descriptor = photoImageDescriptor(t, provider.descriptor)
-	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbeddingProvider(t, provider, false))
-	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
-		"profile": "private", "query": "synthetic empty fence", "mode": "hybrid",
-		"fence": map[string]any{"vault_uid": catalog.VaultID(), "content_version_ids": []string{}},
-	})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var report api.DocumentSearchReport
-	require.NoError(t, json.Unmarshal([]byte(body), &report))
-	assert.Equal(t, "hybrid", report.RequestedMode)
-	assert.Equal(t, "lexical", report.ActualMode)
-	assert.Empty(t, report.Results)
-	assert.Equal(t, "complete", report.Coverage.State)
-}
-
-func TestDocumentSearchEmptyFenceMatchesAllLiveEmptyReport(t *testing.T) {
-	t.Parallel()
-	rendition, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
-	require.NoError(t, err)
-	ts, catalog := newTestServer(t, configureProcessingTestServiceWithProviders(t, rendition,
-		newProcessingTestEmbeddingProvider(t), true, document.EmbeddingRequired))
-	search := func(t *testing.T, mode, scope string) api.DocumentSearchReport {
-		t.Helper()
-		request := map[string]any{"profile": "private", "query": "synthetic", "mode": mode, "explain": true,
-			"fence": map[string]any{"vault_uid": catalog.VaultID(), "content_version_ids": []string{}}}
-		if scope == "all_live" {
-			delete(request, "fence")
-			request["scope"] = map[string]any{"kind": "all_live"}
-		}
-		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var report api.DocumentSearchReport
-		require.NoError(t, json.Unmarshal([]byte(body), &report))
-		return report
-	}
-	for _, mode := range []string{"semantic", "hybrid"} {
-		t.Run(mode, func(t *testing.T) {
-			allLive, fenced := search(t, mode, "all_live"), search(t, mode, "empty_fence")
-			require.True(t, allLive.Coverage.BindingRequired)
-			assert.Equal(t, allLive.Coverage, fenced.Coverage)
-			assert.Equal(t, allLive.Trace, fenced.Trace)
-			assert.Equal(t, mode, fenced.ActualMode)
-			assert.Empty(t, fenced.Results)
-		})
-	}
-}
-
 func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
@@ -1937,11 +1887,10 @@ func TestDocumentSearchAutoPreservesRequestedMode(t *testing.T) {
 	for _, scope := range []string{"all_live", "explicit_fence"} {
 		t.Run(scope, func(t *testing.T) {
 			request := api.DocumentSearchRequest{Query: "current", Mode: "auto", Profile: "private"}
-			switch scope {
-			case "all_live":
+			if scope == "all_live" {
 				request.Scope = &api.DocumentSearchScope{Kind: "all_live"}
-			case "explicit_fence":
-				request.Fence = api.DocumentSearchFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
+			} else {
+				request.Fence = api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}
 			}
 			report, err := client.SearchDocuments(t.Context(), request)
 			require.NoError(t, err)

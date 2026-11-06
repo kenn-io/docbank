@@ -230,7 +230,6 @@ See docs/usage/search.md.`,
 		if automatic.report != nil {
 			empty = len(automatic.report.Results) == 0 && !slices.ContainsFunc(rep.Hits, func(hit api.SearchHit) bool { return hit.Node.Kind == "dir" })
 		}
-		finalizeAutomaticSearchMiss(&automatic, empty)
 		defer func() {
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
@@ -488,7 +487,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	searchRequest := api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
-		Fence: api.DocumentSearchFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
+		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
 	}
 	report, err := c.SearchDocuments(cmd.Context(), searchRequest)
 	if err != nil {

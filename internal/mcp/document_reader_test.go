@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -118,7 +118,8 @@ func TestEmbeddedDocumentReaderDoesNotRecordMiss(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-export-key"
 	cfg.MissLog.Enabled = true
-	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
+	log := misslog.New(t.Context(), os.Getenv("DOCBANK_HOME"), f.catalog.VaultID(), cfg.MissLog, nil)
+	apiServer := api.NewServer(api.Deps{MissLog: log, Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
 	t.Cleanup(apiServer.Close)
 	args := map[string]any{"query": "synthetic private scope miss", "mode": "lexical", "profile": profileName, "filters": map[string]any{"mime_type": "image/png"}}
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
@@ -127,28 +128,7 @@ func TestEmbeddedDocumentReaderDoesNotRecordMiss(t *testing.T) {
 	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
 	require.NoError(t, err)
 	require.False(t, result.IsError, result)
-	records, err := f.catalog.ListMissLogRecords(t.Context(), time.Time{}, 10, 0)
+	records, err := log.List(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, records)
-}
-
-func TestDocumentSearchSubmitsEmptyFenceForImageOnlyProfile(t *testing.T) {
-	client := &answerFakeClient{empty: true, report: api.DocumentSearchReport{
-		RequestedMode: "hybrid", ActualMode: "lexical",
-		Coverage:     api.DocumentSearchCoverage{State: "complete"},
-		Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
-	}}
-	session := documentReadSession(func(ctx context.Context, call func(context.Context, documentClient) error) error {
-		return call(ctx, client)
-	})
-
-	_, _, err := searchDocuments(t.Context(), session,
-		[]byte(`{"query":"synthetic image-only miss","mode":"hybrid","profile":"images-only"}`), false)
-	require.NoError(t, err)
-	require.Len(t, client.requests, 1)
-	assert.Equal(t, "images-only", client.requests[0].Profile)
-	assert.Equal(t, "hybrid", client.requests[0].Mode)
-	assert.NotEmpty(t, client.requests[0].Fence.VaultUID)
-	assert.Empty(t, client.requests[0].Fence.ContentVersionIDs)
-	assert.Zero(t, client.validations, "the search result owns the resolved mode")
 }

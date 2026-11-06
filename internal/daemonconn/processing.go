@@ -510,11 +510,11 @@ func validateDocumentSimilarReport(request api.DocumentSimilarRequest, report ap
 		converted.Results = append(converted.Results, api.DocumentSearchResult{VaultUID: result.VaultUID, NodeID: result.NodeID,
 			ContentVersionID: result.ContentVersionID, Rank: result.Rank, SemanticRank: result.Rank, Score: result.Score, Path: result.Path, Evidence: result.Evidence})
 	}
-	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: api.DocumentSearchFenceFromSourceFence(request.Fence)}, converted)
+	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
-	if request.Scope == nil && (!validUUIDv4(request.Fence.VaultUID) ||
+	if request.Scope == nil && (!validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
 		len(request.Fence.ContentVersionIDs) > 4096) {
 		return errors.New("request fence identity is invalid")
 	}

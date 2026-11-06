@@ -133,15 +133,12 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
-	if d.Gate == nil {
-		d.Gate = NewOperationGate()
-	}
-	if d.MissLog == nil {
-		d.MissLog = misslog.New(d.Store, d.Cfg.MissLog, d.Logger, d.Gate.MutateContext, d.Gate.TryMutateContext)
+	if d.MissLog == nil && d.Store != nil {
+		// The miss log belongs to the server lifetime rather than a request.
+		d.MissLog = misslog.New(context.Background(), d.VaultRoot, d.Store.VaultID(), d.Cfg.MissLog, d.Logger)
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
-	cfg.Transformers = append(cfg.Transformers, sanitizeMissLogErrorResponse)
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
@@ -218,7 +215,7 @@ func NewServer(d Deps) *Server {
 
 	s.webSessions.login = newWebLoginPolicy(d)
 
-	registerMissLogRoutes(humaAPI, d, g)
+	registerMissLogRoutes(humaAPI, d)
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
 	registerPeopleRebuildRoutes(humaAPI, d, g)

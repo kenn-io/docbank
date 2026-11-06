@@ -144,7 +144,6 @@ var (
 // currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
-	"miss_log_records",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",
@@ -353,11 +352,6 @@ func validateCurrentSchemaColumns(
 		got, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err
-		}
-		if table == "miss_log_records" && len(got) == 0 {
-			// The daemon-local miss log is optional. bootstrap reapplies schema.sql
-			// on open and recreates this table before any store operation uses it.
-			continue
 		}
 		if !slices.Equal(got, wantTables[table]) {
 			return fmt.Errorf(

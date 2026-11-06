@@ -876,10 +876,11 @@ func validateDocumentSearch(ctx context.Context, service *processing.Service, in
 	if service == nil {
 		return processingUnavailable()
 	}
-	if err := service.ValidateSearch(ctx, processing.SearchRequest{Query: input.Query,
+	err := service.ValidateSearch(ctx, processing.SearchRequest{Query: input.Query,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
-		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank}); err != nil {
+		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank})
+	if err != nil {
 		return fromProcessingError(err)
 	}
 	return nil
@@ -888,9 +889,6 @@ func validateDocumentSearch(ctx context.Context, service *processing.Service, in
 func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
-	}
-	if input.Scope == nil && len(input.Fence.ContentVersionIDs) == 0 && input.Fence.VaultUID == "" {
-		return DocumentSearchReport{}, NewError(http.StatusUnprocessableEntity, "validation", "document search requires a source fence or an all-live scope")
 	}
 	var allLive *store.SearchOptions
 	if input.Scope != nil {

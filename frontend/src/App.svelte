@@ -2139,7 +2139,6 @@
           request,
           preferredSelectedID,
           refreshing,
-          submitted,
           session,
           controller.signal,
         );
@@ -2338,7 +2337,6 @@
             request,
             preferredSelectedID,
             refreshing,
-            submitted,
             session,
             controller.signal,
             note,
@@ -2391,7 +2389,6 @@
     request: number,
     preferredSelectedID: number | undefined,
     refreshing: boolean,
-    submitted: boolean,
     session: string,
     signal: AbortSignal,
     note = "",
