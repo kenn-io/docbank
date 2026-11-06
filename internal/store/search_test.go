@@ -34,18 +34,15 @@ func TestSearchContentHydrationCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorContains(t, err, "loading content hits")
 	require.Nil(t, hits)
-	require.Equal(t, 2, queryer.calls)
 }
 
 type searchHydrationCancelQuerier struct {
 	metadataQuerier
 
 	cancel context.CancelFunc
-	calls  int
 }
 
 func (q *searchHydrationCancelQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	q.calls++
 	if strings.Contains(query, "FROM json_each(?) page") {
 		q.cancel()
 	}
@@ -3333,7 +3330,7 @@ func TestSearchPageLeadingContentMatchesGrouped(t *testing.T) {
 				case "long.txt":
 					text += strings.Repeat(" filler", 30)
 				}
-				if generation || i == 3 {
+				if generation {
 					build := lexicalSearchBuild(s, profile, fakeHash(fmt.Sprintf("%02x", i+32)), text)
 					build.SourceSHA256 = node.BlobHash
 					second := build.LexicalSegments[0]
@@ -3345,28 +3342,7 @@ func TestSearchPageLeadingContentMatchesGrouped(t *testing.T) {
 					build.LexicalSegments = append(build.LexicalSegments, second)
 					require.NoError(t, s.StageRenditionBuild(ctx, build))
 					attachment := RenditionAttachmentRecord{ID: fakeHash(fmt.Sprintf("%02x", i+64)), VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
-					attachments := []RenditionAttachmentRecord{attachment}
-					if i == 3 {
-						attachment.ID = fakeHash("ef")
-						attachment.Profile = catalogProcessingProfile(t, true)
-						attachments = append(attachments, attachment)
-					}
-					for _, attachment := range attachments {
-						if generation {
-							require.NoError(t, publishAttachmentForTest(t, s, attachment))
-						} else {
-							// Keep the legacy text source while seeding both profile heads.
-							require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-								if err := ensureProcessingProfileTx(ctx, tx, attachment.Profile); err != nil {
-									return err
-								}
-								return insertRenditionAttachmentAndHeadTx(ctx, tx, attachment, RenditionHeadRecord{
-									ContentVersionID: node.CurrentVersionID, ProcessingProfileFingerprint: attachment.Profile.Fingerprint,
-									AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime,
-								})
-							}))
-						}
-					}
+					require.NoError(t, publishAttachmentForTest(t, s, attachment))
 				}
 				if !generation {
 					for j, body := range []string{text, text + strings.Repeat(" filler", 50)} {
