@@ -19461,6 +19461,41 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SearchTextCoverage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchTextCoverage.json
+          format: uri
+          readOnly: true
+          type: string
+        families:
+          items:
+            enum:
+              - pdf
+              - office
+              - other
+            type: string
+          type: array
+        no_text:
+          format: int64
+          minimum: 0
+          type: integer
+        pending:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - no_text
+        - families
+        - pending
+      type: object
+      x-go-type: api.SearchTextCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SelectedDocuments:
       additionalProperties: false
       properties:
@@ -31866,6 +31901,67 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find similar documents using stored embeddings
+  /api/v1/search/text-coverage:
+    get:
+      description: Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.
+      operationId: search-text-coverage
+      parameters:
+        - explode: false
+          in: query
+          name: pdf_filter
+          schema:
+            maxLength: 16384
+            type: string
+        - explode: false
+          in: query
+          name: source_present
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: tag_id
+          schema:
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+            type: string
+        - explode: false
+          in: query
+          name: mime_type
+          schema:
+            maxLength: 255
+            type: string
+        - explode: false
+          in: query
+          name: under_node_id
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: modified_since
+          schema:
+            maxLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: modified_before
+          schema:
+            maxLength: 64
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchTextCoverage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Count files waiting for searchable text
   /api/v1/search/validate:
     post:
       operationId: validateDocumentSearch
