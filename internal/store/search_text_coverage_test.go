@@ -59,3 +59,49 @@ func TestSearchTextCoverage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
 }
+
+func TestSearchTextCoverageEmptyRenditions(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"none", "empty_segments", "blank_segments"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+			collectionCoveragePublish(t, s, pdfs[0], profile, state)
+			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{})
+			require.NoError(t, err)
+			require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
+		})
+	}
+}
+
+func TestSearchTextCoverageRequeuedSearchableBlob(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		active        bool
+		hits, pending int
+	}{
+		{name: "native", hits: 2},
+		{name: "rendition", active: true, hits: 1, pending: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+			if tc.active {
+				collectionCoveragePublish(t, s, pdfs[0], profile, "complete")
+			}
+			text, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", testSHA256([]byte("notes")), 5, "text/plain")
+			require.NoError(t, err)
+			require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: text.BlobHash,
+				Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "lease renewal"}))
+			_, err = s.CreateFile(t.Context(), s.RootID(), "copy.txt", text.BlobHash, 5, "text/plain")
+			require.NoError(t, err)
+			hits, _, err := s.SearchPage(t.Context(), "lease renewal", 10)
+			require.NoError(t, err)
+			require.Len(t, hits, tc.hits)
+			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "text/plain"})
+			require.NoError(t, err)
+			require.Equal(t, tc.pending, got.Pending)
+		})
+	}
+}

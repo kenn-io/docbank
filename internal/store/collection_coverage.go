@@ -76,6 +76,10 @@ coverage_versions AS MATERIALIZED (
 ), ` + processingVersionCoverageCTE(metadataJSONDialect{})
 }
 
+func renditionHasSearchableTextSQL(buildID string) string {
+	return `EXISTS(SELECT 1 FROM rendition_lexical_index ix WHERE ix.build_id=` + buildID + ` AND length(trim(ix.text))>0)`
+}
+
 // processingVersionCoverageCTE classifies exact versions supplied by the caller
 // in coverage_versions, under the profile/generation in coverage_selection.
 func processingVersionCoverageCTE(d metadataJSONDialect) string {
@@ -99,9 +103,7 @@ coverage_head_builds AS (
  JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid AND b.source_sha256=v.blob_hash
 ),
 coverage_serving AS MATERIALIZED (
- SELECT b.build_id, CASE WHEN EXISTS(
-  SELECT 1 FROM rendition_lexical_index ix WHERE ix.build_id=b.build_id AND length(trim(ix.text))>0
- ) THEN 1 ELSE 0 END nonempty
+ SELECT b.build_id, CASE WHEN ` + renditionHasSearchableTextSQL("b.build_id") + ` THEN 1 ELSE 0 END nonempty
  FROM coverage_head_builds b CROSS JOIN coverage_selection p
  WHERE EXISTS(SELECT 1 FROM rendition_lexical_generation_builds gb
   WHERE gb.generation_id=p.generation AND gb.build_id=b.build_id)

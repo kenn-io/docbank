@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,20 +21,29 @@ import (
 
 func TestEmptySearchHints(t *testing.T) {
 	for _, tc := range []struct {
-		name, query                                                string
-		flags                                                      []string
-		hybrid, fileHit, nonempty, filterOnly, unavailable, folder bool
-		pending                                                    int
-		next                                                       string
+		name, query                                                          string
+		flags                                                                []string
+		hybrid, fileHit, nonempty, filterOnly, unavailable, folder, filtered bool
+		pending                                                              int
+		next                                                                 string
 	}{
 		{name: "human", pending: 1},
 		{name: "extracted", pending: 0},
-		{name: "JSON", flags: []string{"--json"}, pending: 1, next: "docbank search 'lease renewal' '--json=true'"},
+		{name: "JSON", flags: []string{"--json"}, pending: 1, next: "docbank search '--json=true' '--' 'lease renewal'"},
+		{name: "JSON leading dash", query: "--lease renewal", flags: []string{"--json"}, pending: 1, next: "docbank search '--json=true' '--' '--lease renewal'"},
+		{name: "filtered", filtered: true, flags: []string{"--tag", processingTestVersionID, "--under", "id:42", "--mime-type", "application/pdf"}},
+		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
+		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
+		{name: "MIME", filtered: true, flags: []string{"--mime-type", "application/pdf"}},
+		{name: "since", filtered: true, flags: []string{"--modified-since", "2000-01-01T00:00:00Z"}},
+		{name: "before", filtered: true, flags: []string{"--modified-before", "2000-01-01T00:00:00Z"}},
+		{name: "source", filtered: true, flags: []string{"--source-present"}},
+		{name: "PDF", filtered: true, flags: []string{"--pdf-filter", "pdf_has_javascript:true"}},
 		{name: "JSON quote", query: "tenant's lease", flags: []string{"--json"}, pending: 1},
 		{name: "agent", flags: []string{"--agent"}, pending: 1},
 		{name: "fuzzy", flags: []string{"--fuzzy"}, pending: 1},
 		{name: "hybrid agent with lexical file", flags: []string{"--agent"}, hybrid: true, fileHit: true, pending: 1},
-		{name: "hybrid JSON", flags: []string{"--json"}, hybrid: true, pending: 1, next: "docbank search 'lease renewal' '--json=true'"},
+		{name: "hybrid JSON", flags: []string{"--json"}, hybrid: true, pending: 1, next: "docbank search '--json=true' '--' 'lease renewal'"},
 		{name: "nonempty", nonempty: true},
 		{name: "hybrid nonempty", hybrid: true, nonempty: true},
 		{name: "filter only", filterOnly: true},
@@ -59,17 +69,36 @@ func TestEmptySearchHints(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/search/text-coverage":
 					coverageCalls++
+					if tc.name == "filtered" {
+						assert.Equal(t, processingTestVersionID, r.URL.Query().Get("tag_id"))
+						assert.Equal(t, "42", r.URL.Query().Get("under_node_id"))
+						assert.Equal(t, "application/pdf", r.URL.Query().Get("mime_type"))
+					}
 					if tc.unavailable {
 						http.Error(w, "unavailable", http.StatusServiceUnavailable)
 						return
 					}
 					assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1, Families: []string{"pdf"}, Pending: tc.pending}))
+				case "/api/v1/tags/" + processingTestVersionID:
+					w.Header().Set("ETag", `"1"`)
+					assert.NoError(t, json.MarshalWrite(w, api.Tag{ID: processingTestVersionID, Name: "urgent", Revision: 1}))
+				case "/api/v1/nodes/42":
+					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "dir", Path: "/cases"}))
 				case "/api/v1/search":
 					if r.Method != http.MethodGet {
 						fallback(w, r)
 						return
 					}
 					report := api.SearchReport{Limit: 50, Hits: []api.SearchHit{}}
+					if tc.filtered {
+						params := r.URL.Query()
+						report.TagID, report.MIMEType = params.Get("tag_id"), params.Get("mime_type")
+						report.PDFFilter, report.SourcePresent = params.Get("pdf_filter"), params.Get("source_present") == "true"
+						report.ModifiedSince, report.ModifiedBefore = params.Get("modified_since"), params.Get("modified_before")
+						var err error
+						report.UnderNodeID, err = strconv.ParseInt(cmp.Or(params.Get("under_node_id"), "0"), 10, 64)
+						assert.NoError(t, err)
+					}
 					if tc.nonempty || tc.fileHit || tc.folder {
 						report.Hits = []api.SearchHit{{Node: api.Node{ID: 42, Kind: "file", Name: "lease.txt"}, Path: "/lease.txt", Match: "name"}}
 					}
@@ -100,11 +129,11 @@ func TestEmptySearchHints(t *testing.T) {
 			rootCmd.SetErr(&stderr)
 			args := []string{"search"}
 			if query != "" {
-				args = append(args, query)
+				args = append(args, tc.flags...)
+				args = append(args, "--", query)
 			} else {
 				args = append(args, "--modified-since", "2000-01-01T00:00:00Z")
 			}
-			args = append(args, tc.flags...)
 			rootCmd.SetArgs(args)
 			defer rootCmd.SetArgs(nil)
 			require.NoError(t, rootCmd.ExecuteContext(context.Background()))
@@ -125,15 +154,17 @@ func TestEmptySearchHints(t *testing.T) {
 				require.Equal(t, tc.next, report.Hints[1].Next)
 				require.Empty(t, stderr.String())
 			} else {
-				if !tc.unavailable {
+				if tc.unavailable {
+					require.NotContains(t, stderr.String(), "no searchable text")
+				} else {
 					require.Contains(t, stderr.String(), "Hint: 1 file (PDF) has no searchable text")
 				}
 				if tc.pending > 0 {
-					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed")
+					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
 				} else {
 					require.NotContains(t, stderr.String(), "still being indexed")
 				}
-				if tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
+				if tc.filtered || tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
 					require.NotContains(t, stderr.String(), "every word")
 				} else {
 					require.Contains(t, stderr.String(), "no name or text segment contains every word")
@@ -144,6 +175,8 @@ func TestEmptySearchHints(t *testing.T) {
 						mode = "hybrid"
 					}
 					require.True(t, strings.HasPrefix(stdout.String(), "OK search count=0 query=\"lease renewal\" mode="+mode+" degraded=false truncated=false"))
+				} else if tc.filtered {
+					require.True(t, strings.HasPrefix(stdout.String(), "no matches"))
 				} else if !tc.hybrid && !slices.Contains(tc.flags, "--fuzzy") {
 					require.Equal(t, "no matches\n", stdout.String())
 				}

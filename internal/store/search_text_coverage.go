@@ -45,26 +45,27 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out
 		 SELECT cv.mime_type,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
+		 EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=cv.blob_hash AND e.status='ok' AND length(trim(e.text))>0) extracted,
 		 EXISTS(SELECT 1 FROM rendition_heads h
 		 JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		  AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		 JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
-		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=?) serving
+		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id")+`) serving
 		 `+scope+`)
-		 SELECT mime_type,native,pending,serving,COUNT(*) FROM coverage
-		 GROUP BY mime_type,native,pending,serving`, args...)
+		 SELECT mime_type,native,pending,extracted,serving,COUNT(*) FROM coverage
+		 GROUP BY mime_type,native,pending,extracted,serving`, args...)
 		if err != nil {
 			return fmt.Errorf("counting search text coverage: %w", err)
 		}
 		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
 		for rows.Next() {
 			var mediaType string
-			var native, pending, serving bool
+			var native, pending, extracted, serving bool
 			var count int
-			if err := rows.Scan(&mediaType, &native, &pending, &serving, &count); err != nil {
+			if err := rows.Scan(&mediaType, &native, &pending, &extracted, &serving, &count); err != nil {
 				return err
 			}
-			if native && pending {
+			if native && pending && !serving && (generation.ID != "" || !extracted) {
 				out.Pending += count
 			}
 			mediaType, _, err = mime.ParseMediaType(mediaType)

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -234,8 +235,13 @@ See docs/usage/search.md.`,
 		}()
 		var hints []searchHint
 		if empty && strings.TrimSpace(query) != "" {
-			coverage, _ := c.SearchTextCoverage(cmd.Context(), opts)
-			hints = emptySearchHints(cmd, query, coverage, automatic.report == nil, opts.Fuzzy)
+			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			if coverageErr != nil {
+				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
+			}
+			unfilteredLexical := automatic.report == nil && !opts.SourcePresent && opts.PDFFilter == "" && opts.TagID == "" &&
+				opts.MIMEType == "" && opts.UnderNodeID == 0 && opts.ModifiedSince == "" && opts.ModifiedBefore == ""
+			hints = emptySearchHints(cmd, query, coverage, unfilteredLexical, opts.Fuzzy)
 		}
 		defer func() {
 			if retErr == nil && !searchJSON {
