@@ -31,7 +31,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
  photo_timeline_version_delete photo_timeline_version_change
  photo_timeline_binding_insert photo_timeline_correction_insert`},
-	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis contracts", `
+	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis/photo-quality-hidden contracts", `
  photo_xmp_unsettled_refresh photo_xmp_unsettled_file_insert photo_xmp_unsettled_file_update
  photo_xmp_unsettled_file_delete photo_xmp_unsettled_asset_insert photo_xmp_unsettled_asset_update
  photo_xmp_unsettled_node_update photo_xmp_unsettled_node_insert photo_xmp_unsettled_node_delete

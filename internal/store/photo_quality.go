@@ -29,12 +29,12 @@ func (s *Store) MissingPhotoQualityTargetsAfter(
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
  FROM content_versions v
- WHERE v.version_id>? AND `+liveIncludedPhotoDisplayPredicate("v")+`
+ WHERE v.version_id>$1 AND `+liveIncludedPhotoDisplayPredicate("v")+`
  AND EXISTS (SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id
-  AND g.recipe_fingerprint=? AND g.state='ready')
+  AND g.recipe_fingerprint=$2 AND g.state='ready')
  AND NOT EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id
-  AND q.evaluator_fingerprint=? AND q.face_inputs=`+photoFaceInputsSQL("v.version_id")+`)
- ORDER BY v.version_id LIMIT ?`, after, fingerprints.GridRecipe, fingerprints.Evaluator, limit)
+  AND q.evaluator_fingerprint=$3 AND q.face_inputs=`+s.photoFaceInputsSQL("v.version_id")+`)
+ ORDER BY v.version_id LIMIT $4`, after, fingerprints.GridRecipe, fingerprints.Evaluator, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -85,14 +85,14 @@ func (s *Store) publishPhotoQuality(
 		args := append([]any{fingerprints.Evaluator, state}, scores...)
 		args = append(args, string(encoded), inputs, target.VersionID, target.SourceSHA256, target.Size, target.MediaType, inputs)
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_quality_signals
- WHERE content_version_id=? AND evaluator_fingerprint!=?`, target.VersionID, fingerprints.Evaluator); err != nil {
+ WHERE content_version_id=$1 AND evaluator_fingerprint!=$2`, target.VersionID, fingerprints.Evaluator); err != nil {
 			return fmt.Errorf("replacing stale photo quality signals: %w", err)
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO photo_quality_signals(
  content_version_id,evaluator_fingerprint,state,`+photoQualityColumns+`,face_reports_json,face_inputs)
- SELECT v.version_id,?,?,?,?,?,?,?,?,?,?,?,? FROM content_versions v
- WHERE v.version_id=? AND v.blob_hash=? AND v.size=? AND COALESCE(v.mime_type,'')=?
- AND `+liveIncludedPhotoDisplayPredicate("v")+` AND `+photoFaceInputsSQL("v.version_id")+`=?
+ SELECT v.version_id,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12 FROM content_versions v
+ WHERE v.version_id=$13 AND v.blob_hash=$14 AND v.size=$15 AND COALESCE(v.mime_type,'')=$16
+ AND `+liveIncludedPhotoDisplayPredicate("v")+` AND `+s.photoFaceInputsSQL("v.version_id")+`=$17
  ON CONFLICT(content_version_id,evaluator_fingerprint) DO UPDATE SET
  state=excluded.state,focus=excluded.focus,blur=excluded.blur,brightness=excluded.brightness,
  color_red=excluded.color_red,color_green=excluded.color_green,color_blue=excluded.color_blue,
@@ -109,7 +109,7 @@ type photoQualityResults struct {
 	unavailable map[string]bool
 }
 
-func photoQualityForVersions(
+func (s *Store) photoQualityForVersions(
 	ctx context.Context, q metadataQuerier, versions []string,
 ) (photoQualityResults, error) {
 	result := photoQualityResults{
@@ -128,9 +128,9 @@ func photoQualityForVersions(
 	for _, v := range versions {
 		args = append(args, v)
 	}
-	rows, err := q.QueryContext(ctx, `SELECT content_version_id,state,`+photoQualityColumns+`,face_reports_json,face_inputs,`+photoFaceInputsSQL("photo_quality_signals.content_version_id")+`
+	rows, err := q.QueryContext(ctx, `SELECT content_version_id,state,`+photoQualityColumns+`,face_reports_json,face_inputs,`+s.photoFaceInputsSQL("photo_quality_signals.content_version_id")+`
  FROM photo_quality_signals
- WHERE evaluator_fingerprint=? AND content_version_id IN (`+placeholders(len(versions))+`)`, args...)
+ WHERE evaluator_fingerprint=$1 AND content_version_id IN (`+numberedPlaceholders(len(versions), 1)+`)`, args...)
 	if err != nil {
 		return photoQualityResults{}, err
 	}
@@ -192,9 +192,16 @@ func decodePhotoQualityRow(
 }
 
 // The source signature is captured with faces and rechecked at publication.
-func photoFaceInputsSQL(version string) string {
-	return `(SELECT COALESCE(group_concat(input,','),'') FROM (SELECT json_array(face_id,x,y,width,height,facing,eyes_open,smile) input FROM photo_faces WHERE content_version_id=` + version + ` AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE e.face_id=photo_faces.face_id AND ` + rejectedFaceMatchPredicate + ` AND COALESCE(c.suggested_person_id,'')='') ORDER BY face_id))`
+// photoFaceInputsSQL identifies the current face inputs to a disposable quality
+// cache. Its encoding is backend-local; quality rows never enter metadata transfer.
+func (s *Store) photoFaceInputsSQL(version string) string {
+	selection := ` FROM photo_faces WHERE content_version_id=` + version + ` AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE e.face_id=photo_faces.face_id AND ` + rejectedFaceMatchPredicate + ` AND COALESCE(c.suggested_person_id,'')='')`
+	if s.postgresSchema != "" {
+		return `(SELECT COALESCE(string_agg(json_build_array(face_id,x,y,width,height,facing,eyes_open,smile)::text,',' ORDER BY face_id),'')` + selection + `)`
+	}
+	return `(SELECT COALESCE(group_concat(input,','),'') FROM (SELECT json_array(face_id,x,y,width,height,facing,eyes_open,smile) input` + selection + ` ORDER BY face_id))`
 }
+
 func (s *Store) PhotoQualityFaces(ctx context.Context, version string) ([]PhotoFace, string, error) {
 	var faces []PhotoFace
 	var inputs string
@@ -204,7 +211,7 @@ func (s *Store) PhotoQualityFaces(ctx context.Context, version string) ([]PhotoF
 		if err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, `SELECT `+photoFaceInputsSQL("?"), version).Scan(&inputs)
+		return tx.QueryRowContext(ctx, `SELECT `+s.photoFaceInputsSQL("$1"), version).Scan(&inputs)
 	})
 	return faces, inputs, err
 }

@@ -49,6 +49,18 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	assert.Equal(t, backendIndex{Columns: []string{"size"}}, right["content_versions"].Indexes[photoSizeIndex])
 	delete(left["content_versions"].Indexes, photoSizeIndex)
 	delete(right["content_versions"].Indexes, photoSizeIndex)
+	// Hidden visibility follows receipt insertion order, independent of clocks.
+	// PostgreSQL's ordinal and indexes replace SQLite's implicit rowid.
+	receipts := right["photo_change_receipts"]
+	require.Contains(t, receipts.Columns, "receipt_order")
+	delete(receipts.Columns, "receipt_order")
+	assert.Equal(t, backendIndex{Columns: []string{"receipt_order"}, Unique: true}, receipts.Indexes["unique:receipt_order"])
+	delete(receipts.Indexes, "unique:receipt_order")
+	assert.Equal(t, backendIndex{Columns: []string{"operation", "receipt_order"}}, receipts.Indexes["photo_change_receipts_operation"])
+	delete(receipts.Indexes, "photo_change_receipts_operation")
+	assert.Equal(t, backendIndex{Columns: []string{"operation"}}, left["photo_change_receipts"].Indexes["photo_change_receipts_operation"])
+	delete(left["photo_change_receipts"].Indexes, "photo_change_receipts_operation")
+
 	for table, reason := range sqliteOnlyBackendTables {
 		assert.Contains(t, left, table, "stale table exception: %s", reason)
 		assert.NotContains(t, right, table, "remove resolved table exception: %s", reason)

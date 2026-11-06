@@ -35,7 +35,6 @@ var deferredBackendIndexes = map[string]string{
 	"package_labels_lookup":                       "package_labels",
 	"package_preflights_expiry":                   "package_preflights",
 	"packages_history":                            "packages",
-	"person_candidate_faces_face":                 "person_candidate_faces",
 	"person_candidate_state":                      "person_match_candidates",
 	"person_document_assertions_person":           "person_document_assertions",
 	"person_external_alias_target":                "person_external_uid_aliases",

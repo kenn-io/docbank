@@ -194,6 +194,26 @@ func checkPhotoXMPInvalidation(t *testing.T, newStore func(*testing.T) *Store) {
 			require.NoError(f.t, err)
 		}, PhotoXMPStatePending},
 
+		{"library display preference", func(f fixture) {
+			_, err := f.s.SetPhotoSettings(f.t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
+			require.NoError(f.t, err)
+		}, PhotoXMPStatePending},
+		{"disable hidden photos", func(f fixture) {
+			require.NoError(f.t, f.s.SetupPhotoHidden(f.t.Context(), "correct"))
+			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
+			require.NoError(f.t, err)
+			_, err = f.s.SetPhotoAssetHidden(f.t.Context(), asset.ID, asset.Revision, true)
+			require.NoError(f.t, err)
+			work, _, err := f.s.ClassifyPhotoXMP(f.t.Context(), f.raw.ID)
+			require.NoError(f.t, err)
+			require.NotNil(f.t, work.History)
+			plan, mask := planXMP(work, work.History.Settled.Packet, "")
+			require.Zero(f.t, mask)
+			_, err = f.s.PublishPhotoXMP(f.t.Context(), plan, "", 0, BlobPhysical{})
+			require.NoError(f.t, err)
+			require.NotContains(f.t, xmpTargets(f.t, f.s), PhotoSidecarTarget{FileID: f.raw.ID, NodeID: f.raw.NodeID, AssetID: f.raw.AssetID})
+			require.NoError(f.t, f.s.DisablePhotoHidden(f.t.Context(), "correct"))
+		}, PhotoXMPStatePending},
 		{"asset display revision", func(f fixture) {
 			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
 			require.NoError(f.t, err)
