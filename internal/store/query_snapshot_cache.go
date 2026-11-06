@@ -260,7 +260,7 @@ func (s *QuerySnapshotService) Create(
 	s.mu.Unlock()
 	page := prepared.page
 	go func() {
-		if err := finish(); err != nil {
+		if err := finish(); err != nil && !errors.Is(err, ErrQuerySnapshotTooLarge) {
 			slog.WarnContext(prepared.ctx, "finish query snapshot build", "error", err)
 		}
 	}()
@@ -359,7 +359,7 @@ func (s *QuerySnapshotService) RunSaved(
 
 func (s *QuerySnapshotService) prepareSnapshot(
 	ctx context.Context, owner string, request SnapshotRequest, saved *savedQuerySnapshotInput,
-) (preparedQuerySnapshot, error) {
+) (prepared preparedQuerySnapshot, err error) {
 	normalized, err := normalizeQuerySnapshotRequest(request)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
@@ -386,6 +386,9 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	handedOff := false
 	defer func() {
 		if !handedOff {
+			if err != nil && ctx.Err() != nil {
+				err = ctx.Err()
+			}
 			stopRequestCancel()
 			cancel()
 			s.finishBuild(build, false)

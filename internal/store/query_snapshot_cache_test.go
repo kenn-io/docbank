@@ -351,6 +351,27 @@ func TestQuerySnapshotCacheRejectsBusyAndCanceledAdmission(t *testing.T) {
 	wg.Wait()
 }
 
+func TestQuerySnapshotCacheDeadlineBeforeFirstPage(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("deadline"), 1, "text/plain")
+		require.NoError(t, err)
+		service := newQuerySnapshotService(s, querySnapshotServiceOptions{
+			ChargeHook: func(ctx context.Context, _ string, _, _ int64) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		})
+		defer func() { require.NoError(t, service.Close()) }()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		_, err = service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, snapshotCacheStats{}, service.stats())
+	})
+}
+
 func TestQuerySnapshotCachePreparationPanicReleasesReservation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
