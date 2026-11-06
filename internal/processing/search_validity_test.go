@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestProcessingSearchValidityOnReturnedPage(t *testing.T) {
+func TestProcessingSearchValidityBeforeLimit(t *testing.T) {
 	t.Parallel()
 	f := newMediaStateFixture(t)
 	ctx := t.Context()
@@ -35,8 +35,8 @@ func TestProcessingSearchValidityOnReturnedPage(t *testing.T) {
 	report, err := f.service.Search(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	require.Equal(t, old.ID, report.Results[0].Document.NodeID)
-	require.Equal(t, document.ValiditySuperseded, report.Results[0].Validity.State)
+	require.Equal(t, next.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, document.ValidityCurrent, report.Results[0].Validity.State)
 	require.Equal(t, 1, report.Results[0].Rank)
 	require.True(t, report.Truncated)
 	require.Equal(t, "2025-06-01", report.AsOf)
@@ -77,8 +77,8 @@ func TestProcessingSearchValidityUndatedSuccessor(t *testing.T) {
 		asOf  string
 		state document.ValidityState
 	}{
-		{"before end", "2025-06-01", "2025-05-31", document.ValidityCurrent},
-		{"after end", "2025-06-01", "2025-06-02", document.ValiditySuperseded},
+		{"before end", "2025-12-31", "2025-06-01", document.ValidityCurrent},
+		{"after end", "2025-12-31", "2026-01-01", document.ValiditySuperseded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -132,7 +132,7 @@ func TestProcessingSearchValidityAllLiveScopeExcludesOutOfScopeSuccessor(t *test
 	require.Nil(t, report.Results[0].Validity)
 }
 
-func TestMediaSearchValidityOnReturnedPage(t *testing.T) {
+func TestMediaSearchValidityBeforeLimitAndSelectedScope(t *testing.T) {
 	t.Parallel()
 	f := newMediaStateFixture(t)
 	ctx := t.Context()
@@ -173,8 +173,19 @@ func TestMediaSearchValidityOnReturnedPage(t *testing.T) {
 	report, err := f.service.Search(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	require.Equal(t, old.ID, report.Results[0].Document.NodeID)
-	require.Equal(t, document.ValiditySuperseded, report.Results[0].Validity.State)
+	require.Equal(t, next.NodeID, report.Results[0].Document.NodeID)
+	require.Nil(t, report.Results[0].Validity)
 	require.Equal(t, 1, report.Results[0].Rank)
 	require.True(t, report.Truncated)
+	for _, source := range sources {
+		if source.ContentVersionID == old.CurrentVersionID {
+			request.MediaSources = []retrieval.MediaSourceSelector{source}
+			break
+		}
+	}
+	report, err = f.service.Search(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, old.ID, report.Results[0].Document.NodeID)
+	require.Nil(t, report.Results[0].Validity, "the fenced replacement was not selected")
 }

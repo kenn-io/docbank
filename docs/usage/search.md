@@ -66,11 +66,11 @@ search, including when expansion and reranking are disabled.
 
 ## Search by effective date
 
-Processing search ranks documents in force ahead of superseded, expired, and future documents within the returned page. It keeps their retrieval scores. The PATH column explains each out-of-force result, for example `(superseded by /leases/lease-2025.pdf)`. Agent output includes `validity` and `validity_reason` fields.
+Processing search ranks documents in force ahead of superseded, expired, and future documents before applying the result limit. It keeps their retrieval scores. The PATH column explains each out-of-force result, for example `(superseded by /leases/lease-2025.pdf)`. Agent output includes `validity` and `validity_reason` fields.
 
 Use `docbank search renewal --as-of 2024-06-01` to evaluate declarations on a chosen date. This also works with explicit processing search. Omitting the date uses today. Only live successors within the search's source fence or filters affect standing or appear in explanations. An undated successor applies after the predecessor's inclusive end date, or on every inspection date if that end is open. See [Document validity](organizing.md#document-validity) to declare replacements and effective dates.
 
-Profile lane limits bound retrieval candidates. Retrieval selects the page and reranks it before validity ordering. Out-of-force matches stay on that page, listed after in-force ones.
+Profile lane limits bound the candidate pool, up to 1,000 documents. Retrieval reranks that pool within the profile’s `MaxCandidates` before validity ordering and the result limit. The reranking receipt may count candidates omitted from the returned page. In-force matches take the limited slots first; out-of-force matches fill any remaining slots, with reasons. With `--limit 1`, an in-force match is returned ahead of an out-of-force match in the pool.
 
 `--as-of` requires automatic hybrid search or explicit processing search. If automatic search cannot run or fails, the command returns an error. Ordinary lexical search without a processing profile keeps its usual order.
 

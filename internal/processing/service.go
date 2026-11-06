@@ -1662,9 +1662,10 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
+	candidateLimit := min(profile.portable.Retrieval.LexicalLimit+profile.portable.Retrieval.VectorLimit, document.MaxRetrievalCandidateLimit)
 	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
-		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
+		Limit: candidateLimit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
 	if err != nil {
@@ -1673,6 +1674,13 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	report.Results, err = service.applyValidity(ctx, report.Results, searchScope, asOf)
 	if err != nil {
 		return retrieval.Report{}, err
+	}
+	if len(report.Results) > prepared.limit {
+		report.Results = report.Results[:prepared.limit]
+		report.Truncated = true
+	}
+	for i := range report.Results {
+		report.Results[i].Rank = i + 1
 	}
 	report.RequestedMode = prepared.requestedMode
 	report.AsOf = asOf

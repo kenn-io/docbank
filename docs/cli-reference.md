@@ -1202,7 +1202,7 @@ OK search count=1 query="renewal terms" mode=lexical degraded=false truncated=fa
 docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--as-of YYYY-MM-DD] [--explain] [--agent | --json]
 ```
 
-`--as-of YYYY-MM-DD` evaluates document validity on that date; omission uses today. Processing search ranks documents in force first within the returned page and shows reasons in the PATH column. Only live replacements within the search scope count. Automatic hybrid search accepts the same flag and returns an error if it cannot honor it. See [Search by effective date](usage/search.md#search-by-effective-date) for candidate bounds and ordinary lexical behavior.
+`--as-of YYYY-MM-DD` evaluates document validity on that date; omission uses today. Processing search ranks documents in force first before applying the result limit and shows reasons in the PATH column. Only live replacements within the search scope count. Automatic hybrid search accepts the same flag and returns an error if it cannot honor it. See [Search by effective date](usage/search.md#search-by-effective-date) for candidate bounds and ordinary lexical behavior.
 
 Searches retained processing results for the source versions you list. That set
 is the source fence: results come only from those versions. `--mode`, an
