@@ -51,7 +51,7 @@ func checkedValidityReceipt(receipt *api.ValidityReceipt, response *http.Respons
 		wantRevision++
 	}
 	if receipt.Node.ID != nodeID || receipt.Node.Revision != wantRevision {
-		return api.ValidityReceipt{}, &responseDecodeError{err: fmt.Errorf("document validity receipt does not bind node %d revision %d", nodeID, wantRevision)}
+		return api.ValidityReceipt{}, &responseDecodeError{err: fmt.Errorf("document validity receipt does not match node %d revision %d", nodeID, wantRevision)}
 	}
 	if err := validateRevisionETag(response.Header.Get("ETag"), wantRevision); err != nil {
 		return api.ValidityReceipt{}, &responseDecodeError{err: err}
@@ -66,7 +66,7 @@ func (c *Connection) NodeValidity(ctx context.Context, nodeID int64, asOf string
 		return api.NodeValidity{}, err
 	}
 	if view == nil || view.Node.ID != nodeID || view.Node.Revision < 1 || view.AsOf == "" || document.ValidateDate(view.AsOf) != nil || (asOf != "" && view.AsOf != asOf) {
-		return api.NodeValidity{}, &responseDecodeError{err: errors.New("document validity response does not bind the requested node and date")}
+		return api.NodeValidity{}, &responseDecodeError{err: errors.New("document validity response does not match the requested node and date")}
 	}
 	return *view, nil
 }
