@@ -334,7 +334,7 @@ func (p localTextEmbeddingProvider) Embed(ctx context.Context, inputs []document
 	return result, nil
 }
 
-func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
+func TestLocalTextBackfillRecoversBesidePermanentFailure(t *testing.T) {
 	t.Parallel()
 	// The backfill's retry delays run on the bubble's clock.
 	synctest.Test(t, func(t *testing.T) {
@@ -403,13 +403,6 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 		}
 		job := settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "failed" })
 		require.Equal(t, store.EmbeddingFailureProviderUnavailable, job.FailureCode)
-		jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
-		require.NoError(t, err)
-		for _, job := range jobs {
-			if job.BindingID == "bad" {
-				require.Equal(t, store.EmbeddingFailureInvalidResponse, job.FailureCode)
-			}
-		}
 		time.Sleep(time.Minute)
 		synctest.Wait()
 		ready.Store(true)

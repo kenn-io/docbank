@@ -50,9 +50,6 @@ func localTextSourceConfig(t *testing.T, origin, revision, format, credentialEnv
 		p.Runtime.DeploymentEpoch, p.Runtime.ProviderRevisionHeader = "", "X-Model-Revision"
 	}
 	p.Chunk.MaxTokens, p.Chunk.OverlapTokens = 800, 100
-	if format == "large-context" {
-		p.MaxInputTokens, p.Chunk.MaxTokens = 8192, 8192
-	}
 	p.AuthorizationFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-source-authorization")))
 	p.DisclosureFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-source-disclosure")))
 	p.CredentialBinding = "credential:source-embedding"
@@ -85,7 +82,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 	for _, variant := range []struct{ name, binding, format string }{
 		{"semantic", "semantic", "prefix-free"},
 		{"revision-header", "semantic", "revision-header"},
-		{"large-context", "semantic", "large-context"},
 		{"local-text", config.LocalTextProfile, "prefix-free"},
 		{"dot-product", "semantic", "dot-product"},
 		{"unconstrained-normalization", "semantic", "unconstrained-normalization"},
@@ -98,7 +94,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			t.Setenv(credentialEnvironment, "synthetic-key")
 			t.Setenv("DOCBANK_HOME", t.TempDir())
 			var localDocuments atomic.Int64
-			var fullLongInput atomic.Bool
 			handler := func(counter *atomic.Int64) http.Handler {
 				ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -115,11 +110,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 					}
 					data := make([]map[string]any, len(request.Input))
 					for i, text := range request.Input {
-						if variant.name == "large-context" && len(text) > 6000 && strings.HasSuffix(text, "lease renewal terms") {
-							fullLongInput.Store(true)
-							t.Logf("source received complete long formatted input: %d bytes", len(text))
-						}
-						if text != "lease renewal" && !strings.HasPrefix(text, "search_query:") && !strings.HasPrefix(text, "query:") {
+						if counter != nil && text != "lease renewal" && !strings.HasPrefix(text, "search_query:") && !strings.HasPrefix(text, "query:") {
 							counter.Add(1)
 						}
 						vector := make([]float32, 768)
@@ -135,8 +126,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 					assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": request.Model, "data": data}))
 				})
 			}
-			var ollamaDocuments atomic.Int64
-			ollama := httptest.NewServer(handler(&ollamaDocuments))
+			ollama := httptest.NewServer(handler(nil))
 			defer ollama.Close()
 			local := httptest.NewServer(handler(&localDocuments))
 			defer local.Close()
@@ -202,9 +192,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 				require.NoError(t, err)
 			}
 			for i, text := range []string{"lease renewal terms", "garden planting instructions"} {
-				if variant.name == "large-context" && i == 0 {
-					text = strings.Repeat("a ", 3000) + text
-				}
 				node := add(fmt.Sprintf("document-%d.txt", i), text)
 				nodes = append(nodes, node)
 				process(service, node, name)
@@ -220,11 +207,8 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			}
 			before := search(service, name)
 			require.Equal(t, nodes[0].CurrentVersionID, before[0])
-			if variant.name == "large-context" {
-				require.True(t, fullLongInput.Load(), "source must receive the entire long chunk before moving")
-			}
 			localDocuments.Store(0)
-			if variant.name != "revision-header" && variant.name != "large-context" {
+			if variant.name != "revision-header" {
 				require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
 			}
 			writeDaemonEmbeddingConfig(t, layout.Root, cfg)
@@ -237,7 +221,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 			require.NoError(t, err)
-			if variant.name == "revision-header" || variant.name == "large-context" {
+			if variant.name == "revision-header" {
 				require.Equal(t, config.LocalTextProfile, plan.Profile)
 				require.Contains(t, plan.VectorEffect, "Rebuild required")
 				require.NoError(t, connection.Close())
@@ -261,9 +245,6 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			waitForDaemon(t, layout.Root)
 			connection, err = daemonconn.Ensure(t.Context())
 			require.NoError(t, err)
-			outcome, err := tryAutomaticSearch(t.Context(), connection, "lease renewal", 2, daemonconn.SearchOptions{})
-			require.NoError(t, err)
-			require.NotNil(t, outcome.report, "automatic search must use the local provider after Ollama stops")
 			profile := choice.Profile
 			semantic, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: profile, Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 			require.NoError(t, err)

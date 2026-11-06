@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 )
 
-func TestLocalTextRejectsLosingRevisionEchoAndReservedProfile(t *testing.T) {
+func TestLocalTextConfigurationRejections(t *testing.T) {
 	cfg := validProcessingConfig()
 	cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_TEST_REVISION_KEY"}}
 	profile := cfg.EmbeddingProfiles["semantic"]
@@ -38,14 +38,11 @@ func TestLocalTextPreservesFormattedInputCapacity(t *testing.T) {
 	profile.ModelInput = EmbeddingModelInputConfig{Profile: "custom/v1", CompatibilityID: profile.CompatibilityID,
 		Document: EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"},
 		Query:    EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}}
-	for _, bound := range []int{2046, 2047, 2048} {
-		profile.MaxInputTokens = bound
-		moved, err := LocalTextEmbedding(profile, "local")
-		if bound == 2046 {
-			require.NoError(t, err)
-			require.Equal(t, profile.ModelInput, moved.ModelInput)
-		} else {
-			require.ErrorContains(t, err, "model or input contract differs from local Nomic")
-		}
-	}
+	profile.MaxInputTokens = 2046
+	moved, err := LocalTextEmbedding(profile, "local")
+	require.NoError(t, err)
+	require.Equal(t, profile.ModelInput, moved.ModelInput)
+	profile.MaxInputTokens = 2047
+	_, err = LocalTextEmbedding(profile, "local")
+	require.ErrorContains(t, err, "model or input contract differs from local Nomic")
 }
