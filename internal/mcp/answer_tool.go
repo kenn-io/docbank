@@ -95,6 +95,7 @@ var answerErrorMessages = map[string]string{
 	"reranking_unavailable":          "The processing profile has no configured reranking provider; ask the operator to configure it.",
 	"reranking_failed":               "Document reranking failed; check the daemon log before retrying.",
 	"stale_index":                    "The selected index needs rebuilding.",
+	"index_unavailable":              "The selected index needs building.",
 }
 
 func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {

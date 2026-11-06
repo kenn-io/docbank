@@ -825,6 +825,9 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
+	_, err := s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "unindexed-reader", time.Now().UTC(), time.Minute, SearchOptions{})
+	require.ErrorIs(t, err, ErrVectorIndexUnavailable)
 	set, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
 		MaxRows: 100, MaxDimension: record.VectorSpace.Descriptor.Dimension,
 		MaxBytes: len(record.VectorSet.Payload),

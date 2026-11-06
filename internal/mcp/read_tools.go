@@ -471,7 +471,7 @@ func searchDocuments(
 			mode = "hybrid"
 		}
 		retry := func(code string) bool {
-			return code != "not_found" && (code == "semantic_unavailable" || daemonconn.BindingSearchFailure(code))
+			return code == "semantic_unavailable" || daemonconn.BindingSearchFailure(code)
 		}
 		var attempt profileSearchAttempt[documentSearchResponse]
 		attempt.profile = selected

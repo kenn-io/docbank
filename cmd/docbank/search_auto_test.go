@@ -127,8 +127,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusServiceUnavailable
 		case "processing_consent_required":
 			status = http.StatusPreconditionRequired
-		case "not_found":
-			status = http.StatusNotFound
+		case "index_unavailable":
+			status = http.StatusConflict
 		}
 		w.WriteHeader(status)
 		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private"}))
@@ -195,7 +195,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, "processing_consent_required")
 			case tc.cold && *searchCalls == 1:
 				// A binding without a built vector index has no index head.
-				problem(w, "not_found")
+				problem(w, "index_unavailable")
 			case tc.searchError != "":
 				problem(w, tc.searchError)
 			case tc.malformed:

@@ -252,14 +252,14 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 		wantAttempts                          []string
 		wantProfile, wantBinding, wantFailure string
 	}{
-		{name: "retry bindings in name order", failures: map[string]string{"a": "not_found", "c": "stale_index"},
+		{name: "retry bindings in name order", failures: map[string]string{"a": "index_unavailable", "c": "stale_index"},
 			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid"}, wantProfile: "z", wantBinding: "b"},
 		{name: "provider outage tries healthy next binding", failures: map[string]string{"a": "processing_failed"},
 			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid"}, wantProfile: "a", wantBinding: "c"},
-		{name: "exhaustion falls back lexically", exhaust: true, failures: map[string]string{"a": "not_found", "c": "stale_index", "b": "stale_index"},
-			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid", "a::lexical"}, wantProfile: "a", wantFailure: "not_found"},
-		{name: "reranking fallback uses compatible profile", rerank: true, exhaust: true, failures: map[string]string{"b": "not_found"},
-			wantAttempts: []string{"z:b:hybrid", "z::lexical"}, wantProfile: "z", wantFailure: "not_found"},
+		{name: "exhaustion falls back lexically", exhaust: true, failures: map[string]string{"a": "index_unavailable", "c": "stale_index", "b": "stale_index"},
+			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid", "a::lexical"}, wantProfile: "a", wantFailure: "index_unavailable"},
+		{name: "reranking fallback uses compatible profile", rerank: true, exhaust: true, failures: map[string]string{"b": "index_unavailable"},
+			wantAttempts: []string{"z:b:hybrid", "z::lexical"}, wantProfile: "z", wantFailure: "index_unavailable"},
 		{name: "reranking without bindings searches lexically", rerank: true, noBindings: true,
 			wantAttempts: []string{"z::lexical"}, wantProfile: "z"},
 		{name: "explicit profile uses first binding", profile: "a",
@@ -268,6 +268,8 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			wantAttempts: []string{"a:c:hybrid"}, wantProfile: "a", wantBinding: "c"},
 		{name: "explicit profile failure stops", profile: "a", failures: map[string]string{"a": "stale_index"},
 			wantAttempts: []string{"a:a:hybrid"}, wantFailure: "stale_index"},
+		{name: "explicit missing index", profile: "a", failures: map[string]string{"a": "index_unavailable"},
+			wantAttempts: []string{"a:a:hybrid"}, wantFailure: "index_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			profiles := []api.ProcessingProfileSummary{
@@ -299,9 +301,6 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 					}
 					if code := tc.failures[request.BindingID]; code != "" {
 						status := http.StatusConflict
-						if code == "not_found" {
-							status = http.StatusNotFound
-						}
 						if code == "processing_failed" {
 							status = http.StatusInternalServerError
 						}
