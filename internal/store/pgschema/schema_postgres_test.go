@@ -190,7 +190,8 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 			require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT vault_uid FROM documents.vault_metadata`).Scan(&kept))
 			require.Equal(t, id, kept)
 		}
-		for _, version := range []int{0, SchemaVersion + 1} {
+		// Schema 3 predates declarations; pin it to catch a missing version bump.
+		for _, version := range []int{0, SchemaVersion + 1, 3} {
 			t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
 				_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_version=$1`, version)
 				require.NoError(t, err)
@@ -328,18 +329,4 @@ func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	require.NoError(t, tx.Rollback())
 	_, err = Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
-}
-
-func TestSetupRejectsPriorDeclarationLayout(t *testing.T) {
-	t.Parallel()
-	db, owner := pgtest.NewDatabase(t)
-	ctx := t.Context()
-	cfg := Config{Schema: "documents", SchemaOwner: owner}
-	_, err := Setup(ctx, db, cfg)
-	require.NoError(t, err)
-	// Schema 3 predates declarations; pin it to catch a missing version bump.
-	_, err = db.ExecContext(ctx, `UPDATE documents.vault_metadata SET schema_version=3 WHERE singleton=1`)
-	require.NoError(t, err)
-	_, err = Setup(ctx, db, cfg)
-	require.ErrorContains(t, err, "recreate this schema")
 }

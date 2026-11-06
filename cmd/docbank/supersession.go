@@ -44,14 +44,16 @@ var supersedeCmd = &cobra.Command{
 			return err
 		}
 		resolveSuccessor := successor.resolve
+		resolvePredecessor := predecessor.resolve
 		if supersessionRemove {
 			resolveSuccessor = successor.resolveIncludingTrash
+			resolvePredecessor = predecessor.resolveIncludingTrash
 		}
 		next, err := resolveSuccessor(cmd.Context(), c)
 		if err != nil {
 			return err
 		}
-		old, err := predecessor.resolve(cmd.Context(), c)
+		old, err := resolvePredecessor(cmd.Context(), c)
 		if err != nil {
 			return err
 		}
@@ -95,9 +97,6 @@ var effectiveCmd = &cobra.Command{
 		}
 		if (cmd.Flags().Changed("from") && effectiveFrom == "") || (cmd.Flags().Changed("to") && effectiveTo == "") {
 			return usageError(errors.New("dates must be nonempty; use --clear to erase the window"))
-		}
-		if err := document.ValidateEffectiveWindow(document.EffectiveWindow{From: effectiveFrom, To: effectiveTo}); err != nil {
-			return usageError(err)
 		}
 		selector, err := parseNodeSelector(args[0])
 		if err != nil {
@@ -151,9 +150,6 @@ var validityCmd = &cobra.Command{
 	Example: `  docbank document validity /leases/old.pdf --as-of 2024-06-01 --json`,
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := document.ValidateDate(validityAsOf); err != nil {
-			return usageError(err)
-		}
 		selector, err := parseNodeSelector(args[0])
 		if err != nil {
 			return err

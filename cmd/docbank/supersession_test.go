@@ -33,6 +33,17 @@ func TestSupersessionCLI(t *testing.T) {
 	assert.Equal(t, "2025-01-01", window.EffectiveFrom)
 	assert.Equal(t, "2025-12-31", window.EffectiveTo)
 	successorID := window.Node.ID
+	for _, args := range [][]string{
+		{"document", "effective", "/leases/next.txt", "--from", "2025-02-30"},
+		{"document", "validity", "/leases/next.txt", "--as-of", "2025-02-30"},
+	} {
+		resetFlags(rootCmd)
+		var stdout, stderr bytes.Buffer
+		code := runProcess(args, &stdout, &stderr)
+		assert.Equal(t, exitUsage, code, stderr.String())
+		assert.Contains(t, stderr.String(), `invalid calendar date "2025-02-30"`)
+		assert.Empty(t, stdout.String())
+	}
 	out, err = runCLI(t, "document", "effective", "/leases/next.txt", "--from", "2025-02-01")
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("Effective window updated: id:%d\n", successorID), out)
@@ -69,34 +80,17 @@ func TestSupersessionCLI(t *testing.T) {
 	_, err = runCLI(t, "document", "remove", selector)
 	require.NoError(t, err)
 
-	out, err = runCLI(t, "document", "supersede", "--remove", selector, "--replaces", "/leases/old.txt")
+	out, err = runCLI(t, "document", "stat", "/leases/old.txt", "--json")
+	require.NoError(t, err)
+	var predecessor api.Node
+	require.NoError(t, json.Unmarshal([]byte(out), &predecessor))
+	predecessorSelector := formatNodeSelector(predecessor.ID)
+	_, err = runCLI(t, "document", "remove", predecessorSelector)
+	require.NoError(t, err)
+
+	out, err = runCLI(t, "document", "supersede", "--remove", selector, "--replaces", predecessorSelector)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Document validity updated: id:")
-}
-
-func TestValidityUsesSnapshotPath(t *testing.T) {
-	var requests []string
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/v1/nodes/42":
-			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Path: "/lease.txt", Revision: 1}))
-		case "GET /api/v1/nodes/42/validity":
-			assert.Equal(t, "2025-06-01", r.URL.Query().Get("as_of"))
-			// Another client renamed the file after selector resolution.
-			assert.NoError(t, json.MarshalWrite(w, api.NodeValidity{
-				Node:  api.Node{ID: 42, Path: "/renamed-lease.txt", Revision: 2},
-				State: "not_yet_effective", AsOf: "2025-06-01",
-			}))
-		default:
-			http.Error(w, r.URL.Path, http.StatusNotFound)
-		}
-	})
-	out, err := runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01")
-	require.NoError(t, err)
-	assert.Equal(t, "/renamed-lease.txt: not yet effective (as of 2025-06-01)\n", out)
-	assert.Equal(t, []string{"GET /api/v1/nodes/42", "GET /api/v1/nodes/42/validity"}, requests)
 }
 
 func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {
@@ -150,33 +144,57 @@ func TestSupersessionCLIRejectsInvalidFlags(t *testing.T) {
 		{[]string{"document", "supersede", "/new.txt"}, "--replaces"},
 		{[]string{"document", "supersede", "/new.txt", "--replaces", "/old.txt", "--remove", "--note", "note"}, "--note"},
 		{[]string{"document", "effective", "/new.txt", "--clear", "--from", "2025-01-01"}, "--clear"},
-		{[]string{"document", "effective", "/new.txt", "--from", "2025-02-30"}, "invalid calendar date"},
 		{[]string{"document", "effective", "/new.txt"}, "provide --from or --to"},
 		{[]string{"document", "effective", "/new.txt", "--from", "", "--to", "2025-03-01"}, "use --clear"},
-		{[]string{"document", "validity", "/new.txt", "--as-of", "2025-02-30"}, "invalid calendar date"},
 	} {
 		_, err := runCLI(t, tc.args...)
 		require.ErrorContains(t, err, tc.want)
 	}
 }
 
-func TestValidityShowsNotes(t *testing.T) {
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/v1/nodes/5":
-			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 5, Path: "/lease.txt", Revision: 1}))
-		case "GET /api/v1/nodes/5/validity":
-			assert.NoError(t, json.MarshalWrite(w, api.NodeValidity{
+func TestValidityTextOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		view api.NodeValidity
+		want string
+	}{
+		{
+			name: "notes",
+			view: api.NodeValidity{
 				Node: api.Node{ID: 5, Path: "/lease.txt", Revision: 1}, State: "superseded", AsOf: "2025-06-01",
 				Predecessors: []api.SupersessionLink{{PredecessorID: 3, Note: "annual renewal"}, {PredecessorID: 4}},
 				Successors:   []api.SupersessionLink{{SuccessorID: 6, Note: "corrected terms"}, {SuccessorID: 7}},
-			}))
-		default:
-			http.Error(w, r.URL.Path, http.StatusNotFound)
-		}
-	})
-	out, err := runCLI(t, "document", "validity", "id:5", "--as-of", "2025-06-01")
-	require.NoError(t, err)
-	assert.Equal(t, "/lease.txt: superseded (as of 2025-06-01)\nReplaces: id:3 annual renewal\nReplaces: id:4\nSuccessor: id:6 corrected terms\nSuccessor: id:7\n", out)
+			},
+			want: "/lease.txt: superseded (as of 2025-06-01)\nReplaces: id:3 annual renewal\nReplaces: id:4\nSuccessor: id:6 corrected terms\nSuccessor: id:7\n",
+		},
+		{
+			name: "snapshot path",
+			// Another client renamed the file after selector resolution.
+			view: api.NodeValidity{
+				Node: api.Node{ID: 5, Path: "/renamed-lease.txt", Revision: 2}, State: "not_yet_effective", AsOf: "2025-06-01",
+			},
+			want: "/renamed-lease.txt: not yet effective (as of 2025-06-01)\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/v1/nodes/5":
+					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 5, Path: "/lease.txt", Revision: 1}))
+				case "GET /api/v1/nodes/5/validity":
+					assert.Equal(t, "2025-06-01", r.URL.Query().Get("as_of"))
+					assert.NoError(t, json.MarshalWrite(w, tc.view))
+				default:
+					http.Error(w, r.URL.Path, http.StatusNotFound)
+				}
+			})
+			out, err := runCLI(t, "document", "validity", "id:5", "--as-of", "2025-06-01")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, out)
+			assert.Equal(t, []string{"GET /api/v1/nodes/5", "GET /api/v1/nodes/5/validity"}, requests)
+		})
+	}
 }

@@ -561,10 +561,7 @@ and inspect a document's standing on a date. Select nodes by absolute virtual
 path or `id:<positive-decimal>`. `--remove` cannot be combined with `--note`;
 `--clear` cannot be combined with `--from` or `--to`. Without `--clear`, provide
 at least one date. Omit `--note` to keep an existing note, or pass
-`--note ""` to clear it. To remove a link to a trashed successor, select that
-successor by ID; paths resolve only live nodes. The predecessor must still be
-live. Declaring a link requires both files to be live. The `supersede` receipt
-names the predecessor whose revision it checks. Plain `validity` output includes
+`--note ""` to clear it. To remove a link with a trashed endpoint, select that endpoint by ID; paths resolve only live nodes. Declaring a link requires both files to be live. `supersede` guards the predecessor's revision and names the predecessor in its receipt. Plain `validity` output includes
 each link's nonempty note after its node ID. `validity --json` prints the full
 validity response.
 See [Document validity](usage/organizing.md#document-validity).

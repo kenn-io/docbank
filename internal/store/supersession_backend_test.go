@@ -16,16 +16,17 @@ func checkSupersessionMetadataGraphValidationPostgres(t *testing.T) {
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	s := newPostgresSchemaStore(t, setup, cfg)
 	ctx := t.Context()
+	source := newTestStore(t)
 
-	predecessor, err := s.CreateFile(ctx, s.RootID(), "before.txt", fakeHash("beef"), 1, "text/plain")
+	predecessor, err := source.CreateFile(ctx, source.RootID(), "before.txt", fakeHash("beef"), 1, "text/plain")
 	require.NoError(t, err)
-	successor, err := s.CreateFile(ctx, s.RootID(), "after.txt", fakeHash("cafe"), 1, "text/plain")
+	successor, err := source.CreateFile(ctx, source.RootID(), "after.txt", fakeHash("cafe"), 1, "text/plain")
 	require.NoError(t, err)
-	// PostgreSQL validates retained declaration state, but the declaration write
-	// operation is not ported there. Seed it with the schema setup role.
-	_, err = setup.ExecContext(ctx, `INSERT INTO documents.node_supersessions(successor_node_id,predecessor_node_id,note,recorded_at) VALUES($1,$2,$3,$4)`,
-		successor.ID, predecessor.ID, "replacement", nowRFC3339())
+	_, err = source.PutSupersession(ctx, successor.ID, predecessor.ID, predecessor.Revision, new("replacement"))
 	require.NoError(t, err)
+	_, err = source.PutEffectiveWindow(ctx, successor.ID, successor.Revision, "2025-01-01", "")
+	require.NoError(t, err)
+	copyStoreCatalogFixture(t, source, setup, postgresEnrollmentCatalogs)
 
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		high, err := s.auditNodeSequence(ctx, tx)

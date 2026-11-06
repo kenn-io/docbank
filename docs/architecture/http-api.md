@@ -1852,12 +1852,11 @@ leave that end open; use DELETE to clear both. The inspection date defaults to
 the daemon host's local date and is echoed in `as_of`. The response `state` is
 `not_yet_effective` when the node's start is later than that date, then
 `superseded` when a live successor has started, then `expired` when the node's
-end has passed, otherwise `current`. An undated successor applies at every
-inspection date and sets `undated` to true. A successor whose effective window
+end has passed, otherwise `current`. An undated successor applies after the predecessor's own end date, or at every inspection date if that end is open, and sets `undated` to true. A successor whose effective window
 has ended still marks its predecessor superseded once its start applies, unless
 the predecessor is itself not yet effective.
 
-Links require distinct live file endpoints. Notes may contain at most 1024
+Declaring links requires distinct live file endpoints; removing them also accepts trashed files. Notes may contain at most 1024
 UTF-8 bytes. Each node may have at most 16 direct predecessors and successors;
 cycles are rejected. Graph validation visits
 at most 4096 nodes and fails explicitly on overflow. Invalid
