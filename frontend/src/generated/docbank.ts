@@ -4322,6 +4322,7 @@ export interface MissLogReceipt {
   id: string;
   /** @maxLength 128 */
   profile?: string;
+  /** @maxLength 32768 */
   query: string;
   requested_mode: MissLogReceiptRequestedMode;
   reranking?: MissLogReceiptReranking;
@@ -4381,6 +4382,7 @@ export interface MissLogRequest {
   filters?: MissLogRequestFilters;
   /** @maxLength 128 */
   profile?: string;
+  /** @maxLength 32768 */
   query: string;
   requested_mode: MissLogRequestRequestedMode;
   reranking?: MissLogRequestReranking;

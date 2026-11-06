@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/kit/atomicfile"
@@ -23,7 +22,7 @@ import (
 
 // Request describes the empty result accepted by a submitting client.
 type Request struct {
-	Query            string         `json:"query"`
+	Query            string         `json:"query" maxLength:"32768"`
 	BindingID        string         `json:"binding_id,omitempty" maxLength:"128"`
 	Profile          string         `json:"profile,omitempty" maxLength:"128"`
 	RequestedMode    string         `json:"requested_mode" enum:"auto,lexical,semantic,hybrid,fuzzy"`
@@ -85,10 +84,6 @@ func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, l
 // Record stores a bounded receipt. Failures leave the search usable.
 func (s *Service) Record(ctx context.Context, request Request) {
 	if s == nil || !s.config.Enabled || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
-		return
-	}
-	if utf8.RuneCountInString(request.Query) > 32768 {
-		s.logger.Warn("miss_log_write_failed")
 		return
 	}
 	receipt := Receipt{Request: request, ID: rand.Text(), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}

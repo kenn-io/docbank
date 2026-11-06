@@ -243,9 +243,7 @@ See docs/usage/search.md.`,
 						}
 						receipt.RequestedMode = "fuzzy"
 					}
-					if automatic.report != nil {
-						receipt = automatic.receipt
-					} else if automatic.receipt.Query != "" {
+					if automatic.report != nil || automatic.receipt.Query != "" {
 						receipt = automatic.receipt
 					}
 					c.RecordMiss(cmd.Context(), receipt)

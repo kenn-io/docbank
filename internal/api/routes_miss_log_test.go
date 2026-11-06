@@ -144,6 +144,29 @@ func TestMissLogIdentifierLimits(t *testing.T) {
 	}
 }
 
+func TestMissLogQueryLengthLimit(t *testing.T) {
+	t.Parallel()
+	for _, size := range []int{32768, 32769} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+			query := strings.Repeat("x", size)
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
+				Query: query, RequestedMode: "lexical", ActualMode: "lexical",
+			})
+			rows, err := listMisses(t, ts)
+			require.NoError(t, err)
+			if size > 32768 {
+				assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+				assert.Empty(t, rows)
+				return
+			}
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			require.Len(t, rows, 1)
+			assert.Equal(t, query, rows[0].Query)
+		})
+	}
+}
+
 func TestMissLogInputLimits(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })

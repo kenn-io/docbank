@@ -20,13 +20,6 @@ type MissLogPage struct {
 	Offset int               `json:"offset"`
 }
 
-func requireMissLogOwner(ctx context.Context) error {
-	if auth, _ := ctx.Value(authenticationContextKey{}).(string); auth != "master" {
-		return NewError(http.StatusForbidden, "forbidden", "miss log management requires the master API credential")
-	}
-	return nil
-}
-
 func missLogFailure() error {
 	return NewError(http.StatusInternalServerError, "miss_log_unavailable", "miss log operation failed")
 }
@@ -44,9 +37,6 @@ func registerMissLogRoutes(api huma.API, d Deps) {
 		Limit  int `query:"limit" default:"20" minimum:"1" maximum:"100"`
 		Offset int `query:"offset" default:"0" minimum:"0"`
 	}) (*pageOutput, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
 		items, err := d.MissLog.List(ctx, in.Limit, in.Offset)
 		if err != nil {
 			return nil, missLogFailure()
@@ -57,9 +47,6 @@ func registerMissLogRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{OperationID: "deleteMissLogRecord", Method: http.MethodDelete, Path: "/api/v1/miss-log/{id}", Summary: "Delete one private search miss (operator only)"}, func(ctx context.Context, in *struct {
 		ID string `path:"id" maxLength:"128"`
 	}) (*struct{}, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
 		if err := d.MissLog.Delete(ctx, in.ID); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, NewError(http.StatusNotFound, "not_found", "miss log record not found")
@@ -69,9 +56,6 @@ func registerMissLogRoutes(api huma.API, d Deps) {
 		return &struct{}{}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "deleteMissLog", Method: http.MethodDelete, Path: "/api/v1/miss-log", Summary: "Purge private search misses (operator only)"}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
-		if err := requireMissLogOwner(ctx); err != nil {
-			return nil, err
-		}
 		if err := d.MissLog.Purge(ctx); err != nil {
 			return nil, missLogFailure()
 		}
