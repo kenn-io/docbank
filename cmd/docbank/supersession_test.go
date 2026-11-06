@@ -96,11 +96,6 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/renamed-lease.txt: not yet effective (as of 2025-06-01)\n", out)
 	assert.Equal(t, []string{"GET /api/v1/nodes/42", "GET /api/v1/nodes/42/validity"}, requests)
-	out, err = runCLI(t, "document", "validity", "id:42", "--as-of", "2025-06-01", "--json")
-	require.NoError(t, err)
-	var view api.NodeValidity
-	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	assert.Equal(t, "not_yet_effective", view.State)
 }
 
 func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {

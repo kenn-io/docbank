@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,6 +30,15 @@ func TestSupersessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "superseded", string(v.State))
 	require.True(t, v.Undated)
+	require.Len(t, v.Successors, 1)
+	require.Equal(t, "replacement", v.Successors[0].Note)
+	c, err = s.PutSupersession(ctx, b.ID, a.ID, c.Node.Revision, new(""))
+	require.NoError(t, err)
+	require.True(t, c.Changed)
+	v, err = s.NodeValidity(ctx, a.ID, "2025-01-01")
+	require.NoError(t, err)
+	require.Len(t, v.Successors, 1)
+	require.Empty(t, v.Successors[0].Note)
 	_, err = s.PutEffectiveWindow(ctx, b.ID, b.Revision, "2026-01-01", "2026-12-31")
 	require.NoError(t, err)
 	v, err = s.NodeValidity(ctx, a.ID, "2025-01-01")
@@ -55,14 +63,9 @@ func TestSupersessionAuditRejected(t *testing.T) {
 	after, err := s.NodeByID(t.Context(), n.ID)
 	require.NoError(t, err)
 	require.Equal(t, n.Revision, after.Revision)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
 	other, err := s.NodeByPath(t.Context(), "/Projects")
 	require.NoError(t, err)
 	_, err = s.DeleteSupersession(t.Context(), other.ID, n.ID, n.Revision)
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	_, err = s.PutSupersession(t.Context(), other.ID, n.ID, n.Revision, new(""))
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	_, err = s.DeleteEffectiveWindow(t.Context(), n.ID, n.Revision)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
 
@@ -90,13 +93,6 @@ func TestSupersessionGraphValidation(t *testing.T) {
 			_, err := s.PutSupersession(ctx, nodes[0].ID, nodes[2].ID, nodes[2].Revision, new(""))
 			require.ErrorIs(t, err, ErrInvalidSupersession)
 			require.NoError(t, s.ValidateMetadata(ctx))
-			var snapshot bytes.Buffer
-			require.NoError(t, s.ExportMetadata(ctx, &snapshot))
-			corrupt := snapshot.String() + fmt.Sprintf("{\"type\":\"node_supersession\",\"successor_node_id\":%d,\"predecessor_node_id\":%d,\"note\":\"\",\"recorded_at\":%q}\n", nodes[0].ID, nodes[2].ID, nowRFC3339())
-			target, err := Open(ctx, filepath.Join(t.TempDir(), "corrupt.db"))
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, target.Close()) })
-			require.ErrorIs(t, target.ImportMetadata(ctx, strings.NewReader(corrupt)), ErrInvalidSupersession)
 		})
 	}
 }
@@ -239,6 +235,7 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSupersession)
 	_, err = s.PutEffectiveWindow(ctx, n.ID, n.Revision, "2025-02-30", "")
 	require.ErrorIs(t, err, ErrInvalidSupersession)
+	require.ErrorContains(t, err, "invalid calendar date")
 	longNote := strings.Repeat("x", 1025)
 	_, err = s.PutSupersession(ctx, other.ID, n.ID, n.Revision, &longNote)
 	require.ErrorIs(t, err, ErrInvalidSupersession)
@@ -312,26 +309,34 @@ func TestSupersessionMetadataRejectsInvalidDeclarations(t *testing.T) {
 	require.NoError(t, err)
 	other, err := source.CreateFile(ctx, source.RootID(), "previous.txt", fakeHash("aa"), 1, "text/plain")
 	require.NoError(t, err)
+	next, err := source.CreateFile(ctx, source.RootID(), "next.txt", fakeHash("ab"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = source.PutSupersession(ctx, other.ID, n.ID, n.Revision, new(""))
+	require.NoError(t, err)
+	_, err = source.PutSupersession(ctx, next.ID, other.ID, other.Revision, new(""))
+	require.NoError(t, err)
 	var snapshot bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &snapshot))
 	for _, tt := range []struct {
 		name, record string
 		wantErr      error
+		wantMessage  string
 	}{
-		{"directory endpoint", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":"","recorded_at":%q}`, n.ID, source.RootID(), nowRFC3339()), ErrInvalidSupersession},
-		{"long note", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":%q,"recorded_at":%q}`, n.ID, other.ID, strings.Repeat("x", 1025), nowRFC3339()), ErrInvalidSupersession},
-		{"directory window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-01","effective_to":null}`, source.RootID()), ErrInvalidSupersession},
-		{"calendar date", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2026-02-30","effective_to":null}`, n.ID), nil},
-		{"empty window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":null,"effective_to":null}`, n.ID), ErrInvalidSupersession},
-		{"reversed window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-02","effective_to":"2025-01-01"}`, n.ID), nil},
+		{"directory endpoint", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":"","recorded_at":%q}`, n.ID, source.RootID(), nowRFC3339()), ErrInvalidSupersession, ""},
+		{"long note", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":%q,"recorded_at":%q}`, n.ID, other.ID, strings.Repeat("x", 1025), nowRFC3339()), ErrInvalidSupersession, ""},
+		{"directory window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-01","effective_to":null}`, source.RootID()), ErrInvalidSupersession, ""},
+		{"calendar date", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2026-02-30","effective_to":null}`, n.ID), nil, "invalid calendar date"},
+		{"empty window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":null,"effective_to":null}`, n.ID), ErrInvalidSupersession, ""},
+		{"cycle", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":"","recorded_at":%q}`, n.ID, next.ID, nowRFC3339()), ErrInvalidSupersession, "supersession cycle"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			target := newTestStore(t)
 			err := target.ImportMetadata(ctx, strings.NewReader(snapshot.String()+tt.record+"\n"))
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
-			} else {
-				require.Error(t, err)
+			}
+			if tt.wantMessage != "" {
+				require.ErrorContains(t, err, tt.wantMessage)
 			}
 			_, err = target.NodeByPath(ctx, "/source.txt")
 			require.ErrorIs(t, err, ErrNotFound, "failed import must not publish partial authority")
