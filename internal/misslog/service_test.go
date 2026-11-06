@@ -81,6 +81,7 @@ func TestRecordingSanitizesDirectoryFailures(t *testing.T) {
 
 type purgeContext struct {
 	context.Context
+
 	beforeErr func()
 }
 

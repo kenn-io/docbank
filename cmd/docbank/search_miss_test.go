@@ -67,11 +67,12 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				rootCmd.SetOut(io.Discard)
 				rootCmd.SetErr(io.Discard)
 				args := []string{"search", "missing", "--json"}
-				if mode == "explicit" {
+				switch mode {
+				case "explicit":
 					args = append(args, "--mode", "hybrid", "--profile", "private", "--binding", "embed", "--source-version", processingTestVersionID)
-				} else if mode == "lexical" {
+				case "lexical":
 					args = append(args, "--mode", "lexical")
-				} else if mode == "fuzzy" {
+				case "fuzzy":
 					args = append(args, "--fuzzy")
 				}
 				rootCmd.SetArgs(args)
