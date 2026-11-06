@@ -47,6 +47,8 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 							}
 							assert.NoError(t, json.MarshalWrite(w, report))
 						}
+					case "/api/v1/search/text-coverage":
+						assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{}))
 					case "/api/v1/miss-log":
 						var receipt misslog.Request
 						assert.NoError(t, json.UnmarshalRead(r.Body, &receipt))
