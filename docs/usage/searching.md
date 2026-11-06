@@ -592,6 +592,14 @@ Ordinary search in the CLI, HTTP API, web app, and TUI matches words in
 names and indexed text. Processing search uses the separate workflow below.
 Saving search choices in QueryV1 does not execute either workflow.
 
+## Why did a text search find nothing?
+
+An empty CLI text search keeps its usual output and prints hints on stderr:
+how many files in the search scope need a processing profile, how many text
+files are still being indexed, and, for a multi-word lexical search, that one
+name or text segment must contain every word. `--json` carries them in a
+`hints` array of `code`, `message`, and, when one exists, a `next` command.
+
 ## Processing search
 
 Automatic CLI search resolves current live versions for hybrid retrieval.

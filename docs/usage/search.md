@@ -52,6 +52,10 @@ processing report with `actual_mode`, `coverage`, and `results`, plus a
 `folders` array of ordinary folder name hits. Check for `actual_mode` to tell
 the shapes apart, or pass `--mode lexical` to always get the ordinary report.
 
+Empty lexical and hybrid reports can include
+[`hints`](searching.md#why-did-a-text-search-find-nothing), which other output
+modes print on stderr.
+
 After semantic retrieval, the daemon revalidates the complete report against
 current live versions, including unembedded lexical matches. A match trashed or
 replaced during query embedding is removed, and moved paths are refreshed. A

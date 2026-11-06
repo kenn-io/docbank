@@ -232,14 +232,24 @@ See docs/usage/search.md.`,
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 			}
 		}()
+		var hints []searchHint
+		if empty && strings.TrimSpace(query) != "" {
+			coverage, _ := c.SearchTextCoverage(cmd.Context(), opts)
+			hints = emptySearchHints(cmd, query, coverage, automatic.report == nil, opts.Fuzzy)
+		}
+		defer func() {
+			if retErr == nil && !searchJSON {
+				retErr = writeSearchHints(cmd, hints)
+			}
+		}()
 		if automatic.report != nil {
-			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep, hints)
 		}
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
 		if searchJSON {
-			return writeCLIJSON(cmd.OutOrStdout(), rep)
+			return writeCLIJSON(cmd.OutOrStdout(), lexicalSearchJSON{SearchReport: rep, Hints: hints})
 		}
 		if searchAgent {
 			return writeLexicalSearchAgent(cmd, query, rep, automatic)

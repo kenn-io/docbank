@@ -929,6 +929,13 @@ type FuzzyReceipt struct {
 	Reasons []string `json:"reasons" enum:"candidate_limit,name_limit,path_limit,query_ineligible,result_limit,time_budget"`
 }
 
+// SearchTextCoverage reports recoverable gaps in the current search scope.
+type SearchTextCoverage struct {
+	NoText   int      `json:"no_text" minimum:"0"`
+	Families []string `json:"families" enum:"pdf,office,other"`
+	Pending  int      `json:"pending" minimum:"0"`
+}
+
 // SearchReport is one bounded search result page.
 type SearchReport struct {
 	Fuzzy          *FuzzyReceipt `json:"fuzzy,omitzero"`

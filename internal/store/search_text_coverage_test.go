@@ -1,0 +1,61 @@
+package store
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestSearchTextCoverage(t *testing.T) {
+	t.Parallel()
+	s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+	text, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", testSHA256([]byte("notes")), 5, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.DeferTextExtraction(t.Context(), text.BlobHash, time.Now().Add(time.Hour)))
+	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{})
+	require.NoError(t, err)
+	require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}, Pending: 1}, got)
+	emptyDir, err := s.Mkdir(t.Context(), s.RootID(), "empty")
+	require.NoError(t, err)
+	outside, err := s.SearchTextCoverage(t.Context(), SearchOptions{UnderNodeID: emptyDir.ID})
+	require.NoError(t, err)
+	require.Equal(t, SearchTextCoverage{Families: []string{}}, outside)
+	// Shared bytes are two files, while the worker's queue contains one blob.
+	duplicate, err := s.CreateFile(t.Context(), s.RootID(), "copy.txt", text.BlobHash, 5, "text/plain")
+	require.NoError(t, err)
+	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "text/plain"})
+	require.NoError(t, err)
+	require.Equal(t, 2, got.Pending)
+	_, _, err = s.Trash(t.Context(), duplicate.ID, duplicate.Revision)
+	require.NoError(t, err)
+	collectionCoveragePublish(t, s, pdfs[0], profile, "complete")
+	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{})
+	require.NoError(t, err)
+	require.Equal(t, SearchTextCoverage{Families: []string{}, Pending: 1}, got)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: text.BlobHash,
+		Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "lease renewal"}))
+	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{})
+	require.NoError(t, err)
+	require.Equal(t, SearchTextCoverage{Families: []string{}}, got)
+	hits, _, err := s.SearchPage(t.Context(), "lease renewal", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, text.ID, hits[0].Node.ID)
+	// An exact replacement does not inherit its old rendition.
+	_, _, err = s.ReplaceContent(t.Context(), pdfs[0].ID, pdfs[0].Revision, pdfs[0].BlobHash, pdfs[0].Size, pdfs[0].MimeType)
+	require.NoError(t, err)
+	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "slides.pptx", testSHA256([]byte("slides")), 6, "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "photo.png", testSHA256([]byte("photo")), 5, "image/png")
+	require.NoError(t, err)
+	failed, err := s.CreateFile(t.Context(), s.RootID(), "invalid.txt", testSHA256([]byte("invalid")), 7, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: failed.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionFailed, Error: "invalid UTF-8"}))
+	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{})
+	require.NoError(t, err)
+	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
+}
