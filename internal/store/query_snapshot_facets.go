@@ -299,10 +299,7 @@ func materializeSnapshotFacetFromRows(
 				observation.missing++
 			}
 		default:
-			key := ""
-			if member.ContentVersionID == row.ContentVersionID {
-				key = member.CoverageState
-			}
+			key := member.CoverageState
 			if dimension != snapshotFacetTextCoverage {
 				key = snapshotFacetScalarValue(dimension, row.Name, row.MIMEType, row.ModifiedAt, row.Size)
 			}

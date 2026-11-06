@@ -386,7 +386,6 @@ type snapshotMembership struct {
 	Tags                                                 []SnapshotTag
 	CollectionIDs                                        []string
 	DisplayCollectionLabel                               *string
-	ContentVersionID                                     string
 	CoverageState, CoverageBuildID, CoverageAttachmentID string
 }
 
@@ -444,11 +443,11 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 	}
 	if coverage.Configuration == "configured" {
 		err = queryRows(ctx, q, matched+`, coverage_members AS (SELECT node_id FROM matched_members), `+processingCoverageCTE()+`
-			SELECT node_id,version_id,state,build_id,attachment_id FROM processing_coverage`,
+			SELECT node_id,state,build_id,attachment_id FROM processing_coverage`,
 			[]any{string(ids), coverage.ProfileFingerprint, generationID}, func(rows *sql.Rows) error {
 				var id int64
 				var member snapshotMembership
-				if err := rows.Scan(&id, &member.ContentVersionID, &member.CoverageState, &member.CoverageBuildID, &member.CoverageAttachmentID); err != nil {
+				if err := rows.Scan(&id, &member.CoverageState, &member.CoverageBuildID, &member.CoverageAttachmentID); err != nil {
 					return err
 				}
 				member.Tags, member.CollectionIDs, member.DisplayCollectionLabel = members[id].Tags, members[id].CollectionIDs, members[id].DisplayCollectionLabel
@@ -559,9 +558,7 @@ func materializeSnapshotRows(
 			row.DisplayCollectionID = row.CollectionIDs[0]
 			row.DisplayCollectionLabel = member.DisplayCollectionLabel
 		}
-		if member.ContentVersionID == row.ContentVersionID {
-			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = member.CoverageState, member.CoverageBuildID, member.CoverageAttachmentID
-		}
+		row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = member.CoverageState, member.CoverageBuildID, member.CoverageAttachmentID
 		row.MediaFamily = query.ClassifyMedia(row.MIMEType, row.Name)
 		if !options.Photos {
 			row.SortKey, err = snapshotSortKey(*row, compiled.Query.Sort.Field)
