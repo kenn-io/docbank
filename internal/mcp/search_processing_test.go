@@ -111,6 +111,8 @@ func TestSearchDocumentsRealProviderSelection(t *testing.T) {
 			require.Equal(t, "lexical", output["actual_mode"])
 			require.Contains(t, output["skipped_reasons"], "index_unavailable")
 			require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "needs building")
+			require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing plan <path-or-id> --profile <profile>")
+			require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent")
 		}
 	}
 }
@@ -141,6 +143,8 @@ func TestSearchDocumentsRequiresQueryConsent(t *testing.T) {
 	require.Equal(t, "lexical", output["actual_mode"])
 	require.Contains(t, output["skipped_reasons"], "processing_consent_required")
 	require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "prior operator consent")
+	require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing plan <path-or-id> --profile <profile>")
+	require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent")
 	hits, ok := output["results"].([]any)
 	require.True(t, ok)
 	require.Len(t, hits, 1)

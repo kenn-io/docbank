@@ -120,6 +120,8 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 			}
 			if tc.failure != "" {
 				require.Contains(t, output["skipped_reasons"], tc.failure)
+				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing plan <path-or-id> --profile <profile>")
+				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent")
 			}
 			if tc.failures {
 				require.Contains(t, output["skipped_reasons"], "processing_failed")

@@ -1028,13 +1028,16 @@ func resolveSearchSummaries(ctx context.Context, c documentClient, results []api
 }
 
 func searchFailureGuidance(code string) string {
+	var guidance string
 	switch code {
 	case "processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
-		return domainErrorMessage("consent_required")
+		guidance = domainErrorMessage("consent_required")
 	case "index_unavailable", "stale_index":
-		return answerErrorMessages[code]
+		guidance = answerErrorMessages[code]
+	default:
+		return ""
 	}
-	return ""
+	return guidance + " Review docbank processing plan <path-or-id> --profile <profile>, then run docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent."
 }
 
 func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary, failure string) string {
