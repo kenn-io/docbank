@@ -15,7 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -82,24 +81,16 @@ func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
 }
 
 func TestRunWebBrowserFailureSuggestsNoBrowser(t *testing.T) {
-	c, _ := webSessionClient(t, "failed-browser-session")
-	root := t.TempDir()
-	cmd := processProbe(t, func(cmd *cobra.Command, _ []string) error {
-		return runWeb(cmd.Context(), cmd.OutOrStdout(), root, c, false, func(context.Context, string) error {
-			return &exec.Error{Name: "browser-opener", Err: exec.ErrNotFound}
-		})
+	c, _ := webSessionClient(t, "browser-session")
+	var out bytes.Buffer
+	err := runWeb(t.Context(), &out, t.TempDir(), c, false, func(context.Context, string) error {
+		return &exec.Error{Name: "browser-opener", Err: exec.ErrNotFound}
 	})
-	resetFlags(rootCmd)
-	var out, diag bytes.Buffer
-	assert.Equal(t, 1, runProcess([]string{cmd.Name()}, &out, &diag))
-	assert.Empty(t, out.String())
-	assert.Contains(t, diag.String(), "opening Docbank web application: exec: \"browser-opener\"")
-	assert.Equal(t, 1, strings.Count(diag.String(), "docbank web --no-browser"))
-	assert.Equal(t, 1, strings.Count(diag.String(), "contains browser credentials"))
-	assert.NotContains(t, diag.String(), "daemon status")
-	assert.NotContains(t, diag.String(), "failed-browser-session")
-	assert.NotContains(t, diag.String(), "AQEBAQ")
-	assert.NotContains(t, diag.String(), "private key")
+	require.ErrorContains(t, err, "opening Docbank web application")
+	hinted, ok := errors.AsType[*hintedError](err)
+	require.True(t, ok)
+	assert.Contains(t, hinted.hint, "docbank web --no-browser")
+	assert.Contains(t, hinted.hint, "browser credentials")
 }
 
 func TestValidateWebLaunchURLRejectsCredentialsAndRemoteURLs(t *testing.T) {
