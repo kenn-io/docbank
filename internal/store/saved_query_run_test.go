@@ -97,8 +97,8 @@ func TestSavedQueryRunDeadlineAfterPreparation(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		_, _, err = service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{},
-			func(ctx context.Context, write func() error) error {
-				<-ctx.Done()
+			func(_ context.Context, write func() error) error {
+				time.Sleep(2 * time.Second)
 				return write()
 			})
 		require.ErrorIs(t, err, context.DeadlineExceeded)

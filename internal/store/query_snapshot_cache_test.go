@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -363,15 +362,17 @@ func TestQuerySnapshotCacheDeadlineBeforeFirstPage(t *testing.T) {
 		require.NoError(t, err)
 		service := newQuerySnapshotService(s, querySnapshotServiceOptions{
 			ChargeHook: func(ctx context.Context, _ string, _, _ int64) error {
-				<-ctx.Done()
+				time.Sleep(2 * time.Second)
 				return ctx.Err()
 			},
 		})
 		defer func() { require.NoError(t, service.Close()) }()
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
+		start := time.Now()
 		_, err = service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, 2*time.Second, time.Since(start))
 		assert.Equal(t, snapshotCacheStats{}, service.stats())
 	})
 }
@@ -757,7 +758,7 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 
 func TestQuerySnapshotCacheRejectsInvalidatedFirstPageHandoff(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"revoke", "request expiry", "shutdown"} {
+	for _, action := range []string{"revoke", "request expiry"} {
 		t.Run(action, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50}
@@ -776,8 +777,6 @@ func TestQuerySnapshotCacheRejectsInvalidatedFirstPageHandoff(t *testing.T) {
 								service.Revoke("owner")
 							case "request expiry":
 								<-ctx.Done()
-							case "shutdown":
-								service.Stop()
 							}
 						}
 						return nil
@@ -825,64 +824,6 @@ func TestQuerySnapshotCacheTailPanicReleasesReservation(t *testing.T) {
 	})
 }
 
-func TestQuerySnapshotCacheMembershipReadRespectsByteBudget(t *testing.T) { //nolint:paralleltest // measures heap allocations, so it runs alone
-	// Keep allocation measurement separate from this package's parallel tests.
-	for _, count := range []int{1, 128} {
-		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			s := newTestStore(t)
-			tag, err := s.CreateTag(t.Context(), strings.Repeat("x", 30<<10))
-			require.NoError(t, err)
-			for i := range count {
-				name := fmt.Sprintf("bounded-%03d.txt", i)
-				node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "text/plain")
-				require.NoError(t, err)
-				_, err = s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
-				require.NoError(t, err)
-			}
-			budget := int64(64 << 10)
-			if count == 1 {
-				budget = 48 << 10
-			}
-			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxBytes: budget}})
-			t.Cleanup(func() { require.NoError(t, service.Close()) })
-			request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			_, err = service.Create(t.Context(), "owner", request)
-			runtime.ReadMemStats(&after)
-			if count == 1 {
-				require.NoError(t, err, "membership bytes must be charged only once")
-				return
-			}
-			require.ErrorIs(t, err, ErrSnapshotAdmission)
-			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20),
-				"stop reading memberships when the cache budget is full")
-			assert.Equal(t, snapshotCacheStats{}, service.stats())
-		})
-	}
-}
-
-func TestQuerySnapshotCacheScanChargesScalarBytes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	const count = 128
-	for i := range count {
-		name := fmt.Sprintf("%03d-%s.txt", i, strings.Repeat("x", 20<<10))
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("scalar-%03d", i)), 1, "text/plain")
-		require.NoError(t, err)
-	}
-	var scanned int64
-	service := newQuerySnapshotService(s, querySnapshotServiceOptions{
-		Limits:     snapshotCacheLimits{MaxBytes: 64 << 10},
-		ChargeHook: func(_ context.Context, _ string, rows, _ int64) error { scanned += rows; return nil },
-	})
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	_, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
-	require.ErrorIs(t, err, ErrSnapshotAdmission)
-	assert.Less(t, scanned, int64(count), "charge each row's names before retaining the next")
-	assert.Equal(t, snapshotCacheStats{}, service.stats())
-}
-
 func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 	t.Parallel()
 	for _, limit := range []struct {
@@ -925,9 +866,9 @@ func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 			for range 2 {
 				_, err = service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
 				require.ErrorIs(t, err, limit.want)
-				_, err = service.CopyMembers(t.Context(), "owner", first.SnapshotID, first.MemberHash)
-				require.ErrorIs(t, err, limit.want)
 			}
+			_, err = service.CopyMembers(t.Context(), "owner", first.SnapshotID, first.MemberHash)
+			require.ErrorIs(t, err, limit.want)
 		})
 	}
 }

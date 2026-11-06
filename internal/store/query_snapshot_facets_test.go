@@ -557,25 +557,70 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 
 func TestQuerySnapshotRejectsOversizedTagBeforeReadingAllAssignments(t *testing.T) { //nolint:paralleltest // measures heap allocations, so it runs alone
 	// Keep allocation measurement separate from this package's parallel tests.
-	s := newTestStore(t)
-	ctx := t.Context()
-	tag, err := s.CreateTag(ctx, strings.Repeat("x", 256<<10))
-	require.NoError(t, err)
-	for i := range 64 {
-		name := fmt.Sprintf("bounded-%d.txt", i)
-		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(name), 1, "text/plain")
-		require.NoError(t, err)
-		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
-		require.NoError(t, err)
+	for _, tc := range []struct {
+		name      string
+		count     int
+		nameBytes int
+		tagBytes  int
+		maxBytes  int64
+	}{
+		{name: "oversized membership", count: 64, tagBytes: 256 << 10},
+		{name: "scalar scan", count: 128, nameBytes: 20 << 10, maxBytes: 64 << 10},
+		{name: "membership budget", count: 128, tagBytes: 30 << 10, maxBytes: 64 << 10},
+		{name: "membership charged once", count: 1, tagBytes: 30 << 10, maxBytes: 48 << 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			var tagID string
+			if tc.tagBytes > 0 {
+				tag, err := s.CreateTag(ctx, strings.Repeat("x", tc.tagBytes))
+				require.NoError(t, err)
+				tagID = tag.ID
+			}
+			for i := range tc.count {
+				name := fmt.Sprintf("bounded-%03d%s.txt", i, strings.Repeat("x", tc.nameBytes))
+				node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(fmt.Sprintf("bounded-%03d", i)), 1, "text/plain")
+				require.NoError(t, err)
+				if tagID != "" {
+					_, err = s.AssignTag(ctx, tagID, node.ID, node.Revision)
+					require.NoError(t, err)
+				}
+			}
+			var scanned, membershipBytes int64
+			options := defaultSnapshotMaterializeOptions()
+			options.MaxSerializedBytes = tc.maxBytes
+			options.Charge = func(rows, bytes int64) error {
+				scanned += rows
+				if rows == 0 && tc.tagBytes > 0 && bytes >= int64(tc.tagBytes) {
+					membershipBytes += bytes
+				}
+				return nil
+			}
+			request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, err := s.materializeQuerySnapshot(ctx, request, options)
+			runtime.ReadMemStats(&after)
+			if tc.name == "membership charged once" {
+				require.NoError(t, err, "membership bytes must be charged only once")
+				return
+			}
+			require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
+			switch tc.name {
+			case "oversized membership":
+				assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20),
+					"reject the first oversized membership before reading all 16 MiB of tag assignments")
+			case "scalar scan":
+				assert.Positive(t, scanned)
+				assert.Less(t, scanned, int64(tc.count), "charge each row's names before retaining the next")
+			case "membership budget":
+				assert.Positive(t, membershipBytes)
+				assert.Less(t, membershipBytes, int64(tc.count*tc.tagBytes),
+					"stop reading memberships when the byte budget is full")
+			}
+		})
 	}
-	request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	_, err = s.MaterializeQuerySnapshot(ctx, request)
-	runtime.ReadMemStats(&after)
-	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
-	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20),
-		"reject the first oversized membership before reading all 16 MiB of tag assignments")
 }
 
 func TestCaptureDayFacetCountsFileModifiedTimeDays(t *testing.T) {
