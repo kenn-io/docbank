@@ -139,7 +139,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         const control = window.reviewDecode;
         if (control.mode === "fail")
           return result.then(() => {
-            throw new Error("Injected displayed-image decode failure");
+            // A decode started in fail mode may finish after recovery begins.
+            if (control.mode === "fail") throw new Error("Injected displayed-image decode failure");
           });
         if (control.mode === "delay")
           return result.then(() => {
