@@ -367,9 +367,6 @@ func executeProfileSearch(ctx context.Context, profiles []api.ProcessingProfileS
 				failure = code
 			}
 			if explicit {
-				if mode == "semantic" {
-					break
-				}
 				return report, selected, "", failure, err
 			}
 		}
