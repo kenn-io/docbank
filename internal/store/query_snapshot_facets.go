@@ -694,8 +694,8 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	if observations[compiledSetField] != nil {
 		const live = `EXISTS (SELECT 1 FROM photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL WHERE sm.asset_id=a.asset_id)`
 		legs = append(legs, `SELECT 'totals','','','','','','','','','','','',
- COALESCE(SUM(CASE WHEN `+live+` THEN 0 ELSE 1 END),0) AS missing,COUNT(*) FROM `+from+where)
-		legs = append(legs, `SELECT 'set','','','','','','','','','',ps.set_id,ps.name,0,COUNT(*) FROM `+from+`
+ COALESCE(SUM(CASE WHEN `+live+` THEN 0 ELSE 1 END),0) AS missing,COUNT(*) FROM `+from+where,
+			`SELECT 'set','','','','','','','','','',ps.set_id,ps.name,0,COUNT(*) FROM `+from+`
  CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id
  CROSS JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`+where+` GROUP BY ps.set_id,ps.name`)
 	}
