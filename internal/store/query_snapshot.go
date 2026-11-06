@@ -432,7 +432,7 @@ func materializeSnapshotRows(
 	// Read scoped collections once: repeated references expand the photo
 	// population enough to exceed SQLite's subquery limit.
 	rows, err := q.QueryContext(ctx, `WITH RECURSIVE
-		matched_members AS (`+statement+`),
+		matched_members AS MATERIALIZED (`+statement+`),
 		parent_dirs AS (
 			SELECT DISTINCT n.parent_id FROM nodes n JOIN matched_members m ON m.node_id=n.id
 		), dir_paths(dir_id,id,parent_id,path) AS (
