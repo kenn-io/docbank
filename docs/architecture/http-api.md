@@ -831,7 +831,7 @@ it returns `422 semantic_unavailable` after validating the source and binding.
 Hybrid search on a profile without embeddings returns that same error. An index
 without an active generation returns `409 index_unavailable`, so clients can try
 another binding while preserving `404 not_found` for invalid selections. Daemon
-protocol revision 122 requires these distinct errors for MCP profile selection.
+protocol revision 123 requires these distinct errors for MCP profile selection.
 
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects. Omission keeps ordinary search; empty arrays and `null` are rejected.

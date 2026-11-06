@@ -224,6 +224,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "protocol 116 daemons must be replaced")
 	rec.Metadata[metaProtocolVersion] = "120" // Before original-content byte ranges.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-range daemons must be replaced before reading content windows")
+	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")

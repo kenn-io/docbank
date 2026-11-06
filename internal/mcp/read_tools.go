@@ -504,6 +504,8 @@ func searchDocuments(
 					result.report.Degradations = append(result.report.Degradations, attempt.failure)
 				} else if len(selected.QueryEmbeddingBindings) == 0 {
 					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
+				} else if nonQueryBinding {
+					result.report.Degradations = append(result.report.Degradations, fmt.Sprintf("Binding %q cannot search document text by meaning. Returned keyword results; try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0]))
 				}
 			}
 		}

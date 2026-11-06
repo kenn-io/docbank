@@ -45,6 +45,7 @@ func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
 				require.Equal(t, "mixed", output["profile"])
 				require.Equal(t, tc.mode, output["requested_mode"])
 				require.Equal(t, "lexical", output["actual_mode"])
+				require.Contains(t, output["skipped_reasons"], "Binding \"image\" cannot search document text by meaning. Returned keyword results; try binding \"query\".")
 				hits, ok := output["results"].([]any)
 				require.True(t, ok)
 				require.Len(t, hits, 1)
