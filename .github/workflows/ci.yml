@@ -443,6 +443,7 @@ jobs:
             echo '```text'
             for f in gotestsum/*.json; do
               [ -f "$f" ] || continue
+              echo "# $f"
               go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
             done
             echo '```'
