@@ -208,7 +208,10 @@ func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
 		require.Len(t, rows, 1)
 		require.Equal(t, "second", rows[0].Query)
 		cfg.Enabled, cfg.MaxRecords = false, 1
+		stagingPath := filepath.Join(root, "miss-log", ".receipt.json.tmp-interrupted")
+		require.NoError(t, os.WriteFile(stagingPath, []byte("synthetic query bytes"), 0600))
 		disabled := New(t.Context(), root, "synthetic-vault", cfg, nil)
+		require.NoFileExists(t, stagingPath)
 		rows, err = disabled.List(t.Context(), 10, 0)
 		require.NoError(t, err)
 		require.Len(t, rows, 1)

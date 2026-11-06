@@ -80,8 +80,18 @@ func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, l
 		return s
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+		if entry.IsDir() || !isReceiptFile(entry.Name()) {
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".json") {
 			s.files = append(s.files, entry.Name())
+			continue
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			logger.Warn("miss_log_prune_failed")
 		}
 	}
 	slices.Sort(s.files)
@@ -224,6 +234,10 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return fs.ErrNotExist
 }
 
+func isReceiptFile(name string) bool {
+	return strings.HasSuffix(name, ".json") || strings.Contains(name, ".json.tmp-")
+}
+
 // Purge removes all local receipt files, including unfinished writes.
 func (s *Service) Purge(ctx context.Context) error {
 	if s == nil {
@@ -241,6 +255,9 @@ func (s *Service) Purge(ctx context.Context) error {
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if entry.IsDir() || !isReceiptFile(entry.Name()) {
+			continue
 		}
 		if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
