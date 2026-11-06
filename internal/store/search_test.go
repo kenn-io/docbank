@@ -3270,3 +3270,74 @@ func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceCancellation(t *testi
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
 	require.Zero(t, leases)
 }
+
+// The filtered search keeps the grouped implementation as an independent oracle.
+// Ties cross page boundaries, and a later segment must not revive an evicted node.
+func TestSearchPageLeadingContentMatchesGrouped(t *testing.T) {
+	t.Parallel()
+	for _, generation := range []bool{false, true} {
+		t.Run(fmt.Sprintf("generation=%t", generation), func(t *testing.T) {
+			s, _ := newRenditionCatalogFixture(t)
+			ctx := t.Context()
+			profile := catalogProcessingProfile(t, false)
+			var eligible []int64
+			for i, name := range []string{"z.txt", "y.txt", "x.txt", "a.txt", "same.txt", "same.txt", "mercury.txt", "short.txt", "long.txt", "trashed.txt", "replaced.txt"} {
+				parent, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("folder-%d", i))
+				require.NoError(t, err)
+				node, err := s.CreateFile(ctx, parent.ID, name, fakeHash(fmt.Sprintf("%02x", i+1)), 7, "text/plain")
+				require.NoError(t, err)
+				text := "mercury equal evidence"
+				switch name {
+				case "short.txt":
+					text = "mercury mercury"
+				case "long.txt":
+					text += strings.Repeat(" filler", 30)
+				}
+				if generation {
+					build := lexicalSearchBuild(s, profile, fakeHash(fmt.Sprintf("%02x", i+32)), text)
+					build.SourceSHA256 = node.BlobHash
+					second := build.LexicalSegments[0]
+					second.ID = "lexical_segment_" + fakeHash("42")
+					second.Order = 1
+					second.Text = text + strings.Repeat(" filler", 50)
+					second.CharEnd = len([]rune(second.Text))
+					second.Checksum = testSHA256([]byte(second.Text))
+					build.LexicalSegments = append(build.LexicalSegments, second)
+					require.NoError(t, s.StageRenditionBuild(ctx, build))
+					attachment := RenditionAttachmentRecord{ID: fakeHash(fmt.Sprintf("%02x", i+64)), VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+					require.NoError(t, publishAttachmentForTest(t, s, attachment))
+				} else {
+					for j, body := range []string{text, text + strings.Repeat(" filler", 50)} {
+						require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: []string{"plain-text", "synthetic"}[j], ExtractorVersion: 1, Status: ExtractionOK, Text: body}))
+					}
+				}
+				switch name {
+				case "trashed.txt":
+					_, _, err = s.Trash(ctx, node.ID, node.Revision)
+				case "replaced.txt":
+					_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("f9"), 7, "text/plain")
+				default:
+					eligible = append(eligible, node.ID)
+				}
+				require.NoError(t, err)
+			}
+			for _, limit := range []int{1, 2, 5, len(eligible) - 1, len(eligible), 1000} {
+				hits, truncated, err := s.SearchPage(ctx, "mercury", limit)
+				require.NoError(t, err)
+				grouped, groupedTruncated, err := s.SearchPageWithOptions(ctx, "mercury", limit, SearchOptions{MIMEType: "text/plain"})
+				require.NoError(t, err)
+				require.Equal(t, grouped, hits, "limit %d", limit)
+				require.Equal(t, groupedTruncated, truncated, "limit %d", limit)
+				require.Equal(t, limit < len(eligible), truncated)
+				require.Equal(t, "mercury.txt", hits[0].Node.Name)
+				if limit >= len(eligible) {
+					var ids []int64
+					for _, hit := range hits {
+						ids = append(ids, hit.Node.ID)
+					}
+					require.Equal(t, []int64{eligible[6], eligible[7], eligible[3], eligible[4], eligible[5], eligible[2], eligible[1], eligible[0], eligible[8]}, ids)
+				}
+			}
+		})
+	}
+}

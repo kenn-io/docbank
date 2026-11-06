@@ -1,6 +1,8 @@
 package store
 
 import (
+	"cmp"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -2476,11 +2478,18 @@ func (s *Store) SearchPageWithOptions(
 		return nameHits, true, nil
 	}
 
-	// Content may also match a node already returned by name. Over-fetch by
-	// the complete name set so duplicate filtering cannot conceal truncation.
+	seen := make(map[int64]struct{}, len(nameHits))
+	for _, hit := range nameHits {
+		seen[hit.Node.ID] = struct{}{}
+	}
 	remaining := limit - len(nameHits)
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
+		if filterSQL == "" {
+			contentHits, err = leadingContentHits(ctx, queryer, fq, generationID, seen, remaining+1)
+			return err
+		}
+		// Over-fetch by the name set so overlap cannot conceal truncation.
 		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
 		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
 		contentArgs = append(contentArgs, filterArgs...)
@@ -2499,10 +2508,6 @@ func (s *Store) SearchPageWithOptions(
 	})
 	if err != nil {
 		return nil, false, err
-	}
-	seen := make(map[int64]struct{}, len(nameHits))
-	for _, hit := range nameHits {
-		seen[hit.Node.ID] = struct{}{}
 	}
 	filtered := contentHits[:0]
 	for _, hit := range contentHits {
@@ -2897,23 +2902,133 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 	return nil
 }
 
-// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
-func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
+// contentSearchSource shares FTS eligibility between grouped and streaming reads.
+func contentSearchSource(match, generation string, profile *string, join string) (from, where string, args []any) {
 	if generation == "" {
-		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM content_fts WHERE content_fts MATCH ? GROUP BY blob_hash)`,
-			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, []any{match}
+		return `content_fts`, `content_fts MATCH ?`, []any{match}
 	}
-	profileFilter := ""
+	from = `rendition_lexical_fts
+  ` + join + ` rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+  ` + join + ` rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id`
+	where = `rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)`
 	args = []any{match, generation}
 	if profile != nil {
-		profileFilter = ` AND a.profile_fingerprint=?`
+		where += ` AND a.profile_fingerprint=?`
 		args = append(args, *profile)
 	}
-	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM rendition_lexical_fts
-  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
-  JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
-  WHERE rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)` + profileFilter + ` GROUP BY a.content_version_id)`,
+	return from, where, args
+}
+
+// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
+func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
+	source, where, args := contentSearchSource(match, generation, profile, "JOIN")
+	if generation == "" {
+		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM ` + source + ` WHERE ` + where + ` GROUP BY blob_hash)`,
+			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+	}
+	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM ` + source + `
+  WHERE ` + where + ` GROUP BY a.content_version_id)`,
 		`matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`, `mv.best_rank`, args
+}
+
+type contentHitKey struct {
+	id   int64
+	name string
+	rank float64
+}
+
+func compareContentHit(a, b contentHitKey) int {
+	if order := cmp.Compare(a.rank, b.rank); order != 0 {
+		return order
+	}
+	if order := cmp.Compare(a.name, b.name); order != 0 {
+		return order
+	}
+	return cmp.Compare(a.id, b.id)
+}
+
+// The worst retained key stays at the root, including name and ID rank ties.
+type contentHitHeap []contentHitKey
+
+func (h *contentHitHeap) Len() int           { return len(*h) }
+func (h *contentHitHeap) Less(i, j int) bool { return compareContentHit((*h)[i], (*h)[j]) > 0 }
+func (h *contentHitHeap) Swap(i, j int)      { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+func (h *contentHitHeap) Push(x any) {
+	key, ok := x.(contentHitKey)
+	if !ok {
+		panic("store: invalid content hit heap key")
+	}
+	*h = append(*h, key)
+}
+func (h *contentHitHeap) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
+}
+
+func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, generation string, seen map[int64]struct{}, n int) ([]SearchHit, error) {
+	from, where, args := contentSearchSource(match, generation, nil, "CROSS JOIN")
+	rank, version := `rendition_lexical_fts.rank`, `a.content_version_id`
+	if generation == "" {
+		rank, version = `content_fts.rank`, `cv.version_id`
+		from += ` CROSS JOIN content_versions cv ON cv.blob_hash=content_fts.blob_hash`
+	} else {
+		from += ` CROSS JOIN content_versions cv ON cv.version_id=a.content_version_id`
+	}
+	from += ` CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=` + version
+	if generation == "" {
+		from += ` CROSS JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
+	}
+	rows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL ORDER BY `+rank, args...)
+	if err != nil {
+		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	kept := make(contentHitHeap, 0, n)
+	members := make(map[int64]struct{}, n)
+	for rows.Next() {
+		var key contentHitKey
+		if err := rows.Scan(&key.id, &key.name, &key.rank); err != nil {
+			return nil, fmt.Errorf("scanning content hit: %w", err)
+		}
+		if len(kept) == n && key.rank > kept[0].rank {
+			break
+		}
+		if _, exists := seen[key.id]; exists {
+			continue
+		}
+		if _, exists := members[key.id]; exists {
+			continue
+		}
+		if len(kept) < n {
+			heap.Push(&kept, key)
+		} else if compareContentHit(key, kept[0]) < 0 {
+			delete(members, kept[0].id)
+			kept[0] = key
+			heap.Fix(&kept, 0)
+		} else {
+			continue
+		}
+		members[key.id] = struct{}{}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	slices.SortFunc(kept, compareContentHit)
+	ids := make([]int64, len(kept))
+	for i, key := range kept {
+		ids[i] = key.id
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("encoding content hit IDs: %w", err)
+	}
+	rows, err = queryer.QueryContext(ctx, `SELECT `+nodeCols+` FROM json_each(?) page CROSS JOIN `+nodeFrom+` WHERE n.id=page.value ORDER BY CAST(page.key AS INTEGER)`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("loading content hits: %w", err)
+	}
+	return scanSearchRows(rows, SearchMatchContent, match)
 }
 
 // photoAssetTextCandidates ranks every member of the asset that owns matching
