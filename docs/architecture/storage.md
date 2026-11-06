@@ -146,7 +146,7 @@ supersession, which replaces source facts on the same node.
 A link write checks and advances the predecessor's revision. A date-window
 write checks and advances its node's revision. Repeating an unchanged write or
 removing an absent declaration preserves the revision. Both link endpoints
-must be live files when declared. Windows also require a live file.
+must be live files when declared. Setting windows also requires a live file. Removing links and clearing windows accept trashed files.
 Declaration and effective-window writes emit no change-feed events.
 See [Audit restrictions](#audit-restrictions) for audited vaults.
 

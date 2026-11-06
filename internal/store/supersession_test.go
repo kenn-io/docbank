@@ -274,6 +274,37 @@ func TestSupersessionWindowRevisionAndClear(t *testing.T) {
 	require.Equal(t, "current", string(v.State))
 }
 
+func TestDeleteEffectiveWindowTrashedFile(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "policy.txt", fakeHash("a3"), 1, "text/plain")
+	require.NoError(t, err)
+	window, err := s.PutEffectiveWindow(ctx, n.ID, n.Revision, "2024-01-01", "2024-12-31")
+	require.NoError(t, err)
+	trashed, _, err := s.Trash(ctx, n.ID, window.Node.Revision)
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "policy.txt", fakeHash("b4"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.DeleteEffectiveWindow(ctx, n.ID, window.Node.Revision)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	cleared, err := s.DeleteEffectiveWindow(ctx, n.ID, trashed.Revision)
+	require.NoError(t, err)
+	require.True(t, cleared.Changed)
+	require.Equal(t, n.ID, cleared.Node.ID)
+	require.Equal(t, trashed.Revision+1, cleared.Node.Revision)
+	require.Equal(t, trashed.TrashedAt, cleared.Node.TrashedAt)
+	require.Empty(t, cleared.Path)
+	unchanged, err := s.DeleteEffectiveWindow(ctx, n.ID, cleared.Node.Revision)
+	require.NoError(t, err)
+	require.False(t, unchanged.Changed)
+	require.Equal(t, cleared.Node.Revision, unchanged.Node.Revision)
+	plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(ctx, plan)
+	require.NoError(t, err)
+}
+
 func TestSupersessionEndpointGuards(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

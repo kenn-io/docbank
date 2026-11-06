@@ -130,6 +130,28 @@ func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {
 	}, requests)
 }
 
+func TestEffectiveCLIClearTrashedFile(t *testing.T) {
+	var requests []string
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/nodes/5":
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 5, Revision: 7, TrashedAt: "2025-01-01T00:00:00Z"}))
+		case "DELETE /api/v1/nodes/5/effective-window":
+			assert.Equal(t, `"7"`, r.Header.Get("If-Match"))
+			w.Header().Set("ETag", `"8"`)
+			assert.NoError(t, json.MarshalWrite(w, api.ValidityReceipt{Node: api.Node{ID: 5, Revision: 8, TrashedAt: "2025-01-01T00:00:00Z"}, Changed: true}))
+		default:
+			http.Error(w, r.URL.Path, http.StatusNotFound)
+		}
+	})
+	out, err := runCLI(t, "document", "effective", "id:5", "--clear")
+	require.NoError(t, err)
+	assert.Equal(t, "Effective window updated: id:5\n", out)
+	assert.Equal(t, []string{"GET /api/v1/nodes/5", "DELETE /api/v1/nodes/5/effective-window"}, requests)
+}
+
 func TestSupersessionCLIRejectsInvalidFlags(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	for _, tc := range []struct {

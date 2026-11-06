@@ -168,9 +168,15 @@ func (s *Store) changeWindow(ctx context.Context, id, revision int64, w document
 		return result, fmt.Errorf("%w: %w", ErrInvalidSupersession, err)
 	}
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		n, err := liveFileTx(ctx, tx, id)
+		n, err := nodeByIDTx(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		if n.IsDir() {
+			return ErrNotFile
+		}
+		if put && n.TrashedAt != nil {
+			return fmt.Errorf("node %d: %w", id, ErrNotFound)
 		}
 		if revision != UnconditionalRev && n.Revision != revision {
 			return ErrStaleRevision
@@ -199,8 +205,8 @@ func (s *Store) changeWindow(ctx context.Context, id, revision int64, w document
 				return err
 			}
 		}
-		result = SupersessionChange{Node: n, Changed: changed}
-		result.Path, err = pathOf(ctx, tx, n.ID)
+		view, err := nodeViewForNode(ctx, tx, n)
+		result = SupersessionChange{Node: view.Node, Path: view.Path, Changed: changed}
 		return err
 	})
 	if err != nil {

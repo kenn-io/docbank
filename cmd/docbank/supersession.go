@@ -106,7 +106,11 @@ var effectiveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		node, err := selector.resolve(cmd.Context(), c)
+		resolve := selector.resolve
+		if effectiveClear {
+			resolve = selector.resolveIncludingTrash
+		}
+		node, err := resolve(cmd.Context(), c)
 		if err != nil {
 			return err
 		}
