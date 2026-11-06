@@ -361,7 +361,8 @@ terminal results and publication of retained text under rendition authority.
 Grouped photo imports include pairing, source replay, browser folder
 continuation and import progress.
 Photo metadata edits and undo, XMP conflict settlement and sidecar publication
-also use shared operations for explicit asset selections.
+also use shared operations for explicit asset selections. Quality scores, hidden-photo
+sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
@@ -554,7 +555,17 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
 GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
-GRANT INSERT ON documents.photo_hidden_credentials TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(passcode_hash)
+    ON documents.photo_hidden_credentials TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_hidden_failures TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(locked_until)
+    ON documents.photo_hidden_lockout TO docbank_runtime;
+GRANT INSERT, UPDATE(preference, revision, updated_at, burst_gap_seconds,
+    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds)
+    ON documents.photo_library_settings TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(state, focus, blur, brightness, color_red,
+    color_green, color_blue, framing, aesthetics, face_reports_json, face_inputs)
+    ON documents.photo_quality_signals TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
     copied_objects, copied_bytes, cancel_requested, error, receipt_json,
     updated_at, finished_at, retention_until)
@@ -1171,8 +1182,55 @@ candidate/undo protection and regeneration after restore; they do not qualify
 PostgreSQL people curation or restore. The two worker tables (explicit waiters
 and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
 sequence; a future metadata importer must advance it past imported IDs.
-Provider network execution, quality scoring, hidden-session management, people
-curation and public PostgreSQL vault opening remain unqualified.
+Provider network execution, people curation and public PostgreSQL vault opening
+remain unqualified. Quality scoring and hidden sessions use the contracts below.
+
+#### Photo quality and hidden sessions
+
+The shared Store discovers photos with ready grid previews, records quality
+scores or terminal unavailable results, and reads those results on both
+backends. Publication rechecks the current display version, source bytes and
+face inputs inside writer admission. A changed face box or observation queues
+new work; a late result cannot overwrite the current face report. Readers keep
+image scores while omitting stale face reports. Repeating the same input does
+not overwrite a terminal result. Replacing an evaluator removes its old cache
+in the same transaction as publication; failed publication preserves that cache.
+
+Face lists and their input signature come from one read snapshot. The signature
+uses each engine's JSON aggregation; it is an opaque, backend-local equality
+key, not a portable digest. Quality caches are disposable and excluded from
+metadata transfer. The face-to-candidate index supports dismissal checks without
+scanning all candidates. Retained dismissal tests qualify reading existing
+people decisions, not producing them on PostgreSQL.
+
+Hidden-photo operations configure and change passcodes, unlock and lock local
+sessions, record failed attempts and lockouts, and reset or disable the feature.
+Tokens remain in the owning Store's memory and disappear on restart. Expiry,
+explicit lock, passcode change and reset end access. A wrong passcode commits
+its failure record even though the operation returns an error. Disable unhides
+every asset, writes its receipt, refreshes XMP export work and removes the
+credential atomically. A failed disable retains both the credential and the
+live sessions. Hidden-state reads keep the visibility change ID, configuration
+and lockout in one snapshot.
+
+Visibility change IDs follow receipt insertion order, not timestamps or random
+UUID order. SQLite keeps its existing `rowid` query and operation index.
+PostgreSQL uses a private `receipt_order` identity column with a matching
+operation/order index. This ordinal is not part of logical metadata. Failure
+IDs also use a PostgreSQL identity column; a future importer of retained failure
+rows must use `OVERRIDING SYSTEM VALUE` and advance its sequence after inserting
+explicit IDs. Runtime roles need
+no sequence grants for these identity inserts.
+
+Photo settings, including hidden-session lifetime and inherited display
+preference, share the existing revision checks and receipts. Preference changes
+refresh affected displays and export work inside the write.
+
+The `photo-quality-hidden` contracts cover native publication, terminal and stale
+results, retained dismissal, lockout, expiry, revocation, settings, rollback and
+read snapshots. General photo browsing and quality filters, people curation,
+best-shot choices, portable restore and public PostgreSQL vault opening remain
+separate qualification boundaries.
 
 #### Photo checkouts
 

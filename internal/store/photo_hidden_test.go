@@ -82,12 +82,13 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, false))
 }
 
-func TestPhotoHiddenPasscodeNormalization(t *testing.T) {
+func checkPhotoHiddenPasscodeNormalization(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, passcode := range []string{"caf\u00e9", "cafe\u0301"} {
 		t.Run(passcode, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			require.NoError(t, s.SetupPhotoHidden(ctx, passcode))
 			_, _, err := s.UnlockPhotoHidden(ctx, "caf\u00e9")
@@ -104,9 +105,10 @@ func TestPhotoHiddenPasscodeNormalization(t *testing.T) {
 	}
 }
 
-func TestPhotoHiddenRestorePreservesHidden(t *testing.T) {
+func checkPhotoHiddenRestorePreservesHidden(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset, nodes := photoTrashFixture(t, s)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -125,7 +127,7 @@ func TestPhotoHiddenRestorePreservesHidden(t *testing.T) {
 	assert.Equal(t, asset.HiddenAt, current.HiddenAt)
 	_, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.ErrorIs(t, err, ErrHiddenLocked)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 }
 
 func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
@@ -339,9 +341,10 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	require.NotNil(t, restored.HiddenAt)
 }
 
-func TestPhotoHiddenVisibilityChangeID(t *testing.T) {
+func checkPhotoHiddenVisibilityChangeID(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "private.jpg")
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
@@ -405,15 +408,16 @@ func TestPhotoHiddenLockoutMetadata(t *testing.T) {
 	}
 }
 
-func TestPhotoHiddenDisableRecordsEveryAsset(t *testing.T) {
+func checkPhotoHiddenDisableRecordsEveryAsset(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
 	for i := range 3 {
 		albumAsset(t, s, fmt.Sprintf("synthetic-%d.jpg", i))
 	}
-	_, err := s.db.ExecContext(t.Context(), `UPDATE photo_assets SET hidden_at=?`, time.Now().UTC().Format(timestampLayout))
+	_, err := s.db.ExecContext(t.Context(), `UPDATE photo_assets SET hidden_at=$1`, time.Now().UTC().Format(timestampLayout))
 	require.NoError(t, err)
 	require.NoError(t, s.DisablePhotoHidden(ctx, "correct"))
 	var hidden, receipts int
@@ -423,9 +427,10 @@ func TestPhotoHiddenDisableRecordsEveryAsset(t *testing.T) {
 	require.Equal(t, 3, receipts)
 }
 
-func TestPhotoHiddenMutationGate(t *testing.T) {
+func checkPhotoHiddenMutationGate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "private.jpg")
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
@@ -516,9 +521,10 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.Nil(t, asset.HiddenAt)
 }
 
-func TestPhotoHiddenUnlockLifetimeOverride(t *testing.T) {
+func checkPhotoHiddenUnlockLifetimeOverride(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	now := time.Now().UTC()
 	s.photoHiddenNow = func() time.Time { return now }
 	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))

@@ -146,10 +146,20 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 	return *state, nil
 }
 
+// The SQLite operation index includes rowid implicitly. PostgreSQL records an
+// insertion ordinal instead; neither clock order nor random receipt IDs suffice.
+func (s *Store) photoHiddenChangeSQL() string {
+	order := "rowid"
+	if s.postgresSchema != "" {
+		order = "receipt_order"
+	}
+	return `SELECT receipt_id FROM photo_change_receipts WHERE ` + order + ` IN (SELECT MAX(` + order + `) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(` + order + `) FROM photo_change_receipts WHERE operation='unhide') ORDER BY ` + order + ` DESC LIMIT 1`
+}
+
 // photoHiddenStateTx reads the Hidden scope inside the caller's snapshot.
 func (s *Store) photoHiddenStateTx(ctx context.Context, tx *sql.Tx) (*PhotoHiddenState, error) {
 	state := &PhotoHiddenState{}
-	if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE rowid IN (SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='unhide') ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, s.photoHiddenChangeSQL()).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
@@ -229,10 +239,10 @@ func (s *Store) consumeHiddenPasscodeTx(ctx context.Context, tx *sql.Tx, passcod
 		}
 		return nil, nil //nolint:nilnil // The first error is a committed denial; the second aborts the transaction.
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_failures WHERE occurred_at<?`, now.Add(-time.Minute).Format(timestampLayout)); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_failures WHERE occurred_at<$1`, now.Add(-time.Minute).Format(timestampLayout)); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_failures(occurred_at) VALUES(?)`, now.Format(timestampLayout)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_failures(occurred_at) VALUES($1)`, now.Format(timestampLayout)); err != nil {
 		return nil, err
 	}
 	var count int
@@ -241,7 +251,7 @@ func (s *Store) consumeHiddenPasscodeTx(ctx context.Context, tx *sql.Tx, passcod
 	}
 	if count >= 5 {
 		until := now.Add(5 * time.Minute)
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_lockout(singleton,locked_until) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET locked_until=excluded.locked_until`, until.Format(timestampLayout))
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_lockout(singleton,locked_until) VALUES(1,$1) ON CONFLICT(singleton) DO UPDATE SET locked_until=excluded.locked_until`, until.Format(timestampLayout))
 		return &HiddenLockoutError{Until: until}, err
 	}
 	return ErrHiddenPasscode, nil
@@ -375,10 +385,13 @@ func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, nextHa
 				if _, err := commitPhotoAssetTx(ctx, tx, asset, next, "unhide"); err != nil {
 					return err
 				}
+				if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {
+					return err
+				}
 			}
 			return clearHiddenAuthTx(ctx, tx, true)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_hidden_credentials SET passcode_hash=? WHERE singleton=1`, nextHash); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_hidden_credentials SET passcode_hash=$1 WHERE singleton=1`, nextHash); err != nil {
 			return err
 		}
 		return clearHiddenAuthTx(ctx, tx, false)

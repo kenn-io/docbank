@@ -127,7 +127,7 @@ func checkPagePublicationRollbackPostgres(t *testing.T) {
 }
 
 // The tracer commits a native write between the read's first and later SELECTs.
-func emailPageSnapshotReader(t *testing.T, s *Store, change func()) *Store {
+func postgresSnapshotReader(t *testing.T, s *Store, change func()) *Store {
 	t.Helper()
 	conn, err := s.db.Conn(t.Context())
 	require.NoError(t, err)
@@ -159,7 +159,7 @@ func checkEmailPageSnapshotsPostgres(t *testing.T) {
 		before, err := s.EmailMetadata(t.Context(), view.Version.ID)
 		require.NoError(t, err)
 		var writeErr error
-		reader := emailPageSnapshotReader(t, s, func() { writeErr = s.PublishEmailBody(t.Context(), body) })
+		reader := postgresSnapshotReader(t, s, func() { writeErr = s.PublishEmailBody(t.Context(), body) })
 		during, err := reader.EmailMetadata(t.Context(), view.Version.ID)
 		require.NoError(t, writeErr)
 		require.NoError(t, err)
@@ -181,7 +181,7 @@ func checkEmailPageSnapshotsPostgres(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(1), before.Total)
 		var writeErr error
-		reader := emailPageSnapshotReader(t, s, func() {
+		reader := postgresSnapshotReader(t, s, func() {
 			writeErr = s.RemoveEmailDocumentPublication(t.Context(), receipt.OperationID, receipt.RequestDigest)
 		})
 		during, err := reader.EmailDocumentRelations(t.Context(), query)
@@ -205,7 +205,7 @@ func checkEmailPageSnapshotsPostgres(t *testing.T) {
 		before, err := s.PageInventory(t.Context(), request.Binding())
 		require.NoError(t, err)
 		var writeErr error
-		reader := emailPageSnapshotReader(t, s, func() {
+		reader := postgresSnapshotReader(t, s, func() {
 			writeErr = s.PublishPageImage(t.Context(), claim, pageStoreImage(t, frames[0], pageStoreRecipe()), pageStoreRecipe(), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10})
 		})
 		during, err := reader.PageInventory(t.Context(), request.Binding())

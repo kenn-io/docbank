@@ -224,7 +224,7 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			parameters[i] = fmt.Sprintf("$%d", i+1)
 		}
 		override := ""
-		if table == "extracted_text" {
+		if table == "extracted_text" || table == "photo_hidden_failures" {
 			override = " OVERRIDING SYSTEM VALUE"
 		}
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
@@ -235,6 +235,10 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		}
 		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
+		if table == "photo_hidden_failures" {
+			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence($1,'failure_id'), COALESCE(MAX(failure_id),1), COUNT(*)>0) FROM photo_hidden_failures`, table)
+			require.NoError(t, err)
+		}
 		if table == "extracted_text" || table == "photo_suggestions" {
 			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence($1,'id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM `+table, table)
 			require.NoError(t, err)

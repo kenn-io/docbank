@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
@@ -54,6 +55,13 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(entry_count,chain_head) ON "+schema+".audit_scopes TO "+quotedRole+
 		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole+
 		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) ON "+schema+".photo_library_settings TO "+quotedRole+
+		"; GRANT DELETE,UPDATE(passcode_hash) ON "+schema+".photo_hidden_credentials TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".photo_hidden_failures TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(locked_until) ON "+schema+".photo_hidden_lockout TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(state,focus,blur,brightness,color_red,color_green,color_blue,framing,aesthetics,face_reports_json,face_inputs) ON "+schema+".photo_quality_signals TO "+quotedRole)
 	require.NoError(t, err)
 
 	_, err = setup.ExecContext(ctx, "GRANT SELECT,INSERT ON "+schema+".photo_xmp_unsettled TO "+quotedRole+
@@ -158,7 +166,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 	actual, err := pgschema.Validate(ctx, db, cfg)
 	require.NoError(t, err)
 	require.Equal(t, id, actual)
-	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, providerEgressMu: waitlock.New()}
+	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time)}
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT id,(SELECT vault_uid FROM vault_metadata) FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID, &s.vaultID))
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT store_id FROM blob_stores WHERE role='primary'`).Scan(&s.primaryStoreID))
 	return s

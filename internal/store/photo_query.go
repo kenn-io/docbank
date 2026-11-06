@@ -716,7 +716,7 @@ func (s *Store) hydratePhotoPreviews(ctx context.Context, q metadataQuerier, req
 	if err != nil {
 		return err
 	}
-	qualities, err := photoQualityForVersions(ctx, q, versions)
+	qualities, err := s.photoQualityForVersions(ctx, q, versions)
 	if err != nil {
 		return err
 	}

@@ -27,7 +27,7 @@ func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep 
 			versionIDs = append(versionIDs, t.CurrentContentVersionID)
 		}
 	}
-	quality, err := photoQualityForVersions(ctx, tx, versionIDs)
+	quality, err := s.photoQualityForVersions(ctx, tx, versionIDs)
 	if err != nil {
 		return nil, err
 	}
