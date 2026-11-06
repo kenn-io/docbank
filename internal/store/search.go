@@ -1,6 +1,8 @@
 package store
 
 import (
+	"cmp"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -2906,6 +2908,42 @@ func contentSearchMatches(match, generation string, profile *string) (cte, from,
 		`matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`, `mv.best_rank`, args
 }
 
+type contentHitKey struct {
+	id   int64
+	name string
+	rank float64
+}
+
+func compareContentHit(a, b contentHitKey) int {
+	if order := cmp.Compare(a.rank, b.rank); order != 0 {
+		return order
+	}
+	if order := cmp.Compare(a.name, b.name); order != 0 {
+		return order
+	}
+	return cmp.Compare(a.id, b.id)
+}
+
+// The worst retained key stays at the root, including name and ID rank ties.
+type contentHitHeap []contentHitKey
+
+func (h *contentHitHeap) Len() int           { return len(*h) }
+func (h *contentHitHeap) Less(i, j int) bool { return compareContentHit((*h)[i], (*h)[j]) > 0 }
+func (h *contentHitHeap) Swap(i, j int)      { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+func (h *contentHitHeap) Push(x any) {
+	key, ok := x.(contentHitKey)
+	if !ok {
+		panic("store: invalid content hit heap key")
+	}
+	*h = append(*h, key)
+}
+func (h *contentHitHeap) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
+}
+
 func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, generation, filterSQL string, filterArgs []any, seen map[int64]struct{}, n int) ([]SearchHit, error) {
 	from, where, args := contentSearchSource(match, generation, nil, "CROSS JOIN")
 	rank, version := `rendition_lexical_fts.rank`, `a.content_version_id`
@@ -2920,28 +2958,45 @@ func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, gen
 		from += ` CROSS JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
 	}
 	args = append(args, filterArgs...)
-	rows, err := queryer.QueryContext(ctx, `SELECT n.id FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL `+filterSQL+` ORDER BY `+rank+`,n.name,n.id`, args...)
+	rows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL `+filterSQL+` ORDER BY `+rank, args...)
 	if err != nil {
 		return nil, fmt.Errorf("streaming content hits: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	ids := make([]int64, 0, n)
+	kept := make(contentHitHeap, 0, n)
+	members := make(map[int64]struct{}, n)
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var key contentHitKey
+		if err := rows.Scan(&key.id, &key.name, &key.rank); err != nil {
 			return nil, fmt.Errorf("scanning content hit: %w", err)
 		}
-		if _, exists := seen[id]; exists {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-		if len(ids) == n {
+		if len(kept) == n && key.rank > kept[0].rank {
 			break
 		}
+		if _, exists := seen[key.id]; exists {
+			continue
+		}
+		if _, exists := members[key.id]; exists {
+			continue
+		}
+		if len(kept) < n {
+			heap.Push(&kept, key)
+		} else if compareContentHit(key, kept[0]) < 0 {
+			delete(members, kept[0].id)
+			kept[0] = key
+			heap.Fix(&kept, 0)
+		} else {
+			continue
+		}
+		members[key.id] = struct{}{}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	slices.SortFunc(kept, compareContentHit)
+	ids := make([]int64, len(kept))
+	for i, key := range kept {
+		ids[i] = key.id
 	}
 	encoded, err := json.Marshal(ids)
 	if err != nil {
