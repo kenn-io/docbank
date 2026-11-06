@@ -1804,6 +1804,20 @@ func TestPhotoFacetsCountSharedValuesOnce(t *testing.T) {
 	}
 	_, err := s.DeletePhotoSet(t.Context(), sets[2].ID, sets[2].Revision)
 	require.NoError(t, err)
+	options := defaultSnapshotMaterializeOptions()
+	options.FacetMemberLimit = 6 // Three live memberships and three photos in no live album.
+	compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, `{}`))
+	facets, err := materializeSharedPhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options)
+	require.NoError(t, err)
+	require.True(t, facets[0].Available)
+	require.Equal(t, int64(5), *facets[0].Total)
+	require.Equal(t, int64(3), *facets[0].Missing)
+	require.ElementsMatch(t, []SnapshotFacetValue{{Key: sets[0].ID, Label: "Live", Count: 2}, {Key: sets[1].ID, Label: "Second", Count: 1}}, facets[0].Values)
+	options.FacetMemberLimit = 5
+	facets, err = materializeSharedPhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options)
+	require.NoError(t, err)
+	require.False(t, facets[0].Available)
+	require.Equal(t, "member_budget_exceeded", facets[0].Reason)
 	for _, raw := range []string{`{}`, `{"filters":{"flags":["pick"]}}`, `{"filters":{"has_duplicates":true}}`} {
 		duplicates := strings.Contains(raw, "has_duplicates")
 		total, missingCamera, missingSet, canon, live := int64(5), int64(1), int64(3), int64(3), int64(2)
