@@ -24,13 +24,13 @@ func TestWebBasePathEntryAssetsLoad(t *testing.T) {
 			s := NewServer(Deps{Cfg: cfg, WebURL: "http://localhost/"})
 			defer s.Close()
 			page := httptest.NewRecorder()
-			s.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "http://localhost"+basePath+"/", nil))
+			s.Handler().ServeHTTP(page, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost"+basePath+"/", nil))
 			require.Equal(t, http.StatusOK, page.Code)
 			assets := regexp.MustCompile(`(?:src|href)="([^"]*assets/[^"]+)"`).FindAllStringSubmatch(page.Body.String(), -1)
 			require.NotEmpty(t, assets)
 			for _, asset := range assets {
 				response := httptest.NewRecorder()
-				s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://localhost"+asset[1], nil))
+				s.Handler().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost"+asset[1], nil))
 				require.Equal(t, http.StatusOK, response.Code, asset[1])
 				require.NotEmpty(t, response.Body.Bytes(), asset[1])
 			}
@@ -47,7 +47,7 @@ func TestWebBasePath(t *testing.T) {
 	s := NewServer(Deps{Cfg: cfg, WebLoginEnabled: true, WebURL: "http://localhost:7777/"})
 	defer s.Close()
 	request := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, cfg.Web.PublicOrigin+path, strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), method, cfg.Web.PublicOrigin+path, strings.NewReader(body))
 		req.Header.Set("Origin", cfg.Web.PublicOrigin)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -82,7 +82,7 @@ func TestWebBasePath(t *testing.T) {
 	var signed webSignInStatus
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &signed))
 	// Mounting cannot broaden the scoped browser credential to daemon control.
-	req := httptest.NewRequest(http.MethodPost, cfg.Web.PublicOrigin+"/tools/archive/api/daemon/shutdown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, cfg.Web.PublicOrigin+"/tools/archive/api/daemon/shutdown", nil)
 	req.Header.Set(WebSessionHeader, signed.Session.Token)
 	req.Header.Set("Origin", cfg.Web.PublicOrigin)
 	req.AddCookie(cookie)
@@ -91,13 +91,13 @@ func TestWebBasePath(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "web_session_read_only")
 	// The proxy mount does not turn a remote peer into a local-filesystem caller.
-	req = httptest.NewRequest(http.MethodPost, cfg.Web.PublicOrigin+"/tools/archive/api/v1/ingest", nil)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodPost, cfg.Web.PublicOrigin+"/tools/archive/api/v1/ingest", nil)
 	req.Header.Set("X-Api-Key", cfg.Server.APIKey)
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "loopback_only")
-	req = httptest.NewRequest(http.MethodDelete, cfg.Web.PublicOrigin+"/tools/archive/api/daemon/web-session", nil)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodDelete, cfg.Web.PublicOrigin+"/tools/archive/api/daemon/web-session", nil)
 	req.Header.Set(WebSessionHeader, signed.Session.Token)
 	req.AddCookie(cookie)
 	req.Header.Set("Origin", "https://other.example.test")
@@ -106,7 +106,7 @@ func TestWebBasePath(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "web_browser")
 	// CLI launch keeps the loopback origin but includes the configured mount.
-	req = httptest.NewRequest(http.MethodPost, "http://localhost:7777/api/daemon/web-session", nil)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost:7777/api/daemon/web-session", nil)
 	req.Header.Set("X-Api-Key", cfg.Server.APIKey)
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
@@ -127,7 +127,7 @@ func TestWebBasePathPreservesRequestBoundaries(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}), "/archive")
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://localhost/archive/api/v1/mailbox/messages/a%2Fb?q=a%2Fb", nil))
+	handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/archive/api/v1/mailbox/messages/a%2Fb?q=a%2Fb", nil))
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
 

@@ -33,7 +33,7 @@ func TestPhotoImportCheckpointMountedCookieJar(t *testing.T) {
 			endpoint := basePath + "/api/daemon/photo-import-checkpoint"
 			request := func(method, path, body string, status int) string {
 				t.Helper()
-				req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+				req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, strings.NewReader(body))
 				require.NoError(t, err)
 				req.Host = "localhost"
 				req.Header.Set("X-Api-Key", "")
