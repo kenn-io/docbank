@@ -361,6 +361,7 @@ func (e *ScreenRetryError) Unwrap() error { return e.Err }
 // arrives, so later requests cannot discard or relabel it.
 type deferredSearchReport struct {
 	receipt             misslog.Request
+	request             api.DocumentSearchRequest
 	requestID, searchID uint64
 	empty               bool
 }
@@ -2482,7 +2483,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		if m.rerankReport.requestID != 0 {
 			earlier = m.reportSearch(m.rerankReport.receipt.ActualMode, m.rerankReport.empty, m.rerankReport.receipt)
 		}
-		m.rerankReport = deferredSearchReport{requestID: msg.requestID, searchID: msg.searchID,
+		m.rerankReport = deferredSearchReport{requestID: msg.requestID, searchID: msg.searchID, request: msg.request,
 			receipt: api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, msg.report), empty: len(m.rows) == 0}
 		return m, tea.Batch(earlier, rerank)
 	}
@@ -2535,17 +2536,7 @@ func (m Model) applyNaturalSearchRerank(msg naturalSearchRerankLoadedMsg) (tea.M
 		m.applyNaturalRows(m.searchQuery, msg.rows, msg.report.Truncated)
 		m.naturalSearchNote = naturalSearchReportNote(msg.report)
 		if report != nil {
-			receipt := pending.receipt
-			receipt.RequestedMode = msg.report.RequestedMode
-			receipt.ActualMode = msg.report.ActualMode
-			if msg.report.Coverage.State != "" && msg.report.Coverage.State != "unknown" {
-				receipt.DocumentCount = new(msg.report.Coverage.ScopedDocuments)
-			}
-			receipt.Truncated = msg.report.Truncated
-			receipt.Degradations = msg.report.Degradations
-			receipt.Coverage = map[string]any{"binding_required": msg.report.Coverage.BindingRequired,
-				"scoped_documents":   msg.report.Coverage.ScopedDocuments,
-				"complete_documents": msg.report.Coverage.CompleteDocuments, "state": msg.report.Coverage.State}
+			receipt := api.DocumentSearchMiss(pending.receipt.Query, pending.receipt.Profile, pending.request, msg.report)
 			report = m.reportSearch(msg.report.ActualMode, len(m.rows) == 0, receipt)
 		}
 	}

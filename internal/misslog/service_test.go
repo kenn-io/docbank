@@ -2,6 +2,7 @@ package misslog
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/kit/atomicfile"
 )
 
 func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
@@ -68,7 +70,37 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	require.Contains(t, logs.String(), "miss_log_write_failed")
 }
 
-func TestEnabledStartupPrunesButDisabledPreserves(t *testing.T) {
+func TestPublishedWriteRemainsVisiblePrunableAndPurgeable(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default().MissLog
+	cfg.Enabled, cfg.MaxRecords = true, 1
+	svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
+	svc.writeFile = func(path string, data []byte, opts ...atomicfile.Option) error {
+		if err := atomicfile.WriteFile(path, data, opts...); err != nil {
+			return err
+		}
+		return errors.Join(atomicfile.ErrNotDurable, errors.New("directory sync failed"))
+	}
+	svc.Record(t.Context(), Request{Query: "first"})
+	rows, err := svc.List(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "first", rows[0].Query)
+	svc.Record(t.Context(), Request{Query: "second"})
+	rows, err = svc.List(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "second", rows[0].Query)
+	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.NoError(t, svc.Purge(t.Context()))
+	entries, err = os.ReadDir(filepath.Join(root, "miss-log"))
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		root := t.TempDir()
 		cfg := config.Default().MissLog
@@ -82,21 +114,25 @@ func TestEnabledStartupPrunesButDisabledPreserves(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		require.Equal(t, "second", rows[0].Query)
-		time.Sleep(91 * 24 * time.Hour)
-		rows, err = svc.List(t.Context(), 10, 0)
-		require.NoError(t, err)
-		require.Empty(t, rows)
-		cfg.Enabled = false
+		cfg.Enabled, cfg.MaxRecords = false, 1
 		disabled := New(t.Context(), root, "synthetic-vault", cfg, nil)
 		rows, err = disabled.List(t.Context(), 10, 0)
 		require.NoError(t, err)
-		require.Len(t, rows, 2)
-		cfg.Enabled = true
-		enabled := New(t.Context(), root, "synthetic-vault", cfg, nil)
-		rows, err = enabled.List(t.Context(), 10, 0)
+		require.Len(t, rows, 1)
+		require.Equal(t, "third", rows[0].Query)
+		entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		disabled.Record(t.Context(), Request{Query: "disabled"})
+		time.Sleep(91 * 24 * time.Hour)
+		rows, err = disabled.List(t.Context(), 10, 0)
 		require.NoError(t, err)
 		require.Empty(t, rows)
-		entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
+		disabled = New(t.Context(), root, "synthetic-vault", cfg, nil)
+		rows, err = disabled.List(t.Context(), 10, 0)
+		require.NoError(t, err)
+		require.Empty(t, rows)
+		entries, err = os.ReadDir(filepath.Join(root, "miss-log"))
 		require.NoError(t, err)
 		require.Empty(t, entries)
 	})

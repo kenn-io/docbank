@@ -17,34 +17,39 @@ func TestMissLogConfigDefaults(t *testing.T) {
 	require.Equal(t, 5000, cfg.MissLog.MaxRecords)
 }
 
-func TestMissLogDisabledExplicitZeroBoundsAccepted(t *testing.T) {
+func TestMissLogDisabledExplicitZeroBoundsRejected(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[miss_log]\nenabled=false\nretention_days=0\nmax_records=0\n"), 0600))
 	cfg, err := Load(dir)
 	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
+	require.ErrorContains(t, cfg.Validate(), "[miss_log] retention_days")
 	absent := Default()
 	absent.MissLog = MissLogConfig{}
-	require.NoError(t, absent.Validate(), "zero-value callers may omit the optional section")
+	require.ErrorContains(t, absent.Validate(), "[miss_log] retention_days")
 }
 
 func FuzzMissLogConfigBounds(f *testing.F) {
 	f.Add(1, 1)
 	f.Add(365, 100000)
 	f.Add(0, 1)
+	f.Add(1, 0)
+	f.Add(-1, 1)
+	f.Add(1, -1)
 	f.Add(366, 100001)
 	f.Fuzz(func(t *testing.T, days, count int) {
 		cfg := Default()
-		cfg.MissLog.Enabled = true
 		cfg.MissLog.RetentionDays = days
 		cfg.MissLog.MaxRecords = count
-		err := cfg.Validate()
 		valid := days >= 1 && days <= 365 && count >= 1 && count <= 100000
-		if valid && err != nil {
-			t.Fatalf("valid bounds rejected: %v", err)
-		}
-		if !valid && err == nil {
-			t.Fatal("out-of-range bounds accepted")
+		for _, enabled := range []bool{false, true} {
+			cfg.MissLog.Enabled = enabled
+			err := cfg.Validate()
+			if valid && err != nil {
+				t.Fatalf("valid bounds rejected: %v", err)
+			}
+			if !valid && err == nil {
+				t.Fatalf("out-of-range bounds accepted with enabled=%t", enabled)
+			}
 		}
 	})
 }

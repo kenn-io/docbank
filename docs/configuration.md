@@ -1543,7 +1543,7 @@ The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show
 
 Receipts preserve the query, time, vault, requested and actual search modes, profile, search options, fence fingerprint or live filters, coverage, truncation, degradations, and reranking outcome. They omit document excerpts and source ID lists. The request body is capped at 64 KiB. Larger requests are refused. A failed write leaves the search available and logs a fixed diagnostic.
 
-Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. List responses use `Cache-Control: no-store`. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. When recording is enabled, lists exclude records older than `retention_days`, including on idle daemons. Enabled startup and writes prune records by age and count. Disabling recording preserves existing files and keeps them visible.
+Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. List responses use `Cache-Control: no-store`. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Lists exclude records older than `retention_days`, including on idle daemons. Startup and writes prune records by age and count. Disabling recording stops new receipts; existing receipts remain subject to retention and record limits.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
 metadata, imports, and federation. Backups carry no miss records, and an overwrite restore leaves the target's own records in place.

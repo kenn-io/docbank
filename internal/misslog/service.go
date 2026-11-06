@@ -5,7 +5,6 @@ package misslog
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"io/fs"
@@ -49,22 +48,23 @@ type Receipt struct {
 
 // Service belongs to one vault owner and one daemon lifetime.
 type Service struct {
-	mu       sync.Mutex
-	dir      string
-	vaultUID string
-	files    []string // Oldest first, ordered by creation time and ID.
-	config   config.MissLogConfig
-	logger   *slog.Logger
+	mu        sync.Mutex
+	dir       string
+	vaultUID  string
+	files     []string // Oldest first, ordered by creation time and ID.
+	config    config.MissLogConfig
+	logger    *slog.Logger
+	writeFile func(string, []byte, ...atomicfile.Option) error
 }
 
 const fileTimeLayout = "20060102T150405.000000000Z"
 
-// New loads the file index and prunes only when recording is enabled.
+// New loads the file index and prunes expired and excess receipts.
 func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Service{dir: filepath.Join(root, "miss-log"), vaultUID: vaultUID, config: cfg, logger: logger}
+	s := &Service{dir: filepath.Join(root, "miss-log"), vaultUID: vaultUID, config: cfg, logger: logger, writeFile: atomicfile.WriteFile}
 	entries, err := os.ReadDir(s.dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		logger.Warn("miss_log_load_failed")
@@ -76,10 +76,8 @@ func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, l
 		}
 	}
 	slices.Sort(s.files)
-	if cfg.Enabled {
-		if err := s.prune(ctx, time.Now().UTC()); err != nil {
-			logger.Warn("miss_log_prune_failed")
-		}
+	if err := s.prune(ctx, time.Now().UTC()); err != nil {
+		logger.Warn("miss_log_prune_failed")
 	}
 	return s
 }
@@ -89,16 +87,11 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	if s == nil || !s.config.Enabled || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
 		return
 	}
-	if utf8.RuneCountInString(request.Query) > 32768 || len(request.Profile) > 128 || len(request.BindingID) > 128 {
+	if utf8.RuneCountInString(request.Query) > 32768 {
 		s.logger.Warn("miss_log_write_failed")
 		return
 	}
-	var random [24]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		s.logger.Warn("miss_log_write_failed")
-		return
-	}
-	receipt := Receipt{Request: request, ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
+	receipt := Receipt{Request: request, ID: rand.Text(), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
 	encoded, err := json.Marshal(receipt)
 	if err != nil || len(encoded) > 64<<10 {
 		s.logger.Warn("miss_log_write_failed")
@@ -114,9 +107,11 @@ func (s *Service) Record(ctx context.Context, request Request) {
 		return
 	}
 	name := receipt.CreatedAt.Format(fileTimeLayout) + "-" + receipt.ID + ".json"
-	if err := atomicfile.WriteFile(filepath.Join(s.dir, name), encoded, atomicfile.WithPrivate()); err != nil {
+	if err := s.writeFile(filepath.Join(s.dir, name), encoded, atomicfile.WithPrivate()); err != nil {
 		s.logger.Warn("miss_log_write_failed")
-		return
+		if !errors.Is(err, atomicfile.ErrPublished) {
+			return
+		}
 	}
 	index, _ := slices.BinarySearch(s.files, name)
 	s.files = slices.Insert(s.files, index, name)
@@ -147,10 +142,7 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Receipt, error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cutoff := ""
-	if s.config.Enabled {
-		cutoff = time.Now().UTC().AddDate(0, 0, -s.config.RetentionDays).Format(fileTimeLayout)
-	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -s.config.RetentionDays).Format(fileTimeLayout)
 	for i := len(s.files) - 1; i >= 0 && len(items) < limit; i-- {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -227,8 +219,5 @@ func ReceiptScope(input any) map[string]any {
 	if json.Unmarshal(encoded, &scope) != nil {
 		return nil
 	}
-	delete(scope, "query")
-	delete(scope, "fence")
-	delete(scope, "media_sources")
 	return scope
 }

@@ -131,6 +131,10 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 				want = []actionCall{{event: "search_run", searchType: "lexical"}}
 			}
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+			fake.naturalRerankSearch.RequestedMode = "auto"
+			fake.naturalRerankSearch.Coverage = api.DocumentSearchCoverage{BindingRequired: true, ScopedDocuments: 7, CompleteDocuments: 3, State: "partial"}
+			fake.naturalRerankSearch.Truncated = true
+			fake.naturalRerankSearch.Degradations = []string{"synthetic degradation"}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
@@ -154,6 +158,18 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			runModelCommand(t, model, cmd)
 			assert.Len(t, model.rows, wantRows)
 			assert.Equal(t, want, fake.actions)
+			if !baseEmpty {
+				require.Len(t, fake.misses, 1)
+				receipt := fake.misses[0]
+				assert.Equal(t, "report", receipt.Query)
+				assert.Equal(t, "auto", receipt.RequestedMode)
+				assert.Equal(t, "lexical", receipt.ActualMode)
+				assert.Equal(t, new(7), receipt.DocumentCount)
+				assert.Equal(t, map[string]any{"binding_required": true, "scoped_documents": 7, "complete_documents": 3, "state": "partial"}, receipt.Coverage)
+				assert.True(t, receipt.Truncated)
+				assert.Equal(t, []string{"synthetic degradation"}, receipt.Degradations)
+				assert.Equal(t, "applied", receipt.Reranking["outcome"])
+			}
 		})
 	}
 }
