@@ -144,9 +144,9 @@ does not grant consent itself.
 Human output shows the reranking outcome and candidate count. `--json` includes
 a `reranking` receipt whether or not you pass `--explain`. In the receipt,
 `applied` means reranking succeeded, `skipped` means there were no candidates,
-and `degraded` means the search kept its original ordering after a reranking
-failure. The configured `degrade` failure policy returns that original
-ordering. `fail_closed` returns `reranking_failed` instead. See the
+and `degraded` means reranking failed. Under the configured `degrade` failure
+policy, search still applies validity ordering before the final result limit.
+`fail_closed` returns `reranking_failed` instead. See the
 [search response contract](../architecture/http-api.md#coverage-and-source-fenced-search)
 for receipt fields and degradation causes.
 

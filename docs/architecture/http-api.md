@@ -893,8 +893,9 @@ The reranking degradation causes are `authorization_denied`, `timed_out`,
 `malformed_output`, and `unavailable`. `malformed_output` covers invalid provider
 scores and local inputs that cannot be reranked: a candidate with no readable
 excerpt or a query that exceeds the reranking size limit. Those local failures
-occur before any reranking provider call. Under `degrade`, the response keeps
-the original ordering and includes `reranking_degraded` in `degradations`.
+occur before any reranking provider call. Under `degrade`, search still applies
+validity ordering before the final result limit and includes
+`reranking_degraded` in `degradations`.
 Under `fail_closed`, the request fails with `reranking_failed`.
 
 #### Processing errors and derivative purge
