@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/spf13/cobra"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -18,7 +19,7 @@ Management uses the master daemon credential even when recording is off.`}
 		if err != nil {
 			return err
 		}
-		page, err := c.ListMissLog(cmd.Context(), limit, offset)
+		page, err := c.API().ListMissLog(cmd.Context(), &apiclient.ListMissLogRequestOptions{Query: &apiclient.ListMissLogQuery{Limit: new(int64(limit)), Offset: new(int64(offset))}})
 		if err != nil {
 			return err
 		}
@@ -31,14 +32,16 @@ Management uses the master daemon credential even when recording is off.`}
 		if err != nil {
 			return err
 		}
-		return c.DeleteMissLogRecord(cmd.Context(), args[0])
+		_, err = c.API().DeleteMissLogRecord(cmd.Context(), &apiclient.DeleteMissLogRecordRequestOptions{PathParams: &apiclient.DeleteMissLogRecordPath{ID: args[0]}})
+		return err
 	}}
 	purge := &cobra.Command{Use: "purge", Short: "Delete all private miss receipts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		return c.DeleteMissLog(cmd.Context())
+		_, err = c.API().DeleteMissLog(cmd.Context())
+		return err
 	}}
 	list.Example = "  docbank miss-log list --limit 20"
 	remove.Example = "  docbank miss-log delete <record-id>"

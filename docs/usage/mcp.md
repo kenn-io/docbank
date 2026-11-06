@@ -142,7 +142,7 @@ or separate `[mcp.http] port` as `--listen` when printing configuration. For
 example, `--listen 127.0.0.1:7341` targets the daemon when its API port is
 7341. Start the daemon with the same bearer binding available in its
 environment. Printing configuration leaves the listener's startup to you.
-Empty `search_documents` results from daemon-backed MCP can enter the opt-in [private search miss log](../configuration.md#private-search-miss-log), including searches with no documents in scope. Embedded library calls create no record. MCP has no miss-log management tools.
+Empty `search_documents`, `find_conflicts`, and `answer_question` searches from daemon-backed MCP can enter the opt-in [private search miss log](../configuration.md#private-search-miss-log), including searches with no documents in scope. Embedded library calls create no record. MCP has no miss-log management tools.
 
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.

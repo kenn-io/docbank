@@ -440,12 +440,7 @@ func searchDocuments(
 	input.Mode = effectiveSearchMode(input.Mode)
 
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
-		out, err := runDocumentSearch(ctx, c, input, false)
-		if daemon, ok := c.(daemonDocumentClient); ok && err == nil && len(out.report.Results) == 0 {
-			receipt := api.DocumentSearchMiss(input.Query, input.Profile, out.request, out.report)
-			daemon.RecordMiss(ctx, receipt)
-		}
-		return out, err
+		return runDocumentSearch(ctx, c, input, false)
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
@@ -506,6 +501,9 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		return documentSearchResponse{}, callErr
 	}
 	if len(report.Results) == 0 {
+		if daemon, ok := c.(daemonDocumentClient); ok {
+			daemon.RecordMiss(ctx, api.DocumentSearchMiss(input.Query, input.Profile, request, report))
+		}
 		return documentSearchResponse{request: request, resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 	}
 	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
