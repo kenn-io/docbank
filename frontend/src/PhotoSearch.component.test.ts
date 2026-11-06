@@ -265,19 +265,20 @@ it.each([false, true])("reports explicit Photos searches, hidden=%s", async (hid
 
 it.each([
   { hidden: false, filters: { cameras: ["Synthetic camera"] }, receipt: true },
+  { hidden: false, mode: "semantic" as const, filters: { cameras: ["Synthetic camera"] }, receipt: true },
   { hidden: true, filters: { cameras: ["Synthetic camera"] }, receipt: false },
   { hidden: false, filters: {}, receipt: false },
   { hidden: false, filters: { cameras: [], no_tags: false }, receipt: false },
 ])(
   "records blank photo submissions only with visible active filters: %j",
-  async ({ hidden, filters, receipt }) => {
+  async ({ hidden, mode, filters, receipt }) => {
     stubPhotoTimeline();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(Response.json({ items: [], total: 0, facets: [] })),
     );
     const photos = new Photos("scoped", vi.fn(), hidden);
-    photos.query = { ...photos.query, filters };
+    photos.query = { ...photos.query, mode: mode ?? "lexical", filters };
     render(PhotoSearch, { photos });
     const search = screen.getByRole("searchbox", { name: "Search photos" });
     await fireEvent.input(search, { target: { value: "   " } });

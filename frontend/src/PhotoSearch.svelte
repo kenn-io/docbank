@@ -44,21 +44,22 @@
           }
         : undefined,
     );
+    const ran = photos.query;
     void pending?.then((outcome) => {
       if (!explicit || !outcome) return;
       if (!text && !Object.values(submitted.filters).some(isFilterSet)) return;
       if (outcome.accepted) {
         const fallbackReason = photos.fallbackReason;
-        const actualMode = fallbackReason ? "lexical" : submitted.mode;
+        const actualMode = fallbackReason ? "lexical" : ran.mode;
         const searchType = actualMode === "lexical" ? "text" : actualMode;
         if (text) reportSearch(session, searchType, outcome.empty);
         if (outcome.empty && !hidden) {
           void recordMiss(
             {
               query: text,
-              requested_mode: submitted.mode,
+              requested_mode: ran.mode,
               actual_mode: actualMode,
-              filters: { ...submitted.filters, syntax: submitted.syntax, corpus: "photos", hidden },
+              filters: { ...ran.filters, syntax: ran.syntax, corpus: "photos", hidden },
               degradations: fallbackReason ? [fallbackReason] : [],
               coverage: { coverage_incomplete: photos.coverageIncomplete },
               truncated: photos.truncated,
