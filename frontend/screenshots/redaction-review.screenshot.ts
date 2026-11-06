@@ -159,12 +159,12 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       // The reader rewrites this box whenever its current page changes, even
       // between the fill and Enter. Retype until the page sticks.
       await expect(async () => {
-        const page = await target.locator("embedpdf-container").evaluate(async (host) => {
+        const currentPage = await target.locator("embedpdf-container").evaluate(async (host) => {
           const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
             .registry;
           return registry.getPlugin<ScrollPlugin>("scroll")!.provides().getCurrentPage();
         });
-        if ((await field.inputValue()) !== String(n) || page !== n) {
+        if ((await field.inputValue()) !== String(n) || currentPage !== n) {
           await field.fill(String(n));
           await field.press("Enter");
         }
@@ -276,7 +276,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await zoom.press("Enter");
       }, target);
     };
-    async function scrollIdle(target: Locator = drawer, page?: number) {
+    async function scrollIdle(target: Locator = drawer, targetPage?: number) {
       // Page readiness can precede navigation and replacement tiles.
       await target.evaluate(
         () =>
@@ -288,15 +288,15 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       // Wait for actual viewport activity to finish.
       await expect
         .poll(() =>
-          target.locator("embedpdf-container").evaluate(async (host, page) => {
+          target.locator("embedpdf-container").evaluate(async (host, requestedPage) => {
             const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
               .registry;
             const scroll = registry.getPlugin<ScrollPlugin>("scroll")!.provides();
             return (
-              (page !== undefined && scroll.getCurrentPage() !== page) ||
+              (requestedPage !== undefined && scroll.getCurrentPage() !== requestedPage) ||
               registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling()
             );
-          }, page),
+          }, targetPage),
         )
         .toBe(false);
     }
