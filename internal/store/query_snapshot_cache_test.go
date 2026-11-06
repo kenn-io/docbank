@@ -796,8 +796,8 @@ func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 	}{
 		// Membership fits, but adding display fields pushes the last row over 64 KiB.
 		{"row", (64 << 10) - 128, false, ErrQuerySnapshotTooLarge},
-		// Cache admission may succeed later, so the failed build leaves no entry.
-		{"cache", 30 << 10, true, ErrSnapshotGone},
+		// Later cache admission failures remain visible to snapshot readers.
+		{"cache", 30 << 10, true, ErrSnapshotAdmission},
 	} {
 		t.Run(limit.name, func(t *testing.T) {
 			s := newTestStore(t)

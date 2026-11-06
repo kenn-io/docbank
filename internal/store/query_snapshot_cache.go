@@ -229,9 +229,9 @@ func (s *QuerySnapshotService) Create(
 			s.finishBuild(prepared.build, published)
 		}()
 		err := prepared.finish()
-		if errors.Is(err, ErrQuerySnapshotTooLarge) {
-			// A size failure would recur, so readers get it. Transient admission
-			// or deadline failures leave no entry, and readers see the snapshot gone.
+		if errors.Is(err, ErrQuerySnapshotTooLarge) || errors.Is(err, ErrSnapshotAdmission) {
+			// Readers retain size and capacity failures. Deadline failures leave
+			// no entry, and readers see the snapshot gone.
 			prepared.cached = &cachedQuerySnapshot{
 				id: prepared.build.snapshotID, owner: owner, err: err,
 				created: prepared.cached.created, lastUsed: prepared.cached.created,
