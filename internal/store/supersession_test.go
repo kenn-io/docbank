@@ -247,6 +247,74 @@ func TestSupersessionEndpointGuards(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestValidityFeedTracksSuccessorLifecycle(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"trash", "restore"} {
+		for _, subtree := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/subtree=%t", operation, subtree), func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a1"), 1, "text/plain")
+				require.NoError(t, err)
+				parent := s.RootID()
+				var moved Node
+				if subtree {
+					moved, err = s.Mkdir(ctx, parent, "replacements")
+					require.NoError(t, err)
+					parent = moved.ID
+				}
+				next, err := s.CreateFile(ctx, parent, "new.txt", fakeHash("a2"), 1, "text/plain")
+				require.NoError(t, err)
+				link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
+				require.NoError(t, err)
+				if subtree {
+					other, err := s.CreateFile(ctx, parent, "other.txt", fakeHash("a3"), 1, "text/plain")
+					require.NoError(t, err)
+					link, err = s.PutSupersession(ctx, other.ID, old.ID, link.Node.Revision, nil)
+					require.NoError(t, err)
+					// A shared predecessor gets one event; a moved predecessor gets only its lifecycle event.
+					_, err = s.PutSupersession(ctx, other.ID, next.ID, next.Revision, nil)
+					require.NoError(t, err)
+				}
+				if !subtree {
+					moved = next
+				}
+				if operation == "restore" {
+					_, _, err = s.Trash(ctx, moved.ID, UnconditionalRev)
+					require.NoError(t, err)
+				}
+				before, err := s.NodeValidity(ctx, old.ID, "2025-01-01")
+				require.NoError(t, err)
+				_, cursor, err := s.VaultChanges(ctx, "", 500)
+				require.NoError(t, err)
+				wantBefore, wantAfter := "superseded", "current"
+				if operation == "trash" {
+					_, _, err = s.Trash(ctx, moved.ID, UnconditionalRev)
+				} else {
+					wantBefore, wantAfter = "current", "superseded"
+					_, _, err = s.Restore(ctx, moved.ID, UnconditionalRev)
+				}
+				require.NoError(t, err)
+				after, err := s.NodeValidity(ctx, old.ID, "2025-01-01")
+				require.NoError(t, err)
+				require.Equal(t, wantBefore, string(before.State))
+				require.Equal(t, wantAfter, string(after.State))
+				require.Equal(t, link.Node.Revision, after.Node.Revision)
+				changes, _, err := s.VaultChanges(ctx, cursor, 500)
+				require.NoError(t, err)
+				var validityChanges []VaultChange
+				for _, change := range changes {
+					if change.Kind == "validity_changed" {
+						change.Cursor = ""
+						validityChanges = append(validityChanges, change)
+					}
+				}
+				require.Equal(t, []VaultChange{{Kind: "validity_changed", NodeID: old.ID, Revision: link.Node.Revision}}, validityChanges)
+			})
+		}
+	}
+}
+
 func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

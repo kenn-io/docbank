@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -14,6 +16,31 @@ import (
 var ErrInvalidSupersession = errors.New("invalid supersession")
 
 const maxSupersessionNote = 1024
+
+// Lifecycle changes affect live predecessors even when their revisions stay the same.
+func recordPredecessorValidityChangesTx(ctx context.Context, tx *sql.Tx, movedIDs []int64) error {
+	moved := make(map[int64]bool, len(movedIDs))
+	for _, id := range movedIDs {
+		moved[id] = true
+	}
+	predecessors := map[int64]bool{}
+	// Bound parameters independently of the size of a trashed or restored subtree.
+	for chunk := range slices.Chunk(movedIDs, 500) {
+		if err := queryRows(ctx, tx, `SELECT id FROM nodes WHERE trashed_at IS NULL AND id IN (SELECT predecessor_node_id FROM node_supersessions WHERE successor_node_id IN (`+placeholders(len(chunk))+`))`, anyArgs(chunk), func(rows *sql.Rows) error {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			if !moved[id] {
+				predecessors[id] = true
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("finding predecessors affected by node lifecycle: %w", err)
+		}
+	}
+	return recordVaultChangesTx(ctx, tx, "validity_changed", slices.Sorted(maps.Keys(predecessors))...)
+}
 
 // Supersession records an owner-declared replacement.
 type Supersession struct {
