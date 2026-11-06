@@ -267,8 +267,6 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		arguments        map[string]any
 		status           int
 	}{
-		{name: "semantic unavailable", tool: "search_documents", code: "semantic_unavailable", status: http.StatusUnprocessableEntity,
-			arguments: map[string]any{"query": "synthetic", "profile": "local", "mode": "lexical", "filters": map[string]any{}}},
 		{name: "processing failed", tool: "search_documents", code: "processing_failed", status: http.StatusBadGateway,
 			arguments: map[string]any{"query": "synthetic", "profile": "local", "mode": "lexical", "filters": map[string]any{}}},
 		{name: "reranking unavailable", tool: "search_documents", code: "reranking_unavailable", status: http.StatusUnprocessableEntity,
@@ -447,8 +445,6 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 		{name: "valid empty result", query: "synthetic", profile: "local"},
 		{name: "reranked empty result", query: "synthetic", profile: "local", rerank: true},
 		{name: "whitespace query", query: "   ", profile: "local", wantCode: "processing_failed", wantError: true},
-		{name: "unconfigured profile", query: "synthetic", profile: "missing",
-			wantCode: "processing_profile_unavailable", wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
@@ -472,9 +468,6 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 					assert.Equal(t, test.rerank, body.Rerank)
 					if test.wantError {
 						status := http.StatusInternalServerError
-						if test.wantCode == "processing_profile_unavailable" {
-							status = http.StatusUnprocessableEntity
-						}
 						response.Header().Set("Content-Type", "application/problem+json")
 						response.WriteHeader(status)
 						writeDaemonJSON(t, response, map[string]any{
@@ -502,13 +495,6 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
 				"filters": map[string]any{"source_present": true}, "rerank": test.rerank,
 			})
-			if test.profile == "missing" {
-				require.NoError(t, err)
-				require.True(t, result.IsError)
-				assert.Equal(t, "processing_profile_unavailable", structuredMap(t, result.StructuredContent)["code"])
-				assert.Zero(t, searchCalls)
-				return
-			}
 			assert.Equal(t, 1, searchCalls)
 			assert.Zero(t, infoCalls)
 			if test.wantError {

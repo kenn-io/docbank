@@ -338,16 +338,9 @@ hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
 skipped reasons of at most 2,048 characters each.
 
-
-Search without guessing a profile:
-
-```json
-{"name":"search_documents","arguments":{"query":"refund","filters":{}}}
-```
-
 With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
 
-An unknown profile returns `processing_profile_unavailable` with the available names, indicating when names are omitted to fit the error limit. If a profile has no query-capable binding, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. After retryable binding failures, hybrid search returns lexical results with the first failure code in `skipped_reasons`, including with an explicit profile or binding. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance. Invalid source selections and unknown binding names retain their own errors. A configured image-only binding permits lexical fallback.
+An unknown profile returns `processing_profile_unavailable` with the available names. If a profile has no query-capable binding, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing

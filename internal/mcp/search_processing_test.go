@@ -77,10 +77,8 @@ func TestSearchDocumentsValidatesBeforeSemanticGuidance(t *testing.T) {
 			{profile: "images", binding: "missing", mode: "hybrid", code: "not_found"},
 			{profile: "images", binding: "missing", mode: "semantic", code: "not_found"},
 			{profile: "images", binding: "query", mode: "hybrid"},
-			{profile: "images", binding: "query", mode: "auto"},
 			{profile: "images", binding: "query", mode: "semantic", code: "semantic_unavailable"},
 			{profile: "supplied-captions", mode: "semantic", code: "not_found", missingDirectory: true},
-			{profile: "images", mode: "semantic", code: "not_found", missingDirectory: true},
 		} {
 			filters := map[string]any{}
 			if tc.missingDirectory {

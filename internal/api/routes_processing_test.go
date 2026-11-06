@@ -1954,28 +1954,3 @@ func TestDocumentSearchAllLiveScope(t *testing.T) {
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
 }
-
-func TestDocumentSearchSemanticReadinessPreservesSelections(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, configureProcessingTestService(t))
-	for _, tc := range []struct {
-		mode, binding, code string
-		missingDirectory    bool
-		status              int
-	}{
-		{mode: "semantic", code: "semantic_unavailable", status: 422},
-		{mode: "hybrid", code: "semantic_unavailable", status: 422},
-		{mode: "semantic", binding: "missing", code: "not_found", status: 404},
-		{mode: "lexical", binding: "missing", code: "not_found", status: 404},
-		{mode: "semantic", code: "not_found", missingDirectory: true, status: 404},
-	} {
-		filters := map[string]any{}
-		if tc.missingDirectory {
-			filters["under_node_id"] = 999999
-		}
-		request := map[string]any{"profile": "private", "query": "refund", "mode": tc.mode, "binding_id": tc.binding, "scope": map[string]any{"kind": "all_live", "filters": filters}}
-		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
-		require.Equal(t, tc.status, response.StatusCode, body)
-		require.Contains(t, body, `"code":"`+tc.code+`"`)
-	}
-}

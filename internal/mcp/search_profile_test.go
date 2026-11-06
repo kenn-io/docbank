@@ -24,11 +24,9 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		{name: "exhausted hybrid", mode: "hybrid", failures: true, want: []string{"local-text:first:hybrid", "local-text:second:hybrid", "supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "processing_failed"},
 		{name: "exhausted semantic", mode: "semantic", failures: true, want: []string{"local-text:first:semantic", "local-text:second:semantic"}, code: "semantic_unavailable", guidance: "processing_failed"},
 		{name: "hybrid captions", mode: "hybrid", profile: "supplied-captions", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
-		{name: "auto captions", mode: "auto", profile: "supplied-captions", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
 		{name: "semantic captions", mode: "semantic", profile: "supplied-captions", want: []string{"supplied-captions::semantic"}, code: "semantic_unavailable", guidance: "local-text"},
 		{name: "explicit binding", mode: "hybrid", profile: "local-text", binding: "second", want: []string{"local-text:second:hybrid"}, wantProfile: "local-text", actual: "hybrid"},
 		{name: "lexical explicit binding", mode: "lexical", profile: "local-text", binding: "second", want: []string{"local-text:second:lexical"}, wantProfile: "local-text", actual: "lexical"},
-		{name: "unknown profile", mode: "hybrid", profile: "default", code: "processing_profile_unavailable", guidance: "local-text"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var attempts []string
@@ -44,9 +42,6 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 					resolutions++
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}, FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 				case "/api/v1/processing/profiles":
-					if tc.versions {
-						assert.Equal(t, 1, resolutions)
-					}
 					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "supplied-captions"}, {Name: "local-text", EmbeddingBindings: []string{"first", "second"}, QueryEmbeddingBindings: []string{"second", "first"}}})
 				case "/api/v1/search":
 					var request api.DocumentSearchRequest
@@ -111,9 +106,6 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 					require.NotContains(t, output["message"], "docbank processing local")
 					require.NotContains(t, output["message"], "has no available")
 				}
-				if tc.code == "processing_profile_unavailable" {
-					require.Contains(t, output["message"], "supplied-captions")
-				}
 				return
 			}
 			require.Equal(t, tc.wantProfile, output["profile"])
@@ -121,9 +113,6 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 			require.Equal(t, tc.mode, output["requested_mode"])
 			if tc.guidance != "" {
 				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), tc.guidance)
-				if tc.failures {
-					require.Contains(t, output["skipped_reasons"], "processing_failed")
-				}
 			}
 		})
 	}

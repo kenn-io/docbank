@@ -526,7 +526,6 @@ func searchDocuments(
 	if result.problem != nil {
 		return searchDocumentsOutput{}, nil, result.problem
 	}
-
 	output := searchDocumentsOutput{VaultID: result.vaultID, Profile: result.profile,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,

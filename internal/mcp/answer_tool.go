@@ -174,7 +174,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-
 		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
 			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
@@ -196,7 +195,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				return response{}, err
 			}
 		}
-
 		docs, err := resolveSearchSummaries(ctx, c, report.Results)
 		if err != nil {
 			return response{}, err

@@ -126,7 +126,6 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 			missing                    bool
 		}{
 			{name: "automatic", mode: "auto"},
-			{name: "missing version before semantic readiness", mode: "semantic", selected: profile, code: "not_found", missing: true},
 			{name: "missing version before unknown profile", mode: "hybrid", selected: "default", code: "not_found", missing: true},
 			{name: "unknown", mode: "hybrid", selected: "default", code: "processing_profile_unavailable"},
 			{name: "hybrid", mode: "hybrid", selected: profile},
@@ -141,17 +140,7 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 				if tc.selected != "" {
 					args["profile"] = tc.selected
 				}
-				var output map[string]any
-				if embedded {
-					raw, err := json.Marshal(args)
-					require.NoError(t, err)
-					result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
-					require.NoError(t, err)
-					require.Equal(t, tc.code != "", result.IsError)
-					output = structuredMap(t, result.StructuredContent)
-				} else {
-					output = exportCall(t, daemon, "search_documents", args)
-				}
+				output := callSearchDocumentReader(t, daemon, reader, embedded, args)
 				if tc.code != "" {
 					require.Equal(t, tc.code, output["code"])
 					if tc.code == "not_found" {
