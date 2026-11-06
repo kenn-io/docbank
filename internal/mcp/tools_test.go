@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,19 +41,26 @@ func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsRes
 	return result
 }
 
+func catalogJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false) // Match the SDK's JSON-RPC encoder.
+	require.NoError(t, encoder.Encode(value))
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
+}
+
 func toolCatalogBudgetError(t *testing.T, result *sdkmcp.ListToolsResult, ceiling int) error {
 	t.Helper()
 	// Measure compact JSON of the complete client-decoded result.
-	data, err := json.Marshal(result)
-	require.NoError(t, err)
+	data := catalogJSON(t, result)
 	if len(data) <= ceiling {
 		return nil
 	}
 	var details strings.Builder
 	fmt.Fprintf(&details, "tool catalog: %d bytes exceeds %d-byte budget", len(data), ceiling)
 	for _, tool := range result.Tools {
-		data, err := json.Marshal(tool)
-		require.NoError(t, err)
+		data := catalogJSON(t, tool)
 		fmt.Fprintf(&details, "\n%s: %d bytes", tool.Name, len(data))
 	}
 	return errors.New(details.String())
@@ -81,24 +89,28 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 	server := NewServerWithOptions(ServerOptions{})
 	baseline := listCatalogThroughClient(t, server)
 	// Replace a tool so the fixture needs no spare bytes in the production catalog.
-	fixture := &sdkmcp.Tool{Name: baseline.Tools[0].Name, InputSchema: map[string]any{"type": "object"}}
+	fixture := &sdkmcp.Tool{Name: baseline.Tools[0].Name, Description: "<>&", InputSchema: map[string]any{"type": "object"}}
 	register := func() {
 		server.sdk.AddTool(fixture, func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 			return &sdkmcp.CallToolResult{}, nil
 		})
 	}
 	register()
-	data, err := json.Marshal(listCatalogThroughClient(t, server))
-	require.NoError(t, err)
-	fixture.Description = strings.Repeat("x", defaultToolCatalogBudget+1-len(data)-len(`,"description":""`))
+	data := catalogJSON(t, listCatalogThroughClient(t, server))
+	fixture.Description += strings.Repeat("x", defaultToolCatalogBudget+1-len(data))
 	register()
 	result := listCatalogThroughClient(t, server)
-	data, err = json.Marshal(result)
-	require.NoError(t, err)
-	require.Len(t, data, defaultToolCatalogBudget+1)
-	err = toolCatalogBudgetError(t, result, defaultToolCatalogBudget)
+	data = catalogJSON(t, result)
+	require.Equal(t, defaultToolCatalogBudget+1, len(data))
+	var wire struct {
+		Result json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(exchangeRaw(t, server, requestFor("tools/list", nil)), &wire))
+	require.Equal(t, defaultToolCatalogBudget+1, len(wire.Result))
+	err := toolCatalogBudgetError(t, result, defaultToolCatalogBudget)
 	require.ErrorContains(t, err, fmt.Sprintf("%d bytes exceeds %d-byte budget", defaultToolCatalogBudget+1, defaultToolCatalogBudget))
-	require.ErrorContains(t, err, fixture.Name+": ")
+	fixtureBytes := len(fixture.Name) + len(fixture.Description) + len(`{"description":"","inputSchema":{"type":"object"},"name":""}`)
+	require.ErrorContains(t, err, fmt.Sprintf("%s: %d bytes", fixture.Name, fixtureBytes))
 }
 
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
