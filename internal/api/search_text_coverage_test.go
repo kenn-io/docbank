@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestSearchTextCoverage(t *testing.T) {
@@ -15,8 +14,10 @@ func TestSearchTextCoverage(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "contract.pdf", testHash("pdf"), 3, "application/pdf")
 	require.NoError(t, err)
-	got, err := daemonconn.New(ts.URL, testAPIKey).SearchTextCoverage(t.Context(), daemonconn.SearchOptions{MIMEType: "text/plain"})
-	require.NoError(t, err)
+	resp, body := get(t, ts, "/api/v1/search/text-coverage?mime_type=text/plain", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var got api.SearchTextCoverage
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	require.Equal(t, api.SearchTextCoverage{Families: []string{}}, got)
 	for _, tc := range []struct {
 		query          string

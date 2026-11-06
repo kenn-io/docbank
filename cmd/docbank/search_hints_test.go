@@ -26,9 +26,10 @@ func TestEmptySearchHints(t *testing.T) {
 		flags                                                                []string
 		hybrid, fileHit, nonempty, filterOnly, unavailable, folder, filtered bool
 		pending                                                              int
+		everyWord                                                            bool
 	}{
 		{name: "human", pending: 1},
-		{name: "JSON", flags: []string{"--json"}, pending: 1},
+		{name: "JSON", flags: []string{"--json"}, pending: 1, everyWord: true},
 		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
 		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
 		{name: "MIME", filtered: true, flags: []string{"--mime-type", "application/pdf"}},
@@ -154,7 +155,7 @@ func TestEmptySearchHints(t *testing.T) {
 				require.Contains(t, report.Hints[0].Message, "use or set up a profile that can extract these files; build it; choose another profile if a build returns no text")
 				require.Contains(t, report.Hints[0].Message, "list profiles with docbank processing profiles")
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
-				if tc.name == "JSON" {
+				if tc.everyWord {
 					require.Equal(t, searchHint{
 						Code:    "every_word_required",
 						Message: "no name or text segment matches all words; try fewer words if some match",

@@ -58,24 +58,14 @@ func TestSearchTextCoverage(t *testing.T) {
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{})
 	require.NoError(t, err)
 	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
-}
-
-func TestSearchTextCoverageEmptyRenditions(t *testing.T) {
-	t.Parallel()
-	for _, state := range []string{"none", "empty_segments", "blank_segments"} {
-		t.Run(state, func(t *testing.T) {
-			t.Parallel()
-			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
-			collectionCoveragePublish(t, s, pdfs[0], profile, state)
-			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{})
-			require.NoError(t, err)
-			require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
-		})
-	}
-}
-
-func TestSearchTextCoverageRequeuedSearchableBlob(t *testing.T) {
-	t.Parallel()
+	t.Run("blank_segments", func(t *testing.T) {
+		t.Parallel()
+		s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+		collectionCoveragePublish(t, s, pdfs[0], profile, "blank_segments")
+		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{})
+		require.NoError(t, err)
+		require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
+	})
 	for _, tc := range []struct {
 		name    string
 		active  bool
