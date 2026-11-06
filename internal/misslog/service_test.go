@@ -31,8 +31,12 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
 	svc.Record(t.Context(), Request{Query: " \n\t"})
 	svc.Record(t.Context(), Request{Query: "oversized", Filters: map[string]any{"filter": strings.Repeat("x", 64<<10)}})
-	svc.Record(t.Context(), Request{RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"tag_id": "taxes"}})
-	svc.Record(t.Context(), Request{Query: "synthetic secret", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0), FenceFingerprint: "sha256:synthetic", Coverage: map[string]any{"state": "complete"}, Truncated: true, Degradations: []string{"reranking_degraded"}, Reranking: map[string]any{"outcome": "degraded"}})
+	filters := map[string]any{"tag_id": "taxes", "asset_ids": []string{"synthetic-photo"}, "set_ids": []string{"synthetic-set"}}
+	svc.Record(t.Context(), Request{RequestedMode: "lexical", ActualMode: "lexical", Filters: filters})
+	nestedFilters := map[string]any{"asset_ids": []string{"synthetic-document"}, "tag_ids": []string{"synthetic-tag"}}
+	svc.Record(t.Context(), Request{Query: "synthetic secret", RequestedMode: "hybrid", ActualMode: "lexical", Filters: map[string]any{"syntax": "literal", "filters": nestedFilters}, DocumentCount: new(0), FenceFingerprint: "sha256:synthetic", Coverage: map[string]any{"state": "complete"}, Truncated: true, Degradations: []string{"reranking_degraded"}, Reranking: map[string]any{"outcome": "degraded"}})
+	require.Equal(t, []string{"synthetic-photo"}, filters["asset_ids"])
+	require.Equal(t, []string{"synthetic-document"}, nestedFilters["asset_ids"])
 	// Reopening observes the persisted receipts, independent of the writer's index.
 	reopened := New(t.Context(), root, "synthetic-vault", cfg, logger)
 	rows, err = reopened.List(t.Context(), 10, 0)
@@ -48,6 +52,7 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	require.NotEmpty(t, receipt.ID)
 	require.Equal(t, "hybrid", receipt.RequestedMode)
 	require.Equal(t, "lexical", receipt.ActualMode)
+	require.Equal(t, map[string]any{"syntax": "literal", "filters": map[string]any{"tag_ids": []any{"synthetic-tag"}}}, receipt.Filters)
 	require.Equal(t, new(0), receipt.DocumentCount)
 	require.Equal(t, "sha256:synthetic", receipt.FenceFingerprint)
 	require.True(t, receipt.Truncated)
@@ -58,7 +63,7 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	rows, err = reopened.List(t.Context(), 1, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, "taxes", rows[0].Filters["tag_id"])
+	require.Equal(t, map[string]any{"tag_id": "taxes", "set_ids": []any{"synthetic-set"}}, rows[0].Filters)
 	require.NoError(t, reopened.Purge(t.Context()))
 	require.ErrorIs(t, reopened.Delete(t.Context(), receipt.ID), os.ErrNotExist)
 	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))

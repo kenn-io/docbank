@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,6 +94,7 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	if s == nil || !s.config.Enabled || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
 		return
 	}
+	request.Filters = receiptFilters(request.Filters)
 	receipt := Receipt{Request: request, ID: rand.Text(), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
 	encoded, err := json.Marshal(receipt)
 	if err != nil || len(encoded) > 64<<10 {
@@ -120,6 +122,16 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	if err := s.prune(context.WithoutCancel(ctx), receipt.CreatedAt); err != nil {
 		s.logger.Warn("miss_log_prune_failed")
 	}
+}
+
+// receiptFilters omits source lists from flat photo filters and nested QueryV1 filters.
+func receiptFilters(filters map[string]any) map[string]any {
+	filters = maps.Clone(filters)
+	delete(filters, "asset_ids")
+	if nested, ok := filters["filters"].(map[string]any); ok {
+		filters["filters"] = receiptFilters(nested)
+	}
+	return filters
 }
 
 func (s *Service) prune(ctx context.Context, now time.Time) error {
