@@ -406,26 +406,7 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 		return nil, fmt.Errorf("encoding snapshot member IDs: %w", err)
 	}
 	const matched = `WITH matched_members AS (SELECT value AS node_id FROM json_each(?))`
-	read := func(ctx context.Context, statement string, args []any, scan func(*sql.Rows) error) error {
-		rows, err := q.QueryContext(ctx, matched+statement, args...)
-		if err != nil {
-			return fmt.Errorf("reading snapshot memberships: %w", err)
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			if err := scan(rows); err != nil {
-				return fmt.Errorf("scanning snapshot membership: %w", err)
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("reading snapshot memberships: %w", err)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("closing snapshot memberships: %w", err)
-		}
-		return nil
-	}
-	err = read(ctx, ` SELECT nt.node_id,t.id,t.name,t.revision
+	err = queryRows(ctx, q, matched+` SELECT nt.node_id,t.id,t.name,t.revision
 		FROM matched_members m JOIN node_tags nt ON nt.node_id=m.node_id JOIN tags t ON t.id=nt.tag_id
 		ORDER BY nt.node_id,t.id`, []any{string(ids)}, func(rows *sql.Rows) error {
 		var id int64
@@ -441,7 +422,7 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 	if err != nil {
 		return nil, err
 	}
-	err = read(ctx, `, `+matchedCollectionMembershipCTE+`
+	err = queryRows(ctx, q, matched+`, `+matchedCollectionMembershipCTE+`
 		SELECT cm.node_id,cm.ingest_id,l.label FROM collection_members cm
 		LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id ORDER BY cm.node_id,cm.ingest_id`, []any{string(ids)}, func(rows *sql.Rows) error {
 		var id int64
@@ -462,8 +443,8 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 		return nil, err
 	}
 	if coverage.Configuration == "configured" {
-		err = read(ctx, `, coverage_members AS (SELECT node_id FROM matched_members), `+processingCoverageCTE()+`
-			SELECT node_id,version_id,state,build_id,attachment_id FROM processing_coverage ORDER BY node_id`,
+		err = queryRows(ctx, q, matched+`, coverage_members AS (SELECT node_id FROM matched_members), `+processingCoverageCTE()+`
+			SELECT node_id,version_id,state,build_id,attachment_id FROM processing_coverage`,
 			[]any{string(ids), coverage.ProfileFingerprint, generationID}, func(rows *sql.Rows) error {
 				var id int64
 				var member snapshotMembership

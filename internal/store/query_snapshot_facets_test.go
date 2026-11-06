@@ -292,6 +292,49 @@ func TestQuerySnapshotFacetsSelectedTagAndCollection(t *testing.T) {
 	}
 }
 
+func TestQuerySnapshotFacetCoverageMatchesContentVersion(t *testing.T) {
+	t.Parallel()
+	f := newSnapshotFacetFixture(t)
+	ctx := t.Context()
+	definition, err := f.store.CreateSavedQuery(ctx, "PDFs", "", SavedQueryKindQuery, []byte(`{"filters":{"extensions":["pdf"]}}`))
+	require.NoError(t, err)
+	service := newQuerySnapshotService(f.store, querySnapshotServiceOptions{})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	_, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Rows, 2)
+
+	a := f.nodes["a"]
+	updated, _, err := f.store.ReplaceContent(ctx, a.ID, a.Revision, fakeHash("facet-replacement"), 501, "application/pdf")
+	require.NoError(t, err)
+	require.NotEqual(t, a.CurrentVersionID, updated.CurrentVersionID)
+	for _, row := range page.Rows {
+		assert.Empty(t, row.CoverageState)
+		assert.Empty(t, row.CoverageBuildID)
+		assert.Empty(t, row.CoverageAttachmentID)
+		if row.NodeID == a.ID {
+			assert.Equal(t, a.CurrentVersionID, row.ContentVersionID)
+		}
+	}
+
+	// Exercise the facet boundary with retained rows and newer memberships.
+	// A newly compiled saved query selects only current versions.
+	err = f.store.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		members, err := readSnapshotMemberships(ctx, q, []int64{a.ID, f.nodes["c"].ID}, f.selection, generation.ID)
+		require.NoError(t, err)
+		require.Equal(t, updated.CurrentVersionID, members[a.ID].ContentVersionID)
+		require.Equal(t, "unprocessed", members[a.ID].CoverageState)
+		facet, err := materializeSnapshotFacetFromRows(ctx, q, page.Query, "text_coverage", page.Rows, members, querySnapshotFacetMembers)
+		require.NoError(t, err)
+		require.True(t, facet.Available)
+		assert.Equal(t, int64(2), *facet.Total)
+		assert.Equal(t, int64(1), *facet.Missing)
+		assert.Equal(t, map[string]int64{"complete": 1, "unprocessed": 0, "partial": 0, "failed": 0, "none": 0, "unavailable": 0}, facetCounts(facet))
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func TestQuerySnapshotFacetsIgnoreBuiltMembershipFields(t *testing.T) {
 	t.Parallel()
 	f := newSnapshotFacetFixture(t)
