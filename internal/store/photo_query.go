@@ -249,12 +249,9 @@ func (s *Store) ListPhotoAssets(
 				if err != nil {
 					return err
 				}
-				countScope, err = newPhotoBrowseScope(ctx, q, countCompiled, generation.ID, coverage, request.Hidden)
+				countScope, err = scope.withCompiledMatch(countCompiled)
 				if err != nil {
 					return err
-				}
-				if photoXMPQueueRestricted(countCompiled.Query) {
-					countScope.match.sql = `a.asset_id=xq.asset_id AND (` + countScope.match.sql + `)`
 				}
 			}
 			countSQL, countArgs, err := countScope.bind(`SELECT COUNT(*) FROM ` + countFrom +
@@ -482,6 +479,18 @@ func newPhotoBrowseScope(
 		return photoBrowseScope{}, err
 	}
 	return photoBrowseScope{match: match, coverage: coverage, generation: generation, hidden: hidden}, nil
+}
+
+func (s photoBrowseScope) withCompiledMatch(compiled CompiledQuery) (photoBrowseScope, error) {
+	match, err := photoBrowseMatch(compiled, s.generation, s.coverage)
+	if err != nil {
+		return photoBrowseScope{}, err
+	}
+	if s.queue != "" {
+		match.sql = `a.asset_id=xq.asset_id AND (` + match.sql + `)`
+	}
+	s.match = match
+	return s, nil
 }
 
 // where filters rows selected from photoBrowseDisplayFrom to the scope.
