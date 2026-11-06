@@ -2462,9 +2462,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		report := api.DocumentSearchReport{RequestedMode: requestedMode, ActualMode: naturalLexical, Degradations: []string{m.naturalSearchNote}}
 		receipt := api.DocumentSearchMiss(msg.query, msg.request.Profile, msg.request, report)
 		receipt.Coverage = nil
-		if msg.request.Scope != nil || len(msg.request.Fence.ContentVersionIDs) == 0 {
-			receipt.DocumentCount = nil
-		}
+		receipt.DocumentCount = nil
 		m.fallbackMiss = &receipt
 		return m, m.loadSearch(msg.query, msg.requestID)
 	}

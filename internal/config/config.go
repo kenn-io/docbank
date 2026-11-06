@@ -741,11 +741,11 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 // exposes credentials and contents to the selected network; operators must
 // provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
-	if c.MissLog.RetentionDays < 1 || c.MissLog.RetentionDays > 365 {
-		return errors.New("[miss_log] retention_days must be between 1 and 365")
+	if c.MissLog.RetentionDays < 0 || c.MissLog.RetentionDays > 365 {
+		return errors.New("[miss_log] retention_days must be between 1 and 365 (or 0 for default)")
 	}
-	if c.MissLog.MaxRecords < 1 || c.MissLog.MaxRecords > 100000 {
-		return errors.New("[miss_log] max_records must be between 1 and 100000")
+	if c.MissLog.MaxRecords < 0 || c.MissLog.MaxRecords > 100000 {
+		return errors.New("[miss_log] max_records must be between 1 and 100000 (or 0 for default)")
 	}
 	if c.Media.MaxSourceBytes < 0 || c.Media.MaxSourceBytes > media.MaxMediaSourceBytes {
 		return fmt.Errorf("[media] max_source_bytes must be between 1 and %d (or 0 for default)", media.MaxMediaSourceBytes)

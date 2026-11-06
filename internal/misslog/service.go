@@ -60,6 +60,13 @@ const fileTimeLayout = "20060102T150405.000000000Z"
 
 // New loads the file index and prunes expired and excess receipts.
 func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, logger *slog.Logger) *Service {
+	defaults := config.Default().MissLog
+	if cfg.RetentionDays == 0 {
+		cfg.RetentionDays = defaults.RetentionDays
+	}
+	if cfg.MaxRecords == 0 {
+		cfg.MaxRecords = defaults.MaxRecords
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -110,7 +117,7 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	}
 	index, _ := slices.BinarySearch(s.files, name)
 	s.files = slices.Insert(s.files, index, name)
-	if err := s.prune(ctx, receipt.CreatedAt); err != nil {
+	if err := s.prune(context.WithoutCancel(ctx), receipt.CreatedAt); err != nil {
 		s.logger.Warn("miss_log_prune_failed")
 	}
 }

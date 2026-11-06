@@ -2,6 +2,7 @@ package misslog
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -135,5 +136,50 @@ func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
 		entries, err = os.ReadDir(filepath.Join(root, "miss-log"))
 		require.NoError(t, err)
 		require.Empty(t, entries)
+	})
+}
+
+func TestCancelledPublishedWriteStillPrunes(t *testing.T) {
+	for _, publishedErr := range []error{nil, atomicfile.ErrNotDurable} {
+		t.Run(map[bool]string{true: "durable", false: "directory sync failed"}[publishedErr == nil], func(t *testing.T) {
+			root := t.TempDir()
+			cfg := config.Default().MissLog
+			cfg.Enabled, cfg.MaxRecords = true, 1
+			svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
+			svc.Record(t.Context(), Request{Query: "first"})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			svc.writeFile = func(path string, data []byte, opts ...atomicfile.Option) error {
+				if err := atomicfile.WriteFile(path, data, opts...); err != nil {
+					return err
+				}
+				cancel()
+				return publishedErr
+			}
+			svc.Record(ctx, Request{Query: "second"})
+			entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			rows, err := svc.List(t.Context(), 10, 0)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, "second", rows[0].Query)
+		})
+	}
+}
+
+func TestZeroBoundsUseDefaults(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		svc := New(t.Context(), t.TempDir(), "synthetic-vault", config.MissLogConfig{Enabled: true}, nil)
+		svc.Record(t.Context(), Request{Query: "first"})
+		svc.Record(t.Context(), Request{Query: "second"})
+		time.Sleep(89 * 24 * time.Hour)
+		rows, err := svc.List(t.Context(), 10, 0)
+		require.NoError(t, err)
+		require.Len(t, rows, 2)
+		time.Sleep(2 * 24 * time.Hour)
+		rows, err = svc.List(t.Context(), 10, 0)
+		require.NoError(t, err)
+		require.Empty(t, rows)
 	})
 }

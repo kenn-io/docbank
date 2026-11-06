@@ -234,8 +234,12 @@ See docs/usage/search.md.`,
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 				if empty {
+					filters := misslog.ReceiptScope(rep)
+					for _, key := range []string{"hits", "limit", "truncated", "fuzzy"} {
+						delete(filters, key)
+					}
 					receipt := misslog.Request{Query: query, RequestedMode: searchModeLexical, ActualMode: searchModeLexical, Truncated: rep.Truncated,
-						Filters: searchMissFilters(opts)}
+						Filters: filters}
 					if rep.Fuzzy != nil {
 						receipt.Coverage = map[string]any{"fuzzy": rep.Fuzzy}
 						if rep.Fuzzy.Status != store.FuzzyStatusNotRun {
@@ -279,38 +283,6 @@ See docs/usage/search.md.`,
 		}
 		return writeSearchReport(cmd, rep, tagName, underPath)
 	},
-}
-
-func searchMissFilters(opts daemonconn.SearchOptions) map[string]any {
-	filters := make(map[string]any, 8)
-	if opts.Fuzzy {
-		filters["fuzzy"] = true
-	}
-	if opts.TagID != "" {
-		filters["tag_id"] = opts.TagID
-	}
-	if opts.MIMEType != "" {
-		filters["mime_type"] = opts.MIMEType
-	}
-	if opts.UnderNodeID != 0 {
-		filters["under_node_id"] = opts.UnderNodeID
-	}
-	if opts.ModifiedSince != "" {
-		filters["modified_since"] = opts.ModifiedSince
-	}
-	if opts.ModifiedBefore != "" {
-		filters["modified_before"] = opts.ModifiedBefore
-	}
-	if opts.PDFFilter != "" {
-		filters["pdf_filter"] = opts.PDFFilter
-	}
-	if opts.SourcePresent {
-		filters["source_present"] = true
-	}
-	if len(filters) == 0 {
-		return nil
-	}
-	return filters
 }
 
 func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underPath string) error {

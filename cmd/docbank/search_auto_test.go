@@ -380,3 +380,44 @@ func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	_, err = runCLI(t, "search", "--pdf-filter", filter, "--json")
 	require.NoError(t, err)
 }
+
+func TestSearchCLIMissUsesAppliedFilters(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	t.Cleanup(func() { resetFlags(rootCmd) })
+	var record kitdaemon.RuntimeRecord
+	var profileCalls, searchCalls, missCalls int
+	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &searchCalls, &missCalls)
+	recordedMisses := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/search":
+			assert.Equal(t, "application/pdf", r.URL.Query().Get("mime_type"))
+			assert.Equal(t, "true", r.URL.Query().Get("fuzzy"))
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{MIMEType: "application/pdf", Limit: 50, Hits: []api.SearchHit{},
+				Fuzzy: &api.FuzzyReceipt{Status: "complete", Reasons: []string{}}}))
+		case "POST /api/v1/miss-log":
+			recordedMisses++
+			var receipt misslog.Request
+			assert.NoError(t, json.UnmarshalRead(r.Body, &receipt))
+			assert.Equal(t, map[string]any{"mime_type": "application/pdf"}, receipt.Filters)
+			assert.Equal(t, "fuzzy", receipt.RequestedMode)
+			assert.Equal(t, "fuzzy", receipt.ActualMode)
+			fuzzy, ok := receipt.Coverage["fuzzy"].(map[string]any)
+			if assert.True(t, ok) {
+				assert.Equal(t, "complete", fuzzy["status"])
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			handshake(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "key", "synthetic-token", "")
+	_, err := daemonconn.RuntimeStore(root).Write(record)
+	require.NoError(t, err)
+	_, err = runCLI(t, "search", "missing", "--mime-type", "Application/PDF", "--fuzzy", "--json")
+	require.NoError(t, err)
+	require.Equal(t, 1, recordedMisses)
+}
