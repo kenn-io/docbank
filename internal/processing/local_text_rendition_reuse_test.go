@@ -65,7 +65,6 @@ func TestLocalTextMoveReusesHostedRendition(t *testing.T) {
 	require.NotEqual(t, old.record.Fingerprint, current.record.Fingerprint)
 	after, err := fixture.catalog.ActiveRendition(t.Context(), node.CurrentVersionID, current.record.Fingerprint)
 	require.NoError(t, err)
-	t.Logf("renderer calls before=1 after=%d; source build=%s; moved build=%s", renderer.calls, before.Build.ID, after.Build.ID)
 	require.Equal(t, 1, renderer.calls, "an already-indexed document must reuse its hosted extractor output")
 	require.Equal(t, before.Build.ID, after.Build.ID)
 }

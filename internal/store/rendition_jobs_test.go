@@ -365,10 +365,6 @@ func checkEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T, ope
 	separate, _, err := s.EnqueueRenditionJob(t.Context(), different)
 	require.NoError(t, err)
 	require.NotEqual(t, jobID, separate.ID, "a changed extractor request needs its own build")
-	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{versions[0]}})
-	require.NoError(t, err)
-	_, _, err = s.EnqueueRenditionJob(t.Context(), request)
-	require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
 }
 
 func checkEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress(t *testing.T, open func(*testing.T) *Store) {

@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestLocalTextPreviewExcludesPurgedDocuments(t *testing.T) {
+func TestLocalTextPurgePreviewTracksSelectedProfile(t *testing.T) {
 	t.Parallel()
 	renderer := newWorkerProvider(t)
 	fixture, original := newLocalTextBackfillFixture(t, renderer)
@@ -32,23 +32,34 @@ func TestLocalTextPreviewExcludesPurgedDocuments(t *testing.T) {
 	_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
 	require.NoError(t, err)
 	current := source.profiles["pdf"]
+	portable := current.portable
+	portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
+	portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
 	var selected string
+	var moved *Service
 	setup := &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
-		candidate, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: current.portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
+		candidate, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
 		if err == nil {
 			t.Cleanup(candidate.Stop)
+			moved = candidate
 		}
 		return candidate, err
 	}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { selected = name; return nil }}
 	plan, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
-	pending, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Empty(t, pending, "purged content must stay outside activation")
+	require.NotEqual(t, current.record.Fingerprint, plan.ProfileFingerprint)
+	require.Contains(t, plan.VectorEffect, "processes 1 documents before setup returns")
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, "pdf", selected)
-	require.Equal(t, 1, renderer.calls, "activation must leave the purged document alone")
-	t.Logf("preview=%q; activation targets=%d; provider calls after rerun=%d", plan.VectorEffect, len(pending), renderer.calls)
+	require.Equal(t, 2, renderer.calls, "the moved profile has its own purge scope")
+	setup.Service = moved
+	_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
+	require.NoError(t, err)
+	plan, err = setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
 	require.Contains(t, plan.VectorEffect, "processes 0 documents before setup returns")
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, 2, renderer.calls, "rerunning the selected profile must respect its purge")
 }

@@ -66,12 +66,12 @@ func checkMissingProcessingTargets(t *testing.T, open func(*testing.T) *Store) {
 	require.Empty(t, suppressed, "another profile has its own suppression identity")
 }
 
-func TestLocalTextEmbeddingHeads(t *testing.T) {
+func TestLocalTextEmbeddingHeadsAndPendingTargets(t *testing.T) {
 	t.Parallel()
 	checkLocalTextEmbeddingHeads(t, newTestStore)
 }
 
-func TestLocalTextEmbeddingHeadsPostgres(t *testing.T) {
+func TestLocalTextEmbeddingHeadsAndPendingTargetsPostgres(t *testing.T) {
 	t.Parallel()
 	checkLocalTextEmbeddingHeads(t, newPostgresQueryStore)
 }

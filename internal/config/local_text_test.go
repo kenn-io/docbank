@@ -25,7 +25,8 @@ func TestLocalTextConfigurationRejections(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 	_, err := LocalTextEmbedding(profile, "local")
 	require.ErrorContains(t, err, "openaicompat: exactly one deployment epoch or provider revision header is required")
-	require.Equal(t, "X-Model-Revision", profile.Runtime.ProviderRevisionHeader)
+	require.False(t, profile.Runtime.Managed)
+	require.Empty(t, profile.Runtime.ServerMode)
 	cfg.ProcessingProfiles[LocalTextProfile] = cfg.ProcessingProfiles["archive"]
 	_, err = cfg.WithLocalText()
 	require.ErrorContains(t, err, "reserved for local text")
