@@ -22,7 +22,7 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "photo-quality-hidden", postgres: "native operations", scope: "Quality publication and hidden-session lifecycle; excludes query browsing and people curation.", scenarios: []backendScenario{
+	{name: "photo-quality-hidden", postgres: "native operations", scope: "Quality publication, hidden sessions and photo settings; excludes query browsing and people curation.", scenarios: []backendScenario{
 		{"PhotoQualityLifecycle", func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newPostgresQueryStore) }},
 		{"PhotoQualityDetectedInputs", func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newPostgresQueryStore) }},
 		{"PhotoHiddenLifecycle", nil, checkPhotoHiddenLifecyclePostgres},

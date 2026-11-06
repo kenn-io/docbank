@@ -58,6 +58,7 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	delete(receipts.Indexes, "unique:receipt_order")
 	assert.Equal(t, backendIndex{Columns: []string{"operation", "receipt_order"}}, receipts.Indexes["photo_change_receipts_operation"])
 	delete(receipts.Indexes, "photo_change_receipts_operation")
+	assert.Equal(t, backendIndex{Columns: []string{"operation"}}, left["photo_change_receipts"].Indexes["photo_change_receipts_operation"])
 	delete(left["photo_change_receipts"].Indexes, "photo_change_receipts_operation")
 
 	for table, reason := range sqliteOnlyBackendTables {
