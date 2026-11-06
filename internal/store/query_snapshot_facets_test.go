@@ -583,6 +583,10 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
+	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	_, err = service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
+	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 }
 
 func TestQuerySnapshotRejectsOversizedTagBeforeReadingAllAssignments(t *testing.T) {

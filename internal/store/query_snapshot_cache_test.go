@@ -698,7 +698,8 @@ func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 		cacheBytes int64
 		want       error
 	}{
-		{"row", 66 << 10, 0, ErrQuerySnapshotTooLarge},
+		// Membership fits, but adding display fields pushes the last row over 64 KiB.
+		{"row", (64 << 10) - 128, 0, ErrQuerySnapshotTooLarge},
 		{"cache", 30 << 10, 40 << 10, ErrSnapshotAdmission},
 	} {
 		t.Run(limit.name, func(t *testing.T) {
