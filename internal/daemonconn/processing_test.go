@@ -606,7 +606,7 @@ func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {
 func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 	const vaultID = "11111111-1111-4111-8111-111111111111"
 	const versionID = "22222222-2222-4222-8222-222222222222"
-	request := api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Limit: 20, Profile: "private",
+	request := api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Limit: 1, Profile: "private",
 		Rerank: true, Fence: api.DocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}}
 	base := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 		Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
@@ -618,6 +618,12 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 		mutate func(*api.DocumentSearchReport)
 	}{
 		{name: "missing", mutate: func(report *api.DocumentSearchReport) {}},
+		{name: "negative candidate count", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: -1}
+		}},
+		{name: "candidate count exceeds retrieval maximum", mutate: func(report *api.DocumentSearchReport) {
+			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1001}
+		}},
 		{name: "bad outcome", mutate: func(report *api.DocumentSearchReport) {
 			report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "unknown", CandidateCount: 1}
 		}},
@@ -665,13 +671,17 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, receipt := range []*api.DocumentSearchRerankingReceipt{
+		{Outcome: "applied", CandidateCount: 2},
+		{Outcome: "applied", CandidateCount: 1000},
 		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 1},
+		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 2},
+		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 1000},
 		{Outcome: "skipped", CandidateCount: 0},
 	} {
 		report := base
 		if receipt.Outcome == "skipped" {
 			report.Results = nil
-		} else {
+		} else if receipt.Outcome == "degraded" {
 			report.Degradations = []string{"reranking_degraded"}
 		}
 		report.Reranking = receipt
@@ -683,6 +693,7 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 		server.Close()
 		require.NoError(t, err)
 		assert.Equal(t, receipt.Outcome, result.Reranking.Outcome)
+		assert.Equal(t, receipt.CandidateCount, result.Reranking.CandidateCount)
 	}
 }
 

@@ -1679,9 +1679,6 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		report.Results = report.Results[:prepared.limit]
 		report.Truncated = true
 	}
-	for i := range report.Results {
-		report.Results[i].Rank = i + 1
-	}
 	report.RequestedMode = prepared.requestedMode
 	report.AsOf = asOf
 	return report, nil

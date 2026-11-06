@@ -9,7 +9,7 @@ describe("processing receipts", () => {
     const request: DocumentSearchRequest = {
       query: "synthetic description",
       mode: "lexical",
-      limit: 20,
+      limit: 1,
       profile: "private",
       fence: { vault_uid: vault, content_version_ids: [versions[0]] },
       rerank: true,
@@ -41,6 +41,30 @@ describe("processing receipts", () => {
       reranking: { outcome: "applied", candidate_count: 1 },
     };
     expect(validateDocumentSearchReport(report, request).reranking?.outcome).toBe("applied");
+    for (const outcome of ["applied", "degraded"]) {
+      for (const candidate_count of [2, 1000]) {
+        const reranking = {
+          outcome,
+          candidate_count,
+          ...(outcome === "degraded" ? { cause: "unavailable" } : {}),
+        };
+        const response = {
+          ...report,
+          truncated: true,
+          reranking,
+          degradations: outcome === "degraded" ? ["reranking_degraded"] : [],
+        };
+        expect(validateDocumentSearchReport(response, request).reranking).toEqual(reranking);
+        for (const invalidCount of [-1, 1001]) {
+          expect(() =>
+            validateDocumentSearchReport(
+              { ...response, reranking: { ...reranking, candidate_count: invalidCount } },
+              request,
+            ),
+          ).toThrow();
+        }
+      }
+    }
     expect(() =>
       validateDocumentSearchReport({ ...report, reranking: undefined }, request),
     ).toThrow();
