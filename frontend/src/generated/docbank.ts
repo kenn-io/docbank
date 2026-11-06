@@ -4328,6 +4328,7 @@ export interface MissLogReceipt {
   reranking?: MissLogReceiptReranking;
   truncated: boolean;
   vault_uid: string;
+  version: number;
 }
 
 export interface MissLogPage {

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -31,7 +30,6 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	cfg.Enabled = true
 	svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
 	svc.Record(t.Context(), Request{Query: " \n\t"})
-	svc.Record(t.Context(), Request{Query: "oversized", Filters: map[string]any{"filter": strings.Repeat("x", 64<<10)}})
 	filters := map[string]any{"tag_id": "taxes", "set_ids": []any{"synthetic-set"}}
 	svc.Record(t.Context(), Request{RequestedMode: "lexical", ActualMode: "lexical", Filters: filters})
 	nestedFilters := map[string]any{"tag_ids": []any{"synthetic-tag"}}
@@ -48,6 +46,7 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 		}
 	}
 	require.Equal(t, "synthetic-vault", receipt.VaultUID)
+	require.Equal(t, 1, receipt.Version)
 	require.NotEmpty(t, receipt.ID)
 	require.Equal(t, "hybrid", receipt.RequestedMode)
 	require.Equal(t, "lexical", receipt.ActualMode)
@@ -68,6 +67,78 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+func TestMissLogMissingReceipt(t *testing.T) {
+	for _, operation := range []string{"list", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				root := t.TempDir()
+				cfg := config.Default().MissLog
+				cfg.Enabled = true
+				svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
+				for _, query := range []string{"first", "second", "third"} {
+					svc.Record(t.Context(), Request{Query: query})
+					time.Sleep(time.Second)
+				}
+				rows, err := svc.List(t.Context(), 3, 0)
+				require.NoError(t, err)
+				require.Len(t, rows, 3)
+				missingID := rows[1].ID
+				require.NoError(t, os.Remove(filepath.Join(root, "miss-log", svc.files[1])))
+				if operation == "delete" {
+					require.NoError(t, svc.Delete(t.Context(), missingID))
+					require.ErrorIs(t, svc.Delete(t.Context(), missingID), os.ErrNotExist)
+				}
+				rows, err = svc.List(t.Context(), 2, 0)
+				require.NoError(t, err)
+				require.Len(t, rows, 2)
+				require.Equal(t, "third", rows[0].Query)
+				require.Equal(t, "first", rows[1].Query)
+				require.ErrorIs(t, svc.Delete(t.Context(), missingID), os.ErrNotExist)
+			})
+		})
+	}
+}
+
+func TestMissLogSkipsUnsupportedReceiptVersions(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		cfg := config.Default().MissLog
+		cfg.Enabled = true
+		var logs bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&logs, nil))
+		svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
+		for _, query := range []string{"first", "second"} {
+			svc.Record(t.Context(), Request{Query: query})
+			time.Sleep(time.Second)
+		}
+		var paths []string
+		for id, data := range map[string]string{
+			"future":      `{"version":2,"query":"synthetic secret"}`,
+			"unversioned": `{"query":"synthetic secret"}`,
+		} {
+			path := filepath.Join(root, "miss-log", time.Now().UTC().Format(fileTimeLayout)+"-"+id+".json")
+			require.NoError(t, os.WriteFile(path, []byte(data), 0600))
+			paths = append(paths, path)
+		}
+		svc = New(t.Context(), root, "synthetic-vault", cfg, logger)
+		rows, err := svc.List(t.Context(), 2, 0)
+		require.NoError(t, err)
+		require.Len(t, rows, 2)
+		require.Equal(t, "second", rows[0].Query)
+		require.Equal(t, "first", rows[1].Query)
+		require.Equal(t, 2, bytes.Count(logs.Bytes(), []byte("level=WARN")))
+		require.NotContains(t, logs.String(), "synthetic secret")
+		for _, path := range paths {
+			require.FileExists(t, path)
+		}
+		rows, err = svc.List(t.Context(), 1, 1)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Equal(t, "first", rows[0].Query)
+		require.NoError(t, svc.Delete(t.Context(), "future"))
+	})
 }
 
 func TestRecordingPreservesAssetScope(t *testing.T) {

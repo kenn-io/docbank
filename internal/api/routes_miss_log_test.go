@@ -103,6 +103,25 @@ func TestMissLogBrowserMayRecordButCannotManage(t *testing.T) {
 	}
 }
 
+func TestMissLogRecordsRequestNearBodyLimit(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+	request := misslog.Request{Query: "synthetic miss", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"value": ""}}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	request.Filters["value"] = strings.Repeat("x", 65471-len(encoded))
+	encoded, err = json.Marshal(request)
+	require.NoError(t, err)
+	require.Len(t, encoded, 65471)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, request)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	rows, err := listMisses(t, ts)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, request.Query, rows[0].Query)
+	require.Equal(t, request.Filters, rows[0].Filters)
+}
+
 func TestMissLogInputLimits(t *testing.T) {
 	t.Parallel()
 	type validationCase struct {

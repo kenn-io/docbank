@@ -43,6 +43,7 @@ type Request struct {
 type Receipt struct {
 	Request
 
+	Version   int       `json:"version"`
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	VaultUID  string    `json:"vault_uid"`
@@ -59,7 +60,10 @@ type Service struct {
 	writeFile func(string, []byte, ...atomicfile.Option) error
 }
 
-const fileTimeLayout = "20060102T150405.000000000Z"
+const (
+	receiptVersion = 1
+	fileTimeLayout = "20060102T150405.000000000Z"
+)
 
 // New loads the file index and prunes expired and excess receipts.
 func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, logger *slog.Logger) *Service {
@@ -101,7 +105,7 @@ func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, l
 	return s
 }
 
-// Record stores a bounded receipt. Failures leave the search usable.
+// Record stores a receipt accepted by the HTTP body limit. Failures leave the search usable.
 func (s *Service) Record(ctx context.Context, request Request) {
 	if s == nil || !s.config.Enabled {
 		return
@@ -110,9 +114,9 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	if strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0 {
 		return
 	}
-	receipt := Receipt{Request: request, ID: rand.Text(), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
+	receipt := Receipt{Request: request, Version: receiptVersion, ID: rand.Text(), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
 	encoded, err := json.Marshal(receipt)
-	if err != nil || len(encoded) > 64<<10 {
+	if err != nil {
 		s.logger.Warn("miss_log_write_failed")
 		return
 	}
@@ -194,17 +198,25 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Receipt, error
 		if s.files[i] < cutoff {
 			break
 		}
-		if offset > 0 {
-			offset--
+		data, err := os.ReadFile(filepath.Join(s.dir, s.files[i]))
+		if errors.Is(err, fs.ErrNotExist) {
+			s.files = slices.Delete(s.files, i, i+1)
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(s.dir, s.files[i]))
 		if err != nil {
 			return nil, err
 		}
 		var receipt Receipt
 		if err := json.Unmarshal(data, &receipt); err != nil {
 			return nil, err
+		}
+		if receipt.Version != receiptVersion {
+			s.logger.Warn("miss_log_unsupported_version")
+			continue
+		}
+		if offset > 0 {
+			offset--
+			continue
 		}
 		items = append(items, receipt)
 	}
@@ -225,7 +237,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := os.Remove(filepath.Join(s.dir, name)); err != nil {
+		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		s.files = slices.Delete(s.files, i, i+1)

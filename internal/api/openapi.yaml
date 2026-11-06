@@ -9843,7 +9843,11 @@ components:
           type: boolean
         vault_uid:
           type: string
+        version:
+          format: int64
+          type: integer
       required:
+        - version
         - id
         - created_at
         - vault_uid
