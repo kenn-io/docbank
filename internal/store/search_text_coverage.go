@@ -42,7 +42,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out
 		scope, args := liveSearchScopeSQL(searchFilterSQL(opts))
 		args = append([]any{generation.ID}, args...)
 		rows, err := q.QueryContext(ctx, `WITH coverage AS (
-		 SELECT cv.mime_type,
+		 SELECT COALESCE(cv.mime_type, '') AS mime_type,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
 		 EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=cv.blob_hash AND e.status='ok' AND length(trim(e.text))>0) extracted,

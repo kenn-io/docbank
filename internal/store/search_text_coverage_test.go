@@ -10,6 +10,8 @@ import (
 func TestSearchTextCoverage(t *testing.T) {
 	t.Parallel()
 	s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+	_, err := s.CreateFile(t.Context(), s.RootID(), "untyped", testSHA256([]byte("untyped")), 7, "")
+	require.NoError(t, err)
 	text, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", testSHA256([]byte("notes")), 5, "text/plain")
 	require.NoError(t, err)
 	require.NoError(t, s.DeferTextExtraction(t.Context(), text.BlobHash, time.Now().Add(time.Hour)))

@@ -239,9 +239,9 @@ See docs/usage/search.md.`,
 			if coverageErr != nil {
 				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
 			}
-			unfilteredLexical := automatic.report == nil && !opts.SourcePresent && opts.PDFFilter == "" && opts.TagID == "" &&
-				opts.MIMEType == "" && opts.UnderNodeID == 0 && opts.ModifiedSince == "" && opts.ModifiedBefore == ""
-			hints = emptySearchHints(cmd, query, coverage, unfilteredLexical, opts.Fuzzy)
+			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
+				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
+			hints = emptySearchHints(cmd, query, coverage, automatic.report == nil, scoped, opts.Fuzzy)
 		}
 		defer func() {
 			if retErr == nil && !searchJSON {

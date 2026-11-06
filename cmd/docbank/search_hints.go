@@ -22,7 +22,7 @@ type lexicalSearchJSON struct {
 	Hints []searchHint `json:"hints,omitzero"`
 }
 
-func emptySearchHints(cmd *cobra.Command, query string, coverage api.SearchTextCoverage, lexical, fuzzy bool) []searchHint {
+func emptySearchHints(cmd *cobra.Command, query string, coverage api.SearchTextCoverage, lexical, scoped, fuzzy bool) []searchHint {
 	const fileNoun = "file"
 	var hints []searchHint
 	if coverage.NoText > 0 {
@@ -41,7 +41,6 @@ func emptySearchHints(cmd *cobra.Command, query string, coverage api.SearchTextC
 				"configure a processing profile and build it; "+
 				"list profiles with docbank processing profiles",
 				coverage.NoText, noun, strings.Join(families, ", "), verb, names),
-			Next: "docbank processing profiles",
 		})
 	}
 	if coverage.Pending > 0 {
@@ -65,7 +64,11 @@ func emptySearchHints(cmd *cobra.Command, query string, coverage api.SearchTextC
 		hints = append(hints, searchHint{Code: "indexing_pending", Message: fmt.Sprintf("%d %s %s still being indexed; search again later", coverage.Pending, noun, verb), Next: next})
 	}
 	if lexical && !fuzzy && len(strings.Fields(query)) > 1 {
-		hints = append(hints, searchHint{Code: "every_word_required", Message: "no name or text segment contains every word; search again with fewer words"})
+		scope := ""
+		if scoped {
+			scope = " in this search scope"
+		}
+		hints = append(hints, searchHint{Code: "every_word_required", Message: fmt.Sprintf("no name or text segment%s contains every word; search again with fewer words", scope)})
 	}
 	return hints
 }

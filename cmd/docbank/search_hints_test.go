@@ -20,6 +20,21 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
+func TestEmptySearchHintsScopedLexical(t *testing.T) {
+	setupVaultHome(t)
+	for _, word := range []string{"lease", "renewal"} {
+		source := writeSourceFile(t, word+".txt", word)
+		_, err := runCLI(t, "add", source)
+		require.NoError(t, err)
+	}
+	out, err := runCLI(t, "search", "lease renewal", "--mode", "lexical", "--mime-type", "text/plain", "--json")
+	require.NoError(t, err)
+	var report lexicalSearchJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Empty(t, report.Hits)
+	require.Contains(t, report.Hints, searchHint{Code: "every_word_required", Message: "no name or text segment in this search scope contains every word; search again with fewer words"})
+}
+
 func TestEmptySearchHints(t *testing.T) {
 	for _, tc := range []struct {
 		name, query                                                          string
@@ -155,7 +170,8 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 				require.Equal(t, "no_searchable_text", report.Hints[0].Code)
-				require.Equal(t, "docbank processing profiles", report.Hints[0].Next)
+				require.Contains(t, report.Hints[0].Message, "list profiles with docbank processing profiles")
+				require.Empty(t, report.Hints[0].Next)
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				require.Equal(t, tc.next, report.Hints[1].Next)
 				require.Empty(t, stderr.String())
@@ -170,8 +186,10 @@ func TestEmptySearchHints(t *testing.T) {
 				} else {
 					require.NotContains(t, stderr.String(), "still being indexed")
 				}
-				if tc.filtered || tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
+				if tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
 					require.NotContains(t, stderr.String(), "every word")
+				} else if tc.filtered {
+					require.Contains(t, stderr.String(), "no name or text segment in this search scope contains every word")
 				} else {
 					require.Contains(t, stderr.String(), "no name or text segment contains every word")
 				}
