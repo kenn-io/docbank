@@ -35,7 +35,7 @@ func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, sc
 		hints = append(hints, searchHint{
 			Code: "no_searchable_text",
 			Message: fmt.Sprintf("%d %s (%s) %s no searchable text, only %s; "+
-				"use or set up a profile that can extract these files; build it; "+
+				"use or set up a profile that can extract these files; build it; choose another profile if a build returns no text; "+
 				"list profiles with docbank processing profiles",
 				coverage.NoText, noun, strings.Join(families, ", "), verb, names),
 		})

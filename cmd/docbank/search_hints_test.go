@@ -151,7 +151,7 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 				require.Equal(t, "no_searchable_text", report.Hints[0].Code)
-				require.Contains(t, report.Hints[0].Message, "use or set up a profile that can extract these files; build it")
+				require.Contains(t, report.Hints[0].Message, "use or set up a profile that can extract these files; build it; choose another profile if a build returns no text")
 				require.Contains(t, report.Hints[0].Message, "list profiles with docbank processing profiles")
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				if tc.name == "JSON" {
