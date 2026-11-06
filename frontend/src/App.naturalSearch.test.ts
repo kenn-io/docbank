@@ -2020,7 +2020,7 @@ it.each(["plain", "rerank", "tag-filtered", "fallback", "filtered"])(
 
 it.each([
   { state: "complete", scoped: 1, expectedCount: 1 },
-  { state: "unknown", scoped: 2, expectedCount: undefined },
+  { state: "incomplete", scoped: 2, expectedCount: 2 },
 ])(
   "uses the accepted reranked scope for an empty result receipt ($state coverage)",
   async ({ state, scoped, expectedCount }) => {
@@ -2070,8 +2070,7 @@ it.each([
       query: "scope changed during reranking",
       coverage: { scoped_documents: scoped, state },
     });
-    if (expectedCount === undefined) expect(harness.misses[0]).not.toHaveProperty("document_count");
-    else expect(harness.misses[0]).toHaveProperty("document_count", expectedCount);
+    expect(harness.misses[0]).toHaveProperty("document_count", expectedCount);
   },
 );
 

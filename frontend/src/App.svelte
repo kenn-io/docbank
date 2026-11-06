@@ -2283,13 +2283,12 @@
         const rerankedReceipt: generated.MissLogRequest = {
           ...outcome.receipt,
           actual_mode: reranked.actual_mode as generated.MissLogRequestActualMode,
+          document_count: reranked.coverage.scoped_documents,
           coverage: { ...reranked.coverage },
           truncated: reranked.truncated,
           degradations: reranked.degradations,
           ...(reranked.reranking ? { reranking: { ...reranked.reranking } } : {}),
         };
-        if (reranked.coverage.state === "unknown") delete rerankedReceipt.document_count;
-        else rerankedReceipt.document_count = reranked.coverage.scoped_documents;
         outcome = {
           type: reranked.actual_mode,
           receipt: rerankedReceipt,

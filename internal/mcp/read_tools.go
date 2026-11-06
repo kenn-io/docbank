@@ -67,7 +67,7 @@ func executeReadTool(
 	case "answer_question":
 		output, links, err = answerQuestion(ctx, daemonAnswerSession(lease), raw)
 	case "search_documents":
-		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw, true)
+		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
 	case "find_conflicts":
 		output, links, err = findConflicts(ctx, lease, raw)
 	case "get_document":
@@ -431,7 +431,7 @@ type searchDocumentsOutput struct {
 }
 
 func searchDocuments(
-	ctx context.Context, session documentReadSession, raw []byte, recordMiss bool,
+	ctx context.Context, session documentReadSession, raw []byte,
 ) (searchDocumentsOutput, []*sdkmcp.ResourceLink, error) {
 	var input searchDocumentsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
@@ -441,7 +441,7 @@ func searchDocuments(
 
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
 		out, err := runDocumentSearch(ctx, c, input, false)
-		if daemon, ok := c.(daemonDocumentClient); recordMiss && ok && err == nil && len(out.report.Results) == 0 {
+		if daemon, ok := c.(daemonDocumentClient); ok && err == nil && len(out.report.Results) == 0 {
 			receipt := api.DocumentSearchMiss(input.Query, input.Profile, out.request, out.report)
 			daemon.RecordMiss(ctx, receipt)
 		}
