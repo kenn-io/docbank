@@ -461,6 +461,9 @@ func searchDocuments(
 			}
 			return documentSearchResponse{}, err
 		}
+		if input.BindingID != "" && !slices.Contains(selected.EmbeddingBindings, input.BindingID) {
+			return documentSearchResponse{problem: &searchProfileError{code: "not_found", message: domainErrorMessage("not_found")}}, nil
+		}
 		run := func(profile, binding, mode string) (documentSearchResponse, error) {
 			request := input
 			request.Profile, request.BindingID, request.Mode = profile, binding, mode
@@ -475,7 +478,7 @@ func searchDocuments(
 		}
 		nonQueryBinding := slices.Contains(selected.EmbeddingBindings, input.BindingID) && !slices.Contains(selected.QueryEmbeddingBindings, input.BindingID)
 		attempt := profileSearchAttempt[documentSearchResponse]{profile: selected}
-		if mode != "lexical" && len(candidates) > 0 && (mode == "semantic" || !nonQueryBinding) && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
+		if (mode == "hybrid" || mode == "semantic") && len(candidates) > 0 && (mode == "semantic" || !nonQueryBinding) && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
 			attempt, err = tryProfileSearch(ctx, profiles, selected, candidates, retry, func(profile, binding string) (documentSearchResponse, error) { return run(profile, binding, mode) })
 		} else if mode == "semantic" {
 			attempt.value, err = run(selected.Name, input.BindingID, mode)
@@ -486,20 +489,24 @@ func searchDocuments(
 				return documentSearchResponse{}, err
 			}
 			if mode == "semantic" {
-				return documentSearchResponse{problem: &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles, attempt.failure)}}, nil
+				guidance := semanticSearchGuidance(selected.Name, profiles, attempt.failure)
+				if nonQueryBinding && len(selected.QueryEmbeddingBindings) > 0 {
+					guidance = fmt.Sprintf("Binding %q cannot search document text by meaning. Try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0])
+				}
+				return documentSearchResponse{problem: &searchProfileError{code: "semantic_unavailable", message: guidance}}, nil
 			}
 		}
 		result := attempt.value
 		if attempt.binding == "" && mode != "semantic" {
 			binding := input.BindingID
-			if input.Mode != "lexical" && nonQueryBinding {
+			if mode != "lexical" && nonQueryBinding {
 				binding = ""
 			}
 			result, err = run(selected.Name, binding, "lexical")
 			if err != nil {
 				return documentSearchResponse{}, err
 			}
-			if input.Mode != "lexical" {
+			if mode == "hybrid" {
 				if attempt.failure != "" {
 					result.report.Degradations = append(result.report.Degradations, attempt.failure)
 				} else if len(selected.QueryEmbeddingBindings) == 0 {

@@ -1720,11 +1720,6 @@ func (service *Service) prepareSearch(
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
 		MediaEvidence: service.mediaEvidence}
-	if request.BindingID != "" {
-		if _, err := selectEmbeddingBinding(profile.portable, request.BindingID); err != nil {
-			return preparedSearch{}, err
-		}
-	}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
 		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)

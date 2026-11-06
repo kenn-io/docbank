@@ -127,14 +127,6 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
-	if name == "search_documents" {
-		facts, _ := toolProblemFacts(err)
-		if facts.Code == "processing_failed" {
-			if result, ok := toolErrorResult(toolErrorOutput{Code: facts.Code, Message: "Document search failed; check the daemon log before retrying."}); ok {
-				return result, nil
-			}
-		}
-	}
 	if name == "answer_question" {
 		facts, _ := toolProblemFacts(err)
 		code := facts.Code

@@ -23,6 +23,8 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		{name: "automatic retries", mode: "hybrid", versions: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid"}, wantProfile: "z-local-text", actual: "hybrid"},
 		{name: "exhausted auto uses default", mode: "auto", failures: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid", "a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "processing_failed"},
 		{name: "hybrid captions", mode: "hybrid", profile: "a-captions", want: []string{"a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "z-local-text"},
+		{name: "explicit auto captions", mode: "auto", profile: "a-captions", want: []string{"a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical"},
+		{name: "explicit auto query binding", mode: "auto", profile: "z-local-text", binding: "second", want: []string{"z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical"},
 		{name: "semantic captions", mode: "semantic", profile: "a-captions", want: []string{"a-captions::semantic"}, code: "semantic_unavailable", guidance: "z-local-text"},
 		{name: "explicit binding", mode: "hybrid", profile: "z-local-text", binding: "second", want: []string{"z-local-text:second:hybrid"}, wantProfile: "z-local-text", actual: "hybrid"},
 		{name: "lexical explicit binding", mode: "lexical", profile: "z-local-text", binding: "second", want: []string{"z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical"},
@@ -108,6 +110,8 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 			require.Equal(t, tc.mode, output["requested_mode"])
 			if tc.guidance != "" {
 				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), tc.guidance)
+			} else {
+				require.Empty(t, output["skipped_reasons"])
 			}
 			if tc.failures {
 				require.Contains(t, output["skipped_reasons"], "processing_failed")

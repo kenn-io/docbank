@@ -823,9 +823,9 @@ The Go library and MCP version lists send fences.
 
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
-and accepts 1–100. `binding_id` selects the embedding binding and must name a
-configured binding, even for lexical or auto mode and profiles without embeddings;
-an unknown binding returns `404 not_found`. Omitting it uses
+and accepts 1–100. `binding_id` selects the embedding binding. When the profile has
+embeddings, an unknown binding returns `404 not_found`. Profiles without embeddings
+ignore it for lexical and auto search. Omitting it uses
 the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The explicit CLI processing form requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode

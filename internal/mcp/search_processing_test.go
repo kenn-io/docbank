@@ -12,6 +12,49 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
+func TestSearchDocumentsModeGuidance(t *testing.T) {
+	f := newNativeExportFixture(t)
+	f.addFile(t, "refund.txt", "Refunds take five days.")
+	daemon, service, profile := newProcessingDocumentServer(t, f)
+	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
+	for _, embedded := range []bool{false, true} {
+		for _, tc := range []struct {
+			mode      string
+			automatic bool
+		}{
+			{mode: ""}, {mode: "auto"}, {mode: "lexical"}, {mode: "hybrid"},
+			{mode: "", automatic: true}, {mode: "auto", automatic: true},
+		} {
+			t.Run(fmt.Sprintf("embedded=%t/%s/automatic=%t", embedded, tc.mode, tc.automatic), func(t *testing.T) {
+				args := map[string]any{"query": "refund", "profile": profile, "filters": map[string]any{}}
+				if tc.automatic {
+					delete(args, "profile")
+				}
+				if tc.mode != "" {
+					args["mode"] = tc.mode
+				}
+				output := callSearchDocumentReader(t, daemon, reader, embedded, args)
+				require.Equal(t, profile, output["profile"])
+				require.Equal(t, "lexical", output["actual_mode"])
+				requested := tc.mode
+				if requested == "" {
+					requested = "auto"
+				}
+				require.Equal(t, requested, output["requested_mode"])
+				if tc.mode == "hybrid" || tc.automatic {
+					require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing local")
+				} else {
+					require.Empty(t, output["skipped_reasons"])
+				}
+				hits, ok := output["results"].([]any)
+				require.True(t, ok)
+				require.Len(t, hits, 1)
+				require.Equal(t, "/refund.txt", schemaMap(t, hits[0])["path"])
+			})
+		}
+	}
+}
+
 func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
 	f := newNativeExportFixture(t)
 	f.addFile(t, "refund.txt", "Refunds take five days.")
@@ -31,21 +74,28 @@ func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
 			{mode: "hybrid", binding: "image"},
 			{mode: "auto", binding: "image"},
 			{mode: "hybrid", binding: "missing", code: "not_found"},
+			{mode: "auto", binding: "missing", code: "not_found"},
+			{mode: "semantic", binding: "missing", code: "not_found"},
 			{mode: "semantic", binding: "image", code: "semantic_unavailable"},
 		} {
 			t.Run(fmt.Sprintf("embedded=%t/%s/%s", embedded, tc.mode, tc.binding), func(t *testing.T) {
 				output := callSearchDocumentReader(t, daemon, reader, embedded, map[string]any{"query": "refund", "profile": "mixed", "binding_id": tc.binding, "mode": tc.mode, "filters": map[string]any{}})
 				if tc.code != "" {
 					require.Equal(t, tc.code, output["code"])
-					if tc.mode == "semantic" {
-						require.Equal(t, "Search by meaning failed: semantic_unavailable.", output["message"])
+					if tc.code == "semantic_unavailable" {
+						require.Contains(t, output["message"], `Binding "image" cannot search document text by meaning.`)
+						require.Contains(t, output["message"], `Try binding "query".`)
 					}
 					return
 				}
 				require.Equal(t, "mixed", output["profile"])
 				require.Equal(t, tc.mode, output["requested_mode"])
 				require.Equal(t, "lexical", output["actual_mode"])
-				require.Contains(t, output["skipped_reasons"], "Binding \"image\" cannot search document text by meaning. Returned keyword results; try binding \"query\".")
+				if tc.mode == "auto" {
+					require.Empty(t, output["skipped_reasons"])
+				} else {
+					require.Contains(t, output["skipped_reasons"], "Binding \"image\" cannot search document text by meaning. Returned keyword results; try binding \"query\".")
+				}
 				hits, ok := output["results"].([]any)
 				require.True(t, ok)
 				require.Len(t, hits, 1)
