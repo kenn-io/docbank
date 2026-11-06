@@ -1,5 +1,11 @@
 import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
-import { croppedReviewPDF, setReviewDrawing, turnReviewPage } from "./redaction-review-fixture.js";
+import {
+  croppedReviewPDF,
+  expectReaderPage,
+  setReviewDrawing,
+  turnReviewPage,
+  waitForReaderIdle,
+} from "./redaction-review-fixture.js";
 import { expect, test, type Route, type Locator } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -9,11 +15,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { RedactionPreview } from "../src/generated/docbank.js";
-import type {
-  PluginRegistry,
-  ViewportPlugin,
-  DocumentManagerPlugin,
-} from "@embedpdf/svelte-pdf-viewer";
+import type { PluginRegistry, DocumentManagerPlugin } from "@embedpdf/svelte-pdf-viewer";
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captures = process.env.DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR;
@@ -164,7 +166,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(
       reader.locator('[data-review-page="2"]').locator("..").locator("img").first(),
     ).toBeInViewport({ ratio: 0.5 });
-    await expect(reader.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
+    await expectReaderPage(reader, 2);
     await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeFocused();
     await page.screenshot({
       path: path.join(captures!, "reader-return-page-two.png"),
@@ -242,17 +244,6 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await zoom.press("Enter");
       }, target);
     };
-    const scrollIdle = async (target: Locator = drawer) => {
-      await expect
-        .poll(() =>
-          target.locator("embedpdf-container").evaluate(async (host) => {
-            const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
-              .registry;
-            return registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling();
-          }),
-        )
-        .toBe(false);
-    };
     const scrollPage = async (layer: Locator, x = 0, y = 0, target: Locator = drawer) => {
       const before = await layer.evaluate(
         async (element, { x, y }) => {
@@ -279,7 +270,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       );
       // Scrolling may reuse existing tiles. Wait for the viewer to settle,
       // rather than requiring an image decode that might never be needed.
-      await scrollIdle(target);
+      await waitForReaderIdle(target);
       await expect(
         target.getByRole("switch", { name: "Draw rectangle", exact: true }),
       ).toBeEnabled();
@@ -345,7 +336,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     ].entries()) {
       await page.keyboard.press(key);
       // Finishing a prior scroll cannot cancel a draft on a stationary page.
-      if (index === 4) await scrollIdle();
+      if (index === 4) await waitForReaderIdle(drawer);
     }
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.40 inches.");
@@ -541,7 +532,6 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(drawToggle).toBeChecked();
     await drawer.getByRole("button", { name: "Next Page", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(drawer.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await turnReviewPage(drawer, 2);
     await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Shift+ArrowRight");

@@ -511,23 +511,6 @@ test("masks selected PDF text using native spans and verified delivery", async (
         for (const n of [2, 3, 4]) {
           await turnReviewPage(drawer, n);
           await expect(drawer.locator(`[data-review-page="${n}"]`)).toBeInViewport();
-          await page.evaluate(
-            () =>
-              new Promise<void>((resolve) =>
-                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-              ),
-          );
-          await expect
-            .poll(() =>
-              host.evaluate(async (el) =>
-                (await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry)
-                  .getPlugin<ViewportPlugin>("viewport")!
-                  .provides()
-                  .isScrolling(),
-              ),
-            )
-            .toBe(false);
-          await expect(draw).toBeEnabled();
           await select(n, 11, 24);
           await expect(add).toBeEnabled();
           await add.click();
@@ -647,28 +630,8 @@ test("masks selected PDF text using native spans and verified delivery", async (
       const draw = drawer.getByRole("switch", { name: "Draw rectangle", exact: true }),
         add = drawer.getByRole("button", { name: "Mask selected text", exact: true });
       for (const [index, entry] of cases.entries()) {
-        if (index) {
-          await turnReviewPage(drawer, index + 1);
-        }
-        // Page readiness alone does not mean navigation and tiling have settled.
+        await turnReviewPage(drawer, index + 1);
         await expect(drawer.locator(`[data-review-page="${index + 1}"]`)).toBeInViewport();
-        await page.evaluate(
-          () =>
-            new Promise<void>((resolve) =>
-              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-            ),
-        );
-        await expect
-          .poll(() =>
-            host.evaluate(async (el) =>
-              (await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry)
-                .getPlugin<ViewportPlugin>("viewport")!
-                .provides()
-                .isScrolling(),
-            ),
-          )
-          .toBe(false);
-        await expect(draw).toBeEnabled({ timeout: 60000 });
         await host.evaluate(
           async (el, { index, target }) => {
             const r = await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry,

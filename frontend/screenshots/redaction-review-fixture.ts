@@ -1,5 +1,38 @@
 import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
 import { expect, type Locator } from "@playwright/test";
+import type { PluginRegistry, ScrollPlugin, ViewportPlugin } from "@embedpdf/svelte-pdf-viewer";
+
+export async function waitForReaderIdle(target: Locator, page?: number) {
+  // Page readiness can precede navigation and replacement tiles.
+  await target.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  // A clamped page turn can leave the reader's navigation flag set.
+  // Wait for actual viewport activity to finish.
+  await expect
+    .poll(() =>
+      target.locator("embedpdf-container").evaluate(async (host, page) => {
+        const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+          .registry;
+        const scroll = registry.getPlugin<ScrollPlugin>("scroll")!.provides();
+        return (
+          (page !== undefined && scroll.getCurrentPage() !== page) ||
+          registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling()
+        );
+      }, page),
+    )
+    .toBe(false);
+}
+
+export async function expectReaderPage(target: Locator, n: number) {
+  await waitForReaderIdle(target, n);
+  await expect(target.getByRole("textbox", { name: "", exact: true })).toHaveValue(String(n), {
+    timeout: 1000,
+  });
+}
 
 export async function setReviewDrawing(toggle: Locator, checked: boolean) {
   // A redraw can disable the switch between actionability and the click.
@@ -13,14 +46,18 @@ export async function turnReviewPage(target: Locator, n: number) {
   // The reader rewrites this box whenever its current page changes, even
   // between the fill and Enter. Retype until the page sticks.
   await expect(async () => {
-    if ((await field.inputValue()) !== String(n)) {
+    const page = await target.locator("embedpdf-container").evaluate(async (host) => {
+      const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> }).registry;
+      return registry.getPlugin<ScrollPlugin>("scroll")!.provides().getCurrentPage();
+    });
+    if ((await field.inputValue()) !== String(n) || page !== n) {
       await field.fill(String(n));
       await field.press("Enter");
     }
+    await expectReaderPage(target, n);
     await expect(target.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled({
       timeout: 5000,
     });
-    await expect(field).toHaveValue(String(n), { timeout: 1000 });
   }).toPass({ timeout: 60000 });
 }
 
