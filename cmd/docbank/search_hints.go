@@ -35,7 +35,14 @@ func emptySearchHints(cmd *cobra.Command, query string, coverage api.SearchTextC
 		if coverage.NoText == 1 {
 			noun, verb, names = fileNoun, "has", "its name"
 		}
-		hints = append(hints, searchHint{Code: "no_searchable_text", Message: fmt.Sprintf("%d %s (%s) %s no searchable text, only %s; configure a processing profile and build it; list profiles with docbank processing profiles", coverage.NoText, noun, strings.Join(families, ", "), verb, names), Next: "docbank processing profiles"})
+		hints = append(hints, searchHint{
+			Code: "no_searchable_text",
+			Message: fmt.Sprintf("%d %s (%s) %s no searchable text, only %s; "+
+				"configure a processing profile and build it; "+
+				"list profiles with docbank processing profiles",
+				coverage.NoText, noun, strings.Join(families, ", "), verb, names),
+			Next: "docbank processing profiles",
+		})
 	}
 	if coverage.Pending > 0 {
 		noun, verb := "files", "are"
