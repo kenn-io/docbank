@@ -31,12 +31,19 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	rawID := fileByRole(asset.Files, PhotoRoleRAW).ID
 	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawID)
 	require.NoError(t, err)
+	displayNodeID := fileByID(asset.Files, *asset.DisplayFileID).NodeID
 	for _, item := range []struct {
 		node Node
 		day  string
 	}{{raw, "2024-02-29"}, {jpeg, "2025-01-01"}} {
 		stamp := item.day + "T00:30:00"
-		browsePhotoMetadata(t, s, item.node, item.day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
+		fields := []document.SourceMetadataFieldV1{
+			photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")),
+		}
+		if item.node.ID == displayNodeID {
+			fields = append(fields, photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
+		}
+		browsePhotoMetadata(t, s, item.node, item.day, fields...)
 	}
 	_, err = s.CreateSavedQuery(ctx, "Sidecars", "", SavedQueryKindQuery, []byte(`{"filters":{"extensions":["xmp"],"capture_before":"2025-01-01"}}`))
 	require.NoError(t, err)
@@ -65,7 +72,7 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, photos.Total)
 	require.Zero(t, *facetByDimension(t, photos, "capture_day").Total)
-	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID), `{"sort":{"field":"capture_time","direction":"desc"}}`, `{"sort":{"field":"import_time","direction":"asc"}}`, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":"added_time","direction":"desc"}}`, album.ID)} {
+	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"cameras":["Camera A"]}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID), `{"sort":{"field":"capture_time","direction":"desc"}}`, `{"sort":{"field":"import_time","direction":"asc"}}`, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":"added_time","direction":"desc"}}`, album.ID)} {
 		projection, err := s.materializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, value), Facets: []string{"capture_day"}}, snapshotMaterializeOptions{MaxRows: 1})
 		require.NoError(t, err, value)
 		require.Empty(t, projection.Rows)

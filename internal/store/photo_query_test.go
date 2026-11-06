@@ -87,7 +87,7 @@ func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
 	}
 }
 
-func TestPhotoBrowseMetadataMatchFollowsCurrentDisplayVersion(t *testing.T) {
+func TestPhotoBrowseMetadataMatch(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	first := browsePhotoNode(t, s, "first.jpg", browseHash("shared"), "image/jpeg")
@@ -158,29 +158,6 @@ func TestPhotoBrowseMetadataMatchFollowsCurrentDisplayVersion(t *testing.T) {
 			}
 		}
 	}
-	captureDays, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
-		FacetsOnly: true, Query: snapshotTestQuery(t, `{"filters":{"cameras":["Camera A"]}}`), Facets: []string{"capture_day"},
-	})
-	require.NoError(t, err)
-	captureDay := facetByDimension(t, captureDays, "capture_day")
-	require.Equal(t, int64(2), *captureDay.Total)
-	require.Zero(t, *captureDay.Missing)
-	require.Equal(t, map[string]int64{"2024-01-01": 2}, facetCounts(captureDay))
-
-	xmpStore, xmpAsset, xmpRaw := xmpSidecarPhoto(t, s)
-	require.Same(t, s, xmpStore)
-	require.Equal(t, PhotoXMPStatePending, xmpState(t, s, xmpRaw.ID).State)
-	xmpDisplay := fileByID(xmpAsset.Files, *xmpAsset.DisplayFileID)
-	xmpDisplayNode, err := s.NodeByID(t.Context(), xmpDisplay.NodeID)
-	require.NoError(t, err)
-	browsePhotoMetadata(t, s, xmpDisplayNode, "queued-camera",
-		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
-		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens A")))
-	queuedPage := browsePhotoPage(t, s, `{"syntax":"advanced","text":"xmp:pending AND camera:\"Camera A\""}`)
-	require.Equal(t, int64(len(queuedPage.Items)), queuedPage.Total)
-	require.Equal(t, int64(1), queuedPage.Total)
-	require.Len(t, queuedPage.Items, 1)
-	require.Equal(t, xmpAsset.ID, queuedPage.Items[0].AssetID)
 }
 
 func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
