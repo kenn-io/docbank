@@ -23,7 +23,7 @@ COPY . .
 COPY --from=frontend /src/frontend/dist/ ./internal/web/dist/
 ARG VERSION=dev
 ARG COMMIT=unknown
-RUN CGO_ENABLED=1 go build -tags fts5 \
+RUN CGO_ENABLED=1 go build -trimpath -tags fts5 \
     -ldflags="-X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}" \
     -o /out/docbank ./cmd/docbank
 
