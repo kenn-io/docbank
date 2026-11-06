@@ -147,6 +147,26 @@ func TestQuerySnapshotRowsShareParentPathsAndKeepEmptyTags(t *testing.T) {
 	}
 }
 
+func TestQuerySnapshotFilteredRowsKeepCollectionMembership(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	createCollectionRun(t, fixture.store, "unmatched.txt", "snapshot-unmatched")
+	projection, err := fixture.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+		Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"name:a.PDF"}`),
+	})
+	require.NoError(t, err)
+	require.Len(t, projection.Rows, 1)
+	row := projection.Rows[0]
+	assert.Equal(t, fixture.nodes["a"].ID, row.NodeID)
+	collections := []string{fixture.collections[0].ID(), fixture.collections[1].ID()}
+	slices.Sort(collections)
+	assert.Equal(t, collections, row.CollectionIDs)
+	assert.Equal(t, collections[0], row.DisplayCollectionID)
+	require.NotNil(t, row.DisplayCollectionLabel)
+	labels := map[string]string{fixture.collections[0].ID(): "First", fixture.collections[1].ID(): "Second"}
+	assert.Equal(t, labels[collections[0]], *row.DisplayCollectionLabel)
+}
+
 func TestQuerySnapshotRejectsBoundsDuringMaterialization(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
