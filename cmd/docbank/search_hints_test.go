@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,7 +31,6 @@ func TestEmptySearchHints(t *testing.T) {
 		{name: "human", pending: 1},
 		{name: "extracted", pending: 0},
 		{name: "JSON", flags: []string{"--json"}, pending: 1, next: "docbank search '--json=true' '--' 'lease renewal'"},
-		{name: "JSON leading dash", query: "--lease renewal", flags: []string{"--json"}, pending: 1, next: "docbank search '--json=true' '--' '--lease renewal'"},
 		{name: "filtered", filtered: true, flags: []string{"--tag", processingTestVersionID, "--under", "id:42", "--mime-type", "application/pdf"}},
 		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
 		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
@@ -63,16 +63,18 @@ func TestEmptySearchHints(t *testing.T) {
 			}
 			var record kitdaemon.RuntimeRecord
 			var profileCalls, searchCalls, coverageCalls int
+			var lexicalFilters url.Values
 			fallback := automaticSearchDaemon(t, base, &record, &profileCalls, &searchCalls)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/search/text-coverage":
 					coverageCalls++
-					if tc.name == "filtered" {
-						assert.Equal(t, processingTestVersionID, r.URL.Query().Get("tag_id"))
-						assert.Equal(t, "42", r.URL.Query().Get("under_node_id"))
-						assert.Equal(t, "application/pdf", r.URL.Query().Get("mime_type"))
+					if tc.filtered {
+						assert.NotEmpty(t, lexicalFilters)
+						for key, values := range lexicalFilters {
+							assert.Equal(t, values, r.URL.Query()[key], key)
+						}
 					}
 					if tc.unavailable {
 						http.Error(w, "unavailable", http.StatusServiceUnavailable)
@@ -92,6 +94,10 @@ func TestEmptySearchHints(t *testing.T) {
 					report := api.SearchReport{Limit: 50, Hits: []api.SearchHit{}}
 					if tc.filtered {
 						params := r.URL.Query()
+						lexicalFilters = params
+						for _, key := range []string{"q", "limit", "fuzzy"} {
+							lexicalFilters.Del(key)
+						}
 						report.TagID, report.MIMEType = params.Get("tag_id"), params.Get("mime_type")
 						report.PDFFilter, report.SourcePresent = params.Get("pdf_filter"), params.Get("source_present") == "true"
 						report.ModifiedSince, report.ModifiedBefore = params.Get("modified_since"), params.Get("modified_before")

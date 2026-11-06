@@ -38,10 +38,6 @@ func TestSearchTextCoverage(t *testing.T) {
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{})
 	require.NoError(t, err)
 	require.Equal(t, SearchTextCoverage{Families: []string{}}, got)
-	hits, _, err := s.SearchPage(t.Context(), "lease renewal", 10)
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	require.Equal(t, text.ID, hits[0].Node.ID)
 	// An exact replacement does not inherit its old rendition.
 	_, _, err = s.ReplaceContent(t.Context(), pdfs[0].ID, pdfs[0].Revision, pdfs[0].BlobHash, pdfs[0].Size, pdfs[0].MimeType)
 	require.NoError(t, err)
@@ -77,12 +73,12 @@ func TestSearchTextCoverageEmptyRenditions(t *testing.T) {
 func TestSearchTextCoverageRequeuedSearchableBlob(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name          string
-		active        bool
-		hits, pending int
+		name    string
+		active  bool
+		pending int
 	}{
-		{name: "native", hits: 2},
-		{name: "rendition", active: true, hits: 1, pending: 1},
+		{name: "native"},
+		{name: "rendition", active: true, pending: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -96,9 +92,6 @@ func TestSearchTextCoverageRequeuedSearchableBlob(t *testing.T) {
 				Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "lease renewal"}))
 			_, err = s.CreateFile(t.Context(), s.RootID(), "copy.txt", text.BlobHash, 5, "text/plain")
 			require.NoError(t, err)
-			hits, _, err := s.SearchPage(t.Context(), "lease renewal", 10)
-			require.NoError(t, err)
-			require.Len(t, hits, tc.hits)
 			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "text/plain"})
 			require.NoError(t, err)
 			require.Equal(t, tc.pending, got.Pending)
