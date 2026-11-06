@@ -173,4 +173,8 @@ func TestSimilarDocumentsUnbuiltIndexReturnsSetupError(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, response.StatusCode, body)
 	assert.Contains(t, body, `"code":"index_unavailable"`)
 	assert.Contains(t, body, `"detail":"The search index needs building."`)
+	request.BindingID = "missing"
+	response, body = do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, request)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	assert.Contains(t, body, `"code":"not_found"`)
 }

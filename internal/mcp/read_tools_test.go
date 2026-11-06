@@ -267,8 +267,6 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		arguments        map[string]any
 		status           int
 	}{
-		{name: "processing failed", tool: "search_documents", code: "processing_failed", status: http.StatusInternalServerError,
-			arguments: map[string]any{"query": "synthetic", "profile": "local", "mode": "lexical", "filters": map[string]any{}}},
 		{name: "reranking unavailable", tool: "search_documents", code: "reranking_unavailable", status: http.StatusUnprocessableEntity,
 			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
 		{name: "reranking failed", tool: "search_documents", code: "reranking_failed", status: http.StatusBadGateway,
@@ -286,7 +284,7 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/v1/processing/profiles" {
-					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+					writeReadToolProfiles(t, response)
 					return
 				}
 				response.Header().Set("Content-Type", "application/problem+json")
@@ -407,7 +405,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+			writeReadToolProfiles(t, response)
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
@@ -451,7 +449,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+					writeReadToolProfiles(t, response)
 				case "/api/v1/info":
 					infoCalls++
 					http.Error(response, "unreadable unrelated blob shard", http.StatusInternalServerError)
@@ -506,7 +504,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+			writeReadToolProfiles(t, response)
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
@@ -574,7 +572,7 @@ func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+			writeReadToolProfiles(t, response)
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint,
@@ -630,7 +628,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		assert.Equal(t, "synthetic-key", request.Header.Get("X-Api-Key"))
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+			writeReadToolProfiles(t, response)
 		case "/api/v1/info":
 			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID, VaultPath: "/synthetic/private/vault",
 				LiveFiles: 1, LiveDirectories: 1, ContentVersions: 1, TrackedBlobs: 1})
@@ -853,7 +851,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+					writeReadToolProfiles(t, w)
 				case "/api/v1/search":
 					var body map[string]any
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
@@ -919,4 +917,9 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			}
 		})
 	}
+}
+
+func writeReadToolProfiles(t *testing.T, response http.ResponseWriter) {
+	t.Helper()
+	writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 }

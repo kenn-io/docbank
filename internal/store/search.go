@@ -717,7 +717,8 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, s.db, profileFingerprint, bindingID)
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotFound) && fingerprints.Profile == "" {
+		// A configured profile can be searched before processing persists it.
 		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
 	}
 	if err != nil {

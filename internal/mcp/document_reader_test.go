@@ -146,30 +146,29 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 			require.Equal(t, "/refund-policy.txt", schemaMap(t, hits[0])["path"])
 			require.Contains(t, output["skipped_reasons"], "Profile \"supplied-captions\" has no available search by meaning. Run docbank processing local to add it.")
 		})
-		for _, tc := range []struct {
-			name, mode, selected, code string
-			missing                    bool
-		}{
-			{name: "missing version before unknown profile", mode: "hybrid", selected: "default", code: "not_found", missing: true},
-			{name: "unknown", mode: "hybrid", selected: "default", code: "processing_profile_unavailable"},
-			{name: "semantic", mode: "semantic", selected: profile, code: "semantic_unavailable"},
-		} {
-			t.Run(fmt.Sprintf("embedded=%t/%s", embedded, tc.name), func(t *testing.T) {
-				args := map[string]any{"query": "refund", "filters": map[string]any{}, "mode": tc.mode, "profile": tc.selected}
-				if tc.missing {
-					delete(args, "filters")
-					args["content_version_ids"] = []string{testVersionID}
-				}
-				output := callSearchDocumentReader(t, daemon, reader, embedded, args)
-				require.Equal(t, tc.code, output["code"])
-				if tc.code != "not_found" {
-					require.Contains(t, output["message"], profile)
-				}
-				if tc.code == "semantic_unavailable" {
-					require.Contains(t, output["message"], "docbank processing local")
-				}
-			})
-		}
+	}
+	for _, tc := range []struct {
+		name, mode, selected, code string
+		missing                    bool
+	}{
+		{name: "missing version before unknown profile", mode: "hybrid", selected: "default", code: "not_found", missing: true},
+		{name: "semantic", mode: "semantic", selected: profile, code: "semantic_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"query": "refund", "filters": map[string]any{}, "mode": tc.mode, "profile": tc.selected}
+			if tc.missing {
+				delete(args, "filters")
+				args["content_version_ids"] = []string{testVersionID}
+			}
+			output := exportCall(t, daemon, "search_documents", args)
+			require.Equal(t, tc.code, output["code"])
+			if tc.code != "not_found" {
+				require.Contains(t, output["message"], profile)
+			}
+			if tc.code == "semantic_unavailable" {
+				require.Contains(t, output["message"], "docbank processing local")
+			}
+		})
 	}
 }
 

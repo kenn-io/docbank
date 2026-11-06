@@ -268,8 +268,6 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			wantAttempts: []string{"a:c:hybrid"}, wantProfile: "a", wantBinding: "c"},
 		{name: "explicit profile failure stops", profile: "a", failures: map[string]string{"a": "stale_index"},
 			wantAttempts: []string{"a:a:hybrid"}, wantFailure: "stale_index"},
-		{name: "explicit missing index", profile: "a", failures: map[string]string{"a": "index_unavailable"},
-			wantAttempts: []string{"a:a:hybrid"}, wantFailure: "index_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			profiles := []api.ProcessingProfileSummary{

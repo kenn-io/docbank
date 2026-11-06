@@ -489,6 +489,9 @@ func searchDocuments(
 				return documentSearchResponse{}, err
 			}
 			if mode == "semantic" {
+				if code, _ := stableDomainError(err); code == "consent_required" {
+					return documentSearchResponse{}, err
+				}
 				guidance := semanticSearchGuidance(selected.Name, profiles, attempt.failure)
 				if nonQueryBinding && len(selected.QueryEmbeddingBindings) > 0 {
 					guidance = fmt.Sprintf("Binding %q cannot search document text by meaning. Try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0])
@@ -509,6 +512,9 @@ func searchDocuments(
 			if mode == "hybrid" {
 				if attempt.failure != "" {
 					result.report.Degradations = append(result.report.Degradations, attempt.failure)
+					if guidance := searchFailureGuidance(attempt.failure); guidance != "" {
+						result.report.Degradations = append(result.report.Degradations, guidance)
+					}
 				} else if len(selected.QueryEmbeddingBindings) == 0 {
 					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
 				} else if nonQueryBinding {
@@ -1019,6 +1025,16 @@ func resolveSearchSummaries(ctx context.Context, c documentClient, results []api
 		identities[i] = api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}
 	}
 	return c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
+}
+
+func searchFailureGuidance(code string) string {
+	switch code {
+	case "processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
+		return domainErrorMessage("consent_required")
+	case "index_unavailable", "stale_index":
+		return answerErrorMessages[code]
+	}
+	return ""
 }
 
 func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary, failure string) string {

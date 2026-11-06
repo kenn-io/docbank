@@ -843,6 +843,25 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 	assert.Equal(t, len(neighbors), consumed)
 }
 
+func TestAcquireSemanticSearchAuthorityUnavailableBindings(t *testing.T) {
+	t.Parallel()
+	s, _, profile, _ := newEmbeddingCatalogFixture(t)
+	for _, tc := range []struct {
+		name, profile, binding string
+		want                   error
+	}{
+		{name: "unknown binding", profile: profile.Fingerprint, binding: "missing", want: ErrNotFound},
+		{name: "unprocessed profile", profile: strings.Repeat("f", 64), binding: "optional", want: ErrVectorIndexUnavailable},
+		{name: "unbuilt vector space", profile: profile.Fingerprint, binding: "optional", want: ErrVectorIndexUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.AcquireSemanticSearchAuthority(t.Context(), tc.profile,
+				tc.binding, "reader", time.Now().UTC(), time.Minute, SearchOptions{})
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)

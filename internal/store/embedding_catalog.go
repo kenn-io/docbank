@@ -659,7 +659,7 @@ func embeddingProfileBindingAuthority(ctx context.Context, query metadataQuerier
 			return binding, fingerprints, nil
 		}
 	}
-	return document.EmbeddingBindingV1{}, document.FingerprintSet{}, fmt.Errorf("processing profile binding %q does not exist", bindingID)
+	return document.EmbeddingBindingV1{}, fingerprints, fmt.Errorf("processing profile binding %q: %w", bindingID, ErrNotFound)
 }
 
 func validateEmbeddingSetRecord(record EmbeddingSetRecord) error {

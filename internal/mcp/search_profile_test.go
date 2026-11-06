@@ -19,6 +19,7 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		failures, versions                 bool
 		want                               []string
 		wantProfile, actual, guidance      string
+		failure                            string
 	}{
 		{name: "automatic retries", mode: "hybrid", versions: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid"}, wantProfile: "z-local-text", actual: "hybrid"},
 		{name: "exhausted auto uses default", mode: "auto", failures: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid", "a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "processing_failed"},
@@ -28,6 +29,7 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		{name: "semantic captions", mode: "semantic", profile: "a-captions", want: []string{"a-captions::semantic"}, code: "semantic_unavailable", guidance: "z-local-text"},
 		{name: "explicit binding", mode: "hybrid", profile: "z-local-text", binding: "second", want: []string{"z-local-text:second:hybrid"}, wantProfile: "z-local-text", actual: "hybrid"},
 		{name: "lexical explicit binding", mode: "lexical", profile: "z-local-text", binding: "second", want: []string{"z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical"},
+		{name: "stale index guidance", mode: "hybrid", profile: "z-local-text", binding: "second", failure: "stale_index", want: []string{"z-local-text:second:hybrid", "z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical", guidance: "needs rebuilding"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var attempts []string
@@ -43,7 +45,7 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 					resolutions++
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}, FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "a-captions", Fingerprint: strings.Repeat("a", 64)}, {Name: "z-local-text", Fingerprint: strings.Repeat("b", 64), EmbeddingBindings: []string{"first", "second"}, QueryEmbeddingBindings: []string{"second", "first"}}})
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "a-captions", Fingerprint: strings.Repeat("a", 64)}, {Name: "z-local-text", Fingerprint: strings.Repeat("b", 64), EmbeddingBindings: []string{"first", "second"}, QueryEmbeddingBindings: []string{"first", "second"}}})
 				case "/api/v1/search":
 					var request api.DocumentSearchRequest
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
@@ -64,11 +66,14 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 						assert.Equal(t, "all_live", request.Scope.Kind)
 					}
 					attempts = append(attempts, request.Profile+":"+request.BindingID+":"+request.Mode)
-					if request.BindingID == "first" || tc.failures && request.BindingID != "" {
+					if request.Mode != "lexical" && (request.BindingID == "first" || tc.failures && request.BindingID != "" || tc.failure != "") {
 						w.Header().Set("Content-Type", "application/problem+json")
 						status, code := http.StatusConflict, "stale_index"
 						if request.BindingID == "first" {
 							status, code = http.StatusInternalServerError, "processing_failed"
+						}
+						if tc.failure != "" {
+							code = tc.failure
 						}
 						w.WriteHeader(status)
 						_, _ = fmt.Fprintf(w, `{"status":%d,"code":%q}`, status, code)
@@ -112,6 +117,9 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), tc.guidance)
 			} else {
 				require.Empty(t, output["skipped_reasons"])
+			}
+			if tc.failure != "" {
+				require.Contains(t, output["skipped_reasons"], tc.failure)
 			}
 			if tc.failures {
 				require.Contains(t, output["skipped_reasons"], "processing_failed")

@@ -1634,7 +1634,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
 	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
+		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -1722,13 +1722,10 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
 		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
-			if errors.Is(bindingErr, store.ErrNotFound) && mode == retrieval.ModeSemantic {
-				return preparedSearch{}, ErrSemanticUnavailable
-			}
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
@@ -2077,13 +2074,25 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
+// selectDocumentSearchBinding returns the text-query binding for a search.
+// Semantic mode reports ErrSemanticUnavailable when the profile has no
+// text-query binding to default to or the named binding only accepts images;
+// an unknown binding name is store.ErrNotFound in every mode.
 func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
-	name string,
+	name string, mode retrieval.Mode,
 ) (document.EmbeddingBindingV1, error) {
+	imageOnly := false
 	for _, binding := range profile.Embeddings {
-		if binding.InputKind != document.EmbeddingInputImage && (name == "" || binding.Name == name) {
+		if name != "" && binding.Name != name {
+			continue
+		}
+		if binding.InputKind != document.EmbeddingInputImage {
 			return binding, nil
 		}
+		imageOnly = true
+	}
+	if mode == retrieval.ModeSemantic && (name == "" || imageOnly) {
+		return document.EmbeddingBindingV1{}, ErrSemanticUnavailable
 	}
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
