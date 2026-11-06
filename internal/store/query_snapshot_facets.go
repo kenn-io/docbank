@@ -705,8 +705,10 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	}
 	defer func() { _ = rows.Close() }()
 	var bytes, projected int64
-	groupAssets := map[string]int64{}
+	var group int64
 	for rows.Next() {
+		group++
+		id := strconv.FormatInt(group, 10)
 		var tag, year, rating, flag, label, cameraMake, cameraModel, lensMake, lensModel, location, setID, setName string
 		var missing, count int64
 		if err := rows.Scan(&tag, &year, &rating, &flag, &label, &cameraMake, &cameraModel, &lensMake, &lensModel, &location, &setID, &setName, &missing, &count); err != nil {
@@ -717,7 +719,7 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 			if observation == nil {
 				return
 			}
-			var values []snapshotFacetGroupValue
+			added := false
 			for _, label := range labels {
 				bytes += count * int64(len(label))
 				key := label
@@ -730,20 +732,21 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 					}
 				}
 				if key != "" {
-					values = append(values, snapshotFacetGroupValue{key, label})
+					observation.add(dimension, id, key, label, count, options.FacetMemberLimit)
+					added = true
 				}
 			}
-			observation.addGroup(dimension, values, count, options.FacetMemberLimit)
+			if !added {
+				observation.add(dimension, id, "", "", count, options.FacetMemberLimit)
+			}
 		}
 		switch tag {
 		case "decision":
-			groupAssets[tag] += count
 			add(snapshotFacetYear, year)
 			add(snapshotFacetRating, rating)
 			add(snapshotFacetFlag, flag)
 			add(snapshotFacetLabel, label)
 		case "metadata":
-			groupAssets[tag] += count
 			add(compiledCameraField, cameraMake, cameraModel)
 			add(compiledLensField, lensMake, lensModel)
 			add(compiledLocationField, location)
@@ -768,7 +771,10 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	}
 	if !slices.Contains(dimensions, compiledSetField) {
 		// Charge the asset ID once, even when two legs read the same assets.
-		assets := max(groupAssets["decision"], groupAssets["metadata"])
+		var assets int64
+		for _, observation := range observations {
+			assets = max(assets, observation.total)
+		}
 		bytes += 36 * assets
 		projected = assets
 	}
@@ -806,27 +812,28 @@ func newSnapshotFacetAccumulator() *snapshotFacetAccumulator {
 	return &snapshotFacetAccumulator{counts: map[string]int64{}, labels: map[string]string{}, seen: map[string]bool{}}
 }
 
-func (observation *snapshotFacetAccumulator) add(dimension, id, value, label string, limit int64) {
-	if observation.limited {
-		return
-	}
+func (observation *snapshotFacetAccumulator) add(dimension, id, value, label string, count, limit int64) {
 	if id != observation.previous {
-		observation.total++
-		observation.missing++
+		observation.total += count
+		observation.missing += count
 		observation.previous = id
 		clear(observation.seen)
 	}
+	// Totals still count every group after a dimension reaches its member limit.
+	if observation.limited {
+		return
+	}
 	if !observation.seen[value] {
-		observation.projected++
+		observation.projected += count
 		if observation.projected > limit {
 			observation.limited = true
 			return
 		}
 		if value != "" {
 			if len(observation.seen) == 0 || len(observation.seen) == 1 && observation.seen[""] {
-				observation.missing--
+				observation.missing -= count
 			}
-			observation.counts[value]++
+			observation.counts[value] += count
 		}
 		observation.seen[value] = true
 	}
@@ -834,36 +841,6 @@ func (observation *snapshotFacetAccumulator) add(dimension, id, value, label str
 		return
 	}
 	observation.preferLabel(dimension, value, label)
-}
-
-type snapshotFacetGroupValue struct{ key, label string }
-
-// addGroup applies the per-asset value rules to count identical assets.
-func (observation *snapshotFacetAccumulator) addGroup(dimension string, values []snapshotFacetGroupValue, count, limit int64) {
-	if observation.limited {
-		return
-	}
-	observation.total += count
-	keys := make([]string, 0, len(values))
-	for _, value := range values {
-		if !slices.Contains(keys, value.key) {
-			keys = append(keys, value.key)
-		}
-	}
-	observation.projected += count * int64(max(len(keys), 1))
-	if observation.projected > limit {
-		observation.limited = true
-		return
-	}
-	if len(keys) == 0 {
-		observation.missing += count
-	}
-	for _, key := range keys {
-		observation.counts[key] += count
-	}
-	for _, value := range values {
-		observation.preferLabel(dimension, value.key, value.label)
-	}
 }
 
 func (observation *snapshotFacetAccumulator) preferLabel(dimension, value, label string) {
@@ -889,7 +866,7 @@ func observeSnapshotFacet(rows *sql.Rows, dimension string, limit int64, scan fu
 		if err != nil {
 			return observation.snapshotFacetObservation, false, err
 		}
-		observation.add(dimension, id, value, label, limit)
+		observation.add(dimension, id, value, label, 1, limit)
 		if observation.limited {
 			return observation.snapshotFacetObservation, true, rows.Close()
 		}
