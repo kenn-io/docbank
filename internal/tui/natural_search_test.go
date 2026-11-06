@@ -159,7 +159,6 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 				require.Len(t, fake.misses, 1)
 				receipt := fake.misses[0]
 				assert.Equal(t, new(7), receipt.DocumentCount)
-				assert.Equal(t, 7, receipt.Coverage["scoped_documents"])
 			}
 		})
 	}

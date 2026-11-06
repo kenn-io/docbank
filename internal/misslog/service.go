@@ -192,22 +192,29 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return fs.ErrNotExist
 }
 
-// Purge removes all indexed receipts, including expired records.
+// Purge removes all local receipt files, including unfinished writes.
 func (s *Service) Purge(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for len(s.files) > 0 {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := os.Remove(filepath.Join(s.dir, s.files[0])); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		s.files = s.files[1:]
 	}
+	s.files = nil
 	return nil
 }
 

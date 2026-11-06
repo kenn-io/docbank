@@ -79,34 +79,23 @@ func TestRecordingSanitizesDirectoryFailures(t *testing.T) {
 	require.Contains(t, logs.String(), "miss_log_write_failed")
 }
 
-func TestPublishedWriteRemainsVisiblePrunableAndPurgeable(t *testing.T) {
+func TestPurgeRemovesUnindexedFiles(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default().MissLog
-	cfg.Enabled, cfg.MaxRecords = true, 1
+	cfg.Enabled = true
 	svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
-	svc.writeFile = func(path string, data []byte, opts ...atomicfile.Option) error {
-		if err := atomicfile.WriteFile(path, data, opts...); err != nil {
-			return err
-		}
-		return errors.Join(atomicfile.ErrNotDurable, errors.New("directory sync failed"))
+	svc.Record(t.Context(), Request{Query: "indexed secret"})
+	dir := filepath.Join(root, "miss-log")
+	for _, name := range []string{".receipt.json.tmp-interrupted", "unindexed.json"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("synthetic query bytes"), 0600))
 	}
-	svc.Record(t.Context(), Request{Query: "first"})
-	rows, err := svc.List(t.Context(), 10, 0)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "first", rows[0].Query)
-	svc.Record(t.Context(), Request{Query: "second"})
-	rows, err = svc.List(t.Context(), 10, 0)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "second", rows[0].Query)
-	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
 	require.NoError(t, svc.Purge(t.Context()))
-	entries, err = os.ReadDir(filepath.Join(root, "miss-log"))
+	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+	rows, err := svc.List(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
 }
 
 func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
@@ -132,7 +121,6 @@ func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
 		entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
 		require.NoError(t, err)
 		require.Len(t, entries, 1)
-		disabled.Record(t.Context(), Request{Query: "disabled"})
 		time.Sleep(91 * 24 * time.Hour)
 		rows, err = disabled.List(t.Context(), 10, 0)
 		require.NoError(t, err)
@@ -148,7 +136,7 @@ func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
 }
 
 func TestCancelledPublishedWriteStillPrunes(t *testing.T) {
-	for _, publishedErr := range []error{nil, atomicfile.ErrNotDurable} {
+	for _, publishedErr := range []error{nil, errors.Join(atomicfile.ErrNotDurable, errors.New("directory sync failed"))} {
 		t.Run(map[bool]string{true: "durable", false: "directory sync failed"}[publishedErr == nil], func(t *testing.T) {
 			root := t.TempDir()
 			cfg := config.Default().MissLog

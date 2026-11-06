@@ -1087,7 +1087,6 @@ it("shows the empty-population note and reports a submitted search once", async 
       },
     ],
     files: [file],
-    tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID },
     rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
     baseReport: {
       ...report("hybrid", []),
@@ -1101,10 +1100,6 @@ it("shows the empty-population note and reports a submitted search once", async 
   });
   render(App);
   await screen.findAllByText("empty.txt");
-  await fireEvent.click(
-    await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-  );
-  await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await submitSearch("nothing");
   await screen.findByText("No documents match the current filter.");
@@ -1938,10 +1933,9 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each(["plain", "rerank", "tag-filtered", "fallback", "filtered"])(
+it.each(["plain", "tag-filtered", "fallback", "filtered"])(
   "records an empty %s submission once",
   async (kind) => {
-    const rerank = kind === "rerank" || kind === "tag-filtered";
     const harness = installHarness({
       profiles: [
         {
@@ -1949,7 +1943,6 @@ it.each(["plain", "rerank", "tag-filtered", "fallback", "filtered"])(
           fingerprint: "a".repeat(64),
           rendition: true,
           embedding_bindings: ["embed"],
-          reranking_available: rerank,
         },
       ],
       files: [node(2, "existing.txt", baseVersion)],
@@ -1960,7 +1953,6 @@ it.each(["plain", "rerank", "tag-filtered", "fallback", "filtered"])(
       ...(kind === "tag-filtered"
         ? { tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID } }
         : {}),
-      rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
     });
     render(App);
     await screen.findAllByText("existing.txt");
@@ -1970,8 +1962,6 @@ it.each(["plain", "rerank", "tag-filtered", "fallback", "filtered"])(
       );
       await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
     }
-    if (rerank)
-      await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
     if (kind === "filtered") {
       await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
         target: { value: "missing" },

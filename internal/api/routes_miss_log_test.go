@@ -55,41 +55,38 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 		"unevaluated": true, "gps_bounds": map[string]any{"south": "0", "north": "45", "west": "0", "east": "90"},
 	}
 	filters["syntax"], filters["corpus"], filters["hidden"] = "simple", "photos", false
-	for _, receipt := range []misslog.Request{
+	for i, receipt := range []misslog.Request{
 		{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)},
 		{Query: "synthetic photo", RequestedMode: "lexical", ActualMode: "lexical", Filters: filters},
 	} {
-		t.Run(receipt.Query, func(t *testing.T) {
-			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
-			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			rows, err := listMisses(t, ts)
-			require.NoError(t, err)
-			require.Len(t, rows, 1)
-			resp, body = get(t, ts, "/api/v1/miss-log", nil)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-			var page api.MissLogPage
-			require.NoError(t, json.Unmarshal([]byte(body), &page))
-			require.Len(t, page.Items, 1)
-			require.Equal(t, receipt.Query, page.Items[0].Query)
-			require.Equal(t, receipt.Filters, page.Items[0].Filters)
-			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+rows[0].ID, nil, nil)
-			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			rows, err = listMisses(t, ts)
-			require.NoError(t, err)
-			require.Empty(t, rows)
-			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/missing", nil, nil)
-			require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
-			resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
-			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log", nil, nil)
-			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			rows, err = listMisses(t, ts)
-			require.NoError(t, err)
-			require.Empty(t, rows)
-		})
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
+		require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+		resp, body = get(t, ts, "/api/v1/miss-log", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+		var page api.MissLogPage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		require.Len(t, page.Items, i+1)
+		require.Equal(t, receipt.Query, page.Items[0].Query)
+		require.Equal(t, receipt.Filters, page.Items[0].Filters)
 	}
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
+	rows, err := listMisses(t, ts)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	resp, body := do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+rows[0].ID, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	rows, err = listMisses(t, ts)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "synthetic empty submission", rows[0].Query)
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/missing", nil, nil)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log", nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	rows, err = listMisses(t, ts)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
 		Query: "large", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"value": strings.Repeat("x", 64<<10)},
 	})
 	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, body)

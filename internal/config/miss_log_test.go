@@ -15,12 +15,8 @@ func TestMissLogConfigDefaults(t *testing.T) {
 	require.False(t, cfg.MissLog.Enabled)
 	require.Equal(t, 90, cfg.MissLog.RetentionDays)
 	require.Equal(t, 5000, cfg.MissLog.MaxRecords)
-}
-
-func TestMissLogZeroBoundsAccepted(t *testing.T) {
-	dir := privateTestConfigDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[miss_log]\nenabled=false\nretention_days=0\nmax_records=0\n"), 0600))
-	cfg, err := Load(dir)
+	cfg, err = Load(dir)
 	require.NoError(t, err)
 	require.NoError(t, cfg.Validate())
 }

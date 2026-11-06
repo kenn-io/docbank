@@ -2211,22 +2211,23 @@
             : "";
       loading = false;
       searchPending = false;
+      const receiptFor = (report: DocumentSearchReport): generated.MissLogRequest => ({
+        query,
+        profile: profile.name,
+        ...(baseRequest.binding_id ? { binding_id: baseRequest.binding_id } : {}),
+        requested_mode: report.requested_mode as generated.MissLogRequestRequestedMode,
+        actual_mode: report.actual_mode as generated.MissLogRequestActualMode,
+        ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
+        document_count: report.coverage.scoped_documents,
+        coverage: { ...report.coverage },
+        truncated: report.truncated,
+        degradations: report.degradations,
+        ...(report.reranking ? { reranking: { ...report.reranking } } : {}),
+      });
       // The base results are accepted, so the search counts however reranking ends.
       let outcome: { type: string; empty: boolean; receipt: generated.MissLogRequest } = {
         type: baseReport.actual_mode,
-        receipt: {
-          query,
-          profile: profile.name,
-          ...(baseRequest.binding_id ? { binding_id: baseRequest.binding_id } : {}),
-          requested_mode: baseReport.requested_mode as generated.MissLogRequestRequestedMode,
-          actual_mode: baseReport.actual_mode as generated.MissLogRequestActualMode,
-          ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
-          document_count: baseReport.coverage.scoped_documents,
-          coverage: { ...baseReport.coverage },
-          truncated: baseReport.truncated,
-          degradations: baseReport.degradations,
-          ...(baseReport.reranking ? { reranking: { ...baseReport.reranking } } : {}),
-        },
+        receipt: receiptFor(baseReport),
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
       if (baseReport.results.length === 0 || !naturalSearchRerank(profile, mode, naturalRerank))
@@ -2280,18 +2281,9 @@
           true,
         );
         naturalSearchNote = rerankingNote("applied");
-        const rerankedReceipt: generated.MissLogRequest = {
-          ...outcome.receipt,
-          actual_mode: reranked.actual_mode as generated.MissLogRequestActualMode,
-          document_count: reranked.coverage.scoped_documents,
-          coverage: { ...reranked.coverage },
-          truncated: reranked.truncated,
-          degradations: reranked.degradations,
-          ...(reranked.reranking ? { reranking: { ...reranked.reranking } } : {}),
-        };
         outcome = {
           type: reranked.actual_mode,
-          receipt: rerankedReceipt,
+          receipt: receiptFor(reranked),
           empty: rerankedRows.length === 0 && nameRows.length === 0,
         };
       } catch (cause) {

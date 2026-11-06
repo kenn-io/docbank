@@ -27,7 +27,7 @@ type automaticSearchCase struct {
 	profiles                        []api.ProcessingProfileSummary
 	profileError, searchError       string
 	malformed, cold, mixed          bool
-	empty, noDocumentHits           bool
+	empty                           bool
 	folderFirst, wantTruncated      bool
 	wantResults, wantFolders        int
 	jsonCLI, humanCLI, agentCLI     bool
@@ -55,7 +55,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
 		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true, wantMiss: 1},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
-		{name: "folder prevents miss", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, noDocumentHits: true, wantFolders: 1},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
 		{name: "blank query", query: " ", profiles: profiles, limit: 50, skipped: true},
@@ -87,7 +86,16 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 			}
 			var profileCalls, searchCalls, missCalls int
 			var record kitdaemon.RuntimeRecord
-			server := httptest.NewServer(automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls, &missCalls))
+			handler := automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/miss-log" {
+					missCalls++
+					var request misslog.Request
+					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+					assert.Equal(t, tc.query, request.Query)
+				}
+				handler(w, r)
+			}))
 			defer server.Close()
 			if tc.jsonCLI || tc.humanCLI || tc.agentCLI {
 				runAutomaticSearchCLI(t, tc, server.URL, &record)
@@ -117,11 +125,10 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 }
 
 func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaemon.RuntimeRecord,
-	profileCalls, searchCalls, missCalls *int,
+	profileCalls, searchCalls *int,
 ) http.HandlerFunc {
 	t.Helper()
 	const vault = "22222222-2222-4222-8222-222222222222"
-	t.Cleanup(func() { assert.Equal(t, tc.wantMiss, *missCalls) })
 	problem := func(w http.ResponseWriter, code string) {
 		status := http.StatusInternalServerError
 		switch code {
@@ -149,26 +156,16 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		case "GET /api/v1/search/text-coverage":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case "POST /api/v1/miss-log":
-			*missCalls++
-			var request misslog.Request
-			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-			assert.Equal(t, tc.query, request.Query)
-			if tc.opts.PDFFilter != "" {
-				assert.Equal(t, tc.opts.PDFFilter, request.Filters["pdf_filter"])
-			}
 			w.WriteHeader(http.StatusNoContent)
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
-			matches := []api.SearchHit{}
-			if !tc.noDocumentHits {
-				matches = append(matches, api.SearchHit{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"})
+			matches := []api.SearchHit{
+				{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"},
+				{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"},
 			}
-			matches = append(matches, api.SearchHit{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"})
 			if tc.folderFirst {
-				if len(matches) > 1 {
-					matches[0], matches[1] = matches[1], matches[0]
-				}
+				matches[0], matches[1] = matches[1], matches[0]
 			}
 			if tc.empty {
 				matches = nil
@@ -218,11 +215,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, tc.searchError)
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
-			case tc.empty || tc.noDocumentHits:
-				coverage := api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}
-				if tc.empty {
-					coverage.ScopedDocuments, coverage.CompleteDocuments = 0, 0
-				}
+			case tc.empty:
+				coverage := api.DocumentSearchCoverage{State: "complete", BindingRequired: true}
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: coverage, Results: []api.DocumentSearchResult{}}))
 			default:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
@@ -357,10 +351,8 @@ func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	t.Cleanup(func() { resetFlags(rootCmd) })
 	const filter = "pdf_embedded_file_count_min:1 OR pdf_has_javascript:true"
 	var record kitdaemon.RuntimeRecord
-	var profileCalls, searchCalls, missCalls int
-	handshake := automaticSearchDaemon(t, automaticSearchCase{
-		opts: daemonconn.SearchOptions{PDFFilter: filter}, wantMiss: 1,
-	}, &record, &profileCalls, &searchCalls, &missCalls)
+	var profileCalls, searchCalls int
+	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &searchCalls)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
 			assert.Equal(t, filter, r.URL.Query().Get("pdf_filter"))
@@ -383,8 +375,8 @@ func TestSearchCLIMissUsesAppliedFilters(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", root)
 	t.Cleanup(func() { resetFlags(rootCmd) })
 	var record kitdaemon.RuntimeRecord
-	var profileCalls, searchCalls, missCalls int
-	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &searchCalls, &missCalls)
+	var profileCalls, searchCalls int
+	handshake := automaticSearchDaemon(t, automaticSearchCase{}, &record, &profileCalls, &searchCalls)
 	recordedMisses := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {

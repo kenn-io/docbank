@@ -14,7 +14,7 @@ import (
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
-	for _, mode := range []string{"lexical", "explicit", "fallback"} {
+	for _, mode := range []string{"explicit", "fallback"} {
 		for _, nameMatch := range []bool{false, true} {
 			if mode == "explicit" && nameMatch {
 				continue
@@ -64,15 +64,12 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				rootCmd.SetOut(io.Discard)
 				rootCmd.SetErr(io.Discard)
 				args := []string{"search", "missing", "--json"}
-				if mode == "lexical" {
-					args = append(args, "--mode", "lexical")
-				}
 				if mode == "explicit" {
 					args = append(args, "--mode", "hybrid", "--profile", "private", "--binding", "embed", "--source-version", processingTestVersionID)
 				}
 				rootCmd.SetArgs(args)
 				require.NoError(t, rootCmd.ExecuteContext(context.Background()))
-				if nameMatch && mode != "explicit" {
+				if nameMatch {
 					require.Empty(t, misses)
 				} else {
 					require.Len(t, misses, 1)

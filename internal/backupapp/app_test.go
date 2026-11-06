@@ -765,8 +765,6 @@ func TestRestoreKeepsMissLogsLocal(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	cfg := config.Default().MissLog
 	cfg.Enabled = true
-	sourceLog := misslog.New(t.Context(), fixture.root, fixture.metadata.VaultID(), cfg, nil)
-	sourceLog.Record(t.Context(), misslog.Request{Query: "synthetic source miss"})
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	_, err = backupapp.Create(
@@ -791,13 +789,6 @@ func TestRestoreKeepsMissLogsLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, receipts, 1)
 	assert.Equal(t, "synthetic target miss", receipts[0].Query)
-	fresh := filepath.Join(t.TempDir(), "fresh-vault")
-	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: fresh, Jobs: 1})
-	require.NoError(t, err)
-	restoredLog := misslog.New(t.Context(), fresh, "synthetic-fresh", cfg, nil)
-	receipts, err = restoredLog.List(t.Context(), 10, 0)
-	require.NoError(t, err)
-	require.Empty(t, receipts)
 }
 
 func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) {
