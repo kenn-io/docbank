@@ -812,6 +812,62 @@ it("reports a submitted frozen run that finds nothing or fails", async () => {
   expect(failure).toHaveBeenCalledOnce();
 });
 
+it("treats a blank Advanced search without active filters as browsing", async () => {
+  const query: Query = {
+    ...initialQuery,
+    text: "",
+    syntax: "simple",
+    filters: {},
+    sort: { field: "name", direction: "asc" },
+  };
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const root = { id: 1000, name: "", kind: "dir", path: "/", revision: 1, size: 0 };
+  const empty = snapshot(query, [], {}, 0);
+  const receipts: unknown[] = [];
+  let runs = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return Response.json(root);
+    if (url.startsWith("/api/v1/nodes/1000/children"))
+      return Response.json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/saved-queries?"))
+      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse")
+      return Response.json({ query, query_fingerprint: empty.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/queries/highlights")
+      return Response.json({
+        query_fingerprint: empty.query_fingerprint,
+        dependencies: [],
+        terms: [],
+      });
+    if (url === "/api/v1/workspace/queries") {
+      runs++;
+      return Response.json(empty);
+    }
+    if (url === "/api/v1/miss-log" && init?.method === "POST") {
+      receipts.push(JSON.parse(String(init.body)));
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Advanced" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Search" })).toBeNull());
+
+  expect(runs).toBe(1);
+  expect(receipts).toEqual([]);
+});
+
 it("keeps each frozen run's empty outcome after a newer run supersedes it", async () => {
   const { SnapshotWorkspace } = await import("./snapshotWorkspace.svelte.js");
   const workspace = new SnapshotWorkspace(() => "synthetic", vi.fn(), vi.fn());
