@@ -3350,52 +3350,55 @@ func TestSearchPageLeadingContentMatchesGrouped(t *testing.T) {
 				}
 				require.NoError(t, err)
 			}
-			for _, opts := range []SearchOptions{{}, {MIMEType: "text/plain"}} {
-				nameFilter, filter, filterArgs := searchCandidateFiltersSQL(opts)
-				names, err := nameSearchCandidates(ftsQuery("mercury"))
-				require.NoError(t, err)
-				nameArgs := names.Args
-				nameArgs = append(nameArgs, filterArgs...)
-				rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL, nameFilter), append(nameArgs, 1000)...)
-				require.NoError(t, err)
-				grouped, err := scanSearchRows(rows, SearchMatchName, "mercury")
-				require.NoError(t, err)
-				require.Len(t, grouped, 1)
-				require.Equal(t, "mercury.txt", grouped[0].Node.Name)
-				require.NoError(t, s.withLexicalGenerationRead(ctx, func(queryer metadataQuerier, generation LexicalGeneration) error {
-					cte, from, rank, args := contentSearchMatches(ftsQuery("mercury"), generation.ID, nil)
-					rows, err := queryer.QueryContext(ctx, `WITH `+cte+` SELECT `+nodeCols+` FROM `+from+` WHERE n.trashed_at IS NULL `+filter+` ORDER BY `+rank+`,n.name,n.id`, append(args, filterArgs...)...)
-					if err != nil {
-						return err
-					}
-					content, err := scanSearchRows(rows, SearchMatchContent, "mercury")
-					if err != nil {
-						return err
-					}
-					for _, hit := range content {
-						if hit.Node.ID != grouped[0].Node.ID {
-							grouped = append(grouped, hit)
-						}
-					}
-					return nil
-				}))
-				require.NoError(t, s.addSearchPaths(ctx, grouped))
-				for _, limit := range []int{1, 2, 5, len(grouped) - 1, len(grouped), 1000} {
-					hits, truncated, err := s.SearchPageWithOptions(ctx, "mercury", limit, opts)
-					require.NoError(t, err)
-					require.Equal(t, grouped[:min(limit, len(grouped))], hits, "limit %d, opts %+v", limit, opts)
-					require.Equal(t, limit < len(grouped), truncated)
+			names, err := nameSearchCandidates(ftsQuery("mercury"))
+			require.NoError(t, err)
+			rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL, ""), append(names.Args, 1000)...)
+			require.NoError(t, err)
+			grouped, err := scanSearchRows(rows, SearchMatchName, "mercury")
+			require.NoError(t, err)
+			require.Len(t, grouped, 1)
+			require.Equal(t, "mercury.txt", grouped[0].Node.Name)
+			require.NoError(t, s.withLexicalGenerationRead(ctx, func(queryer metadataQuerier, generation LexicalGeneration) error {
+				cte, from, rank, args := contentSearchMatches(ftsQuery("mercury"), generation.ID, nil)
+				rows, err := queryer.QueryContext(ctx, `WITH `+cte+` SELECT `+nodeCols+` FROM `+from+` WHERE n.trashed_at IS NULL ORDER BY `+rank+`,n.name,n.id`, args...)
+				if err != nil {
+					return err
 				}
-				var ids []int64
-				for _, hit := range grouped {
-					ids = append(ids, hit.Node.ID)
+				content, err := scanSearchRows(rows, SearchMatchContent, "mercury")
+				if err != nil {
+					return err
 				}
-				expected := []int64{eligible[6], eligible[7], eligible[3], eligible[4], eligible[5], eligible[2], eligible[1], eligible[0]}
-				if opts.MIMEType == "" {
-					expected = append(expected, eligible[8])
+				for _, hit := range content {
+					if hit.Node.ID != grouped[0].Node.ID {
+						grouped = append(grouped, hit)
+					}
 				}
-				require.Equal(t, expected, ids)
+				return nil
+			}))
+			require.NoError(t, s.addSearchPaths(ctx, grouped))
+			for _, limit := range []int{1, 2, 5, len(grouped) - 1, len(grouped), 1000} {
+				hits, truncated, err := s.SearchPage(ctx, "mercury", limit)
+				require.NoError(t, err)
+				require.Equal(t, grouped[:min(limit, len(grouped))], hits, "limit %d", limit)
+				require.Equal(t, limit < len(grouped), truncated)
 			}
+			var ids []int64
+			for _, hit := range grouped {
+				ids = append(ids, hit.Node.ID)
+			}
+			expected := []int64{eligible[6], eligible[7], eligible[3], eligible[4], eligible[5], eligible[2], eligible[1], eligible[0], eligible[8]}
+			require.Equal(t, expected, ids)
+
+			// The filtered page must exclude name/content overlap and still
+			// detect the eighth matching file beyond the seven-hit page.
+			hits, truncated, err := s.SearchPageWithOptions(ctx, "mercury", 7, SearchOptions{MIMEType: "text/plain"})
+			require.NoError(t, err)
+			ids = ids[:0]
+			for _, hit := range hits {
+				ids = append(ids, hit.Node.ID)
+			}
+			require.Equal(t, expected[:7], ids)
+			require.True(t, truncated)
 		})
 	}
 }

@@ -2484,22 +2484,45 @@ func (s *Store) SearchPageWithOptions(
 	}
 	remaining := limit - len(nameHits)
 	var contentHits []SearchHit
+	queryContent := func(queryer metadataQuerier, generationID string) error {
+		if filterSQL == "" {
+			contentHits, err = leadingContentHits(ctx, queryer, fq, generationID, seen, remaining+1)
+			return err
+		}
+		// Over-fetch by the name set so overlap cannot conceal truncation.
+		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
+		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
+		contentArgs = append(contentArgs, filterArgs...)
+		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
+		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
+		if err != nil {
+			return fmt.Errorf("searching extracted content for %q: %w", query, err)
+		}
+		contentHits, err = scanSearchRows(rows, SearchMatchContent, query)
+		return err
+	}
 	err = s.withLexicalGenerationRead(ctx, func(
 		queryer metadataQuerier, generation LexicalGeneration,
 	) error {
-		contentHits, err = leadingContentHits(ctx, queryer, fq, generation.ID, filterSQL, filterArgs, seen, remaining+1)
-		return err
+		return queryContent(queryer, generation.ID)
 	})
 	if err != nil {
 		return nil, false, err
 	}
-	truncated := len(contentHits) > remaining
-	if truncated {
-		contentHits = contentHits[:remaining]
+	filtered := contentHits[:0]
+	for _, hit := range contentHits {
+		if _, exists := seen[hit.Node.ID]; exists {
+			continue
+		}
+		filtered = append(filtered, hit)
 	}
-	hits := make([]SearchHit, 0, len(nameHits)+len(contentHits))
+	truncated := len(filtered) > remaining
+	if truncated {
+		filtered = filtered[:remaining]
+	}
+	hits := make([]SearchHit, 0, len(nameHits)+len(filtered))
 	hits = append(hits, nameHits...)
-	hits = append(hits, contentHits...)
+	hits = append(hits, filtered...)
 	if err := s.addSearchPaths(ctx, hits); err != nil {
 		return nil, false, err
 	}
@@ -2944,7 +2967,7 @@ func (h *contentHitHeap) Pop() any {
 	return x
 }
 
-func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, generation, filterSQL string, filterArgs []any, seen map[int64]struct{}, n int) ([]SearchHit, error) {
+func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, generation string, seen map[int64]struct{}, n int) ([]SearchHit, error) {
 	from, where, args := contentSearchSource(match, generation, nil, "CROSS JOIN")
 	rank, version := `rendition_lexical_fts.rank`, `a.content_version_id`
 	if generation == "" {
@@ -2957,8 +2980,7 @@ func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, gen
 	if generation == "" {
 		from += ` CROSS JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
 	}
-	args = append(args, filterArgs...)
-	rows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL `+filterSQL+` ORDER BY `+rank, args...)
+	rows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL ORDER BY `+rank, args...)
 	if err != nil {
 		return nil, fmt.Errorf("streaming content hits: %w", err)
 	}
