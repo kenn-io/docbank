@@ -323,7 +323,7 @@ func TestSupersessionMetadataRejectsInvalidDeclarations(t *testing.T) {
 		wantMessage  string
 	}{
 		{"directory endpoint", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":"","recorded_at":%q}`, n.ID, source.RootID(), nowRFC3339()), ErrInvalidSupersession, ""},
-		{"long note", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":%q,"recorded_at":%q}`, n.ID, other.ID, strings.Repeat("x", 1025), nowRFC3339()), ErrInvalidSupersession, ""},
+		{"long note", fmt.Sprintf(`{"type":"node_supersession","successor_node_id":%d,"predecessor_node_id":%d,"note":%q,"recorded_at":%q}`, next.ID, n.ID, strings.Repeat("x", 1025), nowRFC3339()), ErrInvalidSupersession, "invalid supersession note"},
 		{"directory window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2025-01-01","effective_to":null}`, source.RootID()), ErrInvalidSupersession, ""},
 		{"calendar date", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":"2026-02-30","effective_to":null}`, n.ID), nil, "invalid calendar date"},
 		{"empty window", fmt.Sprintf(`{"type":"node_effective_window","node_id":%d,"effective_from":null,"effective_to":null}`, n.ID), ErrInvalidSupersession, ""},
