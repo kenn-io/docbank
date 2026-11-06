@@ -119,6 +119,7 @@ func TestSearchDocumentsRealProviderSelection(t *testing.T) {
 
 type searchQueryCounter struct {
 	document.EmbeddingProvider
+
 	queries atomic.Int64
 }
 
