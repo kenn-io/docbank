@@ -1889,7 +1889,7 @@ end has passed, otherwise `current`. An undated successor applies after the pred
 has ended still marks its predecessor superseded once its start applies, unless
 the predecessor is itself not yet effective.
 
-Declaring links requires distinct live file endpoints; removing them also accepts trashed files. Notes may contain at most 1024
+Declaring links requires distinct live file endpoints. Setting windows also requires a live file. Removing links and clearing windows accept trashed files. Notes may contain at most 1024
 UTF-8 bytes. Each node may have at most 16 direct predecessors and successors;
 cycles are rejected. Graph validation visits
 at most 4096 nodes and fails explicitly on overflow. Invalid

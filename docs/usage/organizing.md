@@ -195,7 +195,7 @@ docbank document validity /leases/lease-2024.pdf --as-of 2025-06-01
 
 Dates are inclusive calendar dates. An undated successor takes effect after the predecessor's own end date, or at every inspection date if that end is open. Validity reports that uncertainty. Use `supersede --remove`
 to remove a link. Omit `--note` to keep an existing note; pass `--note ""` to
-clear it. Select either trashed endpoint by `id:<positive-decimal>` when removing a link; paths resolve only live nodes. Use `effective --clear` to clear a window. These declarations do
+clear it. Use `effective --clear` to clear a window. Select trashed files by `id:<positive-decimal>` when removing a link or clearing a window; paths resolve only live nodes. These declarations do
 not change document content or search order.
 Links are retained when a successor is trashed and take effect again on restore.
 Audited vaults reject declaration changes until replayable audit support exists.

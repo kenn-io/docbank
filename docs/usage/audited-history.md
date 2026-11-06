@@ -40,6 +40,8 @@ limits.
 
 ## Review before enabling
 
+Remove replacement links and clear effective windows before enabling audit. Both operations accept trashed files by ID. See [Document validity](organizing.md#document-validity).
+
 First preview the scope. This command does not change the vault:
 
 ```bash
