@@ -58,10 +58,13 @@ func TestEmptySearchHints(t *testing.T) {
 				base.profiles = []api.ProcessingProfileSummary{{Name: "alpha", EmbeddingBindings: []string{"a"}, QueryEmbeddingBindings: []string{"a"}}}
 				base.wantSearch = 1
 			}
+			if !tc.nonempty && !tc.folder {
+				base.wantMiss = 1
+			}
 			var record kitdaemon.RuntimeRecord
-			var profileCalls, searchCalls, coverageCalls int
+			var profileCalls, searchCalls, coverageCalls, missCalls int
 			var lexicalFilters url.Values
-			fallback := automaticSearchDaemon(t, base, &record, &profileCalls, &searchCalls)
+			fallback := automaticSearchDaemon(t, base, &record, &profileCalls, &searchCalls, &missCalls)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
