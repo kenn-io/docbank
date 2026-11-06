@@ -1,11 +1,5 @@
 import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
-import {
-  croppedReviewPDF,
-  expectReaderPage,
-  setReviewDrawing,
-  turnReviewPage,
-  waitForReaderIdle,
-} from "./redaction-review-fixture.js";
+import { croppedReviewPDF } from "./redaction-review-fixture.js";
 import { expect, test, type Route, type Locator } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,7 +9,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { RedactionPreview } from "../src/generated/docbank.js";
-import type { PluginRegistry, DocumentManagerPlugin } from "@embedpdf/svelte-pdf-viewer";
+import type {
+  PluginRegistry,
+  ViewportPlugin,
+  ScrollPlugin,
+  DocumentManagerPlugin,
+} from "@embedpdf/svelte-pdf-viewer";
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captures = process.env.DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR;
@@ -155,7 +154,32 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     });
     const session = await open("two-pages.pdf", false, true);
     const drawer = page.getByRole("dialog", { name: "Redact two-pages.pdf", exact: true });
-    await expectReaderPage(drawer, 2);
+    const originalPage = async (n: number, target: Locator = drawer) => {
+      const field = target.getByRole("textbox", { name: "", exact: true });
+      // The reader rewrites this box whenever its current page changes, even
+      // between the fill and Enter. Retype until the page sticks.
+      await expect(async () => {
+        const page = await target.locator("embedpdf-container").evaluate(async (host) => {
+          const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+            .registry;
+          return registry.getPlugin<ScrollPlugin>("scroll")!.provides().getCurrentPage();
+        });
+        if ((await field.inputValue()) !== String(n) || page !== n) {
+          await field.fill(String(n));
+          await field.press("Enter");
+        }
+        await scrollIdle(target, n);
+        await expect(field).toHaveValue(String(n), { timeout: 1000 });
+        await expect(
+          target.getByRole("switch", { name: "Draw rectangle", exact: true }),
+        ).toBeEnabled({ timeout: 5000 });
+      }).toPass({ timeout: 60000 });
+    };
+    await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled({
+      timeout: 60000,
+    });
+    await scrollIdle(drawer, 2);
+    await expect(drawer.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled({
       timeout: 60000,
     });
@@ -169,7 +193,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(
       reader.locator('[data-review-page="2"]').locator("..").locator("img").first(),
     ).toBeInViewport({ ratio: 0.5 });
-    await expectReaderPage(reader, 2);
+    await expect(reader.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await expect(reader.getByRole("button", { name: "Redact PDF", exact: true })).toBeFocused();
     await page.screenshot({
       path: path.join(captures!, "reader-return-page-two.png"),
@@ -194,13 +218,18 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       }).toPass({ timeout: 10000 });
     };
     await reader.getByRole("button", { name: "Redact PDF", exact: true }).click();
-    await turnReviewPage(drawer, 1);
+    await originalPage(1);
     // Page navigation reports its target before the viewport finishes moving.
     await expectFitPage();
     await page.setViewportSize({ width: 640, height: 400 });
     await expect(
       drawer.getByRole("button", { name: "Preview redaction", exact: true }),
     ).toBeInViewport();
+    const setReviewDrawing = async (toggle: Locator, checked: boolean) => {
+      await expect(async () => {
+        await toggle.setChecked(checked);
+      }).toPass({ timeout: 15000 });
+    };
     const shortDraw = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
     await expect(shortDraw).toBeEnabled();
     await setReviewDrawing(shortDraw, true);
@@ -247,6 +276,30 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await zoom.press("Enter");
       }, target);
     };
+    async function scrollIdle(target: Locator = drawer, page?: number) {
+      // Page readiness can precede navigation and replacement tiles.
+      await target.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      // A clamped page turn can leave the reader's navigation flag set.
+      // Wait for actual viewport activity to finish.
+      await expect
+        .poll(() =>
+          target.locator("embedpdf-container").evaluate(async (host, page) => {
+            const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+              .registry;
+            const scroll = registry.getPlugin<ScrollPlugin>("scroll")!.provides();
+            return (
+              (page !== undefined && scroll.getCurrentPage() !== page) ||
+              registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling()
+            );
+          }, page),
+        )
+        .toBe(false);
+    }
     const scrollPage = async (layer: Locator, x = 0, y = 0, target: Locator = drawer) => {
       const before = await layer.evaluate(
         async (element, { x, y }) => {
@@ -273,7 +326,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       );
       // Scrolling may reuse existing tiles. Wait for the viewer to settle,
       // rather than requiring an image decode that might never be needed.
-      await waitForReaderIdle(target);
+      await scrollIdle(target);
       await expect(
         target.getByRole("switch", { name: "Draw rectangle", exact: true }),
       ).toBeEnabled();
@@ -339,7 +392,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     ].entries()) {
       await page.keyboard.press(key);
       // Finishing a prior scroll cannot cancel a draft on a stationary page.
-      if (index === 4) await waitForReaderIdle(drawer);
+      if (index === 4) await scrollIdle();
     }
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     await expect(cursorStatus).toHaveText("Page 1, cursor 0.40, 0.40 inches.");
@@ -535,7 +588,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(drawToggle).toBeChecked();
     await drawer.getByRole("button", { name: "Next Page", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expectReaderPage(drawer, 2);
+    await scrollIdle(drawer, 2);
+    await expect(drawer.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await expect(drawToggle).toBeEnabled({ timeout: 60000 });
     await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Shift+ArrowRight");
@@ -543,7 +597,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(cursorStatus).toHaveText("Page 2, cursor 0.10, 0.01 inches.");
     await drawer.getByRole("button", { name: "Mask whole page 2", exact: true }).click();
     await expect(drawer.getByText("Whole page 2", { exact: true })).toBeVisible();
-    await turnReviewPage(drawer, 1);
+    await originalPage(1);
     expect(originalLoads).toBe(1);
     expect(page.workers()).toEqual(readerWorkers);
     await expect(async () => {
@@ -677,7 +731,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       ),
     ).toBe(204);
     await drawer.getByRole("button", { name: "Redacted", exact: true }).click();
-    await expectReaderPage(drawer, 2);
+    await scrollIdle(drawer, 2);
+    await expect(drawer.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
     await expect(drawToggle).toBeEnabled({ timeout: 60000 });
     await expect(drawer.locator('[data-review-page="2"]')).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
@@ -758,7 +813,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     // Reload retires only the preview. The same session can keep working.
     await page.reload({ waitUntil: "domcontentloaded" });
     await open("two-pages.pdf", true);
-    await turnReviewPage(drawer, 1);
+    await originalPage(1);
     await drawer.getByRole("button", { name: "Mask whole page 1", exact: true }).click();
     const startedRender = page.waitForRequest(
       (r) => new URL(r.url()).pathname === "/api/v1/redaction/previews" && r.method() === "POST",
@@ -767,7 +822,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await startedRender;
     await page.reload({ waitUntil: "domcontentloaded" });
     await open("two-pages.pdf", true);
-    await turnReviewPage(drawer, 1);
+    await originalPage(1);
     await drawer.getByRole("button", { name: "Mask whole page 1", exact: true }).click();
     const last = page.waitForResponse(
       (r) =>
@@ -787,7 +842,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await run("tag", "assign", "review-pending", "/cropped.pdf");
     });
     const cropped = page.getByRole("dialog", { name: "Redact cropped.pdf", exact: true });
-    await turnReviewPage(cropped, 1);
+    await originalPage(1, cropped);
     await cropped.getByRole("button", { name: "Back to reading", exact: true }).click();
     const croppedReader = page.getByRole("dialog", { name: "Read cropped.pdf", exact: true });
     const originalDownload = page.waitForEvent("download");
@@ -803,7 +858,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       [3500, 9500, 6500, 17000],
     ];
     for (let i = 0; i < 4; i++) {
-      await turnReviewPage(cropped, i + 1);
+      await originalPage(i + 1, cropped);
       await setZoom(i % 2 ? "200" : "100", cropped);
       if (i === 3) {
         await cropped.getByRole("button", { name: "Page Settings", exact: true }).click();
@@ -844,7 +899,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await page.mouse.up();
       await expect(cropped.getByRole("button", { name: "Remove", exact: true })).toHaveCount(i + 1);
     }
-    await turnReviewPage(cropped, 4);
+    await originalPage(4, cropped);
     const cropResolve = page.waitForRequest(
       (r) => new URL(r.url()).pathname === "/api/v1/redaction/resolve" && r.method() === "POST",
     );
@@ -928,7 +983,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await run("add", path.join(scratch, "quantized.pdf"), "--dest", "/", "--json");
     await open("quantized.pdf");
     const quantized = page.getByRole("dialog", { name: "Redact quantized.pdf", exact: true });
-    await turnReviewPage(quantized, 1);
+    await originalPage(1, quantized);
     await checkReaderBoxes(quantized, geometry[0]!);
     await quantized.getByRole("button", { name: "Close", exact: true }).click();
     await expect(quantized).toBeHidden();
@@ -938,7 +993,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await run("add", path.join(scratch, "fractional.pdf"), "--dest", "/", "--json");
     await open("fractional.pdf");
     const fractional = page.getByRole("dialog", { name: "Redact fractional.pdf", exact: true });
-    await turnReviewPage(fractional, 1);
+    await originalPage(1, fractional);
     await checkReaderBoxes(fractional, geometry[1]!);
     await fractional.screenshot({
       path: path.join(captures!, "redaction-fractional-crop.png"),
@@ -974,7 +1029,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await page.mouse.up();
     await expect(fractional.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
     for (let n = 1; n <= 4; n++) {
-      await turnReviewPage(fractional, n);
+      await originalPage(n, fractional);
       if (n === 4) {
         await expect(
           fractional.getByRole("button", { name: "Page 4 · whole page", exact: true }),

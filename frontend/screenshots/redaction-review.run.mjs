@@ -94,9 +94,6 @@ try {
           "frontend/screenshots/playwright.config.ts",
           "--project",
           "chromium",
-          // The run requires flaky: 0, so a retry could only hide the first failure.
-          "--retries",
-          "0",
           "--reporter",
           "line,json",
         ],

@@ -1,5 +1,4 @@
 import { test, expect, type Locator } from "@playwright/test";
-import { turnReviewPage } from "./redaction-review-fixture.js";
 import type { RedactionMask, RedactionPreparation } from "../src/generated/docbank.js";
 import type {
   PluginRegistry,
@@ -509,8 +508,27 @@ test("masks selected PDF text using native spans and verified delivery", async (
           await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
         }
         for (const n of [2, 3, 4]) {
-          await turnReviewPage(drawer, n);
+          const field = drawer.getByRole("textbox", { name: "", exact: true });
+          await field.fill(String(n));
+          await field.press("Enter");
           await expect(drawer.locator(`[data-review-page="${n}"]`)).toBeInViewport();
+          await page.evaluate(
+            () =>
+              new Promise<void>((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+              ),
+          );
+          await expect
+            .poll(() =>
+              host.evaluate(async (el) =>
+                (await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry)
+                  .getPlugin<ViewportPlugin>("viewport")!
+                  .provides()
+                  .isScrolling(),
+              ),
+            )
+            .toBe(false);
+          await expect(draw).toBeEnabled();
           await select(n, 11, 24);
           await expect(add).toBeEnabled();
           await add.click();
@@ -630,8 +648,30 @@ test("masks selected PDF text using native spans and verified delivery", async (
       const draw = drawer.getByRole("switch", { name: "Draw rectangle", exact: true }),
         add = drawer.getByRole("button", { name: "Mask selected text", exact: true });
       for (const [index, entry] of cases.entries()) {
-        await turnReviewPage(drawer, index + 1);
+        if (index) {
+          const field = drawer.getByRole("textbox", { name: "", exact: true });
+          await field.fill(String(index + 1));
+          await field.press("Enter");
+        }
+        // Page readiness alone does not mean navigation and tiling have settled.
         await expect(drawer.locator(`[data-review-page="${index + 1}"]`)).toBeInViewport();
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+            ),
+        );
+        await expect
+          .poll(() =>
+            host.evaluate(async (el) =>
+              (await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry)
+                .getPlugin<ViewportPlugin>("viewport")!
+                .provides()
+                .isScrolling(),
+            ),
+          )
+          .toBe(false);
+        await expect(draw).toBeEnabled({ timeout: 60000 });
         await host.evaluate(
           async (el, { index, target }) => {
             const r = await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry,

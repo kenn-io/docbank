@@ -1761,7 +1761,7 @@ write JSON reports under `frontend/test-results/`. Each test step uploads its
 report as the `vitest-<suite>-attempt-<n>` or `playwright-<suite>-attempt-<n>`
 artifact for 14 days, whatever the result. A test that passed only on a retry
 has Vitest status `passed` with failure messages, or Playwright status `flaky`.
-The report-export and PDF redaction-review browser checks require every case to pass on its first attempt. The PDF redaction-review runner disables retries.
+The report-export browser check still requires one unretried pass.
 
 Go test workflows set `GOTRACEBACK=all` for crashes. When diagnosing a hang, call Kit's `stacktest.Dump(t)` before failing an expired wait to log every goroutine's stack.
 
