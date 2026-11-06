@@ -39,6 +39,8 @@ func TestSearchDocumentsRealProviderSelection(t *testing.T) {
 				}
 				require.NoError(t, err)
 			}
+			answer := exportCall(t, daemon, "answer_question", map[string]any{"question": "refund"})
+			answerProfile := schemaMap(t, schemaMap(t, answer["receipt"])["profile"])["name"]
 			for _, mode := range []string{"", "auto"} {
 				args := map[string]any{"query": "refund", "filters": map[string]any{}}
 				if mode != "" {
@@ -46,6 +48,7 @@ func TestSearchDocumentsRealProviderSelection(t *testing.T) {
 				}
 				output := exportCall(t, daemon, "search_documents", args)
 				require.Equal(t, "z-healthy", output["profile"])
+				require.Equal(t, answerProfile, output["profile"])
 				requested := mode
 				if requested == "" {
 					requested = "auto"
@@ -96,6 +99,7 @@ func TestSearchDocumentsValidatesBeforeSemanticGuidance(t *testing.T) {
 		}{
 			{profile: "export", mode: "semantic", code: "semantic_unavailable"},
 			{profile: "supplied-captions", binding: "missing", mode: "lexical", code: "not_found"},
+			{profile: "images", binding: "missing", mode: "hybrid", code: "not_found"},
 			{profile: "images", binding: "missing", mode: "semantic", code: "not_found"},
 			{profile: "images", binding: "query", mode: "hybrid"},
 			{profile: "images", binding: "query", mode: "semantic", code: "semantic_unavailable"},

@@ -134,6 +134,7 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 			missing                    bool
 		}{
 			{name: "missing version before unknown profile", mode: "hybrid", selected: "default", code: "not_found", missing: true},
+			{name: "unknown", mode: "hybrid", selected: "default", code: "processing_profile_unavailable"},
 			{name: "semantic", mode: "semantic", selected: profile, code: "semantic_unavailable"},
 		} {
 			t.Run(fmt.Sprintf("embedded=%t/%s", embedded, tc.name), func(t *testing.T) {
