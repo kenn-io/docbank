@@ -52,7 +52,7 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	require.NotEmpty(t, receipt.ID)
 	require.Equal(t, "hybrid", receipt.RequestedMode)
 	require.Equal(t, "lexical", receipt.ActualMode)
-	require.Equal(t, map[string]any{"syntax": "literal", "filters": map[string]any{"tag_ids": []any{"synthetic-tag"}}}, receipt.Filters)
+	require.Equal(t, map[string]any{"syntax": "literal", "filters": map[string]any{"tag_ids": []any{"synthetic-tag"}, "asset_count": float64(1), "asset_fingerprint": "sha256:fe7a0888bc42c6d69df7de8c20aaec001ee98f4d4f1f67dde09b9e8dce32aa75"}}, receipt.Filters)
 	require.Equal(t, new(0), receipt.DocumentCount)
 	require.Equal(t, "sha256:synthetic", receipt.FenceFingerprint)
 	require.True(t, receipt.Truncated)
@@ -63,12 +63,70 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	rows, err = reopened.List(t.Context(), 1, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, map[string]any{"tag_id": "taxes", "set_ids": []any{"synthetic-set"}}, rows[0].Filters)
+	require.Equal(t, map[string]any{"tag_id": "taxes", "set_ids": []any{"synthetic-set"}, "asset_count": float64(1), "asset_fingerprint": "sha256:eea79479e200c92b37513cc08e8a4f9a20891a58860e63a57982900300a82bef"}, rows[0].Filters)
 	require.NoError(t, reopened.Purge(t.Context()))
 	require.ErrorIs(t, reopened.Delete(t.Context(), receipt.ID), os.ErrNotExist)
 	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+func TestRecordingPreservesAssetScope(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		t.Run(map[bool]string{false: "flat", true: "nested"}[nested], func(t *testing.T) {
+			root := t.TempDir()
+			cfg := config.Default().MissLog
+			cfg.Enabled = true
+			svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
+			for _, ids := range [][]string{{"synthetic-b", "synthetic-a"}, {"synthetic-c", "synthetic-d"}, {"synthetic-a", "synthetic-b"}} {
+				filters := map[string]any{"asset_ids": ids, "tag_id": "synthetic-tag"}
+				if nested {
+					filters = map[string]any{"filters": filters}
+				}
+				// Clients submit both typed filters and JSON-decoded filters.
+				if ids[0] == "synthetic-a" {
+					filters = ReceiptScope(filters)
+				}
+				svc.Record(t.Context(), Request{Filters: filters})
+			}
+			rows, err := New(t.Context(), root, "synthetic-vault", cfg, nil).List(t.Context(), 10, 0)
+			require.NoError(t, err)
+			require.Len(t, rows, 3)
+			scopes := make([]map[string]any, len(rows))
+			for i, row := range rows {
+				scopes[i] = row.Filters
+				if nested {
+					scopes[i] = row.Filters["filters"].(map[string]any)
+				}
+				require.NotContains(t, scopes[i], "asset_ids")
+				require.Equal(t, float64(2), scopes[i]["asset_count"])
+			}
+			require.Equal(t, "sha256:f97ef24088afcccfd22da4774be2c496a25e2f81f41b762c64e1c7986e79101b", scopes[0]["asset_fingerprint"])
+			require.Equal(t, scopes[0], scopes[2], "reordering the same selection preserves its identity")
+			require.NotEqual(t, scopes[0], scopes[1], "different selections retain different identities")
+		})
+	}
+}
+
+func TestRecordingSkipsEmptyStoredScope(t *testing.T) {
+	for name, filters := range map[string]map[string]any{
+		"empty list":     {"asset_ids": []string{}},
+		"null list":      {"asset_ids": nil},
+		"invalid list":   {"asset_ids": "synthetic-asset"},
+		"nested empty":   {"filters": map[string]any{"asset_ids": []any{}}},
+		"nested invalid": {"filters": map[string]any{"asset_ids": []any{42}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := config.Default().MissLog
+			cfg.Enabled = true
+			svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
+			svc.Record(t.Context(), Request{Query: " \n\t", Filters: filters})
+			rows, err := New(t.Context(), root, "synthetic-vault", cfg, nil).List(t.Context(), 10, 0)
+			require.NoError(t, err)
+			require.Empty(t, rows)
+		})
+	}
 }
 
 func TestRecordingSanitizesDirectoryFailures(t *testing.T) {

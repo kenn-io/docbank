@@ -5,6 +5,8 @@ package misslog
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"io/fs"
@@ -91,10 +93,13 @@ func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, l
 
 // Record stores a bounded receipt. Failures leave the search usable.
 func (s *Service) Record(ctx context.Context, request Request) {
-	if s == nil || !s.config.Enabled || (strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0) {
+	if s == nil || !s.config.Enabled {
 		return
 	}
 	request.Filters = receiptFilters(request.Filters)
+	if strings.TrimSpace(request.Query) == "" && len(request.Filters) == 0 {
+		return
+	}
 	receipt := Receipt{Request: request, ID: rand.Text(), CreatedAt: time.Now().UTC(), VaultUID: s.vaultUID}
 	encoded, err := json.Marshal(receipt)
 	if err != nil || len(encoded) > 64<<10 {
@@ -124,12 +129,27 @@ func (s *Service) Record(ctx context.Context, request Request) {
 	}
 }
 
-// receiptFilters omits source lists from flat photo filters and nested QueryV1 filters.
+// receiptFilters replaces asset lists with compact identities in flat photo filters and nested QueryV1 filters.
 func receiptFilters(filters map[string]any) map[string]any {
 	filters = maps.Clone(filters)
+	if assetIDs, ok := filters["asset_ids"]; ok {
+		encoded, err := json.Marshal(assetIDs)
+		var ids []string
+		if err == nil && json.Unmarshal(encoded, &ids) == nil && len(ids) > 0 {
+			slices.Sort(ids)
+			canonical, _ := json.Marshal(ids)
+			digest := sha256.Sum256(canonical)
+			filters["asset_count"] = len(ids)
+			filters["asset_fingerprint"] = "sha256:" + hex.EncodeToString(digest[:])
+		}
+	}
 	delete(filters, "asset_ids")
 	if nested, ok := filters["filters"].(map[string]any); ok {
-		filters["filters"] = receiptFilters(nested)
+		if nested = receiptFilters(nested); len(nested) > 0 {
+			filters["filters"] = nested
+		} else {
+			delete(filters, "filters")
+		}
 	}
 	return filters
 }
