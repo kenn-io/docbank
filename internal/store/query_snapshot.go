@@ -137,19 +137,18 @@ type SnapshotProjection struct {
 }
 
 type snapshotMaterializeOptions struct {
-	DeferredMemberships *snapshotMemberships
-	PhotoRanking        *PhotoRanking
-	MaterializeFacet    func(context.Context, string) (SnapshotFacet, error)
-	MaxRows             int64
-	MaxRowBytes         int64
-	MaxSerializedBytes  int64
-	FacetMemberLimit    int64
-	BuildTimeout        time.Duration
-	FacetTimeout        time.Duration
-	Now                 func() time.Time
-	Charge              func(rows, bytes int64) error
-	Photos              bool
-	SavedQuery          *savedQuerySnapshotInput
+	PhotoRanking       *PhotoRanking
+	MaterializeFacet   func(context.Context, string) (SnapshotFacet, error)
+	MaxRows            int64
+	MaxRowBytes        int64
+	MaxSerializedBytes int64
+	FacetMemberLimit   int64
+	BuildTimeout       time.Duration
+	FacetTimeout       time.Duration
+	Now                func() time.Time
+	Charge             func(rows, bytes int64) error
+	Photos             bool
+	SavedQuery         *savedQuerySnapshotInput
 }
 
 type savedQuerySnapshotInput struct {
@@ -217,16 +216,35 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
 	options = options.withDefaults()
+	ctx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
+	defer cancel()
+	projection, memberships, err := s.materializeUnhydratedQuerySnapshot(ctx, request, options)
+	if err != nil || request.FacetsOnly {
+		return projection, err
+	}
+	hydrateSnapshotRows(projection.Rows, memberships)
+	if _, err := encodeSnapshotRows(ctx, options, &projection.SerializedBytes, projection.Rows, memberships, 0); err != nil {
+		return SnapshotProjection{}, err
+	}
+	return projection, nil
+}
+
+// materializeUnhydratedQuerySnapshot returns rows without memberships or
+// encoding; callers hydrate them from the returned creation-time memberships
+// and bound ctx by the build timeout.
+func (s *Store) materializeUnhydratedQuerySnapshot(
+	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
+) (SnapshotProjection, snapshotMemberships, error) {
+	options = options.withDefaults()
 	options.PhotoRanking = request.PhotoRanking
 	pageSize, facets := request.PageSize, request.Facets
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {
-		return SnapshotProjection{}, err
+		return SnapshotProjection{}, nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
-	defer cancel()
 
 	var projection SnapshotProjection
+	var memberships snapshotMemberships
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
 		value := request.Query
 		if options.SavedQuery != nil {
@@ -274,7 +292,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		if generation.ID != "" {
 			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
 		}
-		var memberships snapshotMemberships
 		if !request.FacetsOnly {
 			projection.QueryFingerprint, err = query.Fingerprint(projection.Query)
 			if err != nil {
@@ -299,16 +316,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				projection.PhotoRanking = &ranking
 			}
 		}
-		if !request.FacetsOnly {
-			if options.DeferredMemberships != nil {
-				*options.DeferredMemberships = memberships
-			} else {
-				hydrateSnapshotRows(projection.Rows, memberships)
-				if _, err := encodeSnapshotRows(ctx, options, &projection.SerializedBytes, projection.Rows, memberships, 0); err != nil {
-					return err
-				}
-			}
-		}
 		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, memberships, options, &projection.SerializedBytes)
 		if err != nil {
 			return err
@@ -329,9 +336,9 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		return nil
 	})
 	if err != nil {
-		return SnapshotProjection{}, err
+		return SnapshotProjection{}, nil, err
 	}
-	return projection, nil
+	return projection, memberships, nil
 }
 
 // normalizeQuerySnapshotRequest applies the default page size and validates the
@@ -546,7 +553,11 @@ func materializeSnapshotRows(
 			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &row.AssetID, &row.SortKey, &row.Flag); err != nil {
 			return nil, fmt.Errorf("scanning query snapshot row: %w", err)
 		}
-		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, 0); err != nil {
+		bytes := snapshotRowScalarBytes(row)
+		if bytes > options.MaxRowBytes {
+			return nil, fmt.Errorf("%w: row %d name, path, and media type exceed %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
+		}
+		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, bytes); err != nil {
 			return nil, err
 		}
 		projection.Rows = append(projection.Rows, row)
@@ -630,13 +641,18 @@ func encodeSnapshotRows(ctx context.Context, options snapshotMaterializeOptions,
 		if offset+i > 0 {
 			bytes++ // JSON array separator; brackets are charged before the query.
 		}
-		bytes -= memberships[rows[i].NodeID].chargedBytes
+		// The scan charged these strings already; JSON never encodes them shorter.
+		bytes -= snapshotRowScalarBytes(rows[i]) + memberships[rows[i].NodeID].chargedBytes
 		if err := chargeSnapshotMaterialization(options, used, 0, bytes); err != nil {
 			return nil, err
 		}
 		encoded[i] = raw
 	}
 	return encoded, nil
+}
+
+func snapshotRowScalarBytes(row SnapshotRow) int64 {
+	return int64(len(row.Name) + len(row.Path) + len(row.MIMEType))
 }
 
 func snapshotSortKey(row SnapshotRow, field string) (string, error) {

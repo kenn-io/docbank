@@ -589,32 +589,48 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 	}
 }
 
+type snapshotTailFixture struct {
+	store      *Store
+	now        func() time.Time
+	frozen     SnapshotProjection
+	beforeTail int64
+}
+
+// newSnapshotTailFixture freezes 51 rows, so a 50-row page leaves a one-row tail.
+func newSnapshotTailFixture(t *testing.T, request SnapshotRequest) snapshotTailFixture {
+	t.Helper()
+	s := newTestStore(t)
+	for i := range 51 {
+		name := fmt.Sprintf("%02d.txt", i)
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("tail-"+name), 1, "text/plain")
+		require.NoError(t, err)
+	}
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	frozen, err := s.materializeQuerySnapshot(t.Context(), request, snapshotMaterializeOptions{Now: now})
+	require.NoError(t, err)
+	lastRow, err := json.Marshal(frozen.Rows[50])
+	require.NoError(t, err)
+	// The scan charged the last row's strings and the read its empty tags and collections.
+	beforeTail := frozen.SerializedBytes - int64(len(lastRow)) - 1 + snapshotRowScalarBytes(frozen.Rows[50]) + 4
+	return snapshotTailFixture{store: s, now: now, frozen: frozen, beforeTail: beforeTail}
+}
+
 func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"freeze", "cancel request and waiter", "revoke"} {
 		t.Run(action, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				s := newTestStore(t)
-				for i := range 51 {
-					name := fmt.Sprintf("%02d.txt", i)
-					_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("handoff-"+name), 1, "text/plain")
-					require.NoError(t, err)
-				}
 				request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50, Facets: []string{"tags", "size"}}
-				now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
-				frozen, err := s.materializeQuerySnapshot(t.Context(), request, snapshotMaterializeOptions{Now: now})
-				require.NoError(t, err)
+				fixture := newSnapshotTailFixture(t, request)
+				s, frozen := fixture.store, fixture.frozen
 				started, release := make(chan struct{}), make(chan struct{})
 				var unblock sync.Once
-				lastRow, err := json.Marshal(frozen.Rows[50])
-				require.NoError(t, err)
-				beforeTail := frozen.SerializedBytes - int64(len(lastRow)) - 1 + 4 // Empty tags and collections are charged during the read.
 				var charged int64
 				service := newQuerySnapshotService(s, querySnapshotServiceOptions{
-					Now: now,
+					Now: fixture.now,
 					ChargeHook: func(ctx context.Context, _ string, _, bytes int64) error {
 						charged += bytes
-						if charged > beforeTail {
+						if charged > fixture.beforeTail {
 							close(started)
 							select {
 							case <-release:
@@ -728,6 +744,27 @@ func TestQuerySnapshotCacheMembershipReadRespectsByteBudget(t *testing.T) {
 	}
 }
 
+func TestQuerySnapshotCacheScanChargesScalarBytes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	const count = 128
+	for i := range count {
+		name := fmt.Sprintf("%03d-%s.txt", i, strings.Repeat("x", 20<<10))
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("scalar-%03d", i)), 1, "text/plain")
+		require.NoError(t, err)
+	}
+	var scanned int64
+	service := newQuerySnapshotService(s, querySnapshotServiceOptions{
+		Limits:     snapshotCacheLimits{MaxBytes: 64 << 10},
+		ChargeHook: func(_ context.Context, _ string, rows, _ int64) error { scanned += rows; return nil },
+	})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	_, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
+	require.ErrorIs(t, err, ErrSnapshotAdmission)
+	assert.Less(t, scanned, int64(count), "charge each row's names before retaining the next")
+	assert.Equal(t, snapshotCacheStats{}, service.stats())
+}
+
 func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 	t.Parallel()
 	for _, limit := range []struct {
@@ -738,7 +775,8 @@ func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 	}{
 		// Membership fits, but adding display fields pushes the last row over 64 KiB.
 		{"row", (64 << 10) - 128, false, ErrQuerySnapshotTooLarge},
-		{"cache", 30 << 10, true, ErrSnapshotAdmission},
+		// Cache admission may succeed later, so the failed build leaves no entry.
+		{"cache", 30 << 10, true, ErrSnapshotGone},
 	} {
 		t.Run(limit.name, func(t *testing.T) {
 			s := newTestStore(t)
@@ -779,28 +817,17 @@ func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
 func TestQuerySnapshotCacheSuccessiveSearchesReleaseBuilderSlots(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		s := newTestStore(t)
-		for i := range 51 {
-			name := fmt.Sprintf("%02d.txt", i)
-			_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("successive-"+name), 1, "text/plain")
-			require.NoError(t, err)
-		}
 		request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50}
-		now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
-		frozen, err := s.materializeQuerySnapshot(t.Context(), request, snapshotMaterializeOptions{Now: now})
-		require.NoError(t, err)
-		lastRow, err := json.Marshal(frozen.Rows[50])
-		require.NoError(t, err)
-		beforeTail := frozen.SerializedBytes - int64(len(lastRow)) - 1 + 4 // Empty tags and collections are charged during the read.
+		fixture := newSnapshotTailFixture(t, request)
 		var mu sync.Mutex
 		charges := make(map[string]int64)
 		release := make(chan struct{})
-		service := newQuerySnapshotService(s, querySnapshotServiceOptions{
-			Now: now, Limits: snapshotCacheLimits{MaxHandles: 3},
+		service := newQuerySnapshotService(fixture.store, querySnapshotServiceOptions{
+			Now: fixture.now, Limits: snapshotCacheLimits{MaxHandles: 3},
 			ChargeHook: func(ctx context.Context, owner string, _, bytes int64) error {
 				mu.Lock()
 				charges[owner] += bytes
-				block := charges[owner] > beforeTail
+				block := charges[owner] > fixture.beforeTail
 				mu.Unlock()
 				if block {
 					select {
@@ -819,7 +846,7 @@ func TestQuerySnapshotCacheSuccessiveSearchesReleaseBuilderSlots(t *testing.T) {
 			require.Len(t, first.Rows, 50)
 			synctest.Wait()
 		}
-		_, err = service.Create(t.Context(), "four", request)
+		_, err := service.Create(t.Context(), "four", request)
 		require.ErrorIs(t, err, ErrSnapshotAdmission, "background builds still reserve global handles")
 	})
 }
@@ -829,7 +856,7 @@ func TestQuerySnapshotEncodingEnforcesCumulativeByteLimit(t *testing.T) {
 	options := defaultSnapshotMaterializeOptions()
 	options.MaxSerializedBytes = 1000
 	rows := []SnapshotRow{{Name: strings.Repeat("x", 200)}, {Name: strings.Repeat("y", 200)}}
-	var used int64
+	used := snapshotRowScalarBytes(rows[0]) + snapshotRowScalarBytes(rows[1]) // Charged by the scan.
 	_, err := encodeSnapshotRows(t.Context(), options, &used, rows[:1], nil, 0)
 	require.NoError(t, err)
 	_, err = encodeSnapshotRows(t.Context(), options, &used, rows[1:], nil, 1)

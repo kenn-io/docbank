@@ -965,10 +965,12 @@ snapshot. Create another snapshot to observe them.
 Documents snapshot creation returns after freezing membership, order, totals,
 facets, and the first page. Later display rows finish from the same creation-time
 observations in memory, after the database read closes. A page or member-copy
-request waits for that build to finish within its 30-second bound. A later size
-or cache-admission failure returns the same error as creation would, on every
-subsequent page or member request. Saved runs and Photos finish all rows before
-returning.
+request waits for that build to finish. The build's 30-second limit starts at
+creation, so a request without its own deadline waits at most that long. A later
+size failure returns the same error as creation would, on every subsequent page
+or member request. A later cache-admission failure or build timeout discards the
+snapshot, so those requests return `snapshot_gone`. Saved runs and Photos finish
+all rows before returning.
 
 `snapshot_fingerprint` covers the query, dependency revisions, generation,
 coverage, ordered members including their revisions, and facets. It excludes

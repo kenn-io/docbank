@@ -229,11 +229,15 @@ func (s *QuerySnapshotService) Create(
 			s.finishBuild(prepared.build, published)
 		}()
 		err := prepared.finish()
-		if err != nil {
+		if errors.Is(err, ErrQuerySnapshotTooLarge) {
+			// A size failure would recur, so readers get it. Transient admission
+			// or deadline failures leave no entry, and readers see the snapshot gone.
 			prepared.cached = &cachedQuerySnapshot{
 				id: prepared.build.snapshotID, owner: owner, err: err,
 				created: prepared.cached.created, lastUsed: prepared.cached.created,
 			}
+		} else if err != nil {
+			return err
 		}
 		publishErr := s.publishBuild(prepared.build, prepared.cached)
 		published = publishErr == nil
@@ -415,9 +419,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		}
 		return nil
 	}
-	var memberships snapshotMemberships
-	options.DeferredMemberships = &memberships
-	projection, err := s.store.materializeNormalizedQuerySnapshot(buildCtx, normalized, options)
+	projection, memberships, err := s.store.materializeUnhydratedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
 	}
