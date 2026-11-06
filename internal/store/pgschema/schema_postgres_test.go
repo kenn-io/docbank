@@ -369,9 +369,8 @@ func TestSetupRejectsPriorDeclarationLayout(t *testing.T) {
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
 	_, err := Setup(ctx, db, cfg)
 	require.NoError(t, err)
-	// Development schema 1 predates document declarations.
-	_, err = db.ExecContext(ctx, `DROP TABLE documents.node_supersessions, documents.node_effective_windows;
-		UPDATE documents.vault_metadata SET schema_version=1 WHERE singleton=1`)
+	// Schema 1 predates declarations; pin it to catch a missing version bump.
+	_, err = db.ExecContext(ctx, `UPDATE documents.vault_metadata SET schema_version=1 WHERE singleton=1`)
 	require.NoError(t, err)
 	_, err = Setup(ctx, db, cfg)
 	require.ErrorContains(t, err, "recreate this schema")

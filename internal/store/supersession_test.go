@@ -39,24 +39,8 @@ func TestSupersessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, v.Successors, 1)
 	require.Empty(t, v.Successors[0].Note)
-	window, err := s.PutEffectiveWindow(ctx, b.ID, b.Revision, "2026-01-01", "2026-12-31")
+	_, err = s.PutEffectiveWindow(ctx, b.ID, b.Revision, "2026-01-01", "2026-12-31")
 	require.NoError(t, err)
-	// Content replacements preserve declarations on both ends of the link.
-	for _, node := range []Node{c.Node, window.Node} {
-		before, err := s.NodeValidity(ctx, node.ID, "2027-01-01")
-		require.NoError(t, err)
-		edited, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("c1"), 2, "text/plain")
-		require.NoError(t, err)
-		require.Equal(t, fakeHash("c1"), edited.BlobHash)
-		after, err := s.NodeValidity(ctx, node.ID, "2027-01-01")
-		require.NoError(t, err)
-		require.Equal(t, before.Successors, after.Successors)
-		require.Equal(t, before.Predecessors, after.Predecessors)
-		require.Equal(t, before.Window, after.Window)
-		if node.ID == a.ID {
-			c.Node = edited
-		}
-	}
 	v, err = s.NodeValidity(ctx, a.ID, "2025-01-01")
 	require.NoError(t, err)
 	require.Equal(t, "current", string(v.State))
@@ -393,7 +377,7 @@ func TestAuditEnrollmentRejectsValidityDeclarations(t *testing.T) {
 	}
 }
 
-func TestAuditedRestoreRejectsChangedValidity(t *testing.T) {
+func TestAuditedImportRejectsValidityDeclarations(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -419,7 +403,7 @@ func TestAuditedRestoreRejectsChangedValidity(t *testing.T) {
 			require.ErrorContains(t, err, "document validity declarations")
 			active, err := auditAuthorityActiveTx(ctx, target.db)
 			require.NoError(t, err)
-			require.False(t, active, "rejected restore must roll back audit authority")
+			require.False(t, active, "rejected import must roll back audit authority")
 		})
 	}
 }

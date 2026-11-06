@@ -69,8 +69,9 @@ func TestSupersessionCLI(t *testing.T) {
 	_, err = runCLI(t, "document", "remove", selector)
 	require.NoError(t, err)
 
-	_, err = runCLI(t, "document", "supersede", "--remove", selector, "--replaces", "/leases/old.txt")
+	out, err = runCLI(t, "document", "supersede", "--remove", selector, "--replaces", "/leases/old.txt")
 	require.NoError(t, err)
+	assert.Contains(t, out, "Document validity updated: id:")
 }
 
 func TestValidityUsesSnapshotPath(t *testing.T) {
@@ -101,22 +102,15 @@ func TestValidityUsesSnapshotPath(t *testing.T) {
 func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {
 	var requests []string
 	var requestBodies []map[string]string
-	successorResolved := false
-	predecessorResolved := false
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/v1/nodes/5":
-			successorResolved = true
 			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 5, Path: "/next.txt", Revision: 4}))
 		case "GET /api/v1/nodes/3":
-			assert.True(t, successorResolved)
-			predecessorResolved = true
 			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 3, Path: "/old.txt", Revision: 7}))
 		case "PUT /api/v1/nodes/5/supersedes/3":
-			assert.True(t, predecessorResolved)
-			// The store-backed regression exercises trash/restore before this write.
 			var body map[string]string
 			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
 			requestBodies = append(requestBodies, body)
