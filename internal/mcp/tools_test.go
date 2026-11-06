@@ -90,7 +90,7 @@ func TestToolCatalogBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := NewServerWithOptions(tc.options)
 			result := listCatalogThroughClient(t, server)
-			require.Equal(t, len(catalogWireJSON(t, server)), len(catalogJSON(t, result)))
+			require.Len(t, catalogJSON(t, result), len(catalogWireJSON(t, server)))
 			require.NoError(t, toolCatalogBudgetError(t, result, tc.ceiling))
 		})
 	}
@@ -113,9 +113,9 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 	register()
 	result := listCatalogThroughClient(t, server)
 	data = catalogJSON(t, result)
-	require.Equal(t, defaultToolCatalogBudget+1, len(data))
+	require.Len(t, data, defaultToolCatalogBudget+1)
 	wire := catalogWireJSON(t, server)
-	require.Equal(t, defaultToolCatalogBudget+1, len(wire))
+	require.Len(t, wire, defaultToolCatalogBudget+1)
 	err := toolCatalogBudgetError(t, result, defaultToolCatalogBudget)
 	require.ErrorContains(t, err, fmt.Sprintf("%d bytes exceeds %d-byte budget", defaultToolCatalogBudget+1, defaultToolCatalogBudget))
 	var catalog struct {
