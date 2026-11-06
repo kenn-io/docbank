@@ -2220,7 +2220,7 @@
         ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
         document_count: report.coverage.scoped_documents,
         coverage: { ...report.coverage },
-        truncated: report.truncated,
+        truncated: report.truncated || nameReport.truncated,
         degradations: report.degradations,
         ...(report.reranking ? { reranking: { ...report.reranking } } : {}),
       });

@@ -323,6 +323,43 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.submit(input.closest("form")!);
 }
 
+it.each([false, true])(
+  "records name-search truncation for an empty natural search, reranking=%s",
+  async (rerank) => {
+    const stale = node(99, "stale.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [node(2, "existing.txt", baseVersion)],
+      baseReport: report("hybrid", rerank ? [result(stale, 1, "stale excerpt")] : []),
+      rerankReport: report("hybrid", [result(stale, 1, "stale excerpt")], {
+        outcome: "applied",
+        candidate_count: 1,
+      }),
+      tagSearch: { hits: [], limit: 1000, truncated: true },
+    });
+    render(App);
+    await screen.findAllByText("existing.txt");
+    if (rerank)
+      await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+    await submitSearch("missing");
+    await waitFor(() => expect(harness.misses).toHaveLength(1));
+    expect(screen.getByText("0+ results")).toBeTruthy();
+    expect(harness.misses[0]).toMatchObject({
+      query: "missing",
+      truncated: true,
+      ...(rerank ? { reranking: { outcome: "applied" } } : {}),
+    });
+  },
+);
+
 it.each([
   [true, false],
   [true, true],
