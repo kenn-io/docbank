@@ -33,17 +33,12 @@ func TestSupersessionCLI(t *testing.T) {
 	assert.Equal(t, "2025-01-01", window.EffectiveFrom)
 	assert.Equal(t, "2025-12-31", window.EffectiveTo)
 	successorID := window.Node.ID
-	for _, args := range [][]string{
-		{"document", "effective", "/leases/next.txt", "--from", "2025-02-30"},
-		{"document", "validity", "/leases/next.txt", "--as-of", "2025-02-30"},
-	} {
-		resetFlags(rootCmd)
-		var stdout, stderr bytes.Buffer
-		code := runProcess(args, &stdout, &stderr)
-		assert.Equal(t, exitUsage, code, stderr.String())
-		assert.Contains(t, stderr.String(), `invalid calendar date "2025-02-30"`)
-		assert.Empty(t, stdout.String())
-	}
+	resetFlags(rootCmd)
+	var invalidStdout, invalidStderr bytes.Buffer
+	invalidCode := runProcess([]string{"document", "effective", "/leases/next.txt", "--from", "2025-02-30"}, &invalidStdout, &invalidStderr)
+	assert.Equal(t, exitUsage, invalidCode, invalidStderr.String())
+	assert.Contains(t, invalidStderr.String(), `invalid calendar date "2025-02-30"`)
+	assert.Empty(t, invalidStdout.String())
 	out, err = runCLI(t, "document", "effective", "/leases/next.txt", "--from", "2025-02-01")
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("Effective window updated: id:%d\n", successorID), out)

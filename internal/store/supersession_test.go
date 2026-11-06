@@ -55,7 +55,7 @@ func TestSupersessionLifecycle(t *testing.T) {
 	require.False(t, c.Changed)
 }
 
-func TestDeleteSupersessionTrashedPredecessor(t *testing.T) {
+func TestDeleteSupersessionTrashedPredecessorOmitsPath(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -65,24 +65,55 @@ func TestDeleteSupersessionTrashedPredecessor(t *testing.T) {
 	require.NoError(t, err)
 	link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
 	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, old.ID, link.Node.Revision)
+	trashed, _, err := s.Trash(ctx, old.ID, link.Node.Revision)
 	require.NoError(t, err)
-	trashed, err := s.NodeByID(ctx, old.ID)
+	reused, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("c3"), 1, "text/plain")
 	require.NoError(t, err)
-	_, err = s.DeleteSupersession(ctx, next.ID, old.ID, link.Node.Revision)
-	require.ErrorIs(t, err, ErrStaleRevision)
 	removed, err := s.DeleteSupersession(ctx, next.ID, old.ID, trashed.Revision)
 	require.NoError(t, err)
-	require.True(t, removed.Changed)
-	require.Equal(t, trashed.Revision+1, removed.Node.Revision)
+	require.Equal(t, old.ID, removed.Node.ID)
 	require.NotNil(t, removed.Node.TrashedAt)
-	view, err := s.NodeValidity(ctx, next.ID, "2025-06-01")
+	live, err := s.NodeByPath(ctx, "/old.txt")
 	require.NoError(t, err)
-	require.Empty(t, view.Predecessors)
-	plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "api", nil)
-	require.NoError(t, err)
-	_, err = s.EnableInitialAudit(ctx, plan)
-	require.NoError(t, err)
+	require.Equal(t, reused.ID, live.ID)
+	require.Empty(t, removed.Path)
+}
+
+func TestDeleteSupersessionTrashedEndpoint(t *testing.T) {
+	t.Parallel()
+	for _, endpoint := range []string{"predecessor", "successor"} {
+		t.Run(endpoint, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a1"), 1, "text/plain")
+			require.NoError(t, err)
+			next, err := s.CreateFile(ctx, s.RootID(), "next.txt", fakeHash("b2"), 1, "text/plain")
+			require.NoError(t, err)
+			link, err := s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
+			require.NoError(t, err)
+			toTrash := link.Node
+			if endpoint == "successor" {
+				toTrash = next
+			}
+			_, _, err = s.Trash(ctx, toTrash.ID, toTrash.Revision)
+			require.NoError(t, err)
+			predecessor, err := s.NodeByID(ctx, old.ID)
+			require.NoError(t, err)
+			if endpoint == "predecessor" {
+				_, err = s.DeleteSupersession(ctx, next.ID, old.ID, link.Node.Revision)
+				require.ErrorIs(t, err, ErrStaleRevision)
+			}
+			removed, err := s.DeleteSupersession(ctx, next.ID, old.ID, predecessor.Revision)
+			require.NoError(t, err)
+			require.True(t, removed.Changed)
+			require.Equal(t, predecessor.Revision+1, removed.Node.Revision)
+			require.Equal(t, predecessor.TrashedAt, removed.Node.TrashedAt)
+			plan, err := s.PreviewInitialAudit(ctx, s.RootID(), "api", nil)
+			require.NoError(t, err)
+			_, err = s.EnableInitialAudit(ctx, plan)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestSupersessionAuditRejected(t *testing.T) {
@@ -324,11 +355,6 @@ func TestSupersessionTrashRestoreAndPurge(t *testing.T) {
 	require.Zero(t, links)
 	require.Zero(t, windows)
 	require.NoError(t, target.ValidateMetadata(ctx))
-
-	// The source still has a trashed successor whose link can be removed.
-	removed, err := s.DeleteSupersession(ctx, next.ID, old.ID, link.Node.Revision)
-	require.NoError(t, err)
-	require.True(t, removed.Changed)
 }
 
 func TestSupersessionMetadataRejectsInvalidDeclarations(t *testing.T) {

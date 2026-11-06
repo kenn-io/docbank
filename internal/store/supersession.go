@@ -143,8 +143,8 @@ func (s *Store) changeSupersession(ctx context.Context, successorID, predecessor
 				return err
 			}
 		}
-		result = SupersessionChange{Node: n, Changed: changed}
-		result.Path, err = pathOf(ctx, tx, n.ID)
+		view, err := nodeViewForNode(ctx, tx, n)
+		result = SupersessionChange{Node: view.Node, Path: view.Path, Changed: changed}
 		return err
 	})
 	if err != nil {
