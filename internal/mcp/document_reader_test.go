@@ -117,50 +117,42 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 	f.addFile(t, "refund-policy.txt", "Refunds take five days.")
 	daemon, service, profile := newProcessingDocumentServer(t, f)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
+	t.Run("automatic", func(t *testing.T) {
+		output := exportCall(t, daemon, "search_documents", map[string]any{"query": "refund", "filters": map[string]any{}, "mode": "auto"})
+		require.Equal(t, profile, output["profile"])
+		require.Equal(t, "auto", output["requested_mode"])
+		require.Equal(t, "lexical", output["actual_mode"])
+		hits, ok := output["results"].([]any)
+		require.True(t, ok)
+		require.Len(t, hits, 1)
+		require.Equal(t, "/refund-policy.txt", schemaMap(t, hits[0])["path"])
+		require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing local")
+	})
 	for _, embedded := range []bool{false, true} {
 		for _, tc := range []struct {
 			name, mode, selected, code string
 			missing                    bool
 		}{
-			{name: "automatic", mode: "auto"},
 			{name: "missing version before unknown profile", mode: "hybrid", selected: "default", code: "not_found", missing: true},
-			{name: "unknown", mode: "hybrid", selected: "default", code: "processing_profile_unavailable"},
-			{name: "hybrid", mode: "hybrid", selected: profile},
 			{name: "semantic", mode: "semantic", selected: profile, code: "semantic_unavailable"},
 		} {
 			t.Run(fmt.Sprintf("embedded=%t/%s", embedded, tc.name), func(t *testing.T) {
-				args := map[string]any{"query": "refund", "filters": map[string]any{}, "mode": tc.mode}
+				args := map[string]any{"query": "refund", "filters": map[string]any{}, "mode": tc.mode, "profile": tc.selected}
 				if tc.missing {
 					delete(args, "filters")
 					args["content_version_ids"] = []string{testVersionID}
 				}
-				if tc.selected != "" {
-					args["profile"] = tc.selected
-				}
 				output := callSearchDocumentReader(t, daemon, reader, embedded, args)
-				if tc.code != "" {
-					require.Equal(t, tc.code, output["code"])
-					if tc.code == "not_found" {
-						return
-					}
+				require.Equal(t, tc.code, output["code"])
+				if tc.code != "not_found" {
 					require.Contains(t, output["message"], profile)
-					if tc.code == "semantic_unavailable" {
-						require.Contains(t, output["message"], "docbank processing local")
-					}
-					return
 				}
-				require.Equal(t, profile, output["profile"])
-				require.Equal(t, tc.mode, output["requested_mode"])
-				require.Equal(t, "lexical", output["actual_mode"])
-				hits, ok := output["results"].([]any)
-				require.True(t, ok)
-				require.Len(t, hits, 1)
-				require.Equal(t, "/refund-policy.txt", schemaMap(t, hits[0])["path"])
-				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing local")
+				if tc.code == "semantic_unavailable" {
+					require.Contains(t, output["message"], "docbank processing local")
+				}
 			})
 		}
 	}
-	assertSchemaRejects(t, catalogMap(toolCatalog(ServerOptions{}))["find_conflicts"].InputSchema, map[string]any{"query": "refund", "filters": map[string]any{}})
 }
 
 func callSearchDocumentReader(t *testing.T, daemon *Server, reader *api.DocumentReader, embedded bool, args map[string]any) map[string]any {

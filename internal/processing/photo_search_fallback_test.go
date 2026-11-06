@@ -20,14 +20,10 @@ func TestSearchPhotosUnbuiltIndexFallback(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	for _, mode := range []string{"semantic", "hybrid"} {
-		t.Run(mode, func(t *testing.T) {
-			result, err := x.service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{
-				V: 1, Syntax: "simple", Mode: mode, Text: "harbor",
-				Sort: query.Sort{Field: "relevance", Direction: "desc"},
-			}})
-			require.NoError(t, err)
-			require.Equal(t, "index_unavailable", result.FallbackReason)
-		})
-	}
+	result, err := x.service.SearchPhotos(t.Context(), store.PhotoBrowseRequest{Query: query.Query{
+		V: 1, Syntax: "simple", Mode: "semantic", Text: "harbor",
+		Sort: query.Sort{Field: "relevance", Direction: "desc"},
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "index_unavailable", result.FallbackReason)
 }

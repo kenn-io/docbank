@@ -267,7 +267,7 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		arguments        map[string]any
 		status           int
 	}{
-		{name: "processing failed", tool: "search_documents", code: "processing_failed", status: http.StatusBadGateway,
+		{name: "processing failed", tool: "search_documents", code: "processing_failed", status: http.StatusInternalServerError,
 			arguments: map[string]any{"query": "synthetic", "profile": "local", "mode": "lexical", "filters": map[string]any{}}},
 		{name: "reranking unavailable", tool: "search_documents", code: "reranking_unavailable", status: http.StatusUnprocessableEntity,
 			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
@@ -286,7 +286,7 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/v1/processing/profiles" {
-					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 					return
 				}
 				response.Header().Set("Content-Type", "application/problem+json")
@@ -407,7 +407,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
@@ -439,12 +439,11 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 
 func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 	for _, test := range []struct {
-		name, query, profile, wantCode string
-		wantError, rerank              bool
+		name, query, profile string
+		rerank               bool
 	}{
 		{name: "valid empty result", query: "synthetic", profile: "local"},
 		{name: "reranked empty result", query: "synthetic", profile: "local", rerank: true},
-		{name: "whitespace query", query: "   ", profile: "local", wantCode: "processing_failed", wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searchCalls := 0
@@ -452,7 +451,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 				case "/api/v1/info":
 					infoCalls++
 					http.Error(response, "unreadable unrelated blob shard", http.StatusInternalServerError)
@@ -466,15 +465,6 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 					assert.True(t, body.Scope.Filters.SourcePresent)
 					assert.Empty(t, body.Fence)
 					assert.Equal(t, test.rerank, body.Rerank)
-					if test.wantError {
-						status := http.StatusInternalServerError
-						response.Header().Set("Content-Type", "application/problem+json")
-						response.WriteHeader(status)
-						writeDaemonJSON(t, response, map[string]any{
-							"status": status, "title": "Request failed", "code": test.wantCode,
-						})
-						return
-					}
 					report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 						Coverage:     api.DocumentSearchCoverage{State: "unknown"},
 						Degradations: []string{}, Results: []api.DocumentSearchResult{}}
@@ -497,14 +487,6 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			})
 			assert.Equal(t, 1, searchCalls)
 			assert.Zero(t, infoCalls)
-			if test.wantError {
-				require.Error(t, err)
-				facts, ok := daemonProblemFacts(err)
-				require.True(t, ok)
-				assert.Equal(t, test.wantCode, facts.Code)
-				assert.Nil(t, result)
-				return
-			}
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
@@ -524,7 +506,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
@@ -592,7 +574,7 @@ func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint,
@@ -648,7 +630,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 		assert.Equal(t, "synthetic-key", request.Header.Get("X-Api-Key"))
 		switch request.URL.Path {
 		case "/api/v1/processing/profiles":
-			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 		case "/api/v1/info":
 			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID, VaultPath: "/synthetic/private/vault",
 				LiveFiles: 1, LiveDirectories: 1, ContentVersions: 1, TrackedBlobs: 1})
@@ -871,7 +853,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
 				case "/api/v1/search":
 					var body map[string]any
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {

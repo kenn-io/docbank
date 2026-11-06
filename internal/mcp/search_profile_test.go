@@ -41,7 +41,7 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 					resolutions++
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}, FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 				case "/api/v1/processing/profiles":
-					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "a-captions"}, {Name: "z-local-text", EmbeddingBindings: []string{"first", "second"}, QueryEmbeddingBindings: []string{"second", "first"}}})
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "a-captions", Fingerprint: strings.Repeat("a", 64)}, {Name: "z-local-text", Fingerprint: strings.Repeat("b", 64), EmbeddingBindings: []string{"first", "second"}, QueryEmbeddingBindings: []string{"second", "first"}}})
 				case "/api/v1/search":
 					var request api.DocumentSearchRequest
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
@@ -64,12 +64,12 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 					attempts = append(attempts, request.Profile+":"+request.BindingID+":"+request.Mode)
 					if request.BindingID == "first" || tc.failures && request.BindingID != "" {
 						w.Header().Set("Content-Type", "application/problem+json")
-						w.WriteHeader(http.StatusConflict)
-						code := "stale_index"
+						status, code := http.StatusConflict, "stale_index"
 						if request.BindingID == "first" {
-							code = "processing_failed"
+							status, code = http.StatusInternalServerError, "processing_failed"
 						}
-						_, _ = fmt.Fprintf(w, `{"status":409,"code":%q}`, code)
+						w.WriteHeader(status)
+						_, _ = fmt.Fprintf(w, `{"status":%d,"code":%q}`, status, code)
 						return
 					}
 					writeDaemonJSON(t, w, api.DocumentSearchReport{RequestedMode: request.Mode, ActualMode: request.Mode, Coverage: api.DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []api.DocumentSearchResult{}})
@@ -125,6 +125,7 @@ func TestSearchDocumentsBindingRequiresProfile(t *testing.T) {
 func TestSearchDocumentsAvailableProfilesFitErrorBudget(t *testing.T) {
 	profiles := make([]api.ProcessingProfileSummary, 40)
 	for i := range profiles {
+		profiles[i].Fingerprint = strings.Repeat("a", 64)
 		profiles[i].Name = fmt.Sprintf("profile-%03d-", i) + strings.Repeat("a", 115)
 	}
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
