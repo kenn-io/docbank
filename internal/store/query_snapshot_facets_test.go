@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -262,7 +263,7 @@ func TestQuerySnapshotFacetsIgnoreBuiltMembershipFields(t *testing.T) {
 			row.DisplayCollectionID, row.DisplayCollectionLabel = "", nil
 			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = "", "", ""
 		}
-		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID)
+		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID, querySnapshotMaxRowBytes)
 		require.NoError(t, err)
 		var used int64
 		facets, err := materializeSnapshotFacets(t.Context(), q, compiled, generation.ID, f.selection, dimensions, projection.Rows, memberships, snapshotMaterializeOptions{}.withDefaults(), &used)
@@ -582,6 +583,29 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
+}
+
+func TestQuerySnapshotRejectsOversizedTagBeforeReadingAllAssignments(t *testing.T) {
+	// Keep allocation measurement separate from this package's parallel tests.
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, strings.Repeat("x", 256<<10))
+	require.NoError(t, err)
+	for i := range 64 {
+		name := fmt.Sprintf("bounded-%d.txt", i)
+		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(name), 1, "text/plain")
+		require.NoError(t, err)
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
+	request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = s.MaterializeQuerySnapshot(ctx, request)
+	runtime.ReadMemStats(&after)
+	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
+	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20),
+		"reject the first oversized membership before reading all 16 MiB of tag assignments")
 }
 
 func TestCaptureDayFacetCountsFileModifiedTimeDays(t *testing.T) {

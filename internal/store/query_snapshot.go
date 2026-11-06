@@ -392,11 +392,8 @@ type snapshotMembership struct {
 type snapshotMemberships map[int64]snapshotMembership
 
 // readSnapshotMemberships shares creation-time memberships between display rows and facets.
-func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []int64, coverage CoverageSelection, generationID string) (snapshotMemberships, error) {
+func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []int64, coverage CoverageSelection, generationID string, maxRowBytes int64) (snapshotMemberships, error) {
 	members := make(snapshotMemberships, len(nodeIDs))
-	for _, id := range nodeIDs {
-		members[id] = snapshotMembership{Tags: make([]SnapshotTag, 0), CollectionIDs: make([]string, 0)}
-	}
 	if len(nodeIDs) == 0 {
 		return members, nil
 	}
@@ -405,36 +402,35 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 		return nil, fmt.Errorf("encoding snapshot member IDs: %w", err)
 	}
 	const matched = `WITH matched_members AS (SELECT value AS node_id FROM json_each(?))`
-	err = queryRows(ctx, q, matched+` SELECT nt.node_id,t.id,t.name,t.revision
-		FROM matched_members m JOIN node_tags nt ON nt.node_id=m.node_id JOIN tags t ON t.id=nt.tag_id
-		ORDER BY nt.node_id,t.id`, []any{string(ids)}, func(rows *sql.Rows) error {
-		var id int64
-		var tag SnapshotTag
-		if err := rows.Scan(&id, &tag.ID, &tag.Name, &tag.Revision); err != nil {
-			return err
-		}
-		member := members[id]
-		member.Tags = append(member.Tags, tag)
-		members[id] = member
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
 	err = queryRows(ctx, q, matched+`, `+matchedCollectionMembershipCTE+`
-		SELECT cm.node_id,cm.ingest_id,l.label FROM collection_members cm
-		LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id ORDER BY cm.node_id,cm.ingest_id`, []any{string(ids)}, func(rows *sql.Rows) error {
+		, row_collections AS (
+			SELECT node_id,json_group_array(ingest_id ORDER BY ingest_id) collection_ids,
+				MIN(ingest_id) display_collection_id
+			FROM collection_members GROUP BY node_id
+		)
+		SELECT m.node_id,
+			(SELECT json_group_array(json_object('id',id,'name',name,'revision',revision))
+				FROM (SELECT t.id,t.name,t.revision FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
+					WHERE nt.node_id=m.node_id ORDER BY t.id)),
+			COALESCE(rc.collection_ids,'[]'),l.label
+		FROM matched_members m LEFT JOIN row_collections rc ON rc.node_id=m.node_id
+		LEFT JOIN collection_labels l ON l.ingest_id=rc.display_collection_id`, []any{string(ids)}, func(rows *sql.Rows) error {
 		var id int64
-		var collection string
+		var tagsJSON, collectionsJSON []byte
 		var label sql.NullString
-		if err := rows.Scan(&id, &collection, &label); err != nil {
+		if err := rows.Scan(&id, &tagsJSON, &collectionsJSON, &label); err != nil {
 			return err
 		}
-		member := members[id]
-		if len(member.CollectionIDs) == 0 {
-			member.DisplayCollectionLabel = stringPtr(label)
+		if int64(len(tagsJSON))+int64(len(collectionsJSON)) > maxRowBytes {
+			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, id, maxRowBytes)
 		}
-		member.CollectionIDs = append(member.CollectionIDs, collection)
+		member := snapshotMembership{DisplayCollectionLabel: stringPtr(label)}
+		if err := json.Unmarshal(tagsJSON, &member.Tags); err != nil {
+			return fmt.Errorf("decoding snapshot tags: %w", err)
+		}
+		if err := json.Unmarshal(collectionsJSON, &member.CollectionIDs); err != nil {
+			return fmt.Errorf("decoding snapshot collections: %w", err)
+		}
 		members[id] = member
 		return nil
 	})
@@ -546,7 +542,7 @@ func materializeSnapshotRows(
 	for i, row := range projection.Rows {
 		nodeIDs[i] = row.NodeID
 	}
-	memberships, err := readSnapshotMemberships(ctx, q, nodeIDs, coverage, generationID)
+	memberships, err := readSnapshotMemberships(ctx, q, nodeIDs, coverage, generationID, options.MaxRowBytes)
 	if err != nil {
 		return nil, err
 	}
