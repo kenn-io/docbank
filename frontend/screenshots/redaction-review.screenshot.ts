@@ -155,7 +155,10 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     });
     const session = await open("two-pages.pdf", false, true);
     const drawer = page.getByRole("dialog", { name: "Redact two-pages.pdf", exact: true });
-    await turnReviewPage(drawer, 2);
+    await expectReaderPage(drawer, 2);
+    await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled({
+      timeout: 60000,
+    });
     expect(originalLoads).toBe(1);
     const readerWorkers = page.workers();
     // Returning from review keeps the live reader, including its page and zoom.
@@ -532,7 +535,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(drawToggle).toBeChecked();
     await drawer.getByRole("button", { name: "Next Page", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await turnReviewPage(drawer, 2);
+    await expectReaderPage(drawer, 2);
+    await expect(drawToggle).toBeEnabled({ timeout: 60000 });
     await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Shift+ArrowRight");
     await page.keyboard.press("ArrowDown");
@@ -673,7 +677,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       ),
     ).toBe(204);
     await drawer.getByRole("button", { name: "Redacted", exact: true }).click();
-    await turnReviewPage(drawer, 2);
+    await expectReaderPage(drawer, 2);
+    await expect(drawToggle).toBeEnabled({ timeout: 60000 });
     await expect(drawer.locator('[data-review-page="2"]')).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
     preview = await createPreview();
