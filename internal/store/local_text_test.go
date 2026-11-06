@@ -64,14 +64,6 @@ func checkMissingProcessingTargets(t *testing.T, open func(*testing.T) *Store) {
 	suppressed, err = s.EmbeddingPurgeSuppressedVersions(t.Context(), fakeHash("f2"), []EmbeddingHeadKey{key})
 	require.NoError(t, err)
 	require.Empty(t, suppressed, "another profile has its own suppression identity")
-
-	t.Run("image head", func(t *testing.T) {
-		fixture := seedImageEmbeddingCatalog(t, open(t))
-		fixture.publish(t)
-		items, err := fixture.s.MissingProcessingTargetsAfter(t.Context(), fixture.request.Profile.Fingerprint, "", 1, 100)
-		require.NoError(t, err)
-		require.Contains(t, versionIDsForLocalText(items), fixture.node.CurrentVersionID, "an image head does not finish text")
-	})
 }
 
 func TestLocalTextEmbeddingHeads(t *testing.T) {
@@ -117,6 +109,13 @@ func checkLocalTextEmbeddingHeads(t *testing.T, open func(*testing.T) *Store) {
 	retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
 	require.NoError(t, err)
 	require.True(t, retained, "trashed documents retain reusable vectors")
+	t.Run("image head", func(t *testing.T) {
+		fixture := seedImageEmbeddingCatalog(t, open(t))
+		fixture.publish(t)
+		items, err := fixture.s.MissingProcessingTargetsAfter(t.Context(), fixture.request.Profile.Fingerprint, "", 1, 100)
+		require.NoError(t, err)
+		require.Contains(t, versionIDsForLocalText(items), fixture.node.CurrentVersionID, "an image head does not finish text")
+	})
 }
 
 func versionIDsForLocalText(items []DocumentSummary) []string {

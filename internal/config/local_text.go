@@ -15,6 +15,9 @@ import (
 
 const LocalTextProfile = "local-text"
 
+// localTextInputTokens leaves two of Kit's 2048 token slots for CLS and SEP.
+const localTextInputTokens = 2046
+
 // LocalTextConfig selects vault-wide, ongoing text indexing after approval.
 type LocalTextConfig struct {
 	Version int    `json:"version"`
@@ -78,7 +81,7 @@ func (c Config) WithLocalText() (Config, error) {
 
 // LocalTextEmbedding keeps the model and input identity while moving its transport.
 func LocalTextEmbedding(p EmbeddingProfileConfig, mode string) (EmbeddingProfileConfig, error) {
-	if p.Runtime == nil || p.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" {
+	if p.Runtime == nil || p.Runtime.AdapterContract != "docbank-openai-compatible-embeddings/v1" || p.MaxInputTokens > localTextInputTokens {
 		return p, errors.New("model or input contract differs from local Nomic")
 	}
 	p.Runtime = new(*p.Runtime)

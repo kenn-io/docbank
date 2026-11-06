@@ -24,9 +24,28 @@ func TestLocalTextRejectsLosingRevisionEchoAndReservedProfile(t *testing.T) {
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
 	_, err := LocalTextEmbedding(profile, "local")
-	require.Error(t, err, "the managed server cannot preserve the source revision attestation")
+	require.ErrorContains(t, err, "openaicompat: exactly one deployment epoch or provider revision header is required")
 	require.Equal(t, "X-Model-Revision", profile.Runtime.ProviderRevisionHeader)
 	cfg.ProcessingProfiles[LocalTextProfile] = cfg.ProcessingProfiles["archive"]
 	_, err = cfg.WithLocalText()
 	require.ErrorContains(t, err, "reserved for local text")
+}
+
+func TestLocalTextPreservesFormattedInputCapacity(t *testing.T) {
+	cfg, err := Default().WithLocalText()
+	require.NoError(t, err)
+	profile := cfg.EmbeddingProfiles[LocalTextProfile]
+	profile.ModelInput = EmbeddingModelInputConfig{Profile: "custom/v1", CompatibilityID: profile.CompatibilityID,
+		Document: EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"},
+		Query:    EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}}
+	for _, bound := range []int{2046, 2047, 2048} {
+		profile.MaxInputTokens = bound
+		moved, err := LocalTextEmbedding(profile, "local")
+		if bound == 2046 {
+			require.NoError(t, err)
+			require.Equal(t, profile.ModelInput, moved.ModelInput)
+		} else {
+			require.ErrorContains(t, err, "model or input contract differs from local Nomic")
+		}
+	}
 }

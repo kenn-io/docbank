@@ -336,97 +336,85 @@ func (p localTextEmbeddingProvider) Embed(ctx context.Context, inputs []document
 
 func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 	t.Parallel()
-	for _, permanentSibling := range []bool{false, true} {
-		name := "single_binding"
-		if permanentSibling {
-			name = "permanent_sibling"
+	// The backfill's retry delays run on the bubble's clock.
+	synctest.Test(t, func(t *testing.T) {
+		var ready atomic.Bool
+		var calls, clock atomic.Int64
+		provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(context.Context) error {
+			calls.Add(1)
+			if !ready.Load() {
+				return errors.New("synthetic server unavailable")
+			}
+			return nil
+		}}
+		fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+		source := setup.Service.profiles["pdf"]
+		descriptor := embeddingWorkerDescriptor(t)
+		descriptor.ModelRevision = "malformed-sibling"
+		descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+		require.NoError(t, err)
+		binding := source.portable.Embeddings[0]
+		binding.Name, binding.Descriptor.Fingerprint = "bad", descriptor.Fingerprint
+		portable := source.portable
+		portable.Embeddings = append(slices.Clone(portable.Embeddings), binding)
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {
+				Profile: portable, RenditionProvider: source.provider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": provider, "bad": &localTextEmbeddingProvider{descriptor: descriptor, values: []float32{1}}},
+				Tokenizers:         map[string]document.Tokenizer{"chunk": source.tokenizers["chunk"], "bad": source.tokenizers["chunk"]},
+			}}})
+		require.NoError(t, err)
+		t.Cleanup(service.Stop)
+		setup.Service = service
+		require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["pdf"], nil))
+		setup.Service.clock = func() time.Time {
+			if calls.Load() == 0 {
+				return time.Now().UTC()
+			}
+			return time.Now().UTC().Add(time.Duration(clock.Add(1)) * 10 * time.Second)
 		}
-		t.Run(name, func(t *testing.T) {
-			// The backfill's retry delays run on the bubble's clock.
-			synctest.Test(t, func(t *testing.T) {
-				var ready atomic.Bool
-				var calls, clock atomic.Int64
-				provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(context.Context) error {
-					calls.Add(1)
-					if !ready.Load() {
-						return errors.New("synthetic server unavailable")
-					}
-					return nil
-				}}
-				fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
-				if permanentSibling {
-					source := setup.Service.profiles["pdf"]
-					descriptor := embeddingWorkerDescriptor(t)
-					descriptor.ModelRevision = "malformed-sibling"
-					descriptor, err := document.NewEmbeddingDescriptor(descriptor)
-					require.NoError(t, err)
-					binding := source.portable.Embeddings[0]
-					binding.Name, binding.Descriptor.Fingerprint = "bad", descriptor.Fingerprint
-					portable := source.portable
-					portable.Embeddings = append(slices.Clone(portable.Embeddings), binding)
-					service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
-						Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {
-							Profile: portable, RenditionProvider: source.provider,
-							EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": provider, "bad": &localTextEmbeddingProvider{descriptor: descriptor, values: []float32{1}}},
-							Tokenizers:         map[string]document.Tokenizer{"chunk": source.tokenizers["chunk"], "bad": source.tokenizers["chunk"]},
-						}}})
-					require.NoError(t, err)
-					t.Cleanup(service.Stop)
-					setup.Service = service
-					require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["pdf"], nil))
-				}
-				setup.Service.clock = func() time.Time {
-					if calls.Load() == 0 {
-						return time.Now().UTC()
-					}
-					return time.Now().UTC().Add(time.Duration(clock.Add(1)) * 10 * time.Second)
-				}
-				written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+		require.NoError(t, err)
+		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "outage.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- setup.Backfill(ctx, nil) }()
+		defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) }()
+		profile := setup.Service.profiles["pdf"]
+		// Provider retries back off on the bubble's clock, so advance it until
+		// the job settles.
+		settledJob := func(done func(store.EmbeddingJobStatus) bool) store.EmbeddingJobStatus {
+			t.Helper()
+			for range 600 {
+				synctest.Wait()
+				jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
 				require.NoError(t, err)
-				node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "outage.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-				require.NoError(t, err)
-				ctx, cancel := context.WithCancel(t.Context())
-				done := make(chan error, 1)
-				go func() { done <- setup.Backfill(ctx, nil) }()
-				defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) }()
-				profile := setup.Service.profiles["pdf"]
-				// Provider retries back off on the bubble's clock, so advance it until
-				// the job settles.
-				settledJob := func(done func(store.EmbeddingJobStatus) bool) store.EmbeddingJobStatus {
-					t.Helper()
-					for range 600 {
-						synctest.Wait()
-						jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
-						require.NoError(t, err)
-						require.Len(t, jobs, len(profile.portable.Embeddings))
-						for _, job := range jobs {
-							if job.BindingID == "chunk" && done(job) {
-								return job
-							}
-						}
-						time.Sleep(time.Second)
+				require.Len(t, jobs, len(profile.portable.Embeddings))
+				for _, job := range jobs {
+					if job.BindingID == "chunk" && done(job) {
+						return job
 					}
-					require.FailNow(t, "embedding job never settled")
-					return store.EmbeddingJobStatus{}
 				}
-				job := settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "failed" })
-				require.Equal(t, store.EmbeddingFailureProviderUnavailable, job.FailureCode)
-				if permanentSibling {
-					jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
-					require.NoError(t, err)
-					for _, job := range jobs {
-						if job.BindingID == "bad" {
-							require.Equal(t, store.EmbeddingFailureInvalidResponse, job.FailureCode)
-						}
-					}
-					time.Sleep(time.Minute)
-					synctest.Wait()
-				}
-				ready.Store(true)
-				settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "completed" })
-			})
-		})
-	}
+				time.Sleep(time.Second)
+			}
+			require.FailNow(t, "embedding job never settled")
+			return store.EmbeddingJobStatus{}
+		}
+		job := settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "failed" })
+		require.Equal(t, store.EmbeddingFailureProviderUnavailable, job.FailureCode)
+		jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
+		require.NoError(t, err)
+		for _, job := range jobs {
+			if job.BindingID == "bad" {
+				require.Equal(t, store.EmbeddingFailureInvalidResponse, job.FailureCode)
+			}
+		}
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		ready.Store(true)
+		settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "completed" })
+	})
 }
 
 func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
