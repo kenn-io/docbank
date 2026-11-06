@@ -85,7 +85,7 @@ func runWeb(
 		return fmt.Errorf("printing browser recovery command: %w", err)
 	}
 	if err := open(ctx, launchURL); err != nil {
-		return withHint(fmt.Errorf("opening Docbank web application: %w", err), `run "docbank web --no-browser" to print a sign-in URL; it contains browser credentials, so keep it out of logs and chat`)
+		return withHint(fmt.Errorf("opening Docbank web application: %w", err), "use the --no-browser command above")
 	}
 	base, _, _ := strings.Cut(rawURL, "#")
 	_, err = fmt.Fprintf(out, "opened Docbank web application at %s\n", base)
