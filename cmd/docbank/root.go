@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -20,52 +21,9 @@ const (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "docbank",
-	Short: "Keep, find, and verify documents in a local vault",
-	Long: `Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
-over immutable, hash-verified content versions. A daemon owns the vault;
-data commands start it ("docbank daemon stop" ends it).
-
-DOCBANK_HOME selects the vault (default ~/.docbank); the first data command
-creates it. "docbank vault info --json" confirms its path and identity.
-Local data commands use that vault; push --to selects a remote daemon instead.
-
-Agent workflow (replace example paths and ids with your own):
-  docbank vault info --json                  # 1. confirm the selected vault
-  docbank document add ./scans --dest /cases  # 2. import files and folders
-  docbank document tree /cases --json        # 3. browse paths and ids
-  docbank search invoice 2026 --agent        # 4. find by name or text
-  docbank document stat id:12 --json         # 5. read current_version_id
-  docbank document cat /cases/notes.txt      # 6. read original bytes
-  docbank document get id:12 ./invoice.pdf   # 7. save a verified copy
-  docbank backup init --repo ~/backup        # 8. initialize a separate repo
-  docbank backup create --repo ~/backup      # 9. capture a snapshot
-
-Concepts:
-  path-or-id  a node is "/abs/path" or "id:N"; id:N survives document move
-  version     document put/edit add immutable versions (UUIDs);
-              document revert restores one
-  text        search reads text/*, JSON and email bodies; PDFs and Office
-              files need a processing profile (see "docbank processing")
-  rendition   derived Markdown text made by a processing profile
-  deletion    document remove -> trash empty -> vault gc -> storage repack
-
-Output: results on stdout; errors, recovery hints and progress on stderr.
-Use --json where listed in command help; search --agent gives compact hit rows.
-With parsed --json, failures end with a JSON stderr record containing
-error.message, error.code, error.exit and error.hint (when present).
-Existing previews/progress may precede it. Flag parsing can fail before --json
-is read; those errors stay human text. Human hints use hint:; agent uses Hint:.
-
-Exit codes: 0 ok, 1 operational/internal error, 2 usage or request validation,
-3 not found, 4 stale revision, 5 busy/locked, 6 integrity, 7 claim required.
-
-Environment: DOCBANK_HOME selects vault data and config.toml.
-Daemon startup overrides (restart the daemon after changing them):
-  DOCBANK_BIND_ADDR bind IP (default loopback); DOCBANK_API_PORT API port
-  DOCBANK_API_KEY or DOCBANK_API_KEY_FILE configured key (choose only one)
-  DOCBANK_ALLOWED_HOSTS comma-separated HTTP Host allowlist
-Without a configured key, the daemon generates a private per-run key.`,
+	Use:           "docbank",
+	Short:         "Keep, find, and verify documents in a local vault",
+	Long:          agentguide.Workflow,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Cobra checks required flags and flag groups after PersistentPreRun, so

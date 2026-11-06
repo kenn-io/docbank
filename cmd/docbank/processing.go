@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -30,14 +31,7 @@ var (
 var processingCmd = &cobra.Command{
 	Example: `  docbank processing profiles
   docbank processing plan id:12 --profile <profile>`,
-	Long: `Builds derived text (renditions) and embeddings for one document version
-using a named profile. Profiles come from $DOCBANK_HOME/config.toml; the
-default daemon offers only supplied-captions and supplied-transcript, so
-reading PDF/Office text needs a configured profile first. Providers may be
-hosted: plan shows what leaves the machine, and build needs --consent.
-Typical flow: processing profiles -> processing plan <path-or-id> --profile P
--> processing build <path-or-id> --profile P --plan-fingerprint F --consent
--> rendition window <path-or-id> --version V --profile P.`,
+	Long:    agentguide.Processing,
 	GroupID: groupSearch,
 	Use:     "processing",
 	Short:   "Preview and run document processing",

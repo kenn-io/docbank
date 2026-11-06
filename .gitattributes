@@ -33,6 +33,10 @@ document/internal/scanfixture/testdata/*.pdf binary
 internal/production/testdata/native-geometry-control.pdf binary
 # Transfer canonical bytes must survive Windows checkout unchanged.
 document/transfer/testdata/msgvault-transfer-v1.golden.jsonl -text
+# Embedded authored guides and CLI help have the same bytes on every platform.
+internal/agentguide/*.md text eol=lf
+internal/agentguide/*.txt text eol=lf
+
 # Generated API artifacts and dependency resolution output.
 internal/api/openapi.yaml linguist-generated=true
 internal/apiclient/*.gen.go linguist-generated=true
