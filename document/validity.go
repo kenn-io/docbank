@@ -3,6 +3,7 @@ package document
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ValidityState describes whether a document is in force on a calendar date.
