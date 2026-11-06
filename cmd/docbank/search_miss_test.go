@@ -14,7 +14,7 @@ import (
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
-	for _, mode := range []string{"explicit", "fallback"} {
+	for _, mode := range []string{"explicit", "lexical", "fuzzy", "fallback"} {
 		for _, nameMatch := range []bool{false, true} {
 			if mode == "explicit" && nameMatch {
 				continue
@@ -42,13 +42,16 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 							assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: coverage}))
 						} else {
 							report := api.SearchReport{Limit: 50}
+							if mode == "fuzzy" {
+								report.Fuzzy = &api.FuzzyReceipt{Status: "complete", Reasons: []string{}}
+							}
 							if nameMatch {
 								report.Hits = []api.SearchHit{{Node: api.Node{ID: 7, Kind: "dir"}, Path: "/match", Match: "name"}}
 							}
 							assert.NoError(t, json.MarshalWrite(w, report))
 						}
 					case "/api/v1/search/text-coverage":
-						assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{}))
+						assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1, Families: []string{"pdf"}, Pending: 1}))
 					case "/api/v1/miss-log":
 						var receipt misslog.Request
 						assert.NoError(t, json.UnmarshalRead(r.Body, &receipt))
@@ -66,6 +69,10 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				args := []string{"search", "missing", "--json"}
 				if mode == "explicit" {
 					args = append(args, "--mode", "hybrid", "--profile", "private", "--binding", "embed", "--source-version", processingTestVersionID)
+				} else if mode == "lexical" {
+					args = append(args, "--mode", "lexical")
+				} else if mode == "fuzzy" {
+					args = append(args, "--fuzzy")
 				}
 				rootCmd.SetArgs(args)
 				require.NoError(t, rootCmd.ExecuteContext(context.Background()))
@@ -75,6 +82,12 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 					require.Len(t, misses, 1)
 					require.Equal(t, "missing", misses[0].Query)
 					require.Empty(t, misses[0].Filters)
+					if mode != "explicit" {
+						require.Equal(t, map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}, misses[0].Coverage["text"])
+					}
+					if mode == "fuzzy" {
+						require.Equal(t, map[string]any{"status": "complete", "reasons": []any{}}, misses[0].Coverage["fuzzy"])
+					}
 					if mode == "explicit" {
 						require.Equal(t, "embed", misses[0].BindingID)
 						require.Equal(t, "hybrid", misses[0].RequestedMode)

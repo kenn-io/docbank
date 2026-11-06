@@ -230,6 +230,8 @@ See docs/usage/search.md.`,
 		if automatic.report != nil {
 			empty = len(automatic.report.Results) == 0 && !slices.ContainsFunc(rep.Hits, func(hit api.SearchHit) bool { return hit.Node.Kind == "dir" })
 		}
+		var coverage api.SearchTextCoverage
+		var coverageErr error
 		defer func() {
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
@@ -250,13 +252,19 @@ See docs/usage/search.md.`,
 					if automatic.report != nil || automatic.receipt.Query != "" {
 						receipt = automatic.receipt
 					}
+					if coverageErr == nil && strings.TrimSpace(query) != "" {
+						if receipt.Coverage == nil {
+							receipt.Coverage = make(map[string]any)
+						}
+						receipt.Coverage["text"] = coverage
+					}
 					c.RecordMiss(cmd.Context(), receipt)
 				}
 			}
 		}()
 		var hints []searchHint
 		if empty && strings.TrimSpace(query) != "" {
-			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			coverage, coverageErr = c.SearchTextCoverage(cmd.Context(), opts)
 			if coverageErr != nil {
 				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
 			}
