@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -59,17 +60,7 @@ var searchCmd = &cobra.Command{
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Query words are joined; lexical search matches prefixes on current live
-names, then content.
-With a query embedding binding, plain search uses hybrid over live files and
-appends matching folders. Filters, --fuzzy, --limit above
-100, and --mode lexical use lexical search. A failed hybrid attempt prints
-"degraded: REASON" to stderr and returns lexical results.
---json prints lexical {hits, limit, truncated} or hybrid processing results
-plus folders.
---agent prints an OK header and one line per hit.
-Explicit processing modes need --profile and --source-version UUIDs.
-See docs/usage/search.md.`,
+	Long:    agentguide.Search,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
 	Short:   "Find files and folders by name, text, tag, type, folder, or date",

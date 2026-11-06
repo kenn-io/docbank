@@ -38,8 +38,8 @@ require (
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kata v0.20.0
-	go.kenn.io/kit v0.47.6
+	go.kenn.io/kata v0.22.0
+	go.kenn.io/kit v0.48.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.62.0
@@ -48,7 +48,7 @@ require (
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
-	hegel.dev/go/hegel v0.9.28
+	hegel.dev/go/hegel v0.9.29
 	modernc.org/sqlite v1.61.0
 )
 
@@ -121,7 +121,6 @@ require (
 	github.com/posthog/posthog-go v1.39.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pathologize v1.1.0 // indirect
@@ -150,3 +149,7 @@ require (
 )
 
 tool gotest.tools/gotestsum
+
+// Temporary shared MCP support: https://github.com/kenn-io/kit/pull/316.
+// Use a verified canonical Kit version and remove this before marking the PR ready.
+replace go.kenn.io/kit => github.com/salmonumbrella/kit v0.30.2-0.20261106034802-387e61d2cf42

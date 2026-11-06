@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-05
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -8,13 +8,32 @@ description: Connect a local MCP client to Docbank's read-mostly document tools 
 
 Docbank provides a read-mostly Model Context Protocol (MCP) server for local
 agents. It implements only MCP `2026-07-28`, using the official Go SDK at
-`github.com/modelcontextprotocol/go-sdk` v1.7.0. Older MCP versions and the
+`github.com/modelcontextprotocol/go-sdk` v1.8.0. Older MCP versions and the
 legacy `initialize` flow are rejected. Clients start with `server/discover`.
 
-Standalone MCP is a client of the selected vault's daemon. It discovers or
-starts that daemon the same way the CLI does and never opens `docbank.db`, a
+Standalone MCP data tools are clients of the selected vault's daemon. They
+discover or start that daemon the same way the CLI does and never open `docbank.db`, a
 blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
 no remote-daemon option.
+
+## Read the bundled guides
+
+Call `docbank.skills {}` to list the shipped guides: `workflow`, `search`, and
+`processing`. Call `docbank.skills {"name":"workflow"}` to read one before
+working with documents. Named calls return authored Markdown as text content;
+`structuredContent.skills` contains its name, title, and summary. Catalog calls
+return all three metadata entries in the same field.
+
+The guides share the CLI's help text and explain how its commands map to actual
+MCP tools. They cover exact document identities, search scope and coverage,
+provider disclosure, and processing consent. CLI-only actions are identified.
+
+The tool is always present, including when every write family is disabled.
+It serves only bundled guidance and does not read a vault, start a daemon,
+accept filesystem paths, or execute skills. Omit `name` to list; a supplied
+name must match an entry exactly. Empty, unknown, or malformed names and
+additional arguments are rejected. HTTP authentication and protocol checks
+still apply. Reading a guide never enables a write tool or grants consent.
 
 ## Start the server
 
@@ -234,12 +253,14 @@ acknowledges the request and completes immediately.
 ## Tool catalog
 
 All inputs and outputs use closed JSON Schema 2020-12 objects, so unknown
-fields are rejected. Every successful tool result contains both structured
-content and its JSON text representation. The complete result, including
-resource links, is capped at 1 MiB.
+fields are rejected. Successful data-tool results contain both structured
+content and its JSON text representation. `docbank.skills` instead returns
+authored catalog or Markdown text, with guide metadata in structured content.
+The complete result, including resource links, is capped at 1 MiB.
 
 | Tool | Contract and important bounds |
 | --- | --- |
+| `docbank.skills` | Lists the fixed bundled guide catalog, or returns one named guide as Markdown. It accepts no paths and performs no vault or daemon access. |
 | `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
 | `get_report_dates` | Reads frozen date evidence with an optional opaque cursor and 1–100 members, default 50. Requests a 256 KiB page; candidates can continue on the next page. |
 | `get_export_plan` | Reads the complete frozen plan header by `plan_id`, including its admission deadline. |
