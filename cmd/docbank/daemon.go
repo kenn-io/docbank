@@ -412,7 +412,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			return nil, err
 		}
 		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
-			Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+			MediaMaxBytes: cfg.Media.MaxSourceBytes,
+			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
 	}
 	if choice.Profile != "" {
