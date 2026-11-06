@@ -94,7 +94,12 @@
   const boxes = $derived.by(() => {
     if (!preparation) return [];
     if (preview && review) return review.resolved.redact_boxes;
-    return masks.flatMap((m) => maskBoxes(preparation!, m.selector));
+    return masks.flatMap((m) =>
+      maskBoxes(preparation!, m.selector).map((box) => ({
+        ...box,
+        outline: m.selector.kind !== "text",
+      })),
+    );
   });
   const maskItems = $derived(
     masks.flatMap((mask) => {
@@ -105,6 +110,7 @@
   const expansionBoxes = $derived(
     preparation && expansion ? maskBoxes(preparation, expansion.selector) : [],
   );
+  const expansionKind = $derived(masks.find((m) => m.id === expansion?.id)?.selector.kind);
   const gapPages = $derived([...new Set(preparation?.map.gaps.map((g) => g.box.page) ?? [])]);
   function clearImage() {
     imageController.abort();
@@ -233,7 +239,7 @@
       masks = [...masks, ...additions];
       textGroups = [...textGroups, { ids: additions.map((m) => m.id), page: candidate.page }];
       bridge?.clearSelection();
-      selectionAnnouncement = "Selected text added.";
+      selectionAnnouncement = `Text mask ${maskItems.length} added on page ${candidate.page}.`;
     } catch (cause) {
       fail(cause);
     }
@@ -597,7 +603,11 @@
             {#if expansion}<section class="expansion" aria-label="Proposed mask expansion">
                 <h3>Expand mask?</h3>
                 <p>
-                  The safety margin reaches nearby text. Review the added area before continuing.
+                  {#if expansionKind === "text"}
+                    The safety margin reaches nearby text. Review the added area before continuing.
+                  {:else}
+                    The selected region cuts through text. Review the full region before continuing.
+                  {/if}
                 </p>
                 <div class="gap-pages">
                   {#each [...new Set(expansionBoxes.map((b) => b.page))] as n}

@@ -410,9 +410,11 @@ positions, 64 KiB of context/separator text and 1 MiB per page extract. There is
 one extraction task; generation, document, map, range and decoded-page checks
 prevent stale results from becoming masks. Page/zoom/rotation changes, selected
 page readiness loss, mode changes and disposal cancel transient selections.
-Text selectors consume mask slots but no input boxes. Explicitly approved
-multi-span expansions may use the server's checked rectangle proposal, subject
-to the shared 1,024-box budget. No normalization or geometry fallback is used.
+Text selectors consume mask slots but no input boxes. On explicit approval of a
+multi-span expansion, the browser constructs a rectangle selector from the
+server's checked `expanded_boxes`. It retains whitespace between glyphs and
+uses the shared 1,024-box budget. No normalization or geometry fallback is used
+when matching selections.
 
 Redacted keeps one server PNG URL, verifies its length/hash and header before
 decode, and binds its frame to preparation. These are the images checked against

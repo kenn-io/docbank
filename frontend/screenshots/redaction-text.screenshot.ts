@@ -304,6 +304,11 @@ test("masks selected PDF text using native spans and verified delivery", async (
         await expect(draw).toBeEnabled();
       }
       await expect(drawer.getByText("Selected text · Page 1", { exact: true })).toBeVisible();
+      const selectionStatus = drawer.locator(
+        '.redaction-editor > [role="status"][aria-live="polite"]',
+      );
+      await expect(selectionStatus).not.toBeEmpty();
+      const firstAnnouncement = await selectionStatus.textContent();
       if (kind === "small")
         await drawer.screenshot({
           path: path.join(captures!, "text-selection-masks.png"),
@@ -528,6 +533,8 @@ test("masks selected PDF text using native spans and verified delivery", async (
           await expect(add).toBeEnabled();
           await add.click();
           if (n === 2) {
+            await expect(selectionStatus).not.toBeEmpty();
+            expect(await selectionStatus.textContent()).not.toBe(firstAnnouncement);
             await drawer.getByRole("button", { name: "Remove", exact: true }).last().click();
             await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(
               1,

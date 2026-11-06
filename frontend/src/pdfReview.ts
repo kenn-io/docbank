@@ -30,7 +30,7 @@ export interface TextSelectionStatus {
 
 export interface ReaderReview {
   preparation?: RedactionPreparation;
-  boxes: PDFRedactionBox[];
+  boxes: (PDFRedactionBox & { outline?: boolean })[];
   gaps: PDFRedactionGap[];
   proposed: PDFRedactionBox[];
   drawing: boolean;
@@ -626,7 +626,8 @@ export class PDFReviewBridge {
       };
       for (const g of this.review.gaps)
         if (g.box.page === index + 1) rect(g.box, "#c58000", "#c5800026", true);
-      for (const b of this.review.boxes) if (b.page === index + 1) rect(b, "#111", "#00000040");
+      for (const b of this.review.boxes)
+        if (b.page === index + 1) rect(b, b.outline === false ? "none" : "#111", "#00000040");
       for (const b of this.review.proposed)
         if (b.page === index + 1) rect(b, "#0076d6", "#0076d626");
       if (this.review.drawing && this.isReady(index)) {

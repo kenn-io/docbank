@@ -273,6 +273,8 @@ server coverage gaps. A selection can include several lines; matching selected
 line breaks are removed with the passage. Different extraction order can produce
 several text masks, shown as one removable group. Text masks use the existing
 256-mask limit, without a rectangle box for each glyph.
+An expansion covering separate text ranges becomes a rectangle mask on approval.
+It uses rectangle capacity and keeps whitespace between the selected glyphs.
 
 **Back to reading** discards masks and preview after confirmation, then restores
 the reading position. The original stays loaded. Original print and export are
