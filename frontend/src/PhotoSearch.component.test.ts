@@ -265,7 +265,12 @@ it.each([false, true])("reports explicit Photos searches, hidden=%s", async (hid
 
 it.each([
   { hidden: false, filters: { cameras: ["Synthetic camera"] }, receipt: true },
-  { hidden: false, mode: "semantic" as const, filters: { cameras: ["Synthetic camera"] }, receipt: true },
+  {
+    hidden: false,
+    mode: "semantic" as const,
+    filters: { cameras: ["Synthetic camera"] },
+    receipt: true,
+  },
   { hidden: true, filters: { cameras: ["Synthetic camera"] }, receipt: false },
   { hidden: false, filters: {}, receipt: false },
   { hidden: false, filters: { cameras: [], no_tags: false }, receipt: false },
