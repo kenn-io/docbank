@@ -25,9 +25,13 @@ docbank processing profiles
 docbank processing local --server local
 ```
 
-The command previews the built-in `local-text` profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. It builds a separate `local-text` index with Nomic v1.5 (`nomic-embed-text`) and the plaintext extractor. PDF, Office, vision, and image embeddings need their configured providers.
+The command previews the profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. Setup keeps an approved configured recipe or picks the first indexed compatible recipe in name order, then moves it to the shared server with its extractor, chunks, comparison metric, normalization setting, and existing vectors. Only new or changed content needs embedding.
 
-Approval covers eligible documents throughout this vault and future imports. Docbank processes bounded pages in the background and resumes after a daemon restart. Revoking processing consent stops provider calls.
+If another model, text format, or formatted input limit above 2,046 rune tokens requires a separate built-in index, the preview says so before downloading or starting work. The original index stays intact. Vaults without compatible indexed recipes use the built-in `local-text` profile with Nomic and the plaintext extractor. When no configured recipe moves, an existing saved built-in index continues adding missing content. A moved recipe replaces that built-in selection for new imports. Mixed recipes keep image and other bindings on their configured providers. Setup moves one profile; other configured profiles still need their providers. Restart restores the saved profile, including existing watches.
+
+To return to your configured providers, delete `local-text.json` beside the vault's `config.toml` and run `docbank daemon restart`. Documents added or changed while local indexing was selected need processing under the configured profile.
+
+Moving a recipe processes the previewed document count before setup returns. Restart resumes background indexing for the saved profile. Revoking processing consent stops provider calls.
 
 Both `--server auto` and `--server local` use the shared per-user `kennembed` server. Discovery uses its per-user runtime record. When the server or model is missing, the command downloads them from Kit's shared installation and prints the download size first. An already installed server downloads nothing. The daemon's changing loopback port keeps the same consent grant.
 

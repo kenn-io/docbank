@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -47,7 +48,7 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	setup := &LocalTextSetup{Service: service, Selected: "local-text"}
 	gateFailure := errors.New("synthetic grant failure")
 	saveFailure := errors.New("synthetic save failure")
-	setup.Candidate = func(string) (*Service, error) {
+	setup.Candidate = func(string, string) (*Service, error) {
 		next := config
 		next.Gate = &localTextGrantGate{workerTestGate: newWorkerTestGate(), err: gateFailure}
 		s, err := NewService(t.Context(), next)
@@ -64,10 +65,19 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
 	require.ErrorIs(t, err, gateFailure)
 	require.Equal(t, "previous-profile", saved)
-	setup.Candidate = func(string) (*Service, error) {
-		s, err := NewService(t.Context(), config)
+	nextConfig := config
+	setup.Candidate = func(string, string) (*Service, error) {
+		s, err := NewService(t.Context(), nextConfig)
 		return s, err
 	}
+	changed := config.Profiles["local-text"]
+	changed.Profile.Rendition = new(*changed.Profile.Rendition)
+	changed.Profile.Rendition.AuthorizationFingerprint = workerHash("changed-before-approval")
+	nextConfig.Profiles = map[string]ProfileConfig{"local-text": changed}
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	require.ErrorIs(t, err, ErrPlanChanged)
+	require.Equal(t, "previous-profile", saved)
+	nextConfig = config
 	startupFailure := errors.New("synthetic startup failure")
 	setup.Startup = func(context.Context, bool, string) error { return startupFailure }
 	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
@@ -87,6 +97,91 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.NoError(t, err, "consent remains saved when the selection write fails")
 	}
+	setup.Save = func(name, _ string) error { saved = name; return nil }
+	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, "local-text", saved)
+}
+
+func TestLocalTextSelection(t *testing.T) {
+	t.Parallel()
+	provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
+	fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+	source := original.Service.profiles["pdf"]
+	profileFor := func(name string) ProfileConfig {
+		portable := source.portable
+		portable.Rendition = new(*portable.Rendition)
+		portable.Rendition.AuthorizationFingerprint = workerHash(name)
+		return ProfileConfig{Profile: portable, RenditionProvider: source.provider,
+			EmbeddingProviders: source.embedders, Tokenizers: source.tokenizers}
+	}
+	serviceFor := func(profiles map[string]ProfileConfig) *Service {
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			Gate: newWorkerTestGate(), Profiles: profiles, SpoolDirectory: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(service.Stop)
+		return service
+	}
+	service := serviceFor(map[string]ProfileConfig{"archive": profileFor("archive"),
+		"aaa-unused": profileFor("unused"), "bbb-incompatible": profileFor("other")})
+	setup := &LocalTextSetup{Service: service,
+		Candidate: func(_ string, name string) (*Service, error) {
+			if name == "" {
+				name = "local-text"
+			}
+			if name == "bbb-incompatible" {
+				return nil, ErrProfileNotConfigured
+			}
+			identity := name
+			if name != "local-text" {
+				identity += "-managed"
+			}
+			return serviceFor(map[string]ProfileConfig{name: profileFor(identity)}), nil
+		}}
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "indexed.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	process := func(service *Service, profile string) {
+		selector := Selector{Profile: profile, NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+		require.NoError(t, err)
+	}
+	empty, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "local-text (separate; adds missing content)", empty.VectorEffect)
+	process(service, "bbb-incompatible")
+	rebuild, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Contains(t, rebuild.VectorEffect, "Adds separate index")
+	setup.Selected = "local-text"
+	continued, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "local-text (separate; adds missing content)", continued.VectorEffect)
+	setup.Selected = ""
+	process(service, "archive")
+	plan, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "archive", plan.Profile, "skip an unindexed recipe")
+	require.Equal(t, "Keep existing index; processes 2 documents before setup returns; embeds only new content", plan.VectorEffect)
+	setup.Service, err = setup.Candidate("local", "archive")
+	require.NoError(t, err)
+	setup.Selected = "archive"
+	beforeBackfill, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "archive", beforeBackfill.Profile)
+	setup.Service = service
+	process(service, "aaa-unused")
+	rerun, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "archive", rerun.Profile, "keep the approved recipe when an earlier name gains an index")
+	setup.Service, setup.Selected = service, "local-text"
+	fallback, err := setup.Plan(t.Context(), "local")
+	require.NoError(t, err)
+	require.Equal(t, "aaa-unused", fallback.Profile, "a saved fallback never outranks an indexed configured recipe")
+	require.Equal(t, "Keep existing index; replaces local-text for new imports; processes 2 documents before setup returns; embeds only new content", fallback.VectorEffect)
 }
 
 type localTextGrantGate struct {
@@ -96,6 +191,21 @@ type localTextGrantGate struct {
 }
 
 func (gate *localTextGrantGate) MutateContext(context.Context, func() error) error { return gate.err }
+
+func newLocalTextMoveSetup(t *testing.T, source *Service, saved *string) *LocalTextSetup {
+	t.Helper()
+	current := source.profiles["pdf"]
+	portable := current.portable
+	portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
+	portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
+	return &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: source.catalog, Blobs: source.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
+		if err == nil {
+			t.Cleanup(service.Stop)
+		}
+		return service, err
+	}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { *saved = name; return nil }}
+}
 
 func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvider, providers ...document.EmbeddingProvider) (publicationFixture, *LocalTextSetup) {
 	tb.Helper()
@@ -239,7 +349,7 @@ func (p localTextEmbeddingProvider) Embed(ctx context.Context, inputs []document
 	return result, nil
 }
 
-func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
+func TestLocalTextBackfillRecoversBesidePermanentFailure(t *testing.T) {
 	t.Parallel()
 	// The backfill's retry delays run on the bubble's clock.
 	synctest.Test(t, func(t *testing.T) {
@@ -253,6 +363,25 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 			return nil
 		}}
 		fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+		source := setup.Service.profiles["pdf"]
+		descriptor := embeddingWorkerDescriptor(t)
+		descriptor.ModelRevision = "malformed-sibling"
+		descriptor, err := document.NewEmbeddingDescriptor(descriptor)
+		require.NoError(t, err)
+		binding := source.portable.Embeddings[0]
+		binding.Name, binding.Descriptor.Fingerprint = "bad", descriptor.Fingerprint
+		portable := source.portable
+		portable.Embeddings = append(slices.Clone(portable.Embeddings), binding)
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {
+				Profile: portable, RenditionProvider: source.provider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": provider, "bad": &localTextEmbeddingProvider{descriptor: descriptor, values: []float32{1}}},
+				Tokenizers:         map[string]document.Tokenizer{"chunk": source.tokenizers["chunk"], "bad": source.tokenizers["chunk"]},
+			}}})
+		require.NoError(t, err)
+		t.Cleanup(service.Stop)
+		setup.Service = service
+		require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["pdf"], nil))
 		setup.Service.clock = func() time.Time {
 			if calls.Load() == 0 {
 				return time.Now().UTC()
@@ -276,9 +405,11 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 				synctest.Wait()
 				jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(ctx, node.CurrentVersionID, profile.record.Fingerprint)
 				require.NoError(t, err)
-				require.Len(t, jobs, 1)
-				if done(jobs[0]) {
-					return jobs[0]
+				require.Len(t, jobs, len(profile.portable.Embeddings))
+				for _, job := range jobs {
+					if job.BindingID == "chunk" && done(job) {
+						return job
+					}
 				}
 				time.Sleep(time.Second)
 			}
@@ -287,6 +418,8 @@ func TestLocalTextBackfillRecoversAfterProviderOutage(t *testing.T) {
 		}
 		job := settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "failed" })
 		require.Equal(t, store.EmbeddingFailureProviderUnavailable, job.FailureCode)
+		time.Sleep(time.Minute)
+		synctest.Wait()
 		ready.Store(true)
 		settledJob(func(job store.EmbeddingJobStatus) bool { return job.State == "completed" })
 	})

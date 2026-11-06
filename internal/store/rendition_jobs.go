@@ -263,6 +263,46 @@ func (s *Store) EnqueueRenditionJob(
 			request.ExecutionIdentity.Authorization.SourceSHA256 != sourceSHA256 {
 			return fmt.Errorf("%w: rendition execution identity does not match exact source authority", ErrRenditionJobStaleAuthority)
 		}
+		if request.ExecutionIdentity.Upload.InputKind == document.RenditionInputOriginalFile {
+			err := func() (retErr error) {
+				rows, err := tx.QueryContext(ctx, `SELECT j.job_id,j.execution_identity_json,j.execution_identity_fingerprint
+ FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+ JOIN rendition_jobs j ON j.job_id=a.build_id
+ WHERE h.content_version_id=$1 AND j.source_sha256=$2 AND j.rendition_request_fingerprint=$3
+ AND j.evidence_lexical_fingerprint=$4 AND j.captured_artifact_policy_fingerprint=$5
+ AND NOT EXISTS(SELECT 1 FROM rendition_jobs WHERE job_id=$6) ORDER BY j.job_id`,
+					request.ContentVersionID, sourceSHA256, profile.RenditionRequestFingerprint,
+					profile.EvidenceLexicalFingerprint, policyFingerprint, jobID)
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+				for rows.Next() {
+					var retainedID, retainedJSON, retainedFingerprint string
+					if err := rows.Scan(&retainedID, &retainedJSON, &retainedFingerprint); err != nil {
+						return err
+					}
+					stored, err := document.ParseRenditionExecutionIdentityV1([]byte(retainedJSON))
+					if err != nil {
+						return err
+					}
+					stored.Upload.CapabilityRecordChecksum, stored.Upload.ProviderMetadataChecksum = request.ExecutionIdentity.Upload.CapabilityRecordChecksum, request.ExecutionIdentity.Upload.ProviderMetadataChecksum
+					stored.Authorization.CapabilityRecordChecksum, stored.Authorization.ProviderMetadataChecksum = request.ExecutionIdentity.Authorization.CapabilityRecordChecksum, request.ExecutionIdentity.Authorization.ProviderMetadataChecksum
+					_, matchingFingerprint, err := document.CanonicalRenditionExecutionIdentityV1(stored)
+					if err != nil {
+						return err
+					}
+					if matchingFingerprint == executionFingerprint {
+						jobID, executionJSON, executionFingerprint = retainedID, jsontext.Value(retainedJSON), retainedFingerprint
+						break
+					}
+				}
+				return rows.Err()
+			}()
+			if err != nil {
+				return fmt.Errorf("checking retained rendition execution: %w", err)
+			}
+		}
 		buildSuppressed, err := derivativeBuildSuppressedTx(ctx, tx, sourceSHA256, jobID)
 		if err != nil {
 			return fmt.Errorf("checking rendition job build suppression: %w", err)

@@ -343,6 +343,28 @@ func checkEnqueueRenditionJobReusesAndRootsExistingSharedBuild(t *testing.T, ope
 	plan, err := s.DerivativeGCPlan(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, plan.Builds, "a queued build-reuse job must root its immutable input")
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:shared-build", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.StageRenditionJobGeneration(t.Context(), claim, testSHA256([]byte("shared-build-generation")), now.Add(time.Second))
+	require.NoError(t, err)
+	_, err = s.PublishRenditionJob(t.Context(), claim, now.Add(2*time.Second))
+	require.NoError(t, err)
+	moved := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, true))
+	moved.ExecutionIdentity.Upload.CapabilityRecordChecksum = testSHA256([]byte("moved-capability"))
+	moved.ExecutionIdentity.Authorization.CapabilityRecordChecksum = moved.ExecutionIdentity.Upload.CapabilityRecordChecksum
+	grantRenditionJobConsent(t, s, moved)
+	reused, _, err := s.EnqueueRenditionJob(t.Context(), moved)
+	require.NoError(t, err)
+	require.Equal(t, jobID, reused.ID, "an embedding-only change must retain the existing rendition build")
+	require.Equal(t, RenditionPhaseBuildStaged, reused.Phase)
+	different := renditionJobTestRequest(versions[0], catalogProcessingProfileWith(t, true, func(p *document.ProcessingProfileV1) {
+		p.Rendition.UploadOptionsFingerprint = testSHA256([]byte("different-extractor-options"))
+	}))
+	grantRenditionJobConsent(t, s, different)
+	separate, _, err := s.EnqueueRenditionJob(t.Context(), different)
+	require.NoError(t, err)
+	require.NotEqual(t, jobID, separate.ID, "a changed extractor request needs its own build")
 }
 
 func checkEnqueueCompletedRenditionJobRestoresSupersededHeadWithoutProviderEgress(t *testing.T, open func(*testing.T) *Store) {

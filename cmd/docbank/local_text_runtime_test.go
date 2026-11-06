@@ -90,10 +90,10 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
+	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: "archive", Server: "local"}))
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	require.Equal(t, "archive", choice.Profile)
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
@@ -185,7 +185,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 				require.NoError(t, err)
 				defer func() { require.NoError(t, blobs.Close()) }()
-				cfg, err := localTextCandidate(config.Default(), "local")
+				cfg, err := localTextCandidate(config.Default(), "local", "")
 				require.NoError(t, err)
 				bundle, err := configureEmbeddingRuntimeBundle(cfg)
 				require.NoError(t, err)
@@ -332,7 +332,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	}
 	http.DefaultTransport = transport
 	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
-	cfg, err := localTextCandidate(config.Default(), "auto")
+	cfg, err := localTextCandidate(config.Default(), "auto", "")
 	require.NoError(t, err)
 	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
@@ -374,4 +374,14 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
 	require.Equal(t, config.LocalTextProfile, choice.Profile)
+}
+
+func TestLocalTextCandidateRejections(t *testing.T) {
+	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_RESERVED_KEY")
+	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles["archive"]}
+	_, err := localTextCandidate(cfg, "local", config.LocalTextProfile)
+	require.ErrorContains(t, err, "reserved for local text")
+	cfg = localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "revision-header", "DOCBANK_TEST_REVISION_KEY")
+	_, err = localTextCandidate(cfg, "local", "archive")
+	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
