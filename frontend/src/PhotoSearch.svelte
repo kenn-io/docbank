@@ -5,7 +5,7 @@
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import { searchSyntaxOptions } from "./searchSyntax.js";
-  import { photoSearchSort } from "./photoSearch.js";
+  import { isFilterSet, photoSearchSort } from "./photoSearch.js";
 
   let { photos }: { photos: Photos } = $props();
   let search = $state(untrack(() => photos.query.text));
@@ -45,13 +45,13 @@
         : undefined,
     );
     void pending?.then((outcome) => {
-      if (!explicit || !text || !outcome) return;
+      if (!explicit || !outcome) return;
+      if (!text && !Object.values(submitted.filters).some(isFilterSet)) return;
       if (outcome.accepted) {
         const fallbackReason = photos.fallbackReason;
-        const fallback = Boolean(fallbackReason);
-        const actualMode = fallback ? "lexical" : submitted.mode;
-        const searchType = fallback || submitted.mode === "lexical" ? "text" : submitted.mode;
-        reportSearch(session, searchType, outcome.empty);
+        const actualMode = fallbackReason ? "lexical" : submitted.mode;
+        const searchType = actualMode === "lexical" ? "text" : actualMode;
+        if (text) reportSearch(session, searchType, outcome.empty);
         if (outcome.empty && !hidden) {
           void recordMiss(
             {
@@ -68,7 +68,7 @@
         }
         return;
       }
-      reportFailure(photos.session, "search", outcome.cause);
+      if (text) reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;
   }

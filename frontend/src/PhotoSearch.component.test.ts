@@ -264,6 +264,49 @@ it.each([false, true])("reports explicit Photos searches, hidden=%s", async (hid
 });
 
 it.each([
+  { hidden: false, filters: { cameras: ["Synthetic camera"] }, receipt: true },
+  { hidden: true, filters: { cameras: ["Synthetic camera"] }, receipt: false },
+  { hidden: false, filters: {}, receipt: false },
+  { hidden: false, filters: { cameras: [], no_tags: false }, receipt: false },
+])(
+  "records blank photo submissions only with visible active filters: %j",
+  async ({ hidden, filters, receipt }) => {
+    stubPhotoTimeline();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ items: [], total: 0, facets: [] })),
+    );
+    const photos = new Photos("scoped", vi.fn(), hidden);
+    photos.query = { ...photos.query, filters };
+    render(PhotoSearch, { photos });
+    const search = screen.getByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "   " } });
+    await fireEvent.submit(search.closest("form")!);
+    await waitFor(() => expect(photos.loading).toBe(false));
+    expect(photos.total).toBe(0);
+    if (receipt) {
+      expect(generated.recordMiss).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          query: "",
+          requested_mode: "lexical",
+          actual_mode: "lexical",
+          filters: {
+            cameras: ["Synthetic camera"],
+            syntax: "simple",
+            corpus: "photos",
+            hidden: false,
+          },
+        }),
+        expect.objectContaining({ session: "scoped" }),
+      );
+    } else expect(generated.recordMiss).not.toHaveBeenCalled();
+    expect(actions.reportSearch).not.toHaveBeenCalled();
+    expect(actions.reportFailure).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);
+
+it.each([
   { hidden: true, code: "hidden_locked", handled: true },
   { hidden: false, code: "forbidden", handled: false },
 ])(
