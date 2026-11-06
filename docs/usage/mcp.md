@@ -340,6 +340,8 @@ skipped reasons of at most 2,048 characters each.
 
 With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
 
+With no profile, `auto` may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable.
+
 An unknown profile returns `processing_profile_unavailable` with the available names. If a profile has no query-capable binding, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
