@@ -209,6 +209,18 @@ vault, so it also keeps state that a restore deliberately resets:
 - Unexpired package preflights and in-progress mailbox uploads with their
   accepted chunks, so the user can continue within the 24-hour session instead
   of starting again.
+- Photo checkout bindings and file observations, so checkouts keep their
+  destinations and know which local files changed.
+- Watch absence marks, so a watched file that a scan found missing stays
+  marked while a later scan cannot recheck it.
+- Pending photo descriptions with their generated text and rotation, and face
+  scan markers, so photos already described or scanned are not sent to the
+  provider again.
+- Photo description and face detection jobs, including which description
+  requests the user started explicitly, so failed jobs keep their retry budget
+  and an explicit request can still replace a dismissed description.
+- The change feed position, so a client's change cursor stays valid without a
+  rescan.
 
 A copied source table whose columns differ from the current schema stops the
 upgrade before the vault changes. Restoring a backup still requires fresh
@@ -225,9 +237,10 @@ query, so the unversioned released binary also fails closed rather than
 silently writing with obsolete storage rules.
 
 For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. For a
-v0.15.0 source it is `<database>.schema-v28.bak`. If v0.15.1 refused that vault
-with `schema version 28 has no supported JSONL cutover`, open it with v0.15.2
-or later to complete the upgrade.
+v0.15.0 source it is `<database>.schema-v28.bak`; later releases use their
+schema version the same way, such as `<database>.schema-v48.bak` for v0.17.0.
+If v0.15.1 refused that vault with `schema version 28 has no supported JSONL
+cutover`, open it with v0.15.2 or later to complete the upgrade.
 
 The recovery copy contains private vault metadata and inherits the vault's
 owner-private boundary. Keep it until the upgraded vault and a fresh backup
