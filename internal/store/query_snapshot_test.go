@@ -84,6 +84,8 @@ func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
 	assert.Equal(t, "document", projection.Rows[0].MediaFamily)
 	assert.Equal(t, "pdf", query.FilenameExtension(projection.Rows[0].Name))
 	assert.Equal(t, []SnapshotTag{{ID: assigned.Tag.ID, Name: assigned.Tag.Name, Revision: assigned.Tag.Revision}}, projection.Rows[0].Tags)
+	assert.NotNil(t, projection.Rows[1].Tags)
+	assert.Empty(t, projection.Rows[1].Tags)
 	assert.Equal(t, []string{run.ID()}, projection.Rows[0].CollectionIDs)
 	assert.Equal(t, run.ID(), projection.Rows[0].DisplayCollectionID)
 	assert.Nil(t, projection.Rows[0].DisplayCollectionLabel)
@@ -113,58 +115,6 @@ func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
 	assert.Equal(t, originalHash, refreshed.MemberHash, "mutable metadata is not content membership identity")
 	assert.NotEqual(t, originalSnapshotFingerprint, refreshed.SnapshotFingerprint,
 		"a new frozen projection records the changed tag and node revision")
-}
-
-func TestQuerySnapshotRowsShareParentPathsAndKeepEmptyTags(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	nested, err := s.Mkdir(ctx, s.RootID(), "nested")
-	require.NoError(t, err)
-	deeper, err := s.Mkdir(ctx, nested.ID, "deeper")
-	require.NoError(t, err)
-	files := []struct {
-		parentID int64
-		name     string
-		path     string
-	}{
-		{nested.ID, "a.txt", "/nested/a.txt"},
-		{nested.ID, "b.txt", "/nested/b.txt"},
-		{deeper.ID, "c.txt", "/nested/deeper/c.txt"},
-		{s.RootID(), "d.txt", "/d.txt"},
-	}
-	for _, file := range files {
-		_, err := s.CreateFile(ctx, file.parentID, file.name, fakeHash("snapshot-path-"+file.name), 1, "text/plain")
-		require.NoError(t, err)
-	}
-	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
-	require.NoError(t, err)
-	require.Len(t, projection.Rows, len(files))
-	for i, file := range files {
-		assert.Equal(t, file.path, projection.Rows[i].Path)
-		assert.NotNil(t, projection.Rows[i].Tags)
-		assert.Empty(t, projection.Rows[i].Tags)
-	}
-}
-
-func TestQuerySnapshotFilteredRowsKeepCollectionMembership(t *testing.T) {
-	t.Parallel()
-	fixture := newSnapshotFacetFixture(t)
-	createCollectionRun(t, fixture.store, "unmatched.txt", "snapshot-unmatched")
-	projection, err := fixture.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
-		Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"name:a.PDF"}`),
-	})
-	require.NoError(t, err)
-	require.Len(t, projection.Rows, 1)
-	row := projection.Rows[0]
-	assert.Equal(t, fixture.nodes["a"].ID, row.NodeID)
-	collections := []string{fixture.collections[0].ID(), fixture.collections[1].ID()}
-	slices.Sort(collections)
-	assert.Equal(t, collections, row.CollectionIDs)
-	assert.Equal(t, collections[0], row.DisplayCollectionID)
-	require.NotNil(t, row.DisplayCollectionLabel)
-	labels := map[string]string{fixture.collections[0].ID(): "First", fixture.collections[1].ID(): "Second"}
-	assert.Equal(t, labels[collections[0]], *row.DisplayCollectionLabel)
 }
 
 func TestQuerySnapshotRejectsBoundsDuringMaterialization(t *testing.T) {

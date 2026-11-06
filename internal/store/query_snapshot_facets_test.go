@@ -301,8 +301,11 @@ func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
 	assert.Equal(t, map[string]int64{
 		"complete": 2, "partial": 0, "failed": 0, "unprocessed": 4, "none": 0, "unavailable": 0,
 	}, facetCounts(facetByDimension(t, projection, "text_coverage")))
-	assert.Equal(t, map[string]int64{"duplicate": 2, "unique": 4},
-		facetCounts(facetByDimension(t, projection, "duplicates")))
+	duplicates := facetByDimension(t, projection, "duplicates")
+	assert.ElementsMatch(t, []SnapshotFacetValue{
+		{Key: "duplicate", Label: "duplicate", Count: 2},
+		{Key: "unique", Label: "unique", Count: 4},
+	}, duplicates.Values)
 }
 
 func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T) {
@@ -327,9 +330,6 @@ func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T)
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), projection.Total)
-	for _, value := range facetByDimension(t, projection, "duplicates").Values {
-		assert.Equal(t, value.Key, value.Label)
-	}
 	assert.Equal(t, map[string]int64{"duplicate": 1, "unique": 0},
 		facetCounts(facetByDimension(t, projection, "duplicates")), "the duplicate peer is outside the query result")
 }
