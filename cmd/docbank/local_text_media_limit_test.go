@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"maps"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -34,9 +35,7 @@ func TestLocalTextSetupPreservesAudioCeiling(t *testing.T) {
 	cfg, _ := doclingASRProcessingConfig(t, provider.URL())
 	embeddings := localTextSourceConfig(t, local.URL, "source-revision", "prefix-free", "DOCBANK_TEST_AUDIO_EMBED_KEY")
 	cfg.EmbeddingProfiles = embeddings.EmbeddingProfiles
-	for name, binding := range embeddings.CredentialBindings {
-		cfg.CredentialBindings[name] = binding
-	}
+	maps.Copy(cfg.CredentialBindings, embeddings.CredentialBindings)
 	recipe := cfg.ProcessingProfiles["asr"]
 	recipe.Embeddings = []string{"semantic"}
 	cfg.ProcessingProfiles["asr"] = recipe
