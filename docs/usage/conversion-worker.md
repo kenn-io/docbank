@@ -81,6 +81,62 @@ loops. Point the backend directly at Docling Serve. Retained jobs bind
 the backend origin; use a separate spool when changing that origin. It has no vault
 API, shared database, URL-input route, or arbitrary pipeline option.
 
+## Route a Docbank profile to the worker
+
+Choose an explicit worker rendition profile in Docbank's existing processing
+configuration. These opt-in Docbank client integrations implement the
+stable-key gateway contract. Use `docbank-worker-document/v1` for documents or
+`docbank-worker-asr/v1` for original WAV/MP3. Both use descriptor ID
+`docbank.conversion-worker-v1` and require `trust_boundary = "operator_network"`.
+Native `docbank-docling-*` profiles keep their native endpoint contract. The
+audio adapter expects the qualified Docling Serve `1.32.0` / document schema
+`1.10.0` response contract; qualify later versions with synthetic WAV/MP3
+before use. Worker profiles reject password-decrypted PDFs before network
+access because decrypted bytes are not deterministic across retries.
+
+Construct document descriptors with `docling.WorkerDocumentDescriptor()` and
+audio descriptors with `docling.WorkerASRDescriptor(maxTranscriptChars)` from
+`go.kenn.io/docbank/document/docling`. Copy the returned fingerprint into
+`descriptor_fingerprint`. Compute `disclosure_fingerprint` with
+`docling.WorkerDisclosureFingerprint(adapterContract, descriptor, endpoint,
+deploymentFingerprint)`. Changing the endpoint or deployment requires a new
+disclosure and renewed consent. The audio descriptor also binds the transcript
+character limit.
+
+Use the ordinary rendition `runtime` block with the gateway's root origin,
+finite request/polling timeouts, explicit private/shared/loopback `allowed_cidrs`
+and `proxy_mode = "disabled"`. Bind `credential:<name>` to an environment
+variable containing the gateway key. Give Docling's separate backend key only
+to the worker. Keep source and response limits at or below 100 MiB and 128 MiB;
+document `max_units` is at most 200. Request `provider_markdown` for documents,
+optionally `structured_evidence`; audio requests only `provider_transcript`. See
+[processing configuration](configuration.md) for the surrounding profile graph.
+
+The existing processing plan shows the worker destination and requires consent
+before sending bytes. Selecting a worker profile is opt-in. Keep cheap text on
+the local profile and use a supplied transcript when one is available. If the
+worker is unavailable, its durable rendition job waits and retries. It does
+not fall back to heavy conversion on the vault host or to a hosted provider.
+
+After durable acceptance, a checkpoint stores the issued operation and the
+original authorization facts. A known operation resumes without reopening or
+resending the original, including after the original authorization interval
+expires. If the daemon dies before saving its checkpoint, the exact worker
+profile can recover after lease expiry: it rechecks current consent and runtime,
+reopens the exact source, and looks up the same immutable request key before
+new-work readiness. Expired authority is never extended in an existing receipt.
+Receipt timestamps record acceptance or revalidation within that authority,
+not physical model completion or retrieval latency. Resume keeps those facts;
+request/retry usage counts only the current invocation. Epoch and consent
+fences still govern publication. Other adapters retain their
+existing ambiguous-submission handling.
+
+Rendition publication and embedding are independent. Text becomes searchable
+when its lexical generation is published. Embedding outages leave their own
+jobs pending; recovering those jobs does not reconvert the document. Original
+and derivative retention follow the selected processing profile, independently
+of either worker's completion.
+
 ## Storage and recovery
 
 The defaults are 64 MiB per input, 64 MiB per result, 128 retained jobs and a
