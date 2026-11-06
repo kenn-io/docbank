@@ -87,7 +87,6 @@ func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {
 }
 
 func TestSavedQueryRunDeadlineAfterPreparation(t *testing.T) {
-	t.Skip("saved-run finalization still converts caller deadlines to cancellation")
 	t.Parallel()
 	for _, receipt := range []bool{false, true} {
 		name := "mutation admission"

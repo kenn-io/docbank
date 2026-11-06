@@ -375,7 +375,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	options := defaultSnapshotMaterializeOptions()
 	// The service owns the tail after the creating request returns.
-	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), options.BuildTimeout)
+	buildCtx, cancel := context.WithTimeout(snapshotBuildParent(ctx, saved != nil), options.BuildTimeout)
 	stopRequestCancel := context.AfterFunc(ctx, cancel)
 	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
@@ -488,6 +488,15 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		ctx: buildCtx, cancel: cancel, build: build, projection: projection,
 		cached: cached, page: page, finish: finish, stopRequestCancel: stopRequestCancel,
 	}, nil
+}
+
+// snapshotBuildParent keeps synchronous saved runs on the caller's context so
+// its deadline survives as context.DeadlineExceeded; other builds detach.
+func snapshotBuildParent(ctx context.Context, synchronous bool) context.Context {
+	if synchronous {
+		return ctx
+	}
+	return context.WithoutCancel(ctx)
 }
 
 func (s *QuerySnapshotService) beginSavedRunFinalization(prepared preparedQuerySnapshot) error {
