@@ -87,6 +87,79 @@ func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
 	}
 }
 
+func TestPhotoBrowseMetadataMatch(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first := browsePhotoNode(t, s, "first.jpg", browseHash("shared"), "image/jpeg")
+	second := browsePhotoNode(t, s, "second.jpg", first.BlobHash, "image/jpeg")
+	browsePhotoMetadata(t, s, first, "shared-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens A")),
+		photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("41.9028")),
+		photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("12.4964")),
+		exifCapture("2024-01-01T12:00:00Z"))
+	replaced := browsePhotoNode(t, s, "replaced.jpg", browseHash("old"), "image/jpeg")
+	browsePhotoMetadata(t, s, replaced, "old-fields", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
+	replaced, _, err := s.ReplaceContent(t.Context(), replaced.ID, replaced.Revision, browseHash("new"), 20, "image/jpeg")
+	require.NoError(t, err)
+	browsePhotoMetadata(t, s, replaced, "new-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera B")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
+	hidden := browsePhotoNode(t, s, "hidden.jpg", browseHash("hidden"), "image/jpeg")
+	browsePhotoMetadata(t, s, hidden, "hidden-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens Hidden")))
+	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	hiddenAsset, err := s.PhotoAssetForNode(t.Context(), hidden.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(t.Context(), hiddenAsset.ID, hiddenAsset.Revision, true)
+	require.NoError(t, err)
+	hiddenToken, _, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	for _, set := range []bool{false, true} {
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: set}).compile(t.Context(), snapshotTestQuery(t, `{"filters":{"cameras":["Camera A"]}}`), queryResolver{q: s.db})
+		require.NoError(t, err)
+		require.Equal(t, []int64{first.ID, second.ID, hidden.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	}
+	for _, tc := range []struct {
+		raw         string
+		names       []string
+		lens        string
+		cameraTotal int64
+		hidden      bool
+	}{
+		{`{"filters":{"cameras":["Camera A"]}}`, []string{"first.jpg", "second.jpg"}, "Lens A", 3, false},
+		{`{"filters":{"cameras":["Camera A"],"collapse_duplicates":true}}`, []string{"first.jpg"}, "Lens A", 2, false},
+		{`{"filters":{"cameras":["Camera B"]}}`, []string{"replaced.jpg"}, "Lens B", 3, false},
+		{`{"syntax":"advanced","text":"NOT camera:\"Camera A\""}`, []string{"replaced.jpg"}, "Lens B", 1, false},
+		{`{"filters":{"locations":["Rome, Roma, Italy"]}}`, []string{"first.jpg", "second.jpg"}, "Lens A", 2, false},
+		{`{"text":"first","filters":{"cameras":["Camera A"]}}`, []string{"first.jpg"}, "Lens A", 1, false},
+		{`{"filters":{"cameras":["Camera A"]}}`, []string{"hidden.jpg"}, "Lens Hidden", 1, true},
+	} {
+		ctx := t.Context()
+		if tc.hidden {
+			ctx = WithPhotoHiddenToken(ctx, hiddenToken)
+		}
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, tc.raw), Hidden: tc.hidden, Facets: []string{"camera", "lens"}}, nil)
+		require.NoError(t, err, tc.raw)
+		require.Equal(t, int64(len(tc.names)), page.Total, tc.raw)
+		names := make([]string, 0, len(page.Items))
+		for _, item := range page.Items {
+			names = append(names, item.Name)
+		}
+		require.ElementsMatch(t, tc.names, names, tc.raw)
+		for _, facet := range page.Facets {
+			require.True(t, facet.Available, tc.raw)
+			if facet.Dimension == "lens" {
+				require.Equal(t, page.Total, *facet.Total, tc.raw)
+				require.Equal(t, tc.lens, facet.Values[0].Key, tc.raw)
+			} else {
+				require.Equal(t, tc.cameraTotal, *facet.Total, tc.raw)
+			}
+		}
+	}
+}
+
 func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

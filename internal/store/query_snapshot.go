@@ -250,7 +250,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			executionValue.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
-		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos}
+		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
 		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
 		if err != nil {
 			return err

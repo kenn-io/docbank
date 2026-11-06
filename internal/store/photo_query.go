@@ -243,8 +243,19 @@ func (s *Store) ListPhotoAssets(
 			}
 		}
 		if boundary == nil {
-			countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + countFrom +
-				` WHERE ` + scope.where())
+			countScope := scope
+			if len(request.assetIDs) == 0 {
+				countCompiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
+				if err != nil {
+					return err
+				}
+				countScope, err = scope.withCompiledMatch(countCompiled)
+				if err != nil {
+					return err
+				}
+			}
+			countSQL, countArgs, err := countScope.bind(`SELECT COUNT(*) FROM ` + countFrom +
+				` WHERE ` + countScope.where())
 			if err != nil {
 				return err
 			}
@@ -468,6 +479,18 @@ func newPhotoBrowseScope(
 		return photoBrowseScope{}, err
 	}
 	return photoBrowseScope{match: match, coverage: coverage, generation: generation, hidden: hidden}, nil
+}
+
+func (s photoBrowseScope) withCompiledMatch(compiled CompiledQuery) (photoBrowseScope, error) {
+	match, err := photoBrowseMatch(compiled, s.generation, s.coverage)
+	if err != nil {
+		return photoBrowseScope{}, err
+	}
+	if s.queue != "" {
+		match.sql = `a.asset_id=xq.asset_id AND (` + match.sql + `)`
+	}
+	s.match = match
+	return s, nil
 }
 
 // where filters rows selected from photoBrowseDisplayFrom to the scope.

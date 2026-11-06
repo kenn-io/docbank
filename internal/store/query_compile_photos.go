@@ -64,6 +64,18 @@ func photoXMPRequired(expression *query.Expression) bool {
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+	if c.photoDisplayMetadata && c.photoMetadataSet {
+		// Like xmp, match assets once, then expand them to their members.
+		return compiledQueryFragment{sql: `n.id IN (WITH m AS MATERIALIZED (
+ SELECT asset.asset_id FROM photo_technical_metadata p
+ CROSS JOIN source_metadata_heads h ON h.generation_id=p.generation_id
+ CROSS JOIN content_versions v ON v.blob_hash=h.source_sha256
+ CROSS JOIN nodes dn ON dn.id=v.node_id AND dn.current_version_id=v.version_id
+ CROSS JOIN photo_files display ON display.node_id=dn.id
+ CROSS JOIN photo_assets asset ON asset.asset_id=display.asset_id AND asset.display_file_id=display.file_id
+ WHERE ` + predicate + `)
+ SELECT member.node_id FROM m CROSS JOIN photo_files member ON member.asset_id=m.asset_id)`, args: args}
+	}
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
 	}, args...)
