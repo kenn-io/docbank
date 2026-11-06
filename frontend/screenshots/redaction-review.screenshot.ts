@@ -154,14 +154,18 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     const drawer = page.getByRole("dialog", { name: "Redact two-pages.pdf", exact: true });
     const originalPage = async (n: number, target: Locator = drawer) => {
       const field = target.getByRole("textbox", { name: "", exact: true });
-      if ((await field.inputValue()) !== String(n)) {
-        await field.fill(String(n));
-        await field.press("Enter");
-      }
-      await expect(target.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled(
-        { timeout: 60000 },
-      );
-      await expect(field).toHaveValue(String(n));
+      // The reader rewrites this box whenever its current page changes, even
+      // between the fill and Enter. Retype until the page sticks.
+      await expect(async () => {
+        if ((await field.inputValue()) !== String(n)) {
+          await field.fill(String(n));
+          await field.press("Enter");
+        }
+        await expect(
+          target.getByRole("switch", { name: "Draw rectangle", exact: true }),
+        ).toBeEnabled({ timeout: 5000 });
+        await expect(field).toHaveValue(String(n), { timeout: 1000 });
+      }).toPass({ timeout: 60000 });
     };
     await originalPage(2);
     expect(originalLoads).toBe(1);
