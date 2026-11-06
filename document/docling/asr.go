@@ -41,6 +41,9 @@ var _ document.RenditionProvider = (*ASRClient)(nil)
 // ASRPolicyFingerprint binds the qualified versions and every transcript evidence
 // bound. Use it as the ASR descriptor's PolicyFingerprint before sealing requests.
 func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
+	return asrPolicyFingerprint(maxTranscriptChars, ASRAdapterContract)
+}
+func asrPolicyFingerprint(maxTranscriptChars int, contract string) (string, error) {
 	policy, err := document.NewEvidencePolicy(maxTranscriptChars)
 	if err != nil {
 		return "", err
@@ -50,7 +53,7 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 		SchemaVersion   string                          `json:"schema_version"`
 		ProviderVersion string                          `json:"provider_version"`
 		EvidencePolicy  document.EvidencePolicyIdentity `json:"evidence_policy"`
-	}{ASRAdapterContract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
+	}{contract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +68,10 @@ func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint,
 
 // NewASR constructs the transcript provider for the qualified WAV/MP3 deployment.
 func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client) (*ASRClient, error) {
-	client, err := newTransportClient(profile.Profile, secrets, httpClient)
+	return newASRFor(profile, secrets, httpClient, providerID, ASRAdapterContract)
+}
+func newASRFor(profile ASRProfile, secrets SecretResolver, httpClient *http.Client, expectedID, contract string) (*ASRClient, error) {
+	client, err := newTransportClientFor(profile.Profile, secrets, httpClient, expectedID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +81,7 @@ func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client)
 		!qualifiedASRFormats(descriptor.SupportedFormats) {
 		return nil, errors.New("docling: ASR profile does not match the qualified deployment")
 	}
-	fingerprint, err := ASRPolicyFingerprint(profile.MaxTranscriptChars)
+	fingerprint, err := asrPolicyFingerprint(profile.MaxTranscriptChars, contract)
 	if err != nil || descriptor.PolicyFingerprint != fingerprint {
 		return nil, errors.New("docling: ASR descriptor policy fingerprint does not match transcript bounds")
 	}
@@ -260,8 +266,8 @@ func (client *ASRClient) buildResult(
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
 		Descriptor: client.client.descriptor, Authorization: run.authorization,
 		SourceSHA256: run.metadata.SHA256, OperationID: "docling-" + task.id,
-		StartedAt: run.started, CompletedAt: time.Now().UTC(),
-		Usage: run.usage.Rendition(int64(len(run.source)), int64(len(evidence.Units))),
+		StartedAt: run.started, CompletedAt: run.completedAt(),
+		Usage: run.usage.Rendition(run.inputBytes, int64(len(evidence.Units))),
 	})
 	if err != nil {
 		return document.RenditionResult{}, err

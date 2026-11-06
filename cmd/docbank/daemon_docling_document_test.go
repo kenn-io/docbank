@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"image/color"
@@ -21,9 +22,11 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/conversionworker"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -259,8 +262,12 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 		failure          string
 		maxResponseBytes int64
 		maxUnits         int
+		worker           bool
+		loseWorkerReply  bool
 	}{
 		{name: "filename withheld"},
+		{name: "durable Mini worker", worker: true},
+		{name: "durable Mini worker lost reply", worker: true, loseWorkerReply: true},
 		{name: "plain text", filename: "report.txt", source: []byte("Synthetic source text\n")},
 		{name: "PNG image", filename: "report.png", source: mediatest.PNG(2, 2, color.White)},
 		{name: "filename disclosed", disclose: true},
@@ -299,6 +306,9 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
+				case "/ready":
+					_, err := io.WriteString(w, `{}`)
+					assert.NoError(t, err)
 				case "/v1/convert/file/async":
 					assert.Equal(t, http.MethodPost, r.Method)
 					r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -350,8 +360,41 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 				}
 			}))
 			t.Cleanup(provider.Close)
-			cfg, _ := doclingDocumentProcessingConfig(t, provider.URL)
+			endpoint := provider.URL
+			if test.worker {
+				gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-document-key", BackendURL: provider.URL, BackendKey: "synthetic-document-key"})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
+				var loseReply atomic.Bool
+				loseReply.Store(test.loseWorkerReply)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost && r.URL.Path == workerprotocol.SubmitPath && loseReply.Swap(false) {
+						recorded := httptest.NewRecorder()
+						gateway.ServeHTTP(recorded, r)
+						assert.Equal(t, http.StatusAccepted, recorded.Code)
+						w.Header().Set(workerprotocol.ProtocolHeader, workerprotocol.Contract)
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					if strings.HasPrefix(r.URL.Path, workerprotocol.PollPath) {
+						_, err := gateway.RunOnce(r.Context())
+						assert.NoError(t, err)
+					}
+					gateway.ServeHTTP(w, r)
+				}))
+				t.Cleanup(server.Close)
+				endpoint = server.URL
+			}
+			cfg, _ := doclingDocumentProcessingConfig(t, endpoint)
 			p := cfg.RenditionProfiles["documents"]
+			if test.worker {
+				descriptor, err := docling.WorkerDocumentDescriptor()
+				require.NoError(t, err)
+				p.AdapterContract = workerprotocol.DocumentAdapter
+				p.DescriptorID = descriptor.ID
+				p.DescriptorFingerprint = descriptor.Fingerprint
+				p.DisclosureFingerprint = docling.WorkerDisclosureFingerprint(p.AdapterContract, descriptor, endpoint, p.DeploymentFingerprint)
+			}
 			p.DiscloseFilename = test.disclose
 			if test.maxResponseBytes > 0 {
 				p.MaxResponseBytes = test.maxResponseBytes
@@ -385,8 +428,8 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, plan.Flow, 1)
 			require.Equal(t, "operator_network", plan.Flow[0].TrustBoundary)
-			require.Equal(t, config.DoclingDocumentAdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
-			require.Equal(t, provider.URL, plan.Flow[0].RuntimeDisclosure.Endpoint)
+			require.Equal(t, p.AdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+			require.Equal(t, endpoint, plan.Flow[0].RuntimeDisclosure.Endpoint)
 			require.Equal(t, test.disclose, plan.Flow[0].DiscloseFilename)
 			require.Equal(t, p.DeploymentFingerprint, plan.Flow[0].RuntimeDisclosure.Deployment)
 			require.True(t, plan.ConsentRequired)
