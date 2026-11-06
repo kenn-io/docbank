@@ -22,6 +22,20 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "photo-albums", postgres: "native operations", scope: "Album lifecycle, explicit membership and cover summaries; query selection and snapshot delivery remain unqualified.", scenarios: []backendScenario{
+		{"PhotoSetLifecycle", func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newPostgresQueryStore) }},
+		{"PhotoSetCovers", nil, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			s, _, _ := photoSetCoverScenario(t, newPostgresQueryStore)
+			checkRetentionMetadata(t, s)
+		}},
+		{"PhotoHiddenCoverAndPromoteAuthorization", func(t *testing.T) { t.Helper(); checkPhotoHiddenCoverAndPromoteAuthorization(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenCoverAndPromoteAuthorization(t, newPostgresQueryStore) }},
+		{"PhotoSetReceiptsAndOrdering", func(t *testing.T) { t.Helper(); checkPhotoSetReceiptsAndOrdering(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetReceiptsAndOrdering(t, newPostgresQueryStore) }},
+		{"PhotoSetHiddenSummaries", func(t *testing.T) { t.Helper(); checkPhotoSetHiddenSummaries(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetHiddenSummaries(t, newPostgresQueryStore) }},
+		{"PhotoSetSnapshots", nil, checkPhotoSetSnapshotsPostgres},
+		{"PhotoSetRollback", nil, checkPhotoSetRollbackPostgres},
+	}},
 	{name: "photo-quality-hidden", postgres: "native operations", scope: "Quality publication, hidden sessions and photo settings; excludes query browsing and people curation.", scenarios: []backendScenario{
 		{"PhotoQualityLifecycle", func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newPostgresQueryStore) }},
 		{"PhotoQualityDetectedInputs", func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newPostgresQueryStore) }},
@@ -1274,7 +1288,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Photo sets, custodian assignments, snapshots, Bates and delivery jobs remain unqualified."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Custodian assignments, query-selected albums, snapshots, Bates and delivery jobs remain unqualified; explicit album operations are covered above."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }

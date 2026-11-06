@@ -459,9 +459,10 @@ func checkPhotoHiddenMutationGate(t *testing.T, newStore func(*testing.T) *Store
 	require.Equal(t, asset, stored)
 }
 
-func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
+func checkPhotoHiddenCoverAndPromoteAuthorization(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "private.jpg")
 	target := albumAsset(t, s, "target.jpg")

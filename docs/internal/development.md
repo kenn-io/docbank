@@ -566,6 +566,9 @@ GRANT INSERT, UPDATE(preference, revision, updated_at, burst_gap_seconds,
 GRANT INSERT, DELETE, UPDATE(state, focus, blur, brightness, color_red,
     color_green, color_blue, framing, aesthetics, face_reports_json, face_inputs)
     ON documents.photo_quality_signals TO docbank_runtime;
+GRANT INSERT, UPDATE(name, starred, revision, cover_asset_id, updated_at, deleted_at)
+    ON documents.photo_sets TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_set_members TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
     copied_objects, copied_bytes, cancel_requested, error, receipt_json,
     updated_at, finished_at, retention_until)
@@ -1231,6 +1234,36 @@ results, retained dismissal, lockout, expiry, revocation, settings, rollback and
 read snapshots. General photo browsing and quality filters, people curation,
 best-shot choices, portable restore and public PostgreSQL vault opening remain
 separate qualification boundaries.
+
+#### Photo albums
+
+The shared Store creates, renames, stars, duplicates and deletes albums, changes
+membership by explicit asset IDs, and reads album summaries on both backends.
+Mutations check the expected revision inside writer admission. Member changes,
+cover changes, revision advances and receipt chunks commit together; a failed
+receipt write leaves the prior album and membership intact. Repeated adds and
+removes preserve member timestamps and produce no new receipt when nothing
+changes. Duplication preserves member timestamps, star and cover choices.
+
+Summary reads use one repeatable-read snapshot for properties, counts and cover
+selection. They distinguish retained membership from currently visible photos.
+A cover needs a live display version and a ready preview for the requested
+recipe. A hidden, excluded or unavailable cover falls back to the newest visible
+member with a matching preview. A locked hidden cover is omitted from responses,
+including duplication, without erasing the stored choice. Explicit membership or
+cover changes involving hidden photos require a live hidden session. Existing
+audit restrictions on album mutations remain unchanged.
+
+SQLite retains its ordered membership index and forced cover join order. The
+query-plan check requires an indexed album seek without a temporary ordering
+sort. PostgreSQL uses ordinary joins and the same membership access indexes;
+its runtime role can insert albums, update their mutable properties, and insert
+or delete members. It cannot update member identities or timestamps in place.
+
+This qualifies explicit-ID Store operations. Search-selected populations,
+`SkipUnavailable` selection, browse pages and albums created from frozen query
+snapshots remain within the search and delivery qualification boundaries. The
+public PostgreSQL vault lifecycle is still unavailable.
 
 #### Photo checkouts
 

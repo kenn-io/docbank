@@ -57,6 +57,10 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(name,starred,revision,cover_asset_id,updated_at,deleted_at) ON "+schema+".photo_sets TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".photo_set_members TO "+quotedRole)
+	require.NoError(t, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) ON "+schema+".photo_library_settings TO "+quotedRole+
 		"; GRANT DELETE,UPDATE(passcode_hash) ON "+schema+".photo_hidden_credentials TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_hidden_failures TO "+quotedRole+

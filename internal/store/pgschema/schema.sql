@@ -1418,6 +1418,9 @@ CREATE TABLE {{schema}}.photo_set_members (
     PRIMARY KEY (set_id,asset_id)
 );
 
+CREATE INDEX photo_set_members_asset ON {{schema}}.photo_set_members(asset_id,set_id);
+CREATE INDEX photo_set_members_added ON {{schema}}.photo_set_members(set_id,added_at DESC,asset_id);
+
 CREATE TABLE {{schema}}.persons (
     key_face_id TEXT COLLATE "C",
     person_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
