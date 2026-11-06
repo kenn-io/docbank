@@ -260,7 +260,7 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 		"query": "synthetic", "profile": "local", "filters": map[string]any{"modified_since": "not-a-date"},
 	})
 
-	scopedOutput := map[string]any{"vault_id": testVaultID, "requested_mode": "hybrid", "actual_mode": "hybrid",
+	scopedOutput := map[string]any{"profile": "local", "vault_id": testVaultID, "requested_mode": "hybrid", "actual_mode": "hybrid",
 		"coverage":        map[string]any{"binding_required": true, "scoped_documents": 5000, "complete_documents": 5000, "state": "complete"},
 		"skipped_reasons": []any{}, "results": []any{}, "truncated": false, "ttlMs": 0, "cacheScope": "private"}
 	assertSchemaAccepts(t, search.OutputSchema, scopedOutput)

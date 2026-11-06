@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -104,4 +105,64 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	hit, ok := hits[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "/alpha.txt", hit["path"])
+}
+
+func TestSearchDocumentsProfileDiscovery(t *testing.T) {
+	f := newNativeExportFixture(t)
+	f.addFile(t, "refund-policy.txt", "Refunds take five days.")
+	daemon, service, profile := newProcessingDocumentServer(t, f)
+	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
+	answer := exportCall(t, daemon, "answer_question", map[string]any{"question": "refund", "filters": map[string]any{}})
+	receipt := schemaMap(t, answer["receipt"])
+	require.Equal(t, profile, schemaMap(t, receipt["profile"])["name"])
+	for _, embedded := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, mode, selected, binding, code string
+		}{
+			{name: "automatic", mode: "auto"},
+			{name: "unknown", mode: "hybrid", selected: "default", code: "processing_profile_unavailable"},
+			{name: "hybrid", mode: "hybrid", selected: profile},
+			{name: "hybrid explicit binding", mode: "hybrid", selected: profile, binding: "query"},
+			{name: "semantic", mode: "semantic", selected: profile, code: "semantic_unavailable"},
+			{name: "semantic explicit binding", mode: "semantic", selected: profile, binding: "query", code: "semantic_unavailable"},
+		} {
+			t.Run(fmt.Sprintf("embedded=%t/%s", embedded, tc.name), func(t *testing.T) {
+				args := map[string]any{"query": "refund", "filters": map[string]any{}, "mode": tc.mode}
+				if tc.selected != "" {
+					args["profile"] = tc.selected
+				}
+				if tc.binding != "" {
+					args["binding_id"] = tc.binding
+				}
+				var output map[string]any
+				if embedded {
+					raw, err := json.Marshal(args)
+					require.NoError(t, err)
+					result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
+					require.NoError(t, err)
+					require.Equal(t, tc.code != "", result.IsError)
+					output = structuredMap(t, result.StructuredContent)
+				} else {
+					output = exportCall(t, daemon, "search_documents", args)
+				}
+				if tc.code != "" {
+					require.Equal(t, tc.code, output["code"])
+					require.Contains(t, output["message"], profile)
+					if tc.code == "semantic_unavailable" {
+						require.Contains(t, output["message"], "docbank processing local")
+					}
+					return
+				}
+				require.Equal(t, profile, output["profile"])
+				require.Equal(t, tc.mode, output["requested_mode"])
+				require.Equal(t, "lexical", output["actual_mode"])
+				hits, ok := output["results"].([]any)
+				require.True(t, ok)
+				require.Len(t, hits, 1)
+				require.Equal(t, "/refund-policy.txt", schemaMap(t, hits[0])["path"])
+				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing local")
+			})
+		}
+	}
+	assertSchemaRejects(t, catalogMap(toolCatalog(ServerOptions{}))["find_conflicts"].InputSchema, map[string]any{"query": "refund", "filters": map[string]any{}})
 }

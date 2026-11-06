@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -421,6 +422,7 @@ type searchDocumentsOutput struct {
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
 	ObservedScopeCount int                                 `json:"observed_scope_count,omitzero"`
+	Profile            string                              `json:"profile"`
 	RequestedMode      string                              `json:"requested_mode"`
 	ActualMode         string                              `json:"actual_mode"`
 	Coverage           searchCoverageOutput                `json:"coverage"`
@@ -440,12 +442,56 @@ func searchDocuments(
 	input.Mode = effectiveSearchMode(input.Mode)
 
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, c, input, false)
+		profiles, err := c.ListDocumentProcessingProfiles(ctx)
+		if err != nil {
+			return documentSearchResponse{}, err
+		}
+		if input.Profile != "" {
+			found := slices.ContainsFunc(profiles, func(p api.ProcessingProfileSummary) bool { return p.Name == input.Profile })
+			if !found {
+				names := make([]string, 0, len(profiles))
+				for _, p := range profiles {
+					names = append(names, p.Name)
+				}
+				return documentSearchResponse{}, &searchProfileError{code: "processing_profile_unavailable", message: "Available processing profiles: " + strings.Join(names, ", ")}
+			}
+		}
+		selected, candidates, err := selectAnswerSearch(profiles, answerInput{Profile: input.Profile, BindingID: input.BindingID, Rerank: input.Rerank})
+		if err != nil {
+			return documentSearchResponse{}, err
+		}
+		if len(selected.QueryEmbeddingBindings) == 0 && input.Profile != "" {
+			candidates = nil
+		}
+		var result documentSearchResponse
+		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
+			attempt := input
+			if input.Mode == "lexical" {
+				binding = input.BindingID
+			}
+			attempt.Profile, attempt.BindingID, attempt.Mode = profile, binding, mode
+			var err error
+			result, err = runDocumentSearch(ctx, c, attempt, false)
+			return result.report, err
+		}
+		report, selected, binding, failure, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", input.Mode, run)
+		if err != nil {
+			return documentSearchResponse{}, err
+		}
+		report.RequestedMode = input.Mode
+		if input.Mode != "lexical" && binding == "" {
+			report.Degradations = append(report.Degradations, semanticSearchGuidance(selected.Name, profiles))
+			if failure != "" {
+				report.Degradations = append(report.Degradations, failure)
+			}
+		}
+		result.report, result.profile = report, selected.Name
+		return result, nil
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{VaultID: result.vaultID,
+	output := searchDocumentsOutput{VaultID: result.vaultID, Profile: result.profile,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
 			ScopedDocuments:   result.report.Coverage.ScopedDocuments,
@@ -473,6 +519,7 @@ func searchDocuments(
 }
 
 type documentSearchResponse struct {
+	profile    string
 	resolution api.DocumentSourceFenceResolution
 	vaultID    string
 	report     api.DocumentSearchReport
@@ -933,4 +980,14 @@ func resolveSearchSummaries(ctx context.Context, c documentClient, results []api
 		identities[i] = api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}
 	}
 	return c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
+}
+
+func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary) string {
+	message := fmt.Sprintf("Profile %q has no available search by meaning.", name)
+	for _, profile := range profiles {
+		if profile.Name != name && len(profile.QueryEmbeddingBindings) > 0 {
+			return message + fmt.Sprintf(" Try profile %q.", profile.Name)
+		}
+	}
+	return message + " Run docbank processing local to add it."
 }

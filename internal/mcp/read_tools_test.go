@@ -282,7 +282,11 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 			}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/api/v1/processing/profiles" {
+					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
+					return
+				}
 				response.Header().Set("Content-Type", "application/problem+json")
 				response.WriteHeader(test.status)
 				writeDaemonJSON(t, response, map[string]any{
@@ -402,6 +406,8 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 	otherVersion := "33333333-3333-4333-8333-333333333333"
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
+		case "/api/v1/processing/profiles":
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
@@ -447,6 +453,8 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			infoCalls := 0
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
+				case "/api/v1/processing/profiles":
+					writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
 				case "/api/v1/info":
 					infoCalls++
 					http.Error(response, "unreadable unrelated blob shard", http.StatusInternalServerError)
@@ -492,6 +500,13 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 				"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
 				"filters": map[string]any{"source_present": true}, "rerank": test.rerank,
 			})
+			if test.profile == "missing" {
+				require.NoError(t, err)
+				require.True(t, result.IsError)
+				assert.Equal(t, "processing_profile_unavailable", structuredMap(t, result.StructuredContent)["code"])
+				assert.Zero(t, searchCalls)
+				return
+			}
 			assert.Equal(t, 1, searchCalls)
 			assert.Zero(t, infoCalls)
 			if test.wantError {
@@ -520,6 +535,8 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 	resolveCalls := 0
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
+		case "/api/v1/processing/profiles":
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
@@ -586,6 +603,8 @@ func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *
 	batchCalls := 0
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
+		case "/api/v1/processing/profiles":
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
 		case "/api/v1/processing/source-fences/resolve":
 			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
 				VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint,
@@ -640,6 +659,8 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, "synthetic-key", request.Header.Get("X-Api-Key"))
 		switch request.URL.Path {
+		case "/api/v1/processing/profiles":
+			writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
 		case "/api/v1/info":
 			writeDaemonJSON(t, response, api.VaultInfo{VaultID: testVaultID, VaultPath: "/synthetic/private/vault",
 				LiveFiles: 1, LiveDirectories: 1, ContentVersions: 1, TrackedBlobs: 1})
@@ -861,6 +882,8 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			}
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
+				case "/api/v1/processing/profiles":
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "local", RerankingAvailable: true}})
 				case "/api/v1/search":
 					var body map[string]any
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {

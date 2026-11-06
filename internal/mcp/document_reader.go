@@ -13,6 +13,7 @@ import (
 )
 
 type documentClient interface {
+	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
 	VaultInfo(ctx context.Context) (api.VaultInfo, error)
 	VaultID(ctx context.Context) (string, error)
 	ListDocuments(ctx context.Context, request api.DocumentQuery) (api.DocumentPage, error)
@@ -58,9 +59,19 @@ func daemonDocumentSession(lease *daemonLease) documentReadSession {
 
 func daemonClientSession[C documentClient](lease *daemonLease, client func(*daemonconn.Connection) C) func(context.Context, func(context.Context, C) error) error {
 	return func(ctx context.Context, call func(context.Context, C) error) error {
+		var guidance *searchProfileError
 		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
-			return struct{}{}, call(ctx, client(c))
+			err := call(ctx, client(c))
+			// Keep locally constructed guidance outside the daemon error sanitizer.
+			if local, ok := errors.AsType[*searchProfileError](err); ok {
+				guidance = local
+				return struct{}{}, nil
+			}
+			return struct{}{}, err
 		})
+		if err == nil && guidance != nil {
+			return guidance
+		}
 		return err
 	}
 }
@@ -126,7 +137,7 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
-	if name == "answer_question" {
+	if name == "answer_question" || name == "search_documents" {
 		facts, _ := toolProblemFacts(err)
 		code := facts.Code
 		if _, ok := answerErrorMessages[code]; ok {

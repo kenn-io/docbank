@@ -137,6 +137,7 @@ func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentS
 
 func findConflictsSchemas() (schema, schema) {
 	input, _ := searchDocumentsSchemas()
+	input["required"] = []string{"query", "profile"}
 	properties, _ := input["properties"].(schema)
 	properties["limit"] = integerSchema(1, 20)
 	delete(properties, "explain")
