@@ -263,9 +263,9 @@ func TestQuerySnapshotFacetsIgnoreBuiltMembershipFields(t *testing.T) {
 			row.DisplayCollectionID, row.DisplayCollectionLabel = "", nil
 			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = "", "", ""
 		}
-		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID, querySnapshotMaxRowBytes)
-		require.NoError(t, err)
 		var used int64
+		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID, defaultSnapshotMaterializeOptions(), &used)
+		require.NoError(t, err)
 		facets, err := materializeSnapshotFacets(t.Context(), q, compiled, generation.ID, f.selection, dimensions, projection.Rows, memberships, snapshotMaterializeOptions{}.withDefaults(), &used)
 		require.NoError(t, err)
 		assert.Equal(t, projection.Facets, facets)

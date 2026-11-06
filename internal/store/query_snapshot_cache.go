@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -254,7 +255,11 @@ func (s *QuerySnapshotService) Create(
 	prepared.build.handedOff = true
 	s.mu.Unlock()
 	page := prepared.page
-	go func() { _ = finish() }()
+	go func() {
+		if err := finish(); err != nil {
+			slog.WarnContext(prepared.ctx, "finish query snapshot build", "error", err)
+		}
+	}()
 	return page, nil
 }
 
@@ -427,7 +432,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	rows := projection.Rows
 	firstEnd := min(len(rows), projection.PageSize)
 	hydrateSnapshotRows(rows[:firstEnd], memberships)
-	firstRows, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[:firstEnd], 0)
+	firstRows, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[:firstEnd], memberships, 0)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
 	}
@@ -446,7 +451,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	finish := func() error {
 		hydrateSnapshotRows(rows[firstEnd:], memberships)
-		tail, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[firstEnd:], firstEnd)
+		tail, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[firstEnd:], memberships, firstEnd)
 		if err != nil {
 			return err
 		}
@@ -766,13 +771,7 @@ func (s *QuerySnapshotService) admitBuild(
 	}
 	s.purgeExpiredLocked(s.now().UTC())
 	// Counts and snapshots take separate builder slots so neither blocks the other.
-	builders := 0
-	for _, build := range s.builds {
-		if build.facetsOnly == facetsOnly && !build.handedOff {
-			builders++
-		}
-	}
-	if builders >= s.limits.MaxBuilders {
+	if s.activeBuildsLocked(facetsOnly, false) >= s.limits.MaxBuilders {
 		return nil, false, ErrSnapshotBusy
 	}
 	if _, exists := s.snapshots[snapshotID]; exists {
@@ -786,7 +785,7 @@ func (s *QuerySnapshotService) admitBuild(
 	if cached := s.snapshots[protectedSnapshotID]; cached == nil || cached.owner != owner {
 		protectedSnapshotID = ""
 	}
-	for !facetsOnly && (len(s.snapshots)+s.activeBuildsLocked(false) >= s.limits.MaxHandles ||
+	for !facetsOnly && (len(s.snapshots)+s.activeBuildsLocked(false, true) >= s.limits.MaxHandles ||
 		s.ownerHandles[owner] >= s.limits.MaxOwnerHandles) {
 		ownerOnly := s.ownerHandles[owner] >= s.limits.MaxOwnerHandles
 		if !s.evictLRULocked(owner, ownerOnly, protectedSnapshotID) {
@@ -1047,10 +1046,10 @@ func (s *QuerySnapshotService) gc(ctx context.Context) {
 
 // activeBuildsLocked counts in-flight builds of one kind: counts-only builds or
 // snapshot builds, which also reserve a handle.
-func (s *QuerySnapshotService) activeBuildsLocked(facetsOnly bool) int {
+func (s *QuerySnapshotService) activeBuildsLocked(facetsOnly, includeHandedOff bool) int {
 	count := 0
 	for _, build := range s.builds {
-		if build.facetsOnly == facetsOnly {
+		if build.facetsOnly == facetsOnly && (includeHandedOff || !build.handedOff) {
 			count++
 		}
 	}
@@ -1061,7 +1060,7 @@ func (s *QuerySnapshotService) stats() snapshotCacheStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return snapshotCacheStats{
-		CachedHandles: int64(len(s.snapshots)), ReservedHandles: int64(s.activeBuildsLocked(false)),
+		CachedHandles: int64(len(s.snapshots)), ReservedHandles: int64(s.activeBuildsLocked(false, true)),
 		CachedRows: s.cachedRows, ReservedRows: s.reservedRows,
 		CachedBytes: s.cachedBytes, ReservedBytes: s.reservedBytes,
 		ActiveBuilders: int64(len(s.builds)),

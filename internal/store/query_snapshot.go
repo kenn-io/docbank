@@ -304,7 +304,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				*options.DeferredMemberships = memberships
 			} else {
 				hydrateSnapshotRows(projection.Rows, memberships)
-				if _, err := encodeSnapshotRows(ctx, options, &projection.SerializedBytes, projection.Rows, 0); err != nil {
+				if _, err := encodeSnapshotRows(ctx, options, &projection.SerializedBytes, projection.Rows, memberships, 0); err != nil {
 					return err
 				}
 			}
@@ -394,6 +394,7 @@ func validateSnapshotCoverageProfile(ctx context.Context, q metadataQuerier, sel
 }
 
 type snapshotMembership struct {
+	chargedBytes                                         int64
 	Tags                                                 []SnapshotTag
 	CollectionIDs                                        []string
 	DisplayCollectionLabel                               *string
@@ -403,7 +404,7 @@ type snapshotMembership struct {
 type snapshotMemberships map[int64]snapshotMembership
 
 // readSnapshotMemberships shares creation-time memberships between display rows and facets.
-func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []int64, coverage CoverageSelection, generationID string, maxRowBytes int64) (snapshotMemberships, error) {
+func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []int64, coverage CoverageSelection, generationID string, options snapshotMaterializeOptions, used *int64) (snapshotMemberships, error) {
 	members := make(snapshotMemberships, len(nodeIDs))
 	if len(nodeIDs) == 0 {
 		return members, nil
@@ -432,10 +433,14 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 		if err := rows.Scan(&id, &tagsJSON, &collectionsJSON, &label); err != nil {
 			return err
 		}
-		if int64(len(tagsJSON))+int64(len(collectionsJSON)) > maxRowBytes {
-			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, id, maxRowBytes)
+		bytes := int64(len(tagsJSON)) + int64(len(collectionsJSON))
+		if bytes > options.MaxRowBytes {
+			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, id, options.MaxRowBytes)
 		}
-		member := snapshotMembership{DisplayCollectionLabel: stringPtr(label)}
+		if err := chargeSnapshotMaterialization(options, used, 0, bytes); err != nil {
+			return err
+		}
+		member := snapshotMembership{chargedBytes: bytes, DisplayCollectionLabel: stringPtr(label)}
 		if err := json.Unmarshal(tagsJSON, &member.Tags); err != nil {
 			return fmt.Errorf("decoding snapshot tags: %w", err)
 		}
@@ -453,11 +458,12 @@ func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []i
 			SELECT node_id,state,build_id,attachment_id FROM processing_coverage`,
 			[]any{string(ids), coverage.ProfileFingerprint, generationID}, func(rows *sql.Rows) error {
 				var id int64
-				var member snapshotMembership
-				if err := rows.Scan(&id, &member.CoverageState, &member.CoverageBuildID, &member.CoverageAttachmentID); err != nil {
+				var state, buildID, attachmentID string
+				if err := rows.Scan(&id, &state, &buildID, &attachmentID); err != nil {
 					return err
 				}
-				member.Tags, member.CollectionIDs, member.DisplayCollectionLabel = members[id].Tags, members[id].CollectionIDs, members[id].DisplayCollectionLabel
+				member := members[id]
+				member.CoverageState, member.CoverageBuildID, member.CoverageAttachmentID = state, buildID, attachmentID
 				members[id] = member
 				return nil
 			})
@@ -555,7 +561,7 @@ func materializeSnapshotRows(
 	for i, row := range projection.Rows {
 		nodeIDs[i] = row.NodeID
 	}
-	memberships, err := readSnapshotMemberships(ctx, q, nodeIDs, coverage, generationID, options.MaxRowBytes)
+	memberships, err := readSnapshotMemberships(ctx, q, nodeIDs, coverage, generationID, options, &projection.SerializedBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -607,7 +613,7 @@ func hydrateSnapshotRows(rows []SnapshotRow, memberships snapshotMemberships) {
 	}
 }
 
-func encodeSnapshotRows(ctx context.Context, options snapshotMaterializeOptions, used *int64, rows []SnapshotRow, offset int) ([][]byte, error) {
+func encodeSnapshotRows(ctx context.Context, options snapshotMaterializeOptions, used *int64, rows []SnapshotRow, memberships snapshotMemberships, offset int) ([][]byte, error) {
 	encoded := make([][]byte, len(rows))
 	for i := range rows {
 		if err := ctx.Err(); err != nil {
@@ -624,6 +630,7 @@ func encodeSnapshotRows(ctx context.Context, options snapshotMaterializeOptions,
 		if offset+i > 0 {
 			bytes++ // JSON array separator; brackets are charged before the query.
 		}
+		bytes -= memberships[rows[i].NodeID].chargedBytes
 		if err := chargeSnapshotMaterialization(options, used, 0, bytes); err != nil {
 			return nil, err
 		}
