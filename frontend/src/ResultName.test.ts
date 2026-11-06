@@ -26,10 +26,17 @@ it("adds a matched excerpt only when given one", () => {
 it("only uses a validity tooltip when it adds information", () => {
   const sameReason = render(ResultName, {
     name: "lease-2024.pdf",
+    folder: "/leases",
+    excerpt: "renewal excerpt",
     validityReason: "expired",
   });
   const reason = sameReason.container.querySelector(".validity-reason");
   expect(reason?.getAttribute("title")).toBeNull();
+  const excerpt = screen.getByText("renewal excerpt");
+  const text = excerpt.parentElement!;
+  expect(text.querySelector(".folder")?.textContent).toBe("/leases");
+  expect(reason?.parentElement).toBe(text);
+  expect(excerpt.nextElementSibling).toBe(reason);
   sameReason.unmount();
 
   const detailedTitle = "superseded by /leases/2025.pdf; /leases/2026/renewal.pdf";

@@ -1,15 +1,10 @@
 package main
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonconn"
-	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestSearchValidityCLIReasons(t *testing.T) {
@@ -28,44 +23,4 @@ func TestSearchValidityCLIReasons(t *testing.T) {
 	require.NoError(t, writeDocumentSearchAgent(cmd, "lease", report, nil))
 	require.Contains(t, out.String(), "validity=superseded")
 	require.Contains(t, out.String(), `validity_reason="(superseded by /new.txt)"`)
-}
-
-func TestAutomaticSearchValidityCLI(t *testing.T) {
-	profiles := []api.ProcessingProfileSummary{{Name: "alpha", EmbeddingBindings: []string{"a"}, QueryEmbeddingBindings: []string{"a"}}}
-	for _, tc := range []struct {
-		name      string
-		profiles  []api.ProcessingProfileSummary
-		wantError string
-	}{
-		{name: "date reaches automatic request", profiles: profiles},
-		{name: "no automatic profile", wantError: "--as-of requires"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var record kitdaemon.RuntimeRecord
-			var profileCalls, searchCalls, lexicalCalls int
-			spec := automaticSearchCase{asOf: "2025-01-01", query: "lease", limit: 1, profiles: tc.profiles, wantSearch: 1}
-			handler := automaticSearchDaemon(t, spec, &record, &profileCalls, &searchCalls)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
-					lexicalCalls++
-				}
-				handler(w, r)
-			}))
-			defer server.Close()
-			root := t.TempDir()
-			t.Setenv("DOCBANK_HOME", root)
-			record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "key", "synthetic-token", "")
-			_, err := daemonconn.RuntimeStore(root).Write(record)
-			require.NoError(t, err)
-			defer resetFlags(rootCmd)
-			_, err = runCLI(t, "search", "lease", "--as-of", "2025-01-01", "--limit", "1")
-			if tc.wantError != "" {
-				require.ErrorContains(t, err, tc.wantError)
-				require.Zero(t, lexicalCalls)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, 1, lexicalCalls)
-			}
-		})
-	}
 }

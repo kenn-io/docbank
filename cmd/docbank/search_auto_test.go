@@ -36,6 +36,7 @@ type automaticSearchCase struct {
 	skipped, wantHybrid, wantDetail bool
 	wantReason                      string
 	wantError                       bool
+	wantCLIError                    string
 	wantSearch                      int
 }
 
@@ -47,7 +48,8 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	cases := []automaticSearchCase{
 		{name: "PDF evidence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"}, skipped: true},
 		{name: "source presence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{SourcePresent: true}, skipped: true},
-		{name: "dated cold first binding", asOf: "2025-01-01", profiles: profiles, limit: 50, cold: true, wantSearch: 2, wantHybrid: true},
+		{name: "date reaches automatic request", asOf: "2025-01-01", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
+		{name: "no automatic profile", asOf: "2025-01-01", limit: 1, humanCLI: true, wantCLIError: "--as-of requires"},
 		{name: "dated all bindings fail", asOf: "2025-01-01", profiles: profiles, limit: 50, searchError: "processing_failed", wantSearch: 3, wantError: true},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
@@ -148,6 +150,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		case "GET /api/v1/search/text-coverage":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case "GET /api/v1/search":
+			assert.Empty(t, tc.wantCLIError, "usage errors must stop before lexical search")
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
 			matches := []api.SearchHit{
@@ -232,6 +235,9 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	rootCmd.SetErr(&stderr)
 	args := append([]string{"search"}, strings.Split(tc.query, " ")...)
 	args = append(args, "--limit", strconv.Itoa(tc.limit))
+	if tc.asOf != "" {
+		args = append(args, "--as-of", tc.asOf)
+	}
 	switch {
 	case tc.jsonCLI:
 		args = append(args, "--json")
@@ -240,7 +246,12 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	}
 	rootCmd.SetArgs(args)
 	defer rootCmd.SetArgs(nil)
-	require.NoError(t, rootCmd.ExecuteContext(context.Background()))
+	err = rootCmd.ExecuteContext(context.Background())
+	if tc.wantCLIError != "" {
+		require.ErrorContains(t, err, tc.wantCLIError)
+		return
+	}
+	require.NoError(t, err)
 	switch {
 	case tc.empty:
 		assert.Equal(t, "mode: hybrid\ncoverage: complete (0/0 source document(s) complete)\nno matches in the search scope\n", stdout.String())

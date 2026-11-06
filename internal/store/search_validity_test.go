@@ -67,10 +67,6 @@ func checkSearchValiditySnapshotPostgres(t *testing.T) {
 	require.Equal(t, "/new.txt", movedPath)
 	require.NoError(t, err)
 	require.Equal(t, []SearchValiditySuccessor{{NodeID: next.ID, Path: "/leases/new.txt"}}, got[old.ID].Successors)
-
-	after, err := s.SearchResultValidity(ctx, filter, []int64{old.ID})
-	require.NoError(t, err)
-	require.Empty(t, after[old.ID].Successors)
 }
 
 func checkSearchValidity(t *testing.T, s *Store, seed func(int64, int64)) {

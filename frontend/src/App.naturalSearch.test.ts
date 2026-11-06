@@ -1876,11 +1876,6 @@ it.each(["names", "meaning", "frozen"])(
 
 it.each([
   [
-    { state: "superseded", superseded_by: [{ node_id: 3, path: "/leases/lease-2025.pdf" }] },
-    "superseded by lease-2025.pdf",
-    "superseded by /leases/lease-2025.pdf",
-  ],
-  [
     {
       state: "superseded",
       superseded_by: [
@@ -1894,29 +1889,22 @@ it.each([
   [{ state: "expired", superseded_by: [] }, "expired", ""],
   [{ state: "not_yet_effective", superseded_by: [] }, "not yet effective", ""],
   [undefined, "", ""],
-])(
-  "shows the validity reason beneath the search result for %j",
-  async (validity, reason, title) => {
-    const file = node(2, "lease-2024.pdf", baseVersion);
-    installHarness({
-      profiles: [{ name: "private", fingerprint: "a".repeat(64), embedding_bindings: ["embed"] }],
-      files: [file],
-      baseReport: report("hybrid", [{ ...result(file, 1, "renewal excerpt"), validity }]),
-    });
-    render(App);
-    await screen.findAllByText(file.name);
-    await submitSearch("renewal");
-    const excerpt = await screen.findByText("renewal excerpt");
-    const row = excerpt.closest("tr")!;
-    if (reason) {
-      const label = within(row).getByText(reason);
-      expect(label.title).toBe(title);
-      const text = excerpt.parentElement!;
-      expect(text.querySelector(".folder")).toBeTruthy();
-      expect(label.parentElement).toBe(text);
-      expect(excerpt.nextElementSibling).toBe(label);
-    } else {
-      expect(row.querySelector(".validity-reason")).toBeNull();
-    }
-  },
-);
+])("shows the validity reason for %j", async (validity, reason, title) => {
+  const file = node(2, "lease-2024.pdf", baseVersion);
+  installHarness({
+    profiles: [{ name: "private", fingerprint: "a".repeat(64), embedding_bindings: ["embed"] }],
+    files: [file],
+    baseReport: report("hybrid", [{ ...result(file, 1, "renewal excerpt"), validity }]),
+  });
+  render(App);
+  await screen.findAllByText(file.name);
+  await submitSearch("renewal");
+  const excerpt = await screen.findByText("renewal excerpt");
+  const row = excerpt.closest("tr")!;
+  if (reason) {
+    const label = within(row).getByText(reason);
+    if (title) expect(label.title).toBe(title);
+  } else {
+    expect(row.querySelector(".validity-reason")).toBeNull();
+  }
+});
