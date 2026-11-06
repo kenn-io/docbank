@@ -29,8 +29,9 @@ LDFLAGS = -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
 # fts5: enable the SQLite FTS5 full-text search extension
 BUILD_TAGS := fts5
 
-# gotestsum writes gotestsum/<suite>.json, which CI uploads for failed or
-# rerun tests. CI sets PG_SUITE so each PostgreSQL version has its own files.
+# gotestsum writes gotestsum/<suite>.json. Linux, pure-Go, and macOS jobs upload
+# every run; other Go jobs upload failures and reruns. CI sets PG_SUITE so each
+# PostgreSQL version has its own files.
 PG_SUITE ?= postgres
 gotestsum = mkdir -p gotestsum && go tool gotestsum --format pkgname-and-test-fails --format-icons text \
 	--jsonfile gotestsum/$(1).json --rerun-fails=2 --rerun-fails-report gotestsum/$(1)-reruns.txt \

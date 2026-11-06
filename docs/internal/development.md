@@ -1750,11 +1750,13 @@ proposed workflow changes.
 Go test jobs run `go test` through gotestsum, which the module pins as a Go
 tool. gotestsum reruns each failed test up to two more times. A test that passes
 on a rerun lets the job pass, and gotestsum lists it in
-`gotestsum/<suite>-reruns.txt`. When a test fails or is rerun, or the job itself
-is a rerun attempt, the job uploads the `gotestsum/*.json` reports as the
-`gotestsum-<suite>-attempt-<n>` artifact for 14 days. A flaky test therefore
-stays visible after the job passes, and a passing rerun attempt can be matched
-with the earlier failure. A clean first attempt uploads nothing.
+`gotestsum/<suite>-reruns.txt`. Linux, pure-Go, and macOS jobs upload the
+`gotestsum/*.json` reports on every run and list the ten slowest tests per report
+in the job summary. Other Go jobs upload when a test fails or is rerun, or the
+job itself is a rerun attempt. Reports use the
+`gotestsum-<suite>-attempt-<n>` artifact name and stay for 14 days. A flaky test
+therefore stays visible after the job passes, and a passing rerun attempt can
+be matched with the earlier failure.
 
 In CI, Vitest and Playwright also retry a failed test up to two more times and
 write JSON reports under `frontend/test-results/`. Each test step uploads its
