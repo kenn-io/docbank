@@ -633,79 +633,134 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 			match = trueCompiledFragment()
 		}
 	}
-	albumJoin, albumValues := "", `'', ''`
-	if slices.Contains(dimensions, compiledSetField) {
-		albumJoin = ` LEFT JOIN photo_set_members sm ON sm.asset_id=a.asset_id LEFT JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`
-		albumValues = `COALESCE(ps.set_id,''),COALESCE(ps.name,'')`
+	from := photoBrowseScopeFrom
+	where := ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden)
+	prefix := ""
+	var args []any
+	if value.Text != "" || !reflect.DeepEqual(value.Filters, query.Filters{}) {
+		matched, bound, err := bindQueryPopulation(compiledQueryFragment{
+			sql:  `SELECT a.asset_id FROM ` + from + where + ` AND ` + match.sql,
+			args: match.args, relations: match.relations,
+		}, coverage, generation)
+		if err != nil {
+			return nil, err
+		}
+		prefix, args = `WITH m AS MATERIALIZED (`+matched+`) `, bound
+		from = `m CROSS JOIN ` + photoBrowseScopeFrom
+		where = ` WHERE a.asset_id=m.asset_id`
 	}
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id,COALESCE(p.camera_make,''),COALESCE(p.camera_model,''),COALESCE(p.lens_make,''),COALESCE(p.lens_model,''),substr(COALESCE(pl.day,''),1,4),COALESCE(p.location_label,''),` + albumValues + `,CAST(f.rating AS TEXT),f.flag,f.label FROM ` + photoBrowseDisplayFrom + albumJoin + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id LIMIT ?`, args: append(match.args, options.FacetMemberLimit+1), relations: match.relations}, coverage, generation)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := q.QueryContext(ctx, statement, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
+	// Each leg groups only the requested values over its own one-to-one joins.
+	// Keep raw strings distinct here; the accumulator folds and deduplicates them.
 	observations := make(map[string]*snapshotFacetAccumulator, len(dimensions))
 	for _, dimension := range dimensions {
 		observations[dimension] = newSnapshotFacetAccumulator()
 	}
-	var projected, bytes int64
-	exceeded := false
+	var legs []string
+	var grouped []string
+	project := func(dimension, expression string) string {
+		if observations[dimension] == nil {
+			return `''`
+		}
+		grouped = append(grouped, expression)
+		return expression
+	}
+	year := project(snapshotFacetYear, `substr(COALESCE(pl.day,''),1,4)`)
+	rating := project(snapshotFacetRating, `CAST(f.rating AS TEXT)`)
+	flag := project(snapshotFacetFlag, `f.flag`)
+	label := project(snapshotFacetLabel, `f.label`)
+	if len(grouped) > 0 {
+		legFrom := from
+		if observations[snapshotFacetYear] != nil {
+			legFrom += ` LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
+		}
+		legs = append(legs, `SELECT 'decision' AS leg,`+year+` AS year,`+rating+` AS rating,`+flag+` AS flag,`+label+` AS label,
+ '' AS camera_make,'' AS camera_model,'' AS lens_make,'' AS lens_model,'' AS location,'' AS set_id,'' AS set_name,
+ 0 AS missing,COUNT(*) AS members FROM `+legFrom+where+` GROUP BY `+strings.Join(grouped, ","))
+	}
+	grouped = nil
+	cameraMake := project(compiledCameraField, `COALESCE(p.camera_make,'')`)
+	cameraModel := project(compiledCameraField, `COALESCE(p.camera_model,'')`)
+	lensMake := project(compiledLensField, `COALESCE(p.lens_make,'')`)
+	lensModel := project(compiledLensField, `COALESCE(p.lens_model,'')`)
+	location := project(compiledLocationField, `COALESCE(p.location_label,'')`)
+	if len(grouped) > 0 {
+		legFrom := from + ` CROSS JOIN content_versions v ON v.version_id=n.current_version_id
+ LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+		legs = append(legs, `SELECT 'metadata','','','','',`+cameraMake+` AS camera_make,`+cameraModel+` AS camera_model,
+ `+lensMake+` AS lens_make,`+lensModel+` AS lens_model,`+location+` AS location,'','',0,COUNT(*)
+ FROM `+legFrom+where+` GROUP BY `+strings.Join(grouped, ","))
+	}
+	if observations[compiledSetField] != nil {
+		const live = `EXISTS (SELECT 1 FROM photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL WHERE sm.asset_id=a.asset_id)`
+		legs = append(legs, `SELECT 'totals','','','','','','','','','','','',
+ COALESCE(SUM(CASE WHEN `+live+` THEN 0 ELSE 1 END),0) AS missing,COUNT(*) FROM `+from+where,
+			`SELECT 'set','','','','','','','','','',ps.set_id,ps.name,0,COUNT(*) FROM `+from+`
+ CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id
+ CROSS JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`+where+` GROUP BY ps.set_id,ps.name`)
+	}
+	rows, err := q.QueryContext(ctx, prefix+strings.Join(legs, ` UNION ALL `), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var bytes, projected int64
+	var group int64
 	for rows.Next() {
-		var id, cameraMake, cameraModel, lensMake, lensModel, year, location, set, name, rating, flag, label string
-		if err := rows.Scan(&id, &cameraMake, &cameraModel, &lensMake, &lensModel, &year, &location, &set, &name, &rating, &flag, &label); err != nil {
+		group++
+		id := strconv.FormatInt(group, 10)
+		var tag, year, rating, flag, label, cameraMake, cameraModel, lensMake, lensModel, location, setID, setName string
+		var missing, count int64
+		if err := rows.Scan(&tag, &year, &rating, &flag, &label, &cameraMake, &cameraModel, &lensMake, &lensModel, &location, &setID, &setName, &missing, &count); err != nil {
 			return nil, err
 		}
-		projected++
-		bytes += int64(len(id) + len(cameraMake) + len(cameraModel) + len(lensMake) + len(lensModel) + len(year) + len(location) + len(set) + len(name) + len(rating) + len(flag) + len(label))
-		if projected > options.FacetMemberLimit || bytes > options.MaxSerializedBytes {
-			exceeded = true
-			break
-		}
-		for _, dimension := range dimensions {
-			values := []string{}
-			switch dimension {
-			case snapshotFacetRating:
-				values = []string{rating}
-			case snapshotFacetFlag:
-				values = []string{flag}
-			case snapshotFacetLabel:
-				values = []string{label}
-			case compiledCameraField:
-				values = []string{cameraMake, cameraModel}
-			case compiledLensField:
-				values = []string{lensMake, lensModel}
-			case snapshotFacetYear:
-				values = []string{year}
-			case compiledLocationField:
-				values = []string{location}
-			case compiledSetField:
-				values = []string{set}
+		add := func(dimension string, labels ...string) {
+			observation := observations[dimension]
+			if observation == nil {
+				return
 			}
-			have := false
-			for _, label := range values {
-				if label == "" && dimension != snapshotFacetFlag && dimension != snapshotFacetLabel {
-					continue
-				}
-				have = true
+			added := false
+			for _, label := range labels {
+				bytes += count * int64(len(label))
 				key := label
-				if dimension == compiledCameraField || dimension == compiledLensField {
+				switch dimension {
+				case compiledCameraField, compiledLensField:
 					key = cases.Fold().String(label)
+				case snapshotFacetFlag, snapshotFacetLabel:
+					if key == "" {
+						key, label = "none", "None"
+					}
 				}
-				if dimension == compiledSetField {
-					label = name
+				if key != "" {
+					observation.add(dimension, id, key, label, count, options.FacetMemberLimit)
+					added = true
 				}
-				if key == "" {
-					key = "none"
-					label = "None"
-				}
-				observations[dimension].add(dimension, id, key, label, options.FacetMemberLimit)
 			}
-			if !have {
-				observations[dimension].add(dimension, id, "", "", options.FacetMemberLimit)
+			if !added {
+				observation.add(dimension, id, "", "", count, options.FacetMemberLimit)
 			}
+		}
+		switch tag {
+		case "decision":
+			add(snapshotFacetYear, year)
+			add(snapshotFacetRating, rating)
+			add(snapshotFacetFlag, flag)
+			add(snapshotFacetLabel, label)
+		case "metadata":
+			add(compiledCameraField, cameraMake, cameraModel)
+			add(compiledLensField, lensMake, lensModel)
+			add(compiledLocationField, location)
+		case "totals":
+			set := observations[compiledSetField]
+			set.total, set.missing = count, missing
+			projected += missing
+			bytes += 36 * missing
+		case "set":
+			set := observations[compiledSetField]
+			set.counts[setID] += count
+			set.preferLabel(compiledSetField, setID, setName)
+			projected += count
+			bytes += count * int64(36+len(setID)+len(setName))
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -714,6 +769,16 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if !slices.Contains(dimensions, compiledSetField) {
+		// Charge the asset ID once, even when two legs read the same assets.
+		var assets int64
+		for _, observation := range observations {
+			assets = max(assets, observation.total)
+		}
+		bytes += 36 * assets
+		projected = assets
+	}
+	exceeded := projected > options.FacetMemberLimit || bytes > options.MaxSerializedBytes
 	result := make([]SnapshotFacet, 0, len(dimensions))
 	for _, dimension := range dimensions {
 		observation := observations[dimension]
@@ -747,33 +812,38 @@ func newSnapshotFacetAccumulator() *snapshotFacetAccumulator {
 	return &snapshotFacetAccumulator{counts: map[string]int64{}, labels: map[string]string{}, seen: map[string]bool{}}
 }
 
-func (observation *snapshotFacetAccumulator) add(dimension, id, value, label string, limit int64) {
-	if observation.limited {
-		return
-	}
+func (observation *snapshotFacetAccumulator) add(dimension, id, value, label string, count, limit int64) {
 	if id != observation.previous {
-		observation.total++
-		observation.missing++
+		observation.total += count
+		observation.missing += count
 		observation.previous = id
 		clear(observation.seen)
 	}
+	// Totals still count every group after a dimension reaches its member limit.
+	if observation.limited {
+		return
+	}
 	if !observation.seen[value] {
-		observation.projected++
+		observation.projected += count
 		if observation.projected > limit {
 			observation.limited = true
 			return
 		}
 		if value != "" {
 			if len(observation.seen) == 0 || len(observation.seen) == 1 && observation.seen[""] {
-				observation.missing--
+				observation.missing -= count
 			}
-			observation.counts[value]++
+			observation.counts[value] += count
 		}
 		observation.seen[value] = true
 	}
 	if value == "" {
 		return
 	}
+	observation.preferLabel(dimension, value, label)
+}
+
+func (observation *snapshotFacetAccumulator) preferLabel(dimension, value, label string) {
 	prior, ok := observation.labels[value]
 	if ok && label == prior {
 		return
@@ -796,7 +866,7 @@ func observeSnapshotFacet(rows *sql.Rows, dimension string, limit int64, scan fu
 		if err != nil {
 			return observation.snapshotFacetObservation, false, err
 		}
-		observation.add(dimension, id, value, label, limit)
+		observation.add(dimension, id, value, label, 1, limit)
 		if observation.limited {
 			return observation.snapshotFacetObservation, true, rows.Close()
 		}
