@@ -473,9 +473,9 @@ func searchDocuments(
 		retry := func(code string) bool {
 			return code == "semantic_unavailable" || daemonconn.BindingSearchFailure(code)
 		}
-		var attempt profileSearchAttempt[documentSearchResponse]
-		attempt.profile = selected
-		if mode != "lexical" && len(candidates) > 0 && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
+		nonQueryBinding := slices.Contains(selected.EmbeddingBindings, input.BindingID) && !slices.Contains(selected.QueryEmbeddingBindings, input.BindingID)
+		attempt := profileSearchAttempt[documentSearchResponse]{profile: selected}
+		if mode != "lexical" && len(candidates) > 0 && !nonQueryBinding && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
 			attempt, err = tryProfileSearch(ctx, profiles, selected, candidates, retry, func(profile, binding string) (documentSearchResponse, error) { return run(profile, binding, mode) })
 		} else if mode == "semantic" {
 			attempt.value, err = run(selected.Name, input.BindingID, mode)
@@ -492,7 +492,7 @@ func searchDocuments(
 		result := attempt.value
 		if attempt.binding == "" && mode != "semantic" {
 			binding := input.BindingID
-			if input.Mode != "lexical" && slices.Contains(selected.EmbeddingBindings, binding) && !slices.Contains(selected.QueryEmbeddingBindings, binding) {
+			if input.Mode != "lexical" && nonQueryBinding {
 				binding = ""
 			}
 			result, err = run(selected.Name, binding, "lexical")

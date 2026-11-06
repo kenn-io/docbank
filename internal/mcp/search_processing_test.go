@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 
@@ -10,6 +11,45 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
 )
+
+func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
+	f := newNativeExportFixture(t)
+	f.addFile(t, "refund.txt", "Refunds take five days.")
+	mixed := newSearchTestEmbeddingProfile(t, f, document.EmbeddingInputImage, false)
+	text := newSearchTestEmbeddingProfile(t, f, document.EmbeddingInputOriginalFile, false)
+	image := mixed.Profile.Embeddings[0]
+	image.Name = "image"
+	mixed.Profile.Embeddings = append([]document.EmbeddingBindingV1{image}, text.Profile.Embeddings...)
+	mixed.EmbeddingProviders = map[string]document.EmbeddingProvider{"image": mixed.EmbeddingProviders["query"], "query": text.EmbeddingProviders["query"]}
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{"mixed": mixed}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.WithoutCancel(t.Context()))) })
+	daemon := newSearchProcessingServer(t, f, service)
+	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
+	for _, embedded := range []bool{false, true} {
+		for _, tc := range []struct{ mode, binding, code string }{
+			{mode: "hybrid", binding: "image"},
+			{mode: "auto", binding: "image"},
+			{mode: "hybrid", binding: "missing", code: "not_found"},
+			{mode: "semantic", binding: "image", code: "semantic_unavailable"},
+		} {
+			t.Run(fmt.Sprintf("embedded=%t/%s/%s", embedded, tc.mode, tc.binding), func(t *testing.T) {
+				output := callSearchDocumentReader(t, daemon, reader, embedded, map[string]any{"query": "refund", "profile": "mixed", "binding_id": tc.binding, "mode": tc.mode, "filters": map[string]any{}})
+				if tc.code != "" {
+					require.Equal(t, tc.code, output["code"])
+					return
+				}
+				require.Equal(t, "mixed", output["profile"])
+				require.Equal(t, tc.mode, output["requested_mode"])
+				require.Equal(t, "lexical", output["actual_mode"])
+				hits, ok := output["results"].([]any)
+				require.True(t, ok)
+				require.Len(t, hits, 1)
+				require.Equal(t, "/refund.txt", schemaMap(t, hits[0])["path"])
+			})
+		}
+	}
+}
 
 func TestSearchDocumentsRealProviderSelection(t *testing.T) {
 	for _, failure := range []string{"index_unavailable", "processing_failed"} {
