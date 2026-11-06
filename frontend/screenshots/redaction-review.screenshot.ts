@@ -181,9 +181,9 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     const awaitPage = async (n: number, target: Locator = drawer) => {
       await scrollIdle(target, n);
       await expect(target.getByRole("textbox", { name: "", exact: true })).toHaveValue(String(n));
-      await expect(
-        target.getByRole("switch", { name: "Draw rectangle", exact: true }),
-      ).toBeEnabled({ timeout: 60000 });
+      await expect(target.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled(
+        { timeout: 60000 },
+      );
     };
     const originalPage = async (n: number, target: Locator = drawer) => {
       const field = target.getByRole("textbox", { name: "", exact: true });
