@@ -214,7 +214,10 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(shortDraw).toBeEnabled();
     await shortDraw.click();
     await expect(shortDraw).toBeChecked();
-    await shortDraw.click();
+    // A redraw can disable the switch between actionability and the click.
+    await expect(async () => {
+      await shortDraw.uncheck();
+    }).toPass({ timeout: 15000 });
     await page.screenshot({
       path: path.join(captures!, "redaction-short-editing.png"),
       animations: "disabled",
