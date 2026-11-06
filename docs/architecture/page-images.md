@@ -395,6 +395,25 @@ Returning to reading restores its zoom mode, including Fit width and Automatic,
 so the page continues to fit when the window resizes. Keyboard arrow movement
 accounts for viewing rotation before updating physical mask coordinates.
 
+Completed one-page text selections use exact run contexts, prefixes and suffixes
+from the reader's permission-checked text API. Each full context must occur once
+in both complete page extracts. Matching uses literal Unicode, never browser
+glyph coordinates or indexes as native offsets. Native UTF-8 spans must contain
+whole server atoms. The resolver derives their physical masks; the browser draws
+the same native atom boxes. Exact selected whitespace can join adjacent spans;
+reversed native order leaves separate selectors grouped only in the editor.
+Ambiguity and disagreement refuse the entire addition, with rectangle/page
+marking still available.
+
+Selection work is bounded to one page, 32 contexts/spans, 4,096 browser glyph
+positions, 64 KiB of context/separator text and 1 MiB per page extract. There is
+one extraction task; generation, document, map, range and decoded-page checks
+prevent stale results from becoming masks. Page/zoom/rotation changes, selected
+page readiness loss, mode changes and disposal cancel transient selections.
+Text selectors consume mask slots but no input boxes. Explicitly approved
+multi-span expansions may use the server's checked rectangle proposal, subject
+to the shared 1,024-box budget. No normalization or geometry fallback is used.
+
 Redacted keeps one server PNG URL, verifies its length/hash and header before
 decode, and binds its frame to preparation. These are the images checked against
 the delivered PDF. Text is compared with the resolved runs.

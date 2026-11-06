@@ -8,6 +8,7 @@ import type {
   ViewportPlugin,
   CommandsPlugin,
   UIPlugin,
+  SelectionPlugin,
   ZoomLevel,
 } from "@embedpdf/svelte-pdf-viewer";
 import { ZoomMode } from "@embedpdf/svelte-pdf-viewer";
@@ -15,8 +16,17 @@ import type {
   RedactionPreparation,
   PDFRedactionBox,
   PDFRedactionGap,
+  PDFRedactionSpan,
 } from "./generated/docbank.js";
 import { bindReaderPages, readerBox, overlayBox } from "./pdfReviewGeometry.js";
+import { matchTextSelection } from "./pdfTextSelection.js";
+import { readTextSelection } from "./pdfTextSelectionReader.js";
+
+export interface TextSelectionStatus {
+  candidate?: { page: number; spans: PDFRedactionSpan[] };
+  busy: boolean;
+  error: string;
+}
 
 export interface ReaderReview {
   preparation?: RedactionPreparation;
@@ -25,9 +35,11 @@ export interface ReaderReview {
   proposed: PDFRedactionBox[];
   drawing: boolean;
   visible: boolean;
+  editable: boolean;
   oncommit: (box: PDFRedactionBox) => void;
   ondrag: (active: boolean) => void;
   ondrawing: (active: boolean) => void;
+  onselection: (status: TextSelectionStatus) => void;
 }
 export interface ReaderReviewStatus {
   page: number;
@@ -78,6 +90,14 @@ export class PDFReviewBridge {
   private pointer?: PageIdentity & { pointerId: number };
   private lastStatus = "";
   private frame = 0;
+  private textController?: AbortController;
+  private textWork?: Promise<void>;
+  private textGeneration = 0;
+  private textPage?: PageIdentity;
+  private textPointer?: PageIdentity & { pointerId: number };
+  private textCandidate?: TextSelectionStatus["candidate"];
+  private textRange = "";
+  private lastTextStatus = "";
   constructor(
     private host: HTMLElement,
     private changed: (status: ReaderReviewStatus) => void,
@@ -107,8 +127,128 @@ export class PDFReviewBridge {
     const d = this.document();
     return d && this.registry?.getPlugin<ZoomPlugin>("zoom")?.provides().forDocument(d.id);
   }
+  private selection() {
+    const d = this.document();
+    return (
+      d && this.registry?.getPlugin<SelectionPlugin>("selection")?.provides().forDocument(d.id)
+    );
+  }
+  private canSelect() {
+    return (
+      !this.disposed &&
+      !!this.review?.editable &&
+      !!this.review.visible &&
+      !this.review.drawing &&
+      !!this.bound
+    );
+  }
+  private textStatus(status: TextSelectionStatus) {
+    const key = JSON.stringify(status);
+    if (key === this.lastTextStatus) return;
+    this.lastTextStatus = key;
+    this.review?.onselection(status);
+  }
+  private invalidateSelection() {
+    this.textGeneration++;
+    this.textController?.abort();
+    this.textCandidate = undefined;
+    this.textRange = "";
+    this.textStatus({ busy: false, error: "" });
+  }
+  clearSelection() {
+    this.invalidateSelection();
+    this.textPage = undefined;
+    this.textPointer = undefined;
+    if (this.review) this.selection()?.clear();
+  }
+  selectedText() {
+    const candidate = this.textCandidate;
+    return candidate &&
+      this.canSelect() &&
+      this.isReady(candidate.page - 1) &&
+      JSON.stringify(this.selection()?.getState().selection) === this.textRange
+      ? candidate
+      : undefined;
+  }
+  private matchSelection() {
+    const scope = this.selection(),
+      state = scope?.getState(),
+      doc = this.document(),
+      prep = this.bound;
+    if (
+      this.textWork ||
+      !this.canSelect() ||
+      !scope ||
+      !state?.selection ||
+      state.selecting ||
+      !doc ||
+      !prep
+    )
+      return;
+    const pageIndex = state.selection.start.page;
+    if (pageIndex !== state.selection.end.page) {
+      this.textStatus({ busy: false, error: "Select text on one page at a time." });
+      return;
+    }
+    if (!this.isReady(pageIndex)) return;
+    const generation = this.textGeneration,
+      range = JSON.stringify(state.selection);
+    const controller = new AbortController();
+    this.textController = controller;
+    this.textPage = { documentId: doc.id, pageIndex };
+    this.textStatus({ busy: true, error: "" });
+    this.textWork = (async () => {
+      try {
+        const selection = await readTextSelection(this.registry!, controller.signal);
+        controller.signal.throwIfAborted();
+        const spans = matchTextSelection(prep, selection);
+        if (
+          generation !== this.textGeneration ||
+          this.bound !== prep ||
+          this.document()?.id !== doc.id ||
+          !this.canSelect() ||
+          !this.isReady(pageIndex) ||
+          JSON.stringify(scope.getState().selection) !== range
+        )
+          return;
+        this.textRange = range;
+        this.textCandidate = { page: selection.page, spans };
+        this.textStatus({ candidate: this.textCandidate, busy: false, error: "" });
+      } catch (cause) {
+        if (!controller.signal.aborted && generation === this.textGeneration)
+          this.textStatus({
+            busy: false,
+            error:
+              cause instanceof Error
+                ? cause.message
+                : "Text selection could not finish. Draw a rectangle instead.",
+          });
+      } finally {
+        this.textWork = undefined;
+        if (!this.disposed && generation !== this.textGeneration)
+          queueMicrotask(() => this.matchSelection());
+      }
+    })();
+  }
   ready(registry: PluginRegistry) {
     this.registry = registry;
+    const selection = registry.getPlugin<SelectionPlugin>("selection")!.provides();
+    this.subscriptions.push(
+      selection.onSelectionChange(({ documentId, selection: range }) => {
+        if (!this.review || documentId !== this.document()?.id) return;
+        this.invalidateSelection();
+        if (!range) this.textPage = undefined;
+        queueMicrotask(() => this.matchSelection());
+      }),
+      selection.onBeginSelection(({ documentId, page }) => {
+        if (!this.review || documentId !== this.document()?.id) return;
+        this.invalidateSelection();
+        this.textPage = { documentId, pageIndex: page };
+      }),
+      selection.onEndSelection(({ documentId }) => {
+        if (documentId === this.document()?.id) this.matchSelection();
+      }),
+    );
     const redaction = registry.getPlugin<RedactionPlugin>("redaction")!.provides();
     this.subscriptions.push(
       redaction.onStateChange(({ documentId, state }) => {
@@ -177,6 +317,7 @@ export class PDFReviewBridge {
         .getPlugin<ScrollPlugin>("scroll")!
         .provides()
         .onPageChange(() => {
+          this.clearSelection();
           this.cancelDraft();
           this.update();
         }),
@@ -187,6 +328,7 @@ export class PDFReviewBridge {
         .getPlugin<ZoomPlugin>("zoom")!
         .provides()
         .onZoomChange(({ documentId }) => {
+          this.clearSelection();
           this.cancelDraft();
           if (!this.review || documentId !== this.document()?.id) return;
           const navigation = this.scroll()?.getPageChangeState();
@@ -210,18 +352,33 @@ export class PDFReviewBridge {
       registry
         .getPlugin<RotatePlugin>("rotate")!
         .provides()
-        .onRotateChange(() => this.cancelDraft()),
+        .onRotateChange(() => {
+          this.clearSelection();
+          this.cancelDraft();
+        }),
     );
     const viewport = registry.getPlugin<ViewportPlugin>("viewport")!.provides();
     // General viewport events also announce idle scrolling without any movement.
     this.subscriptions.push(
       viewport.onScrollChange(() => this.cancelDraft()),
-      viewport.onViewportResize(() => this.cancelDraft()),
+      viewport.onViewportResize(() => {
+        this.clearSelection();
+        this.cancelDraft();
+      }),
     );
     this.update();
   }
   configure(review?: ReaderReview) {
     const leaving = !review && !!this.review;
+    if (
+      this.review &&
+      (!review ||
+        !review.editable ||
+        !review.visible ||
+        review.drawing ||
+        this.review.preparation?.map.sha256 !== review.preparation?.map.sha256)
+    )
+      this.clearSelection();
     this.review = review;
     if (!review?.drawing || !review.visible) {
       this.cancelDraft();
@@ -326,6 +483,12 @@ export class PDFReviewBridge {
   }
   private renderEvent = (raw: Event) => {
     const event = (raw as CustomEvent<ImageEvent>).detail;
+    if (
+      event.status !== "ready" &&
+      this.textPage?.documentId === event.documentId &&
+      this.textPage.pageIndex === event.pageIndex
+    )
+      this.clearSelection();
     if (event.status === "disposed") this.images.delete(event.token);
     else this.images.set(event.token, event);
     if (event.status !== "ready" && !this.isReady(event.pageIndex)) this.cancelDraft(event);
@@ -335,6 +498,11 @@ export class PDFReviewBridge {
     const event = (raw as CustomEvent<LayerEvent>).detail,
       old = this.layers.get(event.target);
     if (old) {
+      if (
+        this.textPage?.documentId === old.event.documentId &&
+        this.textPage.pageIndex === old.event.pageIndex
+      )
+        this.clearSelection();
       this.cancelDraft(old.event);
       old.remove();
       old.svg.remove();
@@ -349,7 +517,11 @@ export class PDFReviewBridge {
       event.target.dataset.reviewPage = String(event.pageIndex + 1);
       const surface = event.target.parentElement!;
       const down = (e: PointerEvent) => {
-        if (!this.review?.drawing) return;
+        if (!this.review?.drawing) {
+          if (this.canSelect() && this.isReady(event.pageIndex))
+            this.textPointer = { ...event, pointerId: e.pointerId };
+          return;
+        }
         if (!this.review.visible || !this.isReady(event.pageIndex)) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -361,11 +533,13 @@ export class PDFReviewBridge {
       };
       surface.addEventListener("pointerdown", down, true);
       const up = (e: PointerEvent) => {
+        if (this.textPointer?.pointerId === e.pointerId) this.textPointer = undefined;
         if (this.pointer?.pointerId !== e.pointerId) return;
         this.pointer = undefined;
         this.review?.ondrag([...this.layers.values()].some((l) => l.start));
       };
       const cancel = (e: PointerEvent) => {
+        if (this.textPointer?.pointerId === e.pointerId) this.clearSelection();
         if (this.pointer?.pointerId === e.pointerId) this.cancelDraft(this.pointer);
       };
       window.addEventListener("pointerup", up);
@@ -572,6 +746,7 @@ export class PDFReviewBridge {
     this.host.focus({ preventScroll: true });
   }
   dispose() {
+    this.clearSelection();
     this.disposed = true;
     this.announce("");
     cancelAnimationFrame(this.frame);
