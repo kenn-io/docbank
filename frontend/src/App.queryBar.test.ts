@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import App from "./App.svelte";
-import * as actions from "./action-events.js";
 import { canonicalQuery, parseQuery } from "./query.js";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { root } from "./version-test-fixtures.js";
@@ -178,8 +177,7 @@ it("runs the top bar with the page size chosen in Advanced", async () => {
   expect(body.page_size).toBe(250);
 });
 
-it("keeps saved-search filters when typing a new search and records only the typed miss", async () => {
-  const reportSearch = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+it("keeps saved-search filters when typing a new search", async () => {
   const saved = parseQuery(
     JSON.stringify({ text: "invoice", filters: { extensions: ["pdf"] }, sort: { field: "size" } }),
   );
@@ -209,16 +207,14 @@ it("keeps saved-search filters when typing a new search and records only the typ
     configurable: true,
     value: vi.fn(),
   });
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/workspace/queries") {
       const body = JSON.parse(String(init?.body));
       searches.push(body.query);
       return new Response(
         JSON.stringify(
-          await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), [], {
-            page_size: body.page_size ?? 100,
-          }),
+          await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), [], { page_size: 100 }),
         ),
       );
     }
@@ -236,16 +232,11 @@ it("keeps saved-search filters when typing a new search and records only the typ
   await fireEvent.click(await screen.findByRole("button", { name: "Run Invoices" }));
   await waitFor(() => expect(searches).toHaveLength(1));
   await screen.findByText("No matching documents");
-  await waitFor(() => expect(reportSearch).toHaveBeenCalledWith("synthetic", "text", true));
-  expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/miss-log")).toHaveLength(0);
   const search = await screen.findByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "receipts" } });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() => expect(searches).toHaveLength(2));
   expect(searches[1]).toMatchObject({ text: "receipts", filters: { extensions: ["pdf"] } });
-  await waitFor(() =>
-    expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/miss-log")).toHaveLength(1),
-  );
 });
 
 it("uses submitted top-bar text after repairing retained invalid filters", async () => {

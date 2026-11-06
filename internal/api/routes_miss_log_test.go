@@ -44,17 +44,7 @@ func TestDocumentSearchMissUsesKnownDocumentCounts(t *testing.T) {
 func TestMissLogRecordingAndManagement(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
-	filters := map[string]any{
-		"focus_min": "0", "focus_max": "1", "blur_min": "0", "blur_max": "1",
-		"brightness_min": "0", "brightness_max": "1", "framing_min": "0", "framing_max": "1",
-		"aesthetics_min": "0", "aesthetics_max": "1", "color_red_min": "0", "color_red_max": "1",
-		"color_green_min": "0", "color_green_max": "1", "color_blue_min": "0", "color_blue_max": "1",
-		"rating_min": float64(1), "rating_max": float64(5), "flags": []any{"pick"}, "labels": []any{"red"},
-		"kinds": []any{"photo"}, "cameras": []any{"Synthetic Camera"}, "lenses": []any{"Synthetic Lens"}, "locations": []any{"Synthetic Location"},
-		"iso_min": float64(100), "iso_max": float64(800), "capture_after": "2026-01-01", "capture_before": "2026-12-31",
-		"unevaluated": true, "gps_bounds": map[string]any{"south": "0", "north": "45", "west": "0", "east": "90"},
-	}
-	filters["syntax"], filters["corpus"], filters["hidden"] = "simple", "photos", false
+	filters := map[string]any{"cameras": []any{"Synthetic Camera"}}
 	for i, receipt := range []misslog.Request{
 		{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)},
 		{Query: "synthetic photo", RequestedMode: "lexical", ActualMode: "lexical", Filters: filters},

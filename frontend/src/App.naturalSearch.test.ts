@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
-import { parseQuery } from "./query.js";
+import { canonicalQuery, parseQuery } from "./query.js";
 import type { SnapshotRow } from "./snapshots.js";
 import type { Node } from "./generated/docbank.js";
 
@@ -208,7 +208,7 @@ function installHarness(options: HarnessOptions) {
       const body = JSON.parse(String(init?.body));
       return json(
         await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), options.snapshotRows ?? [], {
-          page_size: body.page_size,
+          page_size: body.page_size ?? 100,
           facets: (body.facets ?? []).map((dimension: string) => ({
             dimension,
             available: true,
@@ -1167,7 +1167,7 @@ it("reports a failed legacy GET fallback after a processing failure", async () =
     files: [file],
     baseReport: report("hybrid", []),
     baseSearchStatus: 500,
-    legacyFailureAfter: 0,
+    legacySearchStatus: 500,
     tagSearch: {
       hits: [{ node: file, path: file.path, match: "name" }],
       limit: 1000,
@@ -1933,7 +1933,7 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each(["plain", "tag-filtered", "fallback", "filtered"])(
+it.each(["plain", "tag-filtered", "fallback", "filtered", "saved"])(
   "records an empty %s submission once",
   async (kind) => {
     const harness = installHarness({
@@ -1954,8 +1954,36 @@ it.each(["plain", "tag-filtered", "fallback", "filtered"])(
         ? { tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID } }
         : {}),
     });
+    const reportSearch = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+    if (kind === "saved") {
+      const payload = parseQuery(JSON.stringify({ text: "missing", filters: { size_min: 20 } }));
+      const saved = {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Missing documents",
+        description: "",
+        kind: "query",
+        payload,
+        revision: 1,
+        fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(payload)).digest("hex")}`,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      };
+      const fetch = harness.fetchMock.getMockImplementation()!;
+      harness.fetchMock.mockImplementation(async (input, init) =>
+        String(input).includes("saved-queries")
+          ? Response.json({ items: [saved], total: 1, limit: 100, offset: 0 })
+          : fetch(input, init),
+      );
+    }
     render(App);
     await screen.findAllByText("existing.txt");
+    if (kind === "saved") {
+      await fireEvent.click(screen.getByRole("button", { name: "Searches" }));
+      await fireEvent.click(await screen.findByRole("button", { name: "Run Missing documents" }));
+      await screen.findByText("No matching documents");
+      await waitFor(() => expect(reportSearch).toHaveBeenCalledWith("short-lived", "text", true));
+      expect(harness.misses).toHaveLength(0);
+    }
     if (kind === "tag-filtered") {
       await fireEvent.click(
         await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
@@ -1986,7 +2014,7 @@ it.each(["plain", "tag-filtered", "fallback", "filtered"])(
             binding_id: "embed",
             degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
           }
-        : kind === "filtered"
+        : kind === "filtered" || kind === "saved"
           ? {
               filters: { filters: { size_min: 20 } },
               actual_mode: "lexical",
@@ -2001,7 +2029,7 @@ it.each(["plain", "tag-filtered", "fallback", "filtered"])(
       });
       expect(harness.misses[0]).toMatchObject({ filters: { tag_id: tagID } });
     }
-    if (kind === "fallback" || kind === "filtered") return;
+    if (kind === "fallback" || kind === "filtered" || kind === "saved") return;
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     await waitFor(() => expect(harness.postBodies).toHaveLength(2));
     expect(harness.misses).toHaveLength(1);

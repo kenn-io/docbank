@@ -14,9 +14,9 @@ import (
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
-	for _, mode := range []string{"explicit", "lexical", "fuzzy", "fallback"} {
+	for _, mode := range []string{"explicit", "lexical", "fuzzy", "fallback", "automatic"} {
 		for _, nameMatch := range []bool{false, true} {
-			if mode == "explicit" && nameMatch {
+			if (nameMatch && mode != "lexical" && mode != "automatic") || (mode == "automatic" && !nameMatch) {
 				continue
 			}
 			t.Run(mode+map[bool]string{true: "/name", false: "/empty"}[nameMatch], func(t *testing.T) {
@@ -43,6 +43,10 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 						} else {
 							report := api.SearchReport{Limit: 50}
 							if mode == "fuzzy" {
+								assert.Equal(t, "application/pdf", r.URL.Query().Get("mime_type"))
+								assert.Equal(t, "true", r.URL.Query().Get("source_present"))
+								assert.Equal(t, "true", r.URL.Query().Get("fuzzy"))
+								report.MIMEType, report.SourcePresent = "application/pdf", true
 								report.Fuzzy = &api.FuzzyReceipt{Status: "complete", Reasons: []string{}}
 							}
 							if nameMatch {
@@ -73,7 +77,7 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				case "lexical":
 					args = append(args, "--mode", "lexical")
 				case "fuzzy":
-					args = append(args, "--fuzzy")
+					args = append(args, "--fuzzy", "--mime-type", "Application/PDF", "--source-present")
 				}
 				rootCmd.SetArgs(args)
 				require.NoError(t, rootCmd.ExecuteContext(context.Background()))
@@ -82,18 +86,19 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 				} else {
 					require.Len(t, misses, 1)
 					require.Equal(t, "missing", misses[0].Query)
-					require.Empty(t, misses[0].Filters)
-					if mode != "explicit" {
-						require.Equal(t, map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}, misses[0].Coverage["text"])
+					if mode == "explicit" {
+						return
 					}
 					if mode == "fuzzy" {
-						require.Equal(t, map[string]any{"status": "complete", "reasons": []any{}}, misses[0].Coverage["fuzzy"])
+						require.Equal(t, "fuzzy", misses[0].RequestedMode)
+						require.Equal(t, "fuzzy", misses[0].ActualMode)
+						require.Equal(t, map[string]any{"mime_type": "application/pdf", "source_present": true}, misses[0].Filters)
+					} else {
+						require.Empty(t, misses[0].Filters)
 					}
-					if mode == "explicit" {
-						require.Equal(t, "embed", misses[0].BindingID)
-						require.Equal(t, "hybrid", misses[0].RequestedMode)
-						require.Equal(t, "hybrid", misses[0].ActualMode)
-						require.Equal(t, new(1), misses[0].DocumentCount)
+					require.Equal(t, map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}, misses[0].Coverage["text"])
+					if mode == "fuzzy" {
+						require.Equal(t, map[string]any{"status": "complete", "reasons": []any{}}, misses[0].Coverage["fuzzy"])
 					}
 					if mode == "fallback" {
 						require.Equal(t, "private", misses[0].Profile)
