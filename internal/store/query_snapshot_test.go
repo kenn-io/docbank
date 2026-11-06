@@ -114,6 +114,22 @@ func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
 	assert.Equal(t, originalHash, refreshed.MemberHash, "mutable metadata is not content membership identity")
 	assert.NotEqual(t, originalSnapshotFingerprint, refreshed.SnapshotFingerprint,
 		"a new frozen projection records the changed tag and node revision")
+
+	fixture := newSnapshotFacetFixture(t)
+	collectionProjection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{
+		Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"name:a.PDF"}`),
+	})
+	require.NoError(t, err)
+	require.Len(t, collectionProjection.Rows, 1)
+	row := collectionProjection.Rows[0]
+	require.Len(t, row.CollectionIDs, 2)
+	assert.True(t, slices.IsSorted(row.CollectionIDs))
+	assert.Equal(t, row.CollectionIDs[0], row.DisplayCollectionID)
+	require.NotNil(t, row.DisplayCollectionLabel)
+	expected := map[string]string{
+		fixture.collections[0].ID(): "First", fixture.collections[1].ID(): "Second",
+	}
+	assert.Equal(t, expected[row.DisplayCollectionID], *row.DisplayCollectionLabel)
 }
 
 func TestQuerySnapshotRejectsBoundsDuringMaterialization(t *testing.T) {

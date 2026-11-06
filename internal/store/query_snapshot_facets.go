@@ -52,7 +52,7 @@ func normalizeFacetDimensions(values, dimensions []string) ([]string, error) {
 
 func materializeSnapshotFacets(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generationID string,
-	coverage CoverageSelection, dimensions []string, rows []SnapshotRow, options snapshotMaterializeOptions, used *int64,
+	coverage CoverageSelection, dimensions []string, rows []SnapshotRow, memberships snapshotMemberships, options snapshotMaterializeOptions, used *int64,
 ) ([]SnapshotFacet, error) {
 	result := make([]SnapshotFacet, 0, len(dimensions))
 	if err := chargeSnapshotMaterialization(options, used, 0, 2); err != nil {
@@ -79,7 +79,7 @@ func materializeSnapshotFacets(
 		case options.MaterializeFacet != nil:
 			facet, err = options.MaterializeFacet(facetCtx, dimension)
 		default:
-			facet, err = materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+			facet, err = materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, memberships, options.FacetMemberLimit)
 		}
 		if err != nil {
 			if ctx.Err() != nil {
@@ -130,11 +130,11 @@ type snapshotFacetObservation struct {
 
 func materializeSnapshotFacet(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generationID string,
-	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberLimit int64,
+	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberships snapshotMemberships, memberLimit int64,
 ) (SnapshotFacet, error) {
 	facetQuery := queryWithoutSnapshotFacet(compiled.Query, dimension)
 	if dimension != snapshotFacetDuplicates && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
-		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
+		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberships, memberLimit)
 	}
 	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q})
 	if err != nil {
@@ -261,7 +261,7 @@ func materializeCaptureDayFacet(
 }
 
 func materializeSnapshotFacetFromRows(
-	ctx context.Context, q metadataQuerier, value query.Query, dimension string, rows []SnapshotRow, memberLimit int64,
+	ctx context.Context, q metadataQuerier, value query.Query, dimension string, rows []SnapshotRow, members snapshotMemberships, memberLimit int64,
 ) (SnapshotFacet, error) {
 	observation := snapshotFacetObservation{counts: make(map[string]int64), labels: make(map[string]string)}
 	var projectedRows int64
@@ -269,12 +269,13 @@ func materializeSnapshotFacetFromRows(
 		if err := ctx.Err(); err != nil {
 			return SnapshotFacet{}, err
 		}
+		member := members[row.NodeID]
 		memberships := 1
 		switch dimension {
 		case "collections":
-			memberships = max(1, len(row.CollectionIDs))
+			memberships = max(1, len(member.CollectionIDs))
 		case snapshotFacetTags:
-			memberships = max(1, len(row.Tags))
+			memberships = max(1, len(member.Tags))
 		}
 		projectedRows += int64(memberships)
 		if projectedRows > memberLimit {
@@ -283,22 +284,22 @@ func materializeSnapshotFacetFromRows(
 		observation.total++
 		switch dimension {
 		case "collections":
-			for _, id := range row.CollectionIDs {
+			for _, id := range member.CollectionIDs {
 				observation.counts[id]++
 			}
-			if len(row.CollectionIDs) == 0 {
+			if len(member.CollectionIDs) == 0 {
 				observation.missing++
 			}
 		case snapshotFacetTags:
-			for _, tag := range row.Tags {
+			for _, tag := range member.Tags {
 				observation.counts[tag.ID]++
 				observation.labels[tag.ID] = tag.Name
 			}
-			if len(row.Tags) == 0 {
+			if len(member.Tags) == 0 {
 				observation.missing++
 			}
 		default:
-			key := row.CoverageState
+			key := member.CoverageState
 			if dimension != snapshotFacetTextCoverage {
 				key = snapshotFacetScalarValue(dimension, row.Name, row.MIMEType, row.ModifiedAt, row.Size)
 			}
@@ -617,7 +618,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 		}
 		return results[dimension], nil
 	}
-	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, used)
+	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, nil, options, used)
 }
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {

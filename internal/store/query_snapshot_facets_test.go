@@ -243,6 +243,36 @@ func facetCounts(facet SnapshotFacet) map[string]int64 {
 	return result
 }
 
+func TestQuerySnapshotFacetsIgnoreBuiltMembershipFields(t *testing.T) {
+	t.Parallel()
+	f := newSnapshotFacetFixture(t)
+	dimensions := []string{"collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates"}
+	projection, err := f.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+		Query: snapshotTestQuery(t, `{}`), Coverage: f.selection, Facets: dimensions,
+	})
+	require.NoError(t, err)
+	err = f.store.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, generation LexicalGeneration) error {
+		compiled, err := (queryCompiler{}).compile(t.Context(), projection.Query, queryResolver{q: q})
+		require.NoError(t, err)
+		ids := make([]int64, len(projection.Rows))
+		for i := range projection.Rows {
+			row := &projection.Rows[i]
+			ids[i] = row.NodeID
+			row.Tags, row.CollectionIDs = nil, nil
+			row.DisplayCollectionID, row.DisplayCollectionLabel = "", nil
+			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = "", "", ""
+		}
+		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID)
+		require.NoError(t, err)
+		var used int64
+		facets, err := materializeSnapshotFacets(t.Context(), q, compiled, generation.ID, f.selection, dimensions, projection.Rows, memberships, snapshotMaterializeOptions{}.withDefaults(), &used)
+		require.NoError(t, err)
+		assert.Equal(t, projection.Facets, facets)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 // Returning a live filter population, counting memberships as documents, or
 // dropping fixed zero buckets changes these literal facet counts.
 func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
@@ -254,18 +284,6 @@ func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, projection.Facets, 8)
-	for _, row := range projection.Rows {
-		if row.NodeID == fixture.nodes["a"].ID {
-			require.Len(t, row.CollectionIDs, 2)
-			assert.True(t, sort.StringsAreSorted(row.CollectionIDs))
-			assert.Equal(t, row.CollectionIDs[0], row.DisplayCollectionID)
-			require.NotNil(t, row.DisplayCollectionLabel)
-			expected := map[string]string{
-				fixture.collections[0].ID(): "First", fixture.collections[1].ID(): "Second",
-			}
-			assert.Equal(t, expected[row.DisplayCollectionID], *row.DisplayCollectionLabel)
-		}
-	}
 
 	collections := facetByDimension(t, projection, "collections")
 	assert.Equal(t, int64(6), *collections.Total)
@@ -359,6 +377,53 @@ func TestQuerySnapshotFacetsSelfExcludeAndRetainSelectedZero(t *testing.T) {
 			assert.True(t, value.Selected)
 			assert.Zero(t, value.Count)
 		}
+	}
+
+	red, blue := fixture.tags[0].ID, fixture.tags[1].ID
+	first, second := fixture.collections[0].ID(), fixture.collections[1].ID()
+	for _, tc := range []struct {
+		name, value                        string
+		coverageTotal                      int64
+		tags, collections                  map[string]int64
+		tagTotal, tagMissing               int64
+		collectionTotal, collectionMissing int64
+		complete, unprocessed              int64
+		selectedDimension, selectedKey     string
+	}{
+		{"tag", fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, red), 2,
+			map[string]int64{red: 2, blue: 1}, map[string]int64{first: 1, second: 2}, 6, 4, 2, 0, 2, 0, "tags", red},
+		{"collection", fmt.Sprintf(`{"filters":{"collection_ids":[%q]}}`, first), 2,
+			map[string]int64{red: 1, blue: 1}, map[string]int64{first: 2, second: 2}, 2, 1, 6, 3, 1, 1, "collections", first},
+		{"collapse", `{"filters":{"collapse_duplicates":true}}`, 5,
+			map[string]int64{red: 1, blue: 1}, map[string]int64{first: 2, second: 1}, 5, 4, 5, 3, 1, 4, "", ""},
+		{"empty", `{"filters":{"extensions":["absent"]}}`, 0,
+			map[string]int64{}, map[string]int64{}, 0, 0, 0, 0, 0, 0, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projection, err := fixture.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+				Query: snapshotTestQuery(t, tc.value), Coverage: fixture.selection,
+				Facets: []string{"collections", "tags", "text_coverage"},
+			})
+			require.NoError(t, err)
+			for _, expected := range []struct {
+				dimension      string
+				counts         map[string]int64
+				total, missing int64
+			}{{"tags", tc.tags, tc.tagTotal, tc.tagMissing}, {"collections", tc.collections, tc.collectionTotal, tc.collectionMissing}} {
+				facet := facetByDimension(t, projection, expected.dimension)
+				require.True(t, facet.Available)
+				assert.Equal(t, expected.counts, facetCounts(facet))
+				assert.Equal(t, expected.total, *facet.Total)
+				assert.Equal(t, expected.missing, *facet.Missing)
+				for _, value := range facet.Values {
+					assert.Equal(t, expected.dimension == tc.selectedDimension && value.Key == tc.selectedKey, value.Selected)
+				}
+			}
+			coverage := facetByDimension(t, projection, "text_coverage")
+			require.True(t, coverage.Available)
+			assert.Equal(t, tc.coverageTotal, *coverage.Total)
+			assert.Equal(t, map[string]int64{"complete": tc.complete, "unprocessed": tc.unprocessed, "partial": 0, "failed": 0, "none": 0, "unavailable": 0}, facetCounts(coverage))
+		})
 	}
 }
 
