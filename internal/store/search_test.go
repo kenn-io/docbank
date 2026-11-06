@@ -19,6 +19,39 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+func TestSearchContentHydrationCancellation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "report.txt", fakeHash("ab"), 7, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury",
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	queryer := &searchHydrationCancelQuerier{metadataQuerier: s.db, cancel: cancel}
+	hits, err := leadingContentHits(ctx, queryer, "mercury", ftsQuery("mercury"), "", nil, 2)
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "loading content hits")
+	require.Nil(t, hits)
+	require.Equal(t, 2, queryer.calls)
+}
+
+type searchHydrationCancelQuerier struct {
+	metadataQuerier
+
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (q *searchHydrationCancelQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	q.calls++
+	if strings.Contains(query, "FROM json_each(?) page") {
+		q.cancel()
+	}
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
 func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	t.Parallel()
 	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)

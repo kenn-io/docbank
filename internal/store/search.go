@@ -2486,7 +2486,7 @@ func (s *Store) SearchPageWithOptions(
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
 		if filterSQL == "" {
-			contentHits, err = leadingContentHits(ctx, queryer, fq, generationID, seen, remaining+1)
+			contentHits, err = leadingContentHits(ctx, queryer, query, fq, generationID, seen, remaining+1)
 			return err
 		}
 		// Over-fetch by the name set so overlap cannot conceal truncation.
@@ -2509,12 +2509,15 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	filtered := contentHits[:0]
-	for _, hit := range contentHits {
-		if _, exists := seen[hit.Node.ID]; exists {
-			continue
+	filtered := contentHits
+	if filterSQL != "" {
+		filtered = contentHits[:0]
+		for _, hit := range contentHits {
+			if _, exists := seen[hit.Node.ID]; exists {
+				continue
+			}
+			filtered = append(filtered, hit)
 		}
-		filtered = append(filtered, hit)
 	}
 	truncated := len(filtered) > remaining
 	if truncated {
@@ -2967,7 +2970,7 @@ func (h *contentHitHeap) Pop() any {
 	return x
 }
 
-func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, generation string, seen map[int64]struct{}, n int) ([]SearchHit, error) {
+func leadingContentHits(ctx context.Context, queryer metadataQuerier, query, match, generation string, seen map[int64]struct{}, n int) ([]SearchHit, error) {
 	from, where, args := contentSearchSource(match, generation, nil, "CROSS JOIN")
 	rank, version := `rendition_lexical_fts.rank`, `a.content_version_id`
 	if generation == "" {
@@ -2980,16 +2983,16 @@ func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, gen
 	if generation == "" {
 		from += ` CROSS JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
 	}
-	rows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL ORDER BY `+rank, args...)
+	streamRows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL ORDER BY `+rank, args...)
 	if err != nil {
 		return nil, fmt.Errorf("streaming content hits: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() { _ = streamRows.Close() }()
 	kept := make(contentHitHeap, 0, n)
 	members := make(map[int64]struct{}, n)
-	for rows.Next() {
+	for streamRows.Next() {
 		var key contentHitKey
-		if err := rows.Scan(&key.id, &key.name, &key.rank); err != nil {
+		if err := streamRows.Scan(&key.id, &key.name, &key.rank); err != nil {
 			return nil, fmt.Errorf("scanning content hit: %w", err)
 		}
 		if len(kept) == n && key.rank > kept[0].rank {
@@ -3012,7 +3015,7 @@ func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, gen
 		}
 		members[key.id] = struct{}{}
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := errors.Join(streamRows.Err(), streamRows.Close()); err != nil {
 		return nil, fmt.Errorf("streaming content hits: %w", err)
 	}
 	slices.SortFunc(kept, compareContentHit)
@@ -3024,11 +3027,11 @@ func leadingContentHits(ctx context.Context, queryer metadataQuerier, match, gen
 	if err != nil {
 		return nil, fmt.Errorf("encoding content hit IDs: %w", err)
 	}
-	rows, err = queryer.QueryContext(ctx, `SELECT `+nodeCols+` FROM json_each(?) page CROSS JOIN `+nodeFrom+` WHERE n.id=page.value ORDER BY CAST(page.key AS INTEGER)`, string(encoded))
+	rows, err := queryer.QueryContext(ctx, `SELECT `+nodeCols+` FROM json_each(?) page CROSS JOIN `+nodeFrom+` WHERE n.id=page.value ORDER BY CAST(page.key AS INTEGER)`, string(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("loading content hits: %w", err)
 	}
-	return scanSearchRows(rows, SearchMatchContent, match)
+	return scanSearchRows(rows, SearchMatchContent, query)
 }
 
 // photoAssetTextCandidates ranks every member of the asset that owns matching
