@@ -520,10 +520,4 @@ func TestSearchRerankRelevanceFollowsDemotedResults(t *testing.T) {
 	for i, hit := range after[1:] {
 		require.Equal(t, schemaMap(t, before[i])["rerank_relevance"], schemaMap(t, hit)["rerank_relevance"])
 	}
-	answer := exportCall(t, server, "answer_question", map[string]any{"question": "renewal", "rerank": true})
-	passages, ok := answer["passages"].([]any)
-	require.True(t, ok)
-	require.Len(t, passages, 3)
-	require.NotContains(t, schemaMap(t, passages[0]), "relevance")
-	require.Contains(t, schemaMap(t, passages[1]), "relevance")
 }

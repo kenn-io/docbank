@@ -855,9 +855,7 @@ func liveSearchScopeSQL(filterSQL string, filterArgs []any) (string, []any) {
 }
 
 func liveSearchScopeSQLForBackend(opts SearchOptions, postgres bool, offset int) (string, []any) {
-	filterSQL, filterArgs := searchFilterSQLForBackend(opts, postgres, offset)
-	return `FROM ` + nodeFrom + `
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL ` + filterSQL, filterArgs
+	return liveSearchScopeSQL(searchFilterSQLForBackend(opts, postgres, offset))
 }
 
 // currentEmbeddingHeadsSQL keeps coverage and semantic retrieval on the same
@@ -2778,7 +2776,7 @@ func searchFilterSQLForBackend(opts SearchOptions, postgres bool, offset int) (s
 		if err != nil {
 			panic(err)
 		}
-		clauses = append(clauses, `AND cv.version_id IN (SELECT value FROM (`+jsonArrayRowsSQL(postgres, "?")+`))`)
+		clauses = append(clauses, `AND cv.version_id IN (SELECT value FROM (`+jsonArrayRowsSQL(postgres, "?")+`) j)`)
 		args = append(args, string(encoded))
 	}
 	if opts.TagID != "" {

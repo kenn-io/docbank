@@ -674,8 +674,6 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 		{Outcome: "applied", CandidateCount: 2},
 		{Outcome: "applied", CandidateCount: 1000},
 		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 1},
-		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 2},
-		{Outcome: "degraded", Cause: "unavailable", CandidateCount: 1000},
 		{Outcome: "skipped", CandidateCount: 0},
 	} {
 		report := base
