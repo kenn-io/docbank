@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -46,7 +45,7 @@ func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
 	var opened string
 	var out bytes.Buffer
 	root := t.TempDir()
-	err := runWeb(t.Context(), &out, io.Discard, root, c, false, func(_ context.Context, rawURL string) error {
+	err := runWeb(t.Context(), &out, root, c, false, func(_ context.Context, rawURL string) error {
 		opened = rawURL
 		return nil
 	})
@@ -72,7 +71,7 @@ func TestRunWebOpensReadOnlySessionWithoutPrintingMasterKey(t *testing.T) {
 func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
 	c, webOrigin := webSessionClient(t, "read-only-session")
 	var out bytes.Buffer
-	err := runWeb(t.Context(), &out, io.Discard, t.TempDir(), c, true, func(context.Context, string) error {
+	err := runWeb(t.Context(), &out, t.TempDir(), c, true, func(context.Context, string) error {
 		return errors.New("must not open")
 	})
 	require.NoError(t, err)
@@ -86,7 +85,7 @@ func TestRunWebBrowserFailureSuggestsNoBrowser(t *testing.T) {
 	c, _ := webSessionClient(t, "failed-browser-session")
 	root := t.TempDir()
 	cmd := processProbe(t, func(cmd *cobra.Command, _ []string) error {
-		return runWeb(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), root, c, false, func(context.Context, string) error {
+		return runWeb(cmd.Context(), cmd.OutOrStdout(), root, c, false, func(context.Context, string) error {
 			return &exec.Error{Name: "browser-opener", Err: exec.ErrNotFound}
 		})
 	})
@@ -101,30 +100,6 @@ func TestRunWebBrowserFailureSuggestsNoBrowser(t *testing.T) {
 	assert.NotContains(t, diag.String(), "failed-browser-session")
 	assert.NotContains(t, diag.String(), "AQEBAQ")
 	assert.NotContains(t, diag.String(), "private key")
-}
-
-func TestRunWebPrintsRecoveryBeforeBrowserReturns(t *testing.T) {
-	c, _ := webSessionClient(t, "pending-browser-session")
-	root := t.TempDir()
-	var diag bytes.Buffer
-	entered, release := make(chan struct{}), make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		done <- runWeb(t.Context(), io.Discard, &diag, root, c, false, func(context.Context, string) error {
-			close(entered)
-			<-release
-			return nil
-		})
-	}()
-	select {
-	case err := <-done:
-		t.Fatalf("returned before opening browser: %v", err)
-	case <-entered:
-	}
-	assert.Contains(t, diag.String(), "docbank web --no-browser")
-	assert.Contains(t, diag.String(), "contains browser credentials")
-	close(release)
-	require.NoError(t, <-done)
 }
 
 func TestValidateWebLaunchURLRejectsCredentialsAndRemoteURLs(t *testing.T) {
@@ -144,7 +119,7 @@ func TestRunWebRejectsNonLoopbackClientBeforeOpeningOrPrinting(t *testing.T) {
 	c := daemonconn.New("http://example.com:43210", "private")
 	var out bytes.Buffer
 	called := false
-	err := runWeb(t.Context(), &out, io.Discard, t.TempDir(), c, false, func(context.Context, string) error {
+	err := runWeb(t.Context(), &out, t.TempDir(), c, false, func(context.Context, string) error {
 		called = true
 		return nil
 	})

@@ -54,13 +54,13 @@ browser credentials: do not paste it into logs, issue trackers, or chat.`,
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		return runWeb(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), layout.Root, c, webNoBrowser, openWebBrowser)
+		return runWeb(cmd.Context(), cmd.OutOrStdout(), layout.Root, c, webNoBrowser, openWebBrowser)
 	},
 }
 
 func runWeb(
 	ctx context.Context,
-	out, diagnostics io.Writer,
+	out io.Writer,
 	root string,
 	c *daemonconn.Connection,
 	noBrowser bool,
@@ -81,11 +81,8 @@ func runWeb(
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(diagnostics, "Run docbank web --no-browser to print a sign-in URL; it contains browser credentials, so keep it out of logs and chat"); err != nil {
-		return fmt.Errorf("printing browser recovery command: %w", err)
-	}
 	if err := open(ctx, launchURL); err != nil {
-		return withHint(fmt.Errorf("opening Docbank web application: %w", err), "use the --no-browser command above")
+		return withHint(fmt.Errorf("opening Docbank web application: %w", err), `run "docbank web --no-browser" to print a sign-in URL; it contains browser credentials, so keep it out of logs and chat`)
 	}
 	base, _, _ := strings.Cut(rawURL, "#")
 	_, err = fmt.Fprintf(out, "opened Docbank web application at %s\n", base)
