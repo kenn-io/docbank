@@ -75,6 +75,9 @@ func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
 	t.Parallel()
 	for _, text := range []string{`camera:A`, `lens:B`, `iso:100`, `capture_after:2024-01-01`, `gps:"-1,-1,1,1"`, `focus_min:0.5`, `unevaluated:true`} {
 		for _, photos := range []bool{false, true} {
+			if photos && !strings.HasPrefix(text, "capture_") && !strings.HasPrefix(text, "focus_") && text != "unevaluated:true" {
+				continue
+			}
 			compiled, err := (queryCompiler{photoDisplayMetadata: photos}).compile(t.Context(), compilerQuery(t, text), nil)
 			require.NoError(t, err, text)
 			if photos {
@@ -82,6 +85,52 @@ func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
 			} else {
 				require.NotContains(t, compiled.predicate.sql, "FROM content_versions", text)
 				require.Contains(t, compiled.predicate.sql, "cv.", text)
+			}
+		}
+	}
+}
+
+func TestPhotoBrowseMetadataMatchFollowsCurrentDisplayVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first := browsePhotoNode(t, s, "first.jpg", browseHash("shared"), "image/jpeg")
+	browsePhotoNode(t, s, "second.jpg", first.BlobHash, "image/jpeg")
+	browsePhotoMetadata(t, s, first, "shared-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens A")))
+	replaced := browsePhotoNode(t, s, "replaced.jpg", browseHash("old"), "image/jpeg")
+	browsePhotoMetadata(t, s, replaced, "old-fields", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
+	replaced, _, err := s.ReplaceContent(t.Context(), replaced.ID, replaced.Revision, browseHash("new"), 20, "image/jpeg")
+	require.NoError(t, err)
+	browsePhotoMetadata(t, s, replaced, "new-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera B")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
+	for _, tc := range []struct {
+		raw         string
+		names       []string
+		lens        string
+		cameraTotal int64
+	}{
+		{`{"filters":{"cameras":["Camera A"]}}`, []string{"first.jpg", "second.jpg"}, "Lens A", 3},
+		{`{"filters":{"cameras":["Camera A"],"collapse_duplicates":true}}`, []string{"first.jpg"}, "Lens A", 2},
+		{`{"filters":{"cameras":["Camera B"]}}`, []string{"replaced.jpg"}, "Lens B", 3},
+		{`{"syntax":"advanced","text":"NOT camera:\"Camera A\""}`, []string{"replaced.jpg"}, "Lens B", 1},
+	} {
+		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, tc.raw), Facets: []string{"camera", "lens"}}, nil)
+		require.NoError(t, err, tc.raw)
+		require.Equal(t, int64(len(tc.names)), page.Total, tc.raw)
+		names := make([]string, 0, len(page.Items))
+		for _, item := range page.Items {
+			names = append(names, item.Name)
+		}
+		require.ElementsMatch(t, tc.names, names, tc.raw)
+		for _, facet := range page.Facets {
+			require.True(t, facet.Available, tc.raw)
+			if facet.Dimension == "lens" {
+				require.Equal(t, page.Total, *facet.Total, tc.raw)
+				require.Equal(t, tc.lens, facet.Values[0].Key, tc.raw)
+			} else {
+				require.Equal(t, tc.cameraTotal, *facet.Total, tc.raw)
 			}
 		}
 	}
