@@ -238,8 +238,12 @@ fields are rejected. Every successful tool result contains both structured
 content and its JSON text representation. The complete result, including
 resource links, is capped at 1 MiB.
 
-The default tool catalog measures 135,667 bytes with a 150,000-byte test budget; enabling all six write flags measures 213,288 bytes with a 235,000-byte test budget.
-Tests measure the complete client-received `tools/list` result, including output schemas, metadata, and cache fields; a larger catalog requires a reviewed budget edit.
+Tests enforce a 150,000-byte default catalog budget and a 235,000-byte budget
+with all six write flags enabled, set from baseline measurements of 135,667 and
+213,288 bytes, respectively.
+They measure compact JSON of the complete client-decoded `tools/list` result,
+including output schemas, metadata, and cache fields; a larger catalog requires
+a reviewed budget edit.
 
 | Tool | Contract and important bounds |
 | --- | --- |

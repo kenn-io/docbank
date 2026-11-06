@@ -42,6 +42,7 @@ func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsRes
 
 func toolCatalogBudgetError(t *testing.T, result *sdkmcp.ListToolsResult, ceiling int) error {
 	t.Helper()
+	// Measure compact JSON of the complete client-decoded result.
 	data, err := json.Marshal(result)
 	require.NoError(t, err)
 	if len(data) <= ceiling {
@@ -96,7 +97,7 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, data, defaultToolCatalogBudget+1)
 	err = toolCatalogBudgetError(t, result, defaultToolCatalogBudget)
-	require.ErrorContains(t, err, "150001 bytes exceeds 150000-byte budget")
+	require.ErrorContains(t, err, fmt.Sprintf("%d bytes exceeds %d-byte budget", defaultToolCatalogBudget+1, defaultToolCatalogBudget))
 	require.ErrorContains(t, err, fixture.Name+": ")
 }
 
