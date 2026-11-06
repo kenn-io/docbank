@@ -6,7 +6,7 @@
   import ExportMenu from "./ExportMenu.svelte";
   import { reportAction, reportFailure, reportSearch } from "./action-events.js";
   import PhotoSearch from "./PhotoSearch.svelte";
-  import { photoSearchSort } from "./photoSearch.js";
+  import { isFilterSet, photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
@@ -3101,7 +3101,7 @@
     query: Query,
     options: SnapshotOptions,
     preserveDraft = false,
-    recordEmpty = true,
+    recordEmpty = !!query.text.trim() || Object.values(query.filters).some(isFilterSet),
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
