@@ -165,13 +165,16 @@ func materializeSnapshotFacet(
 	case "duplicates":
 		ctes = `, ` + CurrentContentMembershipCTE
 		key = `CASE WHEN EXISTS(SELECT 1 FROM current_content_members peer WHERE peer.blob_hash=cv.blob_hash AND peer.node_id<>n.id) THEN 'duplicate' ELSE 'unique' END`
-		label = key
+	}
+	order := ""
+	if dimension != "duplicates" {
+		order = ` ORDER BY ` + identity + `,` + key
 	}
 	rows, err := q.QueryContext(ctx, `WITH matched_members AS (`+statement+`)`+ctes+`
 		SELECT `+identity+`,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,`+key+`,`+label+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		`+join+` ORDER BY `+identity+`,`+key, args...)
+		`+join+order, args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
@@ -180,6 +183,9 @@ func materializeSnapshotFacet(
 		var size int64
 		var id, name, mimeType, modifiedAt, value, label string
 		err := rows.Scan(&id, &name, &mimeType, &size, &modifiedAt, &value, &label)
+		if dimension == "duplicates" {
+			label = value
+		}
 		if dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
 			value = snapshotFacetScalarValue(dimension, name, mimeType, modifiedAt, size)
 			label = value

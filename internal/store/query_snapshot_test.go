@@ -115,6 +115,38 @@ func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
 		"a new frozen projection records the changed tag and node revision")
 }
 
+func TestQuerySnapshotRowsShareParentPathsAndKeepEmptyTags(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	nested, err := s.Mkdir(ctx, s.RootID(), "nested")
+	require.NoError(t, err)
+	deeper, err := s.Mkdir(ctx, nested.ID, "deeper")
+	require.NoError(t, err)
+	files := []struct {
+		parentID int64
+		name     string
+		path     string
+	}{
+		{nested.ID, "a.txt", "/nested/a.txt"},
+		{nested.ID, "b.txt", "/nested/b.txt"},
+		{deeper.ID, "c.txt", "/nested/deeper/c.txt"},
+		{s.RootID(), "d.txt", "/d.txt"},
+	}
+	for _, file := range files {
+		_, err := s.CreateFile(ctx, file.parentID, file.name, fakeHash("snapshot-path-"+file.name), 1, "text/plain")
+		require.NoError(t, err)
+	}
+	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
+	require.NoError(t, err)
+	require.Len(t, projection.Rows, len(files))
+	for i, file := range files {
+		assert.Equal(t, file.path, projection.Rows[i].Path)
+		assert.NotNil(t, projection.Rows[i].Tags)
+		assert.Empty(t, projection.Rows[i].Tags)
+	}
+}
+
 func TestQuerySnapshotRejectsBoundsDuringMaterialization(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

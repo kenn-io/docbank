@@ -431,14 +431,16 @@ func materializeSnapshotRows(
 	}
 	rows, err := q.QueryContext(ctx, `WITH RECURSIVE
 		matched_members AS (`+statement+`),
-		tree_paths(node_id,id,parent_id,path) AS (
-			SELECT n.id,n.id,n.parent_id,n.name FROM nodes n JOIN matched_members m ON m.node_id=n.id
+		parent_dirs AS (
+			SELECT DISTINCT n.parent_id FROM nodes n JOIN matched_members m ON m.node_id=n.id
+		), dir_paths(dir_id,id,parent_id,path) AS (
+			SELECT n.id,n.id,n.parent_id,n.name FROM nodes n JOIN parent_dirs d ON d.parent_id=n.id
 			UNION ALL
-			SELECT p.node_id,n.id,n.parent_id,
+			SELECT p.dir_id,n.id,n.parent_id,
 				CASE WHEN n.name='' THEN '/'||p.path ELSE n.name||'/'||p.path END
-			FROM nodes n JOIN tree_paths p ON n.id=p.parent_id
-		), `+CollectionMembershipCTE+coverageCTE+`
-		SELECT n.id,cv.version_id,cv.blob_hash,cv.size,n.revision,n.name,tp.path,
+			FROM nodes n JOIN dir_paths p ON n.id=p.parent_id
+		), `+matchedCollectionMembershipCTE+coverageCTE+`
+		SELECT n.id,cv.version_id,cv.blob_hash,cv.size,n.revision,n.name,dp.path||'/'||n.name,
 			COALESCE(cv.mime_type,''),n.modified_at,
 			COALESCE((SELECT json_group_array(json_object('id',id,'name',name,'revision',revision))
 				FROM (SELECT t.id,t.name,t.revision FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
@@ -451,7 +453,7 @@ func materializeSnapshotRows(
 			`+coverageColumns+`,`+photoColumns+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		JOIN tree_paths tp ON tp.node_id=n.id AND tp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
+		JOIN dir_paths dp ON dp.dir_id=n.parent_id AND dp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
 	if err != nil {
 		return fmt.Errorf("materializing query snapshot rows: %w", err)
 	}
@@ -478,8 +480,10 @@ func materializeSnapshotRows(
 		if int64(len(tagsJSON)) > options.MaxRowBytes || int64(len(collectionsJSON)) > options.MaxRowBytes {
 			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
 		}
-		if err := json.Unmarshal(tagsJSON, &row.Tags); err != nil {
-			return fmt.Errorf("decoding snapshot tags: %w", err)
+		if string(tagsJSON) != "[]" {
+			if err := json.Unmarshal(tagsJSON, &row.Tags); err != nil {
+				return fmt.Errorf("decoding snapshot tags: %w", err)
+			}
 		}
 		if err := json.Unmarshal(collectionsJSON, &row.CollectionIDs); err != nil {
 			return fmt.Errorf("decoding snapshot collections: %w", err)

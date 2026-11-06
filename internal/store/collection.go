@@ -11,7 +11,9 @@ import (
 // by every collection summary and member read. It intentionally omits WITH so
 // callers can compose it with other CTEs. LOWER preserves the case-insensitive
 // embedded-prefix rule on both database engines.
-const CollectionMembershipCTE = `collection_members AS (
+const CollectionMembershipCTE = `collection_members AS (` + collectionMembershipSelect + `)`
+
+const collectionMembershipSelect = `
     SELECT DISTINCT p.ingest_id, p.node_id
     FROM provenance p
     JOIN ingests i ON i.id = p.ingest_id
@@ -19,6 +21,11 @@ const CollectionMembershipCTE = `collection_members AS (
     WHERE LOWER(i.source_kind) NOT LIKE 'embedded:%'
       AND n.kind = 'file' AND n.trashed_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes = p.identity)
+`
+
+// matchedCollectionMembershipCTE consumes matched_members(node_id).
+const matchedCollectionMembershipCTE = `collection_members AS (` + collectionMembershipSelect + `
+      AND p.node_id IN (SELECT node_id FROM matched_members)
 )`
 
 // Collection is one document-bearing operational ingest and its current

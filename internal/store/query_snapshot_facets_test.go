@@ -320,6 +320,9 @@ func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T)
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), projection.Total)
+	for _, value := range facetByDimension(t, projection, "duplicates").Values {
+		assert.Equal(t, value.Key, value.Label)
+	}
 	assert.Equal(t, map[string]int64{"duplicate": 1, "unique": 0},
 		facetCounts(facetByDimension(t, projection, "duplicates")), "the duplicate peer is outside the query result")
 }
