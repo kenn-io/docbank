@@ -177,7 +177,7 @@ it("runs the top bar with the page size chosen in Advanced", async () => {
   expect(body.page_size).toBe(250);
 });
 
-it("keeps saved-search filters when typing a new search", async () => {
+it("keeps a saved plain-words search's filters when the search text changes", async () => {
   const saved = parseQuery(
     JSON.stringify({ text: "invoice", filters: { extensions: ["pdf"] }, sort: { field: "size" } }),
   );

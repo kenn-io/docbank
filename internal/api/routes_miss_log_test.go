@@ -76,10 +76,6 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 	rows, err = listMisses(t, ts)
 	require.NoError(t, err)
 	require.Empty(t, rows)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
-		Query: "large", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"value": strings.Repeat("x", 64<<10)},
-	})
-	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, body)
 }
 
 func TestMissLogBrowserMayRecordButCannotManage(t *testing.T) {
@@ -120,6 +116,10 @@ func TestMissLogRecordsRequestNearBodyLimit(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, request.Query, rows[0].Query)
 	require.Equal(t, request.Filters, rows[0].Filters)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
+		Query: "large", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"value": strings.Repeat("x", 64<<10)},
+	})
+	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, body)
 }
 
 func TestMissLogInputLimits(t *testing.T) {

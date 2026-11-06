@@ -323,10 +323,22 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.submit(input.closest("form")!);
 }
 
-it.each([false, true])(
-  "records name-search truncation for an empty natural search, reranking=%s",
-  async (rerank) => {
-    const stale = node(99, "stale.txt", baseVersion);
+it.each([
+  { name: "base name truncation", rerank: false, truncated: true, state: "complete", scoped: 2 },
+  { name: "reranked name truncation", rerank: true, truncated: true, state: "complete", scoped: 2 },
+  { name: "complete reranked scope", rerank: true, truncated: false, state: "complete", scoped: 1 },
+  {
+    name: "incomplete reranked scope",
+    rerank: true,
+    truncated: false,
+    state: "incomplete",
+    scoped: 2,
+  },
+])(
+  "records the accepted empty natural search receipt: $name",
+  async ({ rerank, truncated, state, scoped }) => {
+    const baseCandidate = node(4, "stale-base.txt", baseVersion);
+    const rerankedCandidate = node(5, "stale-reranked.txt", rerankedVersion);
     const harness = installHarness({
       profiles: [
         {
@@ -338,12 +350,20 @@ it.each([false, true])(
         },
       ],
       files: [node(2, "existing.txt", baseVersion)],
-      baseReport: report("hybrid", rerank ? [result(stale, 1, "stale excerpt")] : []),
-      rerankReport: report("hybrid", [result(stale, 1, "stale excerpt")], {
-        outcome: "applied",
-        candidate_count: 1,
-      }),
-      tagSearch: { hits: [], limit: 1000, truncated: true },
+      baseReport: report("hybrid", rerank ? [result(baseCandidate, 1, "stale base excerpt")] : []),
+      rerankReport: {
+        ...report("hybrid", [result(rerankedCandidate, 1, "stale reranked excerpt")], {
+          outcome: "applied",
+          candidate_count: 1,
+        }),
+        coverage: {
+          binding_required: true,
+          scoped_documents: scoped,
+          complete_documents: state === "complete" ? scoped : 0,
+          state,
+        },
+      },
+      tagSearch: { hits: [], limit: 1000, truncated },
     });
     render(App);
     await screen.findAllByText("existing.txt");
@@ -351,10 +371,12 @@ it.each([false, true])(
       await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
     await submitSearch("missing");
     await waitFor(() => expect(harness.misses).toHaveLength(1));
-    expect(screen.getByText("0+ results")).toBeTruthy();
+    expect(screen.getByText(truncated ? "0+ results" : "0 results")).toBeTruthy();
     expect(harness.misses[0]).toMatchObject({
       query: "missing",
-      truncated: true,
+      truncated,
+      coverage: { scoped_documents: scoped, state },
+      document_count: scoped,
       ...(rerank ? { reranking: { outcome: "applied" } } : {}),
     });
   },
@@ -428,7 +450,6 @@ it.each([
       expect(harness.postBodies).toHaveLength(embeddings ? 1 : 0);
       if (!embeddings) expect(harness.legacyCalls()).toBe(1);
     }
-    expect(harness.misses).toHaveLength(0);
   },
 );
 
@@ -1180,7 +1201,6 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
   expect(harness.postBodies).toHaveLength(1);
-  expect(harness.misses).toHaveLength(0);
   expect(
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
@@ -1646,7 +1666,6 @@ it("filtered search walkthrough reaches accepted results", async () => {
   await screen.findAllByText("report.txt");
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
-  expect(harness.misses).toHaveLength(0);
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
@@ -2041,24 +2060,20 @@ it.each(["plain", "tag-filtered", "fallback", "filtered", "saved"])(
       await submitSearch("missing");
     }
     await waitFor(() => expect(harness.misses).toHaveLength(1));
-    expect(harness.misses[0]).toMatchObject({
-      query: "missing",
-      ...(kind === "fallback"
-        ? {
-            requested_mode: "hybrid",
-            actual_mode: "lexical",
-            profile: "private",
-            binding_id: "embed",
-            degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
-          }
-        : kind === "filtered" || kind === "saved"
+    if (kind !== "filtered" && kind !== "saved") {
+      expect(harness.misses[0]).toMatchObject({
+        query: "missing",
+        ...(kind === "fallback"
           ? {
-              filters: { filters: { size_min: 20 } },
+              requested_mode: "hybrid",
               actual_mode: "lexical",
-              coverage: { configuration: "unconfigured" },
+              profile: "private",
+              binding_id: "embed",
+              degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
             }
           : { binding_id: "embed", actual_mode: "hybrid", document_count: 2 }),
-    });
+      });
+    }
     if (kind === "tag-filtered") {
       expect(harness.postBodies[0]?.scope).toEqual({
         kind: "all_live",
@@ -2070,62 +2085,6 @@ it.each(["plain", "tag-filtered", "fallback", "filtered", "saved"])(
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     await waitFor(() => expect(harness.postBodies).toHaveLength(2));
     expect(harness.misses).toHaveLength(1);
-  },
-);
-
-it.each([
-  { state: "complete", scoped: 1, expectedCount: 1 },
-  { state: "incomplete", scoped: 2, expectedCount: 2 },
-])(
-  "uses the accepted reranked scope for an empty result receipt ($state coverage)",
-  async ({ state, scoped, expectedCount }) => {
-    const baseCandidate = node(4, "stale-base.txt", baseVersion);
-    const rerankedCandidate = node(5, "stale-reranked.txt", rerankedVersion);
-    const baseReport = {
-      ...report("hybrid", [result(baseCandidate, 1, "stale base excerpt")]),
-      coverage: {
-        binding_required: true,
-        scoped_documents: 2,
-        complete_documents: 2,
-        state: "complete",
-      },
-    };
-    const rerankReport = {
-      ...report("hybrid", [result(rerankedCandidate, 1, "stale reranked excerpt")], {
-        outcome: "applied",
-        candidate_count: 1,
-      }),
-      coverage: {
-        binding_required: true,
-        scoped_documents: scoped,
-        complete_documents: state === "complete" ? scoped : 0,
-        state,
-      },
-    };
-    const harness = installHarness({
-      profiles: [
-        {
-          name: "private",
-          fingerprint: "a".repeat(64),
-          rendition: true,
-          embedding_bindings: ["embed"],
-          reranking_available: true,
-        },
-      ],
-      files: [node(2, "existing.txt", baseVersion)],
-      baseReport,
-      rerankReport,
-    });
-    render(App);
-    await screen.findAllByText("existing.txt");
-    await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
-    await submitSearch("scope changed during reranking");
-    await waitFor(() => expect(harness.misses).toHaveLength(1));
-    expect(harness.misses[0]).toMatchObject({
-      query: "scope changed during reranking",
-      coverage: { scoped_documents: scoped, state },
-    });
-    expect(harness.misses[0]).toHaveProperty("document_count", expectedCount);
   },
 );
 

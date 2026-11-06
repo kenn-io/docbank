@@ -251,6 +251,7 @@ See docs/usage/search.md.`,
 					}
 					if automatic.report != nil || automatic.receipt.Query != "" {
 						receipt = automatic.receipt
+						receipt.Truncated = receipt.Truncated || rep.Truncated
 					}
 					if coverageErr == nil && strings.TrimSpace(query) != "" {
 						if receipt.Coverage == nil {

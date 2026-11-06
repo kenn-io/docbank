@@ -767,11 +767,12 @@ func TestRestoreKeepsMissLogsLocal(t *testing.T) {
 	cfg.Enabled = true
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
-	_, err = backupapp.Create(
+	manifest, err := backupapp.Create(
 		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
 		backup.CreateOptions{Jobs: 1},
 	)
 	require.NoError(t, err)
+	assert.Contains(t, manifest.Excluded, "miss-log/")
 
 	target := filepath.Join(t.TempDir(), "existing-vault")
 	seedOwnedVault(t, target)

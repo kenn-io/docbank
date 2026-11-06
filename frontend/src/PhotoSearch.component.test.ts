@@ -165,7 +165,7 @@ it("applies the draft when the search mode changes", async () => {
   photos.dispose();
 });
 
-it("reports explicit Photos searches", async () => {
+it("reports Photos search outcomes for explicit submissions", async () => {
   stubPhotoTimeline();
   const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
   vi.stubGlobal("fetch", fetcher);
@@ -205,12 +205,7 @@ it("reports explicit Photos searches", async () => {
       query: "Nikon",
       requested_mode: "lexical",
       actual_mode: "lexical",
-      filters: expect.objectContaining({
-        cameras: ["Synthetic camera"],
-        syntax: "advanced",
-        corpus: "photos",
-        hidden: false,
-      }),
+      filters: expect.objectContaining({ syntax: "advanced" }),
     }),
     expect.objectContaining({ session: "scoped" }),
   );

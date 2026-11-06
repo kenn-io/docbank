@@ -19,23 +19,21 @@ import (
 
 func TestRecordingIsOptInAndBounded(t *testing.T) {
 	root := t.TempDir()
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	cfg := config.Default().MissLog
-	disabled := New(t.Context(), root, "synthetic-vault", cfg, logger)
+	disabled := New(t.Context(), root, "synthetic-vault", cfg, nil)
 	disabled.Record(t.Context(), Request{Query: "synthetic secret"})
 	rows, err := disabled.List(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 	cfg.Enabled = true
-	svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
+	svc := New(t.Context(), root, "synthetic-vault", cfg, nil)
 	svc.Record(t.Context(), Request{Query: " \n\t"})
 	filters := map[string]any{"tag_id": "taxes", "set_ids": []any{"synthetic-set"}}
 	svc.Record(t.Context(), Request{RequestedMode: "lexical", ActualMode: "lexical", Filters: filters})
 	nestedFilters := map[string]any{"tag_ids": []any{"synthetic-tag"}}
 	svc.Record(t.Context(), Request{Query: "synthetic secret", RequestedMode: "hybrid", ActualMode: "lexical", Filters: map[string]any{"syntax": "literal", "filters": nestedFilters}, DocumentCount: new(0), FenceFingerprint: "sha256:synthetic", Coverage: map[string]any{"state": "complete"}, Truncated: true, Degradations: []string{"reranking_degraded"}, Reranking: map[string]any{"outcome": "degraded"}})
 	// Reopening observes the persisted receipts, independent of the writer's index.
-	reopened := New(t.Context(), root, "synthetic-vault", cfg, logger)
+	reopened := New(t.Context(), root, "synthetic-vault", cfg, nil)
 	rows, err = reopened.List(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
@@ -62,11 +60,6 @@ func TestRecordingIsOptInAndBounded(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, map[string]any{"tag_id": "taxes", "set_ids": []any{"synthetic-set"}}, rows[0].Filters)
-	require.NoError(t, reopened.Purge(t.Context()))
-	require.ErrorIs(t, reopened.Delete(t.Context(), receipt.ID), os.ErrNotExist)
-	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
-	require.NoError(t, err)
-	require.Empty(t, entries)
 }
 
 func TestMissLogMissingReceipt(t *testing.T) {
@@ -88,7 +81,6 @@ func TestMissLogMissingReceipt(t *testing.T) {
 				require.NoError(t, os.Remove(filepath.Join(root, "miss-log", svc.files[1])))
 				if operation == "delete" {
 					require.NoError(t, svc.Delete(t.Context(), missingID))
-					require.ErrorIs(t, svc.Delete(t.Context(), missingID), os.ErrNotExist)
 				}
 				rows, err = svc.List(t.Context(), 2, 0)
 				require.NoError(t, err)

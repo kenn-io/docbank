@@ -18,7 +18,8 @@ func TestMissLogConfigDefaults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[miss_log]\nenabled=false\nretention_days=0\nmax_records=0\n"), 0600))
 	cfg, err = Load(dir)
 	require.NoError(t, err)
-	require.NoError(t, cfg.Validate())
+	require.Zero(t, cfg.MissLog.RetentionDays)
+	require.Zero(t, cfg.MissLog.MaxRecords)
 }
 
 func FuzzMissLogConfigBounds(f *testing.F) {

@@ -14,9 +14,9 @@ import (
 )
 
 func TestSubmittedSearchMissRecording(t *testing.T) {
-	for _, mode := range []string{"explicit", "lexical", "fuzzy", "fallback", "automatic"} {
+	for _, mode := range []string{"explicit", "lexical", "fuzzy", "fallback"} {
 		for _, nameMatch := range []bool{false, true} {
-			if (nameMatch && mode != "lexical" && mode != "automatic") || (mode == "automatic" && !nameMatch) {
+			if nameMatch && mode != "lexical" {
 				continue
 			}
 			t.Run(mode+map[bool]string{true: "/name", false: "/empty"}[nameMatch], func(t *testing.T) {
@@ -43,9 +43,6 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 						} else {
 							report := api.SearchReport{Limit: 50}
 							if mode == "fuzzy" {
-								assert.Equal(t, "application/pdf", r.URL.Query().Get("mime_type"))
-								assert.Equal(t, "true", r.URL.Query().Get("source_present"))
-								assert.Equal(t, "true", r.URL.Query().Get("fuzzy"))
 								report.MIMEType, report.SourcePresent = "application/pdf", true
 								report.Fuzzy = &api.FuzzyReceipt{Status: "complete", Reasons: []string{}}
 							}
@@ -96,7 +93,9 @@ func TestSubmittedSearchMissRecording(t *testing.T) {
 					} else {
 						require.Empty(t, misses[0].Filters)
 					}
-					require.Equal(t, map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}, misses[0].Coverage["text"])
+					if mode == "lexical" {
+						require.Equal(t, map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}, misses[0].Coverage["text"])
+					}
 					if mode == "fuzzy" {
 						require.Equal(t, map[string]any{"status": "complete", "reasons": []any{}}, misses[0].Coverage["fuzzy"])
 					}

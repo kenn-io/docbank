@@ -109,7 +109,7 @@ it("notices an unfinished run without touching its in-flight batch", async () =>
 it("shows a retained run instead of enumerating results for a new Tag all", async () => {
   const actionID = await retainSendingAction();
   const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
-  const query = parseQuery(JSON.stringify({ text: "report" }));
+  const query = parseQuery(JSON.stringify({ text: "report", filters: { size_min: 20 } }));
   const rows = Array.from({ length: 100 }, (_, index) => ({
     ...member,
     node_id: index + 1,
@@ -135,7 +135,14 @@ it("shows a retained run instead of enumerating results for a new Tag all", asyn
         )
       : Response.json({ vault_id: vaultID }),
   );
-  await workspace.run(query, { page_size: 100 });
+  expect(await workspace.run(query, { page_size: 100 })).toMatchObject({
+    receipt: {
+      query: "report",
+      actual_mode: "lexical",
+      filters: { filters: { size_min: 20 } },
+      coverage: { configuration: "unconfigured" },
+    },
+  });
   await workspace.refreshRetained();
   vi.mocked(fetch).mockClear();
   workspace.openActions("query");

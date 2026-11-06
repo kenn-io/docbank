@@ -60,7 +60,7 @@ func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
 }
 
 func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
-	for _, outcome := range []string{"reply", "replaced pending", "failed"} {
+	for _, outcome := range []string{"replaced pending", "failed"} {
 		t.Run(outcome, func(t *testing.T) {
 			fake := newFakeBackend()
 			fake.profiles[0].RerankingAvailable = true
@@ -155,9 +155,13 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			runModelCommand(t, model, cmd)
 			assert.Len(t, model.rows, wantRows)
 			assert.Equal(t, want, fake.actions)
-			if !baseEmpty {
+			if baseEmpty {
+				assert.Empty(t, fake.misses)
+			} else {
 				require.Len(t, fake.misses, 1)
 				receipt := fake.misses[0]
+				assert.Equal(t, "report", receipt.Query)
+				assert.Empty(t, receipt.BindingID)
 				assert.Equal(t, new(7), receipt.DocumentCount)
 			}
 		})

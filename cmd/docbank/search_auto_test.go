@@ -27,7 +27,7 @@ type automaticSearchCase struct {
 	profiles                        []api.ProcessingProfileSummary
 	profileError, searchError       string
 	malformed, cold, mixed          bool
-	empty                           bool
+	empty, emptyDocuments           bool
 	folderFirst, wantTruncated      bool
 	wantResults, wantFolders        int
 	jsonCLI, humanCLI, agentCLI     bool
@@ -54,6 +54,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantSearch: 1, wantHybrid: true, wantTruncated: true},
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
 		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true, wantMiss: 1},
+		{name: "empty hybrid preserves lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, emptyDocuments: true, wantSearch: 1, wantHybrid: true, wantMiss: 1, wantTruncated: true},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
@@ -93,6 +94,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 					var request misslog.Request
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 					assert.Equal(t, tc.query, request.Query)
+					assert.Equal(t, tc.wantTruncated, request.Truncated)
 				}
 				handler(w, r)
 			}))
@@ -215,7 +217,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, tc.searchError)
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
-			case tc.empty:
+			case tc.empty || tc.emptyDocuments:
 				coverage := api.DocumentSearchCoverage{State: "complete", BindingRequired: true}
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: coverage, Results: []api.DocumentSearchResult{}}))
 			default:
