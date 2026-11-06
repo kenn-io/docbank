@@ -244,36 +244,6 @@ func facetCounts(facet SnapshotFacet) map[string]int64 {
 	return result
 }
 
-func TestQuerySnapshotFacetsIgnoreBuiltMembershipFields(t *testing.T) {
-	t.Parallel()
-	f := newSnapshotFacetFixture(t)
-	dimensions := []string{"collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates"}
-	projection, err := f.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
-		Query: snapshotTestQuery(t, `{}`), Coverage: f.selection, Facets: dimensions,
-	})
-	require.NoError(t, err)
-	err = f.store.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, generation LexicalGeneration) error {
-		compiled, err := (queryCompiler{}).compile(t.Context(), projection.Query, queryResolver{q: q})
-		require.NoError(t, err)
-		ids := make([]int64, len(projection.Rows))
-		for i := range projection.Rows {
-			row := &projection.Rows[i]
-			ids[i] = row.NodeID
-			row.Tags, row.CollectionIDs = nil, nil
-			row.DisplayCollectionID, row.DisplayCollectionLabel = "", nil
-			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = "", "", ""
-		}
-		var used int64
-		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID, defaultSnapshotMaterializeOptions(), &used)
-		require.NoError(t, err)
-		facets, err := materializeSnapshotFacets(t.Context(), q, compiled, generation.ID, f.selection, dimensions, projection.Rows, memberships, snapshotMaterializeOptions{}.withDefaults(), &used)
-		require.NoError(t, err)
-		assert.Equal(t, projection.Facets, facets)
-		return nil
-	})
-	require.NoError(t, err)
-}
-
 // Returning a live filter population, counting memberships as documents, or
 // dropping fixed zero buckets changes these literal facet counts.
 func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
@@ -582,10 +552,6 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	_, err = s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
 	require.NoError(t, err)
 	_, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
-	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
-	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	_, err = service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 }
 

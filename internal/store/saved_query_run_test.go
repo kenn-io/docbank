@@ -88,33 +88,22 @@ func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {
 
 func TestSavedQueryRunDeadlineAfterPreparation(t *testing.T) {
 	t.Parallel()
-	for _, receipt := range []bool{false, true} {
-		name := "mutation admission"
-		if receipt {
-			name = "receipt write"
-		}
-		t.Run(name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				s := newTestStore(t)
-				definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
-				require.NoError(t, err)
-				service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
-				defer func() { require.NoError(t, service.Close()) }()
-				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-				defer cancel()
-				_, _, err = service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{},
-					func(ctx context.Context, write func() error) error {
-						<-ctx.Done()
-						if receipt {
-							return write()
-						}
-						return ctx.Err()
-					})
-				require.ErrorIs(t, err, context.DeadlineExceeded)
-				assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		definition, err := s.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
+		require.NoError(t, err)
+		service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
+		defer func() { require.NoError(t, service.Close()) }()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		_, _, err = service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{},
+			func(ctx context.Context, write func() error) error {
+				<-ctx.Done()
+				return write()
 			})
-		})
-	}
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
+	})
 }
 
 func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing.T) {

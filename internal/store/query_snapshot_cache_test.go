@@ -611,10 +611,10 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 }
 
 type snapshotTailFixture struct {
-	store      *Store
-	now        func() time.Time
-	frozen     SnapshotProjection
-	beforeTail int64
+	store             *Store
+	now               func() time.Time
+	frozen            SnapshotProjection
+	chargesBeforeTail int
 }
 
 // newSnapshotTailFixture freezes 51 rows, so a 50-row page leaves a one-row tail.
@@ -627,13 +627,22 @@ func newSnapshotTailFixture(t *testing.T, request SnapshotRequest) snapshotTailF
 		require.NoError(t, err)
 	}
 	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
-	frozen, err := s.materializeQuerySnapshot(t.Context(), request, snapshotMaterializeOptions{Now: now})
+	request, err := normalizeQuerySnapshotRequest(request)
 	require.NoError(t, err)
-	lastRow, err := json.Marshal(frozen.Rows[50])
+	var charges int
+	options := snapshotMaterializeOptions{Now: now, Charge: func(_, _ int64) error {
+		charges++
+		return nil
+	}}.withDefaults()
+	frozen, memberships, err := s.materializeUnhydratedQuerySnapshot(t.Context(), request, options)
 	require.NoError(t, err)
-	// The scan charged the last row's strings and the read its empty tags and collections.
-	beforeTail := frozen.SerializedBytes - int64(len(lastRow)) - 1 + snapshotRowScalarBytes(frozen.Rows[50]) + 4
-	return snapshotTailFixture{store: s, now: now, frozen: frozen, beforeTail: beforeTail}
+	hydrateSnapshotRows(frozen.Rows, memberships)
+	_, err = encodeSnapshotRows(t.Context(), options, &frozen.SerializedBytes, frozen.Rows[:50], memberships, 0)
+	require.NoError(t, err)
+	chargesBeforeTail := charges
+	_, err = encodeSnapshotRows(t.Context(), options, &frozen.SerializedBytes, frozen.Rows[50:], memberships, 50)
+	require.NoError(t, err)
+	return snapshotTailFixture{store: s, now: now, frozen: frozen, chargesBeforeTail: chargesBeforeTail}
 }
 
 func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
@@ -646,12 +655,12 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 				s, frozen := fixture.store, fixture.frozen
 				started, release := make(chan struct{}), make(chan struct{})
 				var unblock sync.Once
-				var charged int64
+				var charges int
 				service := newQuerySnapshotService(s, querySnapshotServiceOptions{
 					Now: fixture.now,
-					ChargeHook: func(ctx context.Context, _ string, _, bytes int64) error {
-						charged += bytes
-						if charged > fixture.beforeTail {
+					ChargeHook: func(ctx context.Context, _ string, _, _ int64) error {
+						charges++
+						if charges == fixture.chargesBeforeTail+1 {
 							close(started)
 							select {
 							case <-release:
@@ -841,14 +850,14 @@ func TestQuerySnapshotCacheSuccessiveSearchesReleaseBuilderSlots(t *testing.T) {
 		request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50}
 		fixture := newSnapshotTailFixture(t, request)
 		var mu sync.Mutex
-		charges := make(map[string]int64)
+		charges := make(map[string]int)
 		release := make(chan struct{})
 		service := newQuerySnapshotService(fixture.store, querySnapshotServiceOptions{
 			Now: fixture.now, Limits: snapshotCacheLimits{MaxHandles: 3},
-			ChargeHook: func(ctx context.Context, owner string, _, bytes int64) error {
+			ChargeHook: func(ctx context.Context, owner string, _, _ int64) error {
 				mu.Lock()
-				charges[owner] += bytes
-				block := charges[owner] > fixture.beforeTail
+				charges[owner]++
+				block := charges[owner] == fixture.chargesBeforeTail+1
 				mu.Unlock()
 				if block {
 					select {
