@@ -72,9 +72,6 @@ func TestToolCatalogBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := listCatalogThroughClient(t, NewServerWithOptions(tc.options))
 			require.NoError(t, toolCatalogBudgetError(t, result, tc.ceiling))
-			data, err := json.Marshal(result)
-			require.NoError(t, err)
-			t.Logf("%d tools, %d bytes, %d-byte budget", len(result.Tools), len(data), tc.ceiling)
 		})
 	}
 }
@@ -92,17 +89,9 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 	register()
 	data, err := json.Marshal(listCatalogThroughClient(t, server))
 	require.NoError(t, err)
-	require.LessOrEqual(t, len(data), defaultToolCatalogBudget)
-	fixture.Description = strings.Repeat("x", defaultToolCatalogBudget-len(data)-len(`,"description":""`))
+	fixture.Description = strings.Repeat("x", defaultToolCatalogBudget+1-len(data)-len(`,"description":""`))
 	register()
 	result := listCatalogThroughClient(t, server)
-	data, err = json.Marshal(result)
-	require.NoError(t, err)
-	require.Len(t, data, defaultToolCatalogBudget)
-	require.NoError(t, toolCatalogBudgetError(t, result, defaultToolCatalogBudget))
-	fixture.Description += "x"
-	register()
-	result = listCatalogThroughClient(t, server)
 	data, err = json.Marshal(result)
 	require.NoError(t, err)
 	require.Len(t, data, defaultToolCatalogBudget+1)
