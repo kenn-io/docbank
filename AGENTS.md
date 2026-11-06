@@ -6,7 +6,11 @@ Instructions for autonomous coding agents working in this repository.
 
 - Use GitHub-hosted runners for repository workflows. See the
   [development guide](docs/internal/development.md#verification-contract)
-  for CI routing.
+  for CI routing. The `CI gate` job runs on a Namespace profile that uses
+  Namespace's
+  [Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+  which disables workload access to Namespace features and APIs. GitHub fork
+  approvals, token permissions, and secrets are separate controls.
 - PostgreSQL checks use `DOCBANK_TEST_POSTGRES_DSN` and `make test-pg` against
   a disposable server. CI owns its service container; each test owns and drops
   its database. An explicitly configured but unavailable server fails the test.

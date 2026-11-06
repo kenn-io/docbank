@@ -14068,6 +14068,63 @@ func (c *Client) FindSimilarDocuments(ctx context.Context, options *FindSimilarD
 	return responseParser(ctx, resp)
 }
 
+// SearchTextCoverage Count files waiting for searchable text
+func (c *Client) SearchTextCoverage(ctx context.Context, options *SearchTextCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchTextCoverageResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
+		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
+		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search/text-coverage",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SearchTextCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SearchTextCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SearchTextCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SearchTextCoverageErrorResponse](resp, "SearchTextCoverageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/text-coverage")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ValidateDocumentSearch Validate document-search semantics without executing a search
 func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDocumentSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ValidateDocumentSearchResponse, error) {
 	var err error
@@ -25321,6 +25378,37 @@ func (o *FindSimilarDocumentsRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// SearchTextCoverageRequestOptions is the options needed to make a request to SearchTextCoverage.
+type SearchTextCoverageRequestOptions struct {
+	Query *SearchTextCoverageQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchTextCoverageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchTextCoverageRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchTextCoverageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchTextCoverageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ValidateDocumentSearchRequestOptions is the options needed to make a request to ValidateDocumentSearch.
 type ValidateDocumentSearchRequestOptions struct {
 	Body *ValidateDocumentSearchBody
@@ -28372,6 +28460,16 @@ type ListTermReportHistoryQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 }
 
+type SearchTextCoverageQuery struct {
+	PdfFilter      *string `json:"pdf_filter,omitempty"`
+	SourcePresent  *bool   `json:"source_present,omitempty"`
+	TagID          *string `json:"tag_id,omitempty"`
+	MimeType       *string `json:"mime_type,omitempty"`
+	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
+	ModifiedSince  *string `json:"modified_since,omitempty"`
+	ModifiedBefore *string `json:"modified_before,omitempty"`
+}
+
 type StorageStatusQuery struct {
 	Refresh *bool `json:"refresh,omitempty"`
 }
@@ -29767,6 +29865,10 @@ type ReviseTermReportErrorResponse = Error
 type FindSimilarDocumentsResponse = api.DocumentSimilarReport
 
 type FindSimilarDocumentsErrorResponse = Error
+
+type SearchTextCoverageResponse = api.SearchTextCoverage
+
+type SearchTextCoverageErrorResponse = Error
 
 type ValidateDocumentSearchResponse = api.DocumentSearchValidation
 
@@ -31499,6 +31601,8 @@ type SealExportSourceRequest struct {
 type SearchHit = api.SearchHit
 
 type SearchReport = api.SearchReport
+
+type SearchTextCoverage = api.SearchTextCoverage
 
 type SelectedDocuments = report.SelectedDocuments
 

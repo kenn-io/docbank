@@ -309,6 +309,7 @@ CREATE TABLE {{schema}}.photo_sets (
 );
 
 CREATE TABLE {{schema}}.photo_change_receipts (
+    receipt_order BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
     receipt_id     TEXT COLLATE "C" PRIMARY KEY,
     operation      TEXT COLLATE "C" NOT NULL,
     asset_id       TEXT COLLATE "C",
@@ -369,7 +370,7 @@ CREATE INDEX photo_change_receipts_asset
 
 CREATE INDEX photo_change_receipts_set ON {{schema}}.photo_change_receipts(set_id,receipt_id);
 
-CREATE INDEX photo_change_receipts_operation ON {{schema}}.photo_change_receipts(operation);
+CREATE INDEX photo_change_receipts_operation ON {{schema}}.photo_change_receipts(operation,receipt_order);
 
 CREATE INDEX photo_change_receipts_xmp_file
     ON {{schema}}.photo_change_receipts(((after_json::jsonb ->> 'file_id') COLLATE "C"))
@@ -1417,6 +1418,9 @@ CREATE TABLE {{schema}}.photo_set_members (
     PRIMARY KEY (set_id,asset_id)
 );
 
+CREATE INDEX photo_set_members_asset ON {{schema}}.photo_set_members(asset_id,set_id);
+CREATE INDEX photo_set_members_added ON {{schema}}.photo_set_members(set_id,added_at DESC,asset_id);
+
 CREATE TABLE {{schema}}.persons (
     key_face_id TEXT COLLATE "C",
     person_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
@@ -1709,7 +1713,7 @@ CREATE TABLE {{schema}}.photo_hidden_lockout (
 );
 
 CREATE TABLE {{schema}}.photo_hidden_failures (
-    failure_id BIGINT PRIMARY KEY,
+    failure_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     occurred_at TEXT COLLATE "C" NOT NULL
 );
 
@@ -1719,6 +1723,8 @@ CREATE TABLE {{schema}}.person_candidate_faces (
     content_version_id TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY(candidate_id,face_id,content_version_id)
 );
+
+CREATE INDEX person_candidate_faces_face ON {{schema}}.person_candidate_faces(face_id,candidate_id);
 
 CREATE TABLE {{schema}}.photo_checkouts (
     checkout_id TEXT COLLATE "C" PRIMARY KEY,

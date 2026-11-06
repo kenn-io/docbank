@@ -976,7 +976,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			}
 		}
 		next.Revision, next.UpdatedAt = current.Revision+1, nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,$1,$2,$3,$4,$5,$6,$7) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
@@ -999,6 +999,9 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 				continue
 			}
 			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {
+				return err
+			}
+			if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {
 				return err
 			}
 		}

@@ -115,7 +115,13 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 	f := newNativeExportFixture(t)
 	f.addFile(t, "refund-policy.txt", "Refunds take five days.")
-	daemon, service, profile := newProcessingDocumentServer(t, f)
+	profile, captions, err := processing.NewSuppliedCaptionProfile(f.catalog, f.blobs, "test:operator")
+	require.NoError(t, err)
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profile: captions}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.WithoutCancel(t.Context()))) })
+	daemon := newSearchProcessingServer(t, f, service)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
 	t.Run("automatic", func(t *testing.T) {
 		output := exportCall(t, daemon, "search_documents", map[string]any{"query": "refund", "filters": map[string]any{}, "mode": "auto"})
@@ -129,6 +135,17 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 		require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing local")
 	})
 	for _, embedded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("embedded=%t/hybrid supplied captions", embedded), func(t *testing.T) {
+			output := callSearchDocumentReader(t, daemon, reader, embedded, map[string]any{"query": "refund", "filters": map[string]any{}, "mode": "hybrid", "profile": profile})
+			require.Equal(t, profile, output["profile"])
+			require.Equal(t, "hybrid", output["requested_mode"])
+			require.Equal(t, "lexical", output["actual_mode"])
+			hits, ok := output["results"].([]any)
+			require.True(t, ok)
+			require.Len(t, hits, 1)
+			require.Equal(t, "/refund-policy.txt", schemaMap(t, hits[0])["path"])
+			require.Contains(t, output["skipped_reasons"], "Profile \"supplied-captions\" has no available search by meaning. Run docbank processing local to add it.")
+		})
 		for _, tc := range []struct {
 			name, mode, selected, code string
 			missing                    bool

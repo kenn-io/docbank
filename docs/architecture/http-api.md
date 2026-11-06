@@ -208,6 +208,11 @@ require substantial work before reaching `limit`. The normal `limit` and
 the page is incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
 
+`GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
+current files after an empty text search. `no_text` counts files a processing
+profile could make searchable, by `families` (`pdf`, `office`, `other`), and
+`pending` counts native-text files still queued for extraction.
+
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
 other text outside the supplemental syntax returns ordinary hits with

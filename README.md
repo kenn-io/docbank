@@ -85,6 +85,8 @@ docbank search "tax return"
 docbank web
 ```
 
+For empty search results, see the [search hints](docs/usage/searching.md#why-did-a-text-search-find-nothing).
+
 Retrieve a file, list its versions, replace its content, and rename it. Docbank
 verifies a file before handing it back. Replacing content adds a version and
 leaves the earlier ones in place, and a rename keeps the document's ID:

@@ -33,6 +33,7 @@ type automaticSearchJSON struct {
 	api.DocumentSearchReport `json:",inline"`
 
 	Folders []api.SearchHit `json:"folders"`
+	Hints   []searchHint    `json:"hints,omitzero"`
 }
 
 // tryAutomaticSearch runs hybrid search when a profile has a query embedding
@@ -107,7 +108,7 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 // search ranks name matches ahead of content. The page is truncated when
 // either search omitted matches.
 func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentSearchReport,
-	lexical api.SearchReport,
+	lexical api.SearchReport, hints []searchHint,
 ) error {
 	folders := []api.SearchHit{}
 	for _, hit := range lexical.Hits {
@@ -121,7 +122,7 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 	}
 	report.Truncated = report.Truncated || lexical.Truncated
 	if searchJSON {
-		return writeCLIJSON(cmd.OutOrStdout(), automaticSearchJSON{DocumentSearchReport: report, Folders: folders})
+		return writeCLIJSON(cmd.OutOrStdout(), automaticSearchJSON{DocumentSearchReport: report, Folders: folders, Hints: hints})
 	}
 	if searchAgent {
 		return writeDocumentSearchAgent(cmd, query, report, folders)

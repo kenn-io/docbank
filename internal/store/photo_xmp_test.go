@@ -194,6 +194,26 @@ func checkPhotoXMPInvalidation(t *testing.T, newStore func(*testing.T) *Store) {
 			require.NoError(f.t, err)
 		}, PhotoXMPStatePending},
 
+		{"library display preference", func(f fixture) {
+			_, err := f.s.SetPhotoSettings(f.t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
+			require.NoError(f.t, err)
+		}, PhotoXMPStatePending},
+		{"disable hidden photos", func(f fixture) {
+			require.NoError(f.t, f.s.SetupPhotoHidden(f.t.Context(), "correct"))
+			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
+			require.NoError(f.t, err)
+			_, err = f.s.SetPhotoAssetHidden(f.t.Context(), asset.ID, asset.Revision, true)
+			require.NoError(f.t, err)
+			work, _, err := f.s.ClassifyPhotoXMP(f.t.Context(), f.raw.ID)
+			require.NoError(f.t, err)
+			require.NotNil(f.t, work.History)
+			plan, mask := planXMP(work, work.History.Settled.Packet, "")
+			require.Zero(f.t, mask)
+			_, err = f.s.PublishPhotoXMP(f.t.Context(), plan, "", 0, BlobPhysical{})
+			require.NoError(f.t, err)
+			require.NotContains(f.t, xmpTargets(f.t, f.s), PhotoSidecarTarget{FileID: f.raw.ID, NodeID: f.raw.NodeID, AssetID: f.raw.AssetID})
+			require.NoError(f.t, f.s.DisablePhotoHidden(f.t.Context(), "correct"))
+		}, PhotoXMPStatePending},
 		{"asset display revision", func(f fixture) {
 			asset, err := f.s.PhotoAssetByID(f.t.Context(), f.raw.AssetID)
 			require.NoError(f.t, err)
@@ -421,6 +441,43 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{asset.ID}, match("xmp:CONFLICT"))
 	assert.Equal(t, []string{asset.ID}, match("xmp:PENDING"))
+
+	display := fileByID(asset.Files, *asset.DisplayFileID)
+	displayNode, err := s.NodeByID(ctx, display.NodeID)
+	require.NoError(t, err)
+	browsePhotoMetadata(t, s, displayNode, "queued-camera-a",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
+
+	otherRawNode := browsePhotoNode(t, s, "queued-other.cr2", browseHash("queued-other-raw"), "application/octet-stream")
+	otherImageNode := browsePhotoNode(t, s, "queued-other.jpg", browseHash("queued-other-image"), "image/jpeg")
+	otherImageAsset, err := s.PhotoAssetForNode(ctx, otherImageNode.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, otherImageAsset.ID, otherImageAsset.Revision, otherImageAsset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	otherAsset, err := s.PromotePhotoNode(ctx, otherRawNode.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	otherAsset, err = s.AttachPhotoFile(ctx, otherAsset.ID, otherAsset.Revision, otherImageNode.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	otherRaw := fileByRole(otherAsset.Files, PhotoRoleRAW)
+	otherSidecar, err := s.CreateFile(ctx, s.RootID(), "queued-other.cr2.xmp", browseHash("queued-other-sidecar"), 20, "application/rdf+xml")
+	require.NoError(t, err)
+	otherAsset, err = s.AttachPhotoFile(ctx, otherAsset.ID, otherAsset.Revision, otherSidecar.ID, PhotoRoleSidecar, &otherRaw.ID)
+	require.NoError(t, err)
+	publishXMPOrientation(t, s, otherRaw.NodeID, browseHash("queued-other-metadata"))
+	otherDisplay := fileByID(otherAsset.Files, *otherAsset.DisplayFileID)
+	otherDisplayNode, err := s.NodeByID(ctx, otherDisplay.NodeID)
+	require.NoError(t, err)
+	browsePhotoMetadata(t, s, otherDisplayNode, "queued-camera-b",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera B")))
+
+	queuedPage, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{
+		V: 1, Syntax: "advanced", Mode: "lexical", Text: `xmp:pending AND camera:"Camera A"`,
+		Sort: query.Sort{Field: "name", Direction: "asc"},
+	}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), queuedPage.Total)
+	require.Len(t, queuedPage.Items, 1)
+	require.Equal(t, asset.ID, queuedPage.Items[0].AssetID)
 }
 
 // restoredXMPStore backs up a store's metadata and restores it into a new one.

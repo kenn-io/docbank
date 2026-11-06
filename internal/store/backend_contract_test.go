@@ -22,7 +22,37 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "photo-analysis", postgres: "native operations", scope: "Description and face-detection jobs and suggestion responses; excludes provider network calls, people curation, hidden sessions and quality scoring.", scenarios: []backendScenario{
+	{name: "photo-albums", postgres: "native operations", scope: "Album lifecycle, explicit membership and cover summaries; query selection and snapshot delivery remain unqualified.", scenarios: []backendScenario{
+		{"PhotoSetLifecycle", func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newPostgresQueryStore) }},
+		{"PhotoSetCovers", nil, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			s, _, _ := photoSetCoverScenario(t, newPostgresQueryStore)
+			checkRetentionMetadata(t, s)
+		}},
+		{"PhotoHiddenCoverAndPromoteAuthorization", func(t *testing.T) { t.Helper(); checkPhotoHiddenCoverAndPromoteAuthorization(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenCoverAndPromoteAuthorization(t, newPostgresQueryStore) }},
+		{"PhotoSetReceiptsAndOrdering", func(t *testing.T) { t.Helper(); checkPhotoSetReceiptsAndOrdering(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetReceiptsAndOrdering(t, newPostgresQueryStore) }},
+		{"PhotoSetHiddenSummaries", func(t *testing.T) { t.Helper(); checkPhotoSetHiddenSummaries(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetHiddenSummaries(t, newPostgresQueryStore) }},
+		{"PhotoSetSnapshots", nil, checkPhotoSetSnapshotsPostgres},
+		{"PhotoSetRollback", nil, checkPhotoSetRollbackPostgres},
+	}},
+	{name: "photo-quality-hidden", postgres: "native operations", scope: "Quality publication, hidden sessions and photo settings; excludes query browsing and people curation.", scenarios: []backendScenario{
+		{"PhotoQualityLifecycle", func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newPostgresQueryStore) }},
+		{"PhotoQualityDetectedInputs", func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newPostgresQueryStore) }},
+		{"PhotoHiddenLifecycle", nil, checkPhotoHiddenLifecyclePostgres},
+		{"PhotoSettingsRecomputeInheritedAssets", func(t *testing.T) { t.Helper(); checkPhotoSettingsRecomputeInheritedAssets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSettingsRecomputeInheritedAssets(t, newPostgresQueryStore) }},
+		{"PhotoQualityRetainedDismissal", nil, checkPhotoQualityRetainedDismissalPostgres},
+		{"PhotoQualityHiddenSnapshots", nil, checkPhotoQualityHiddenSnapshotsPostgres},
+		{"PhotoQualityHiddenRollback", nil, checkPhotoQualityHiddenRollbackPostgres},
+		{"PhotoQualityDisplayAndPublicationFence", func(t *testing.T) { t.Helper(); checkPhotoQualityDisplayAndPublicationFence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityDisplayAndPublicationFence(t, newPostgresQueryStore) }},
+		{"PhotoHiddenPasscodeNormalization", func(t *testing.T) { t.Helper(); checkPhotoHiddenPasscodeNormalization(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenPasscodeNormalization(t, newPostgresQueryStore) }},
+		{"PhotoHiddenRestorePreservesHidden", func(t *testing.T) { t.Helper(); checkPhotoHiddenRestorePreservesHidden(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenRestorePreservesHidden(t, newPostgresQueryStore) }},
+		{"PhotoHiddenVisibilityChangeID", func(t *testing.T) { t.Helper(); checkPhotoHiddenVisibilityChangeID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenVisibilityChangeID(t, newPostgresQueryStore) }},
+		{"PhotoHiddenDisableRecordsEveryAsset", func(t *testing.T) { t.Helper(); checkPhotoHiddenDisableRecordsEveryAsset(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenDisableRecordsEveryAsset(t, newPostgresQueryStore) }},
+		{"PhotoHiddenMutationGate", func(t *testing.T) { t.Helper(); checkPhotoHiddenMutationGate(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenMutationGate(t, newPostgresQueryStore) }},
+		{"PhotoHiddenUnlockLifetimeOverride", func(t *testing.T) { t.Helper(); checkPhotoHiddenUnlockLifetimeOverride(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenUnlockLifetimeOverride(t, newPostgresQueryStore) }},
+	}},
+	{name: "photo-analysis", postgres: "native operations", scope: "Description and face-detection jobs and suggestion responses; excludes provider network calls and people curation.", scenarios: []backendScenario{
 		{"PhotoFaceDetectionJob", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionJob(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionJob(t, newPostgresQueryStore) }},
 		{"PhotoAnalysisTargetPlan", func(t *testing.T) { t.Helper(); checkPhotoAnalysisTargetPlan(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAnalysisTargetPlan(t, newPostgresQueryStore) }},
 		{"PhotoAnalysisPublicationRollback", nil, checkPhotoAnalysisPublicationRollbackPostgres},
@@ -223,7 +253,7 @@ var backendSuites = []backendSuite{
 		{"BrowserPhotoDirectoryContinuation", func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newPostgresQueryStore) }},
 		{"BrowserPhotoSizeCandidates", func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newPostgresQueryStore) }},
 	}},
-	{name: "photo-edit", postgres: "native operations", scope: "Explicit photo metadata edits, keywords and undo; XMP classification, conflicts and sidecar publication. Excludes ranked photo selection, people and checkout.", scenarios: []backendScenario{
+	{name: "photo-edit", postgres: "native operations", scope: "Explicit photo metadata edits, keywords and undo; XMP classification, conflicts and sidecar publication. Excludes ranked photo selection and people curation.", scenarios: []backendScenario{
 		{"PhotoXMPEmbeddedSourceClaim", func(t *testing.T) { t.Helper(); checkPhotoXMPEmbeddedSourceClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPEmbeddedSourceClaim(t, newPostgresQueryStore) }},
 		{"PhotoEditRollback", nil, checkPhotoEditRollbackPostgres},
 		{"PhotoPreparationSnapshot", nil, checkPhotoPreparationSnapshotPostgres},
@@ -1157,7 +1187,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "People curation, best-shot/representative choices, hidden-session management and photo review remain unqualified. Photo query selection is covered by the search boundary."},
+	{name: "photo-editing", postgres: "unqualified", scope: "People curation, best-shot/representative choices and photo review remain unqualified. Photo query selection is covered by the search boundary."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
@@ -1258,7 +1288,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Photo sets, custodian assignments, snapshots, Bates and delivery jobs remain unqualified."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Custodian assignments, query-selected albums, snapshots, Bates and delivery jobs remain unqualified; explicit album operations are covered above."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }

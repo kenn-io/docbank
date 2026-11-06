@@ -329,8 +329,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		choice = config.LocalTextConfig{}
 	}
 	baseConfig := cfg
-	candidateProfiles := func(mode string) (map[string]processing.ProfileConfig, config.Config, error) {
-		candidate, err := localTextCandidate(baseConfig, mode)
+	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
+		candidate, err := localTextCandidate(baseConfig, mode, name)
 		if err != nil {
 			return nil, candidate, err
 		}
@@ -342,7 +342,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return profiles, candidate, err
 	}
 	if choice.Profile != "" {
-		selected, candidate, err := candidateProfiles(choice.Server)
+		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
+		if err == nil && selected[choice.Profile].RenditionProvider == nil {
+			err = processing.ErrProfileNotConfigured
+		}
 		if err == nil {
 			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
 		}
@@ -403,13 +406,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
 		},
 	}
-	localText.Candidate = func(mode string) (*processing.Service, error) {
-		profiles, _, err := candidateProfiles(mode)
+	localText.Candidate = func(mode, name string) (*processing.Service, error) {
+		profiles, _, err := candidateProfiles(mode, name)
 		if err != nil {
 			return nil, err
 		}
 		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
-			Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+			MediaMaxBytes: cfg.Media.MaxSourceBytes,
+			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
 	}
 	if choice.Profile != "" {

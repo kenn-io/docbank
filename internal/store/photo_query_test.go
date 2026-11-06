@@ -87,6 +87,79 @@ func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
 	}
 }
 
+func TestPhotoBrowseMetadataMatch(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first := browsePhotoNode(t, s, "first.jpg", browseHash("shared"), "image/jpeg")
+	second := browsePhotoNode(t, s, "second.jpg", first.BlobHash, "image/jpeg")
+	browsePhotoMetadata(t, s, first, "shared-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens A")),
+		photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("41.9028")),
+		photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("12.4964")),
+		exifCapture("2024-01-01T12:00:00Z"))
+	replaced := browsePhotoNode(t, s, "replaced.jpg", browseHash("old"), "image/jpeg")
+	browsePhotoMetadata(t, s, replaced, "old-fields", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
+	replaced, _, err := s.ReplaceContent(t.Context(), replaced.ID, replaced.Revision, browseHash("new"), 20, "image/jpeg")
+	require.NoError(t, err)
+	browsePhotoMetadata(t, s, replaced, "new-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera B")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
+	hidden := browsePhotoNode(t, s, "hidden.jpg", browseHash("hidden"), "image/jpeg")
+	browsePhotoMetadata(t, s, hidden, "hidden-fields",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens Hidden")))
+	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	hiddenAsset, err := s.PhotoAssetForNode(t.Context(), hidden.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(t.Context(), hiddenAsset.ID, hiddenAsset.Revision, true)
+	require.NoError(t, err)
+	hiddenToken, _, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	for _, set := range []bool{false, true} {
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: set}).compile(t.Context(), snapshotTestQuery(t, `{"filters":{"cameras":["Camera A"]}}`), queryResolver{q: s.db})
+		require.NoError(t, err)
+		require.Equal(t, []int64{first.ID, second.ID, hidden.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	}
+	for _, tc := range []struct {
+		raw         string
+		names       []string
+		lens        string
+		cameraTotal int64
+		hidden      bool
+	}{
+		{`{"filters":{"cameras":["Camera A"]}}`, []string{"first.jpg", "second.jpg"}, "Lens A", 3, false},
+		{`{"filters":{"cameras":["Camera A"],"collapse_duplicates":true}}`, []string{"first.jpg"}, "Lens A", 2, false},
+		{`{"filters":{"cameras":["Camera B"]}}`, []string{"replaced.jpg"}, "Lens B", 3, false},
+		{`{"syntax":"advanced","text":"NOT camera:\"Camera A\""}`, []string{"replaced.jpg"}, "Lens B", 1, false},
+		{`{"filters":{"locations":["Rome, Roma, Italy"]}}`, []string{"first.jpg", "second.jpg"}, "Lens A", 2, false},
+		{`{"text":"first","filters":{"cameras":["Camera A"]}}`, []string{"first.jpg"}, "Lens A", 1, false},
+		{`{"filters":{"cameras":["Camera A"]}}`, []string{"hidden.jpg"}, "Lens Hidden", 1, true},
+	} {
+		ctx := t.Context()
+		if tc.hidden {
+			ctx = WithPhotoHiddenToken(ctx, hiddenToken)
+		}
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, tc.raw), Hidden: tc.hidden, Facets: []string{"camera", "lens"}}, nil)
+		require.NoError(t, err, tc.raw)
+		require.Equal(t, int64(len(tc.names)), page.Total, tc.raw)
+		names := make([]string, 0, len(page.Items))
+		for _, item := range page.Items {
+			names = append(names, item.Name)
+		}
+		require.ElementsMatch(t, tc.names, names, tc.raw)
+		for _, facet := range page.Facets {
+			require.True(t, facet.Available, tc.raw)
+			if facet.Dimension == "lens" {
+				require.Equal(t, page.Total, *facet.Total, tc.raw)
+				require.Equal(t, tc.lens, facet.Values[0].Key, tc.raw)
+			} else {
+				require.Equal(t, tc.cameraTotal, *facet.Total, tc.raw)
+			}
+		}
+	}
+}
+
 func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1162,33 +1235,59 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 		_, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: assetIDs})
 		require.NoError(t, err)
 	}
-	budgetQuery := snapshotTestQuery(t, `{}`)
-	budgetQuery.Filters.AssetIDs = assetIDs
-	compiled := mustPhotoCompiled(t, s, budgetQuery)
-	options = defaultSnapshotMaterializeOptions()
-	options.FacetMemberLimit = 3
-	for _, dimensions := range [][]string{{"camera"}, {"camera", "set"}, {"set", "camera"}, {"camera", "lens", "year", "location", "set"}} {
-		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options, new(int64))
-		require.NoError(t, err)
-		require.Len(t, facets, len(dimensions))
-		for i, facet := range facets {
-			require.Equal(t, dimensions[i], facet.Dimension)
-			if facet.Dimension == "set" {
-				require.False(t, facet.Available)
-				require.Equal(t, "member_budget_exceeded", facet.Reason)
-			} else {
-				require.True(t, facet.Available, dimensions)
-				require.Equal(t, int64(2), *facet.Total)
-			}
-		}
-	}
-	options.FacetMemberLimit = 4
-	facets, err = materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options, new(int64))
+	deletedOnly, err := s.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	require.True(t, facets[0].Available)
-	require.Len(t, facets[0].Values, 2)
-	for _, value := range facets[0].Values {
-		require.Equal(t, int64(2), value.Count)
+	deletedAlbum, err := s.CreatePhotoSet(t.Context(), "Deleted album")
+	require.NoError(t, err)
+	deletedAlbum, err = s.ChangePhotoSetMembers(t.Context(), deletedAlbum.ID, deletedAlbum.Revision, true, PhotoSetSelection{AssetIDs: []string{assetIDs[0], deletedOnly.ID}})
+	require.NoError(t, err)
+	_, err = s.DeletePhotoSet(t.Context(), deletedAlbum.ID, deletedAlbum.Revision)
+	require.NoError(t, err)
+	unassignedNode := browsePhotoNode(t, s, "unassigned.jpg", browseHash("unassigned"), "image/jpeg")
+	unassigned, err := s.PhotoAssetForNode(t.Context(), unassignedNode.ID)
+	require.NoError(t, err)
+	budgetQuery := snapshotTestQuery(t, `{}`)
+	for _, tc := range []struct {
+		name     string
+		assetIDs []string
+		limit    int64
+		missing  int64
+	}{
+		{"live albums", assetIDs, 4, 0},
+		{"deleted album members", append(slices.Clone(assetIDs), deletedOnly.ID), 5, 1},
+		{"photos without albums", append(slices.Clone(assetIDs), deletedOnly.ID, unassigned.ID), 6, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			budgetQuery.Filters.AssetIDs = tc.assetIDs
+			compiled := mustPhotoCompiled(t, s, budgetQuery)
+			options := defaultSnapshotMaterializeOptions()
+			options.FacetMemberLimit = tc.limit - 1
+			for _, dimensions := range [][]string{{"camera"}, {"camera", "set"}, {"set", "camera"}, {"camera", "lens", "year", "location", "set"}} {
+				facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options, new(int64))
+				require.NoError(t, err)
+				require.Len(t, facets, len(dimensions))
+				for i, facet := range facets {
+					require.Equal(t, dimensions[i], facet.Dimension)
+					if facet.Dimension == "set" {
+						require.False(t, facet.Available)
+						require.Equal(t, "member_budget_exceeded", facet.Reason)
+					} else {
+						require.True(t, facet.Available, dimensions)
+						require.Equal(t, int64(len(tc.assetIDs)), *facet.Total)
+					}
+				}
+			}
+			options.FacetMemberLimit = tc.limit
+			facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options, new(int64))
+			require.NoError(t, err)
+			require.True(t, facets[0].Available)
+			require.Equal(t, int64(len(tc.assetIDs)), *facets[0].Total)
+			require.Equal(t, tc.missing, *facets[0].Missing)
+			require.Len(t, facets[0].Values, 2)
+			for _, value := range facets[0].Values {
+				require.Equal(t, int64(2), value.Count)
+			}
+		})
 	}
 	budgetQuery.Filters.AssetIDs = assetIDs[:1]
 	albums, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: budgetQuery, Facets: []string{"set"}}, nil)
@@ -1770,4 +1869,94 @@ func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
 	require.Equal(t, datedFolder, read(s, dated.ID).Folder)
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT folder_key FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, dated.ID).Scan(&folder))
 	require.Equal(t, "z"+datedFolder, folder)
+}
+
+func TestPhotoFacetsCountSharedValuesOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	var ids []string
+	for i, camera := range [][2]string{{"Canon", "CANON"}, {"canon", ""}, {"", "Model"}, {"", ""}, {"Canon", "CANON"}} {
+		hash := browseHash(fmt.Sprint("grouped", i))
+		if i == 4 {
+			hash = browseHash("grouped0")
+		}
+		node := browsePhotoNode(t, s, fmt.Sprintf("grouped-%d.jpg", i), hash, "image/jpeg")
+		date := []string{"2024-01-01", "2023-01-01", "2023-01-01", "2022-01-01", "2024-01-01"}[i]
+		fields := []document.SourceMetadataFieldV1{
+			photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(camera[0])),
+			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(camera[1])),
+			photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens")),
+			photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")),
+		}
+		if i == 0 || i == 1 || i == 4 {
+			fields = append(fields,
+				photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("48.8566")),
+				photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("2.3522")))
+		}
+		browsePhotoMetadata(t, s, node, fmt.Sprint("grouped", i), fields...)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		ids = append(ids, asset.ID)
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new([]int{3, 4, 5, 4, 3}[i]), Flag: new([]string{"pick", "pick", "reject", "reject", "pick"}[i]), Label: new([]string{"red", "blue", "blue", "blue", "red"}[i])}}})
+		require.NoError(t, err)
+	}
+	var sets []PhotoSet
+	for i, name := range []string{"Live", "Second"} {
+		set, err := s.CreatePhotoSet(t.Context(), name)
+		require.NoError(t, err)
+		set, err = s.ChangePhotoSetMembers(t.Context(), set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: [][]string{ids[:2], ids[:1]}[i]})
+		require.NoError(t, err)
+		sets = append(sets, set)
+	}
+	for _, raw := range []string{`{}`, `{"filters":{"flags":["pick"]}}`, `{"filters":{"has_duplicates":true}}`} {
+		total, missingCamera, missingSet, missingLocation, live := int64(5), int64(1), int64(3), int64(2), int64(2)
+		want := map[string][]SnapshotFacetValue{
+			"camera": {{Key: "CANON", Label: "CANON", Count: 3}, {Key: "Model", Label: "Model", Count: 1}},
+			"year":   {{Key: "2023", Label: "2023", Count: 2}, {Key: "2024", Label: "2024", Count: 2}, {Key: "2022", Label: "2022", Count: 1}},
+			"rating": {{Key: "3", Label: "3", Count: 2}, {Key: "4", Label: "4", Count: 2}, {Key: "5", Label: "5", Count: 1}},
+			"flag":   {{Key: "pick", Label: "pick", Count: 3}, {Key: "reject", Label: "reject", Count: 2}},
+			"label":  {{Key: "blue", Label: "blue", Count: 3}, {Key: "red", Label: "red", Count: 2}},
+		}
+		selectedFlag := strings.Contains(raw, "flags")
+		if selectedFlag {
+			total, missingCamera, missingSet, missingLocation = 3, 0, 1, 0
+			want["camera"] = []SnapshotFacetValue{{Key: "CANON", Label: "CANON", Count: 3}}
+			want["year"] = []SnapshotFacetValue{{Key: "2024", Label: "2024", Count: 2}, {Key: "2023", Label: "2023", Count: 1}}
+			want["rating"] = []SnapshotFacetValue{{Key: "3", Label: "3", Count: 2}, {Key: "4", Label: "4", Count: 1}}
+			want["label"] = []SnapshotFacetValue{{Key: "red", Label: "red", Count: 2}, {Key: "blue", Label: "blue", Count: 1}}
+			want["flag"][0].Selected = true
+		}
+		if strings.Contains(raw, "has_duplicates") {
+			total, missingCamera, missingSet, missingLocation, live = 2, 0, 1, 0, 1
+			want["camera"] = []SnapshotFacetValue{{Key: "CANON", Label: "CANON", Count: 2}}
+			want["year"] = []SnapshotFacetValue{{Key: "2024", Label: "2024", Count: 2}}
+			want["rating"] = []SnapshotFacetValue{{Key: "3", Label: "3", Count: 2}}
+			want["flag"] = []SnapshotFacetValue{{Key: "pick", Label: "pick", Count: 2}}
+			want["label"] = []SnapshotFacetValue{{Key: "red", Label: "red", Count: 2}}
+		}
+		want["lens"] = []SnapshotFacetValue{{Key: "Lens", Label: "Lens", Count: total}}
+		want["location"] = []SnapshotFacetValue{{Key: "Paris, Paris, France", Label: "Paris, Paris, France", Count: total - missingLocation}}
+		want["set"] = []SnapshotFacetValue{{Key: sets[0].ID, Label: "Live", Count: live}, {Key: sets[1].ID, Label: "Second", Count: 1}}
+		compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, raw))
+		dimensions := []string{"camera", "lens", "year", "location", "set", "rating", "flag", "label"}
+		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, defaultSnapshotMaterializeOptions(), new(int64))
+		require.NoError(t, err, raw)
+		require.Len(t, facets, 8)
+		for i, facet := range facets {
+			require.Equal(t, dimensions[i], facet.Dimension)
+			require.True(t, facet.Available, facet.Dimension)
+			facetTotal := total
+			if selectedFlag && facet.Dimension == "flag" {
+				facetTotal = 5
+			}
+			require.Equal(t, facetTotal, *facet.Total, facet.Dimension)
+			missing := map[string]int64{"camera": missingCamera, "set": missingSet, "location": missingLocation}
+			require.Equal(t, missing[facet.Dimension], *facet.Missing, facet.Dimension)
+			if facet.Dimension == "set" {
+				require.ElementsMatch(t, want[facet.Dimension], facet.Values)
+			} else {
+				require.Equal(t, want[facet.Dimension], facet.Values, facet.Dimension)
+			}
+		}
+	}
 }

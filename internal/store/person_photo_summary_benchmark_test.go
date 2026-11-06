@@ -21,6 +21,7 @@ func BenchmarkPeopleRecentAtVaultScale(b *testing.B) {
 		contacts int
 		photos   int
 	}{
+		{name: "1000-people-100000-photos", people: 1000, photos: 100000},
 		{name: "3000-people-40000-photos", people: 3000, photos: 40000},
 		{name: "5000-people", people: 5000},
 		{name: "50000-people-mail-heavy", people: 50000, contacts: 10000},

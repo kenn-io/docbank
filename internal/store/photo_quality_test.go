@@ -55,11 +55,12 @@ func TestPhotoQualityRetention(t *testing.T) {
 	require.Zero(t, count)
 }
 
-func TestPhotoQualityDisplayAndPublicationFence(t *testing.T) {
+func checkPhotoQualityDisplayAndPublicationFence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{"exclude", "trash", "replace", "display"} {
 		t.Run(state, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			node := browsePhotoNode(t, s, "fenced.jpg", browseHash("fenced-"+state), "image/jpeg")
 			target := qualityTarget(node)
@@ -128,7 +129,7 @@ func TestPhotoQualityFaceInputsFence(t *testing.T) {
 	require.NoError(t, err)
 	scores := document.PhotoQualitySignals{Focus: 0.7, FaceReports: []document.PhotoFaceReport{report}}
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores, inputs))
-	read, err := photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
+	read, err := s.photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
 	require.NoError(t, err)
 	require.Len(t, read.signals[node.CurrentVersionID].FaceReports, 1)
 	targets, err = s.MissingPhotoQualityTargetsAfter(ctx, "", 10)
@@ -142,7 +143,7 @@ func TestPhotoQualityFaceInputsFence(t *testing.T) {
 	_, err = s.db.ExecContext(t.Context(), `DELETE FROM photo_quality_signals WHERE content_version_id=?`, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(node), scores, inputs))
-	read, err = photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
+	read, err = s.photoQualityForVersions(ctx, s.db, []string{node.CurrentVersionID})
 	require.NoError(t, err)
 	require.NotContains(t, read.signals, node.CurrentVersionID)
 }

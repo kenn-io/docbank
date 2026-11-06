@@ -5,8 +5,15 @@ import (
 	"errors"
 )
 
+// HasEmbeddingHeads reports retained vectors for a binding, including trashed documents.
+func (s *Store) HasEmbeddingHeads(ctx context.Context, profile, binding string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads WHERE profile_fingerprint=$1 AND binding_id=$2)`, profile, binding).Scan(&exists)
+	return exists, err
+}
+
 // MissingProcessingTargetsAfter excludes published work at the selected
-// profile, including after daemon restart. Failed jobs remain eligible.
+// profile, including after daemon restart. Failed text jobs remain eligible.
 func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, after string, bindings, limit int) ([]DocumentSummary, error) {
 	if bindings < 1 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid processing backfill bounds")
@@ -19,12 +26,12 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
 `
 	filter := ` WHERE n.trashed_at IS NULL AND v.version_id>?
  AND (SELECT COUNT(DISTINCT h.binding_id) FROM embedding_heads h
- WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=?) < ?
+ WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=? AND h.input_kind<>'image') < ?
  ORDER BY v.version_id LIMIT ?`
 	if s.postgresSchema != "" {
 		filter = ` WHERE n.trashed_at IS NULL AND v.version_id>$1
  AND (SELECT COUNT(DISTINCT h.binding_id) FROM embedding_heads h
- WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2) < $3
+ WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2 AND h.input_kind<>'image') < $3
  ORDER BY v.version_id LIMIT $4`
 	}
 

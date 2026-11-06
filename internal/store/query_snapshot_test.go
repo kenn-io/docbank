@@ -84,6 +84,7 @@ func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
 	assert.Equal(t, "document", projection.Rows[0].MediaFamily)
 	assert.Equal(t, "pdf", query.FilenameExtension(projection.Rows[0].Name))
 	assert.Equal(t, []SnapshotTag{{ID: assigned.Tag.ID, Name: assigned.Tag.Name, Revision: assigned.Tag.Revision}}, projection.Rows[0].Tags)
+	assert.Equal(t, []SnapshotTag{}, projection.Rows[1].Tags)
 	assert.Equal(t, []string{run.ID()}, projection.Rows[0].CollectionIDs)
 	assert.Equal(t, run.ID(), projection.Rows[0].DisplayCollectionID)
 	assert.Nil(t, projection.Rows[0].DisplayCollectionLabel)

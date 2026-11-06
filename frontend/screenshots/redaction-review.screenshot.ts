@@ -12,6 +12,7 @@ import type { RedactionPreview } from "../src/generated/docbank.js";
 import type {
   PluginRegistry,
   ViewportPlugin,
+  ScrollPlugin,
   DocumentManagerPlugin,
 } from "@embedpdf/svelte-pdf-viewer";
 const exec = promisify(execFile);
@@ -139,7 +140,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         const control = window.reviewDecode;
         if (control.mode === "fail")
           return result.then(() => {
-            throw new Error("Injected displayed-image decode failure");
+            // A decode started in fail mode may finish after recovery begins.
+            if (control.mode === "fail") throw new Error("Injected displayed-image decode failure");
           });
         if (control.mode === "delay")
           return result.then(() => {
@@ -152,18 +154,62 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     });
     const session = await open("two-pages.pdf", false, true);
     const drawer = page.getByRole("dialog", { name: "Redact two-pages.pdf", exact: true });
-    const originalPage = async (n: number, target: Locator = drawer) => {
-      const field = target.getByRole("textbox", { name: "", exact: true });
-      if ((await field.inputValue()) !== String(n)) {
-        await field.fill(String(n));
-        await field.press("Enter");
-      }
+    const scrollIdle = async (target: Locator = drawer, targetPage?: number) => {
+      // Page readiness can precede navigation and replacement tiles.
+      await target.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      // A clamped page turn can leave the reader's navigation flag set.
+      // Wait for actual viewport activity to finish.
+      await expect
+        .poll(() =>
+          target.locator("embedpdf-container").evaluate(async (host, requestedPage) => {
+            const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+              .registry;
+            const scroll = registry.getPlugin<ScrollPlugin>("scroll")!.provides();
+            return (
+              (requestedPage !== undefined && scroll.getCurrentPage() !== requestedPage) ||
+              registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling()
+            );
+          }, targetPage),
+        )
+        .toBe(false);
+    };
+    const awaitPage = async (n: number, target: Locator = drawer) => {
+      await scrollIdle(target, n);
+      await expect(target.getByRole("textbox", { name: "", exact: true })).toHaveValue(String(n));
       await expect(target.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled(
         { timeout: 60000 },
       );
-      await expect(field).toHaveValue(String(n));
     };
-    await originalPage(2);
+    const originalPage = async (n: number, target: Locator = drawer) => {
+      const field = target.getByRole("textbox", { name: "", exact: true });
+      // The reader rewrites this box whenever its current page changes, even
+      // between the fill and Enter. Retype until the page sticks.
+      await expect(async () => {
+        const currentPage = await target.locator("embedpdf-container").evaluate(async (host) => {
+          const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
+            .registry;
+          return registry.getPlugin<ScrollPlugin>("scroll")!.provides().getCurrentPage();
+        });
+        if ((await field.inputValue()) !== String(n) || currentPage !== n) {
+          await field.fill(String(n));
+          await field.press("Enter");
+        }
+        await scrollIdle(target, n);
+        await expect(field).toHaveValue(String(n), { timeout: 1000 });
+        await expect(
+          target.getByRole("switch", { name: "Draw rectangle", exact: true }),
+        ).toBeEnabled({ timeout: 5000 });
+      }).toPass({ timeout: 60000 });
+    };
+    await expect(drawer.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled({
+      timeout: 60000,
+    });
+    await awaitPage(2);
     expect(originalLoads).toBe(1);
     const readerWorkers = page.workers();
     // Returning from review keeps the live reader, including its page and zoom.
@@ -206,11 +252,15 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(
       drawer.getByRole("button", { name: "Preview redaction", exact: true }),
     ).toBeInViewport();
+    const setReviewDrawing = async (toggle: Locator, checked: boolean) => {
+      await expect(async () => {
+        await toggle.setChecked(checked);
+      }).toPass({ timeout: 15000 });
+    };
     const shortDraw = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
     await expect(shortDraw).toBeEnabled();
-    await shortDraw.click();
-    await expect(shortDraw).toBeChecked();
-    await shortDraw.click();
+    await setReviewDrawing(shortDraw, true);
+    await setReviewDrawing(shortDraw, false);
     await page.screenshot({
       path: path.join(captures!, "redaction-short-editing.png"),
       animations: "disabled",
@@ -252,17 +302,6 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
         await zoom.fill(value);
         await zoom.press("Enter");
       }, target);
-    };
-    const scrollIdle = async (target: Locator = drawer) => {
-      await expect
-        .poll(() =>
-          target.locator("embedpdf-container").evaluate(async (host) => {
-            const registry = await (host as HTMLElement & { registry: Promise<PluginRegistry> })
-              .registry;
-            return registry.getPlugin<ViewportPlugin>("viewport")!.provides().isScrolling();
-          }),
-        )
-        .toBe(false);
     };
     const scrollPage = async (layer: Locator, x = 0, y = 0, target: Locator = drawer) => {
       const before = await layer.evaluate(
@@ -322,7 +361,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     const canvas = drawer.locator('[data-review-page="1"]');
     const drag = async (x0: number, y0: number, x1: number, y1: number) => {
       const toggle = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
-      if (!(await toggle.isChecked())) await toggle.click();
+      await setReviewDrawing(toggle, true);
       const rect = await canvas.boundingBox();
       if (!rect) throw new Error("Canvas absent");
       await page.mouse.move(
@@ -339,7 +378,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await expect(toggle).toBeChecked();
     };
     // Keyboard marks use the same authoritative boxes, and Escape cancels only a draft.
-    await drawToggle.click();
+    await setReviewDrawing(drawToggle, true);
     const cursorStatus = drawer.getByRole("status", { name: "Mask cursor", exact: true });
     await drawer.locator("embedpdf-container").focus();
     for (const [index, key] of [
@@ -552,8 +591,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect(drawToggle).toBeChecked();
     await drawer.getByRole("button", { name: "Next Page", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(drawer.getByRole("textbox", { name: "", exact: true })).toHaveValue("2");
-    await originalPage(2);
+    await awaitPage(2);
     await drawer.locator("embedpdf-container").focus();
     await page.keyboard.press("Shift+ArrowRight");
     await page.keyboard.press("ArrowDown");
@@ -694,7 +732,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       ),
     ).toBe(204);
     await drawer.getByRole("button", { name: "Redacted", exact: true }).click();
-    await originalPage(2);
+    await awaitPage(2);
     await expect(drawer.locator('[data-review-page="2"]')).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
     preview = await createPreview();
@@ -827,7 +865,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       }
       if (i === 2) await page.setViewportSize({ width: 1280, height: 960 });
       const toggle = cropped.getByRole("switch", { name: "Draw rectangle", exact: true });
-      if (!(await toggle.isChecked())) await toggle.click();
+      await setReviewDrawing(toggle, true);
       const c = cropped.locator(`[data-review-page="${i + 1}"]`);
       await c.scrollIntoViewIfNeeded();
       await expect(async () => {
@@ -966,7 +1004,10 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect
       .poll(async () => (await fractionalLayer.boundingBox())!.y)
       .toBeLessThan(beforeScroll - 100);
-    await fractional.getByRole("switch", { name: "Draw rectangle", exact: true }).click();
+    await setReviewDrawing(
+      fractional.getByRole("switch", { name: "Draw rectangle", exact: true }),
+      true,
+    );
     await expect
       .poll(() =>
         fractionalLayer.evaluate((layer) => getComputedStyle(layer.parentElement!).cursor),

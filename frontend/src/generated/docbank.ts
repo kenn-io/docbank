@@ -8302,6 +8302,25 @@ export interface SearchReport {
   under_node_id?: number;
 }
 
+export type SearchTextCoverageFamiliesItem = typeof SearchTextCoverageFamiliesItem[keyof typeof SearchTextCoverageFamiliesItem];
+
+
+export const SearchTextCoverageFamiliesItem = {
+  pdf: 'pdf',
+  office: 'office',
+  other: 'other',
+} as const;
+
+export interface SearchTextCoverage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  families: SearchTextCoverageFamiliesItem[];
+  /** @minimum 0 */
+  no_text: number;
+  /** @minimum 0 */
+  pending: number;
+}
+
 export interface SetBackupScheduleRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -10232,6 +10251,34 @@ offset?: number;
  * @maximum 50
  */
 limit?: number;
+};
+
+export type SearchTextCoverageParams = {
+/**
+ * @maxLength 16384
+ */
+pdf_filter?: string;
+source_present?: boolean;
+/**
+ * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+ */
+tag_id?: string;
+/**
+ * @maxLength 255
+ */
+mime_type?: string;
+/**
+ * @minimum 1
+ */
+under_node_id?: number;
+/**
+ * @maxLength 64
+ */
+modified_since?: string;
+/**
+ * @maxLength 64
+ */
+modified_before?: string;
 };
 
 export type StorageStatusParams = {
@@ -20577,6 +20624,38 @@ return sessionJSON<DocumentSimilarReport>(getFindSimilarDocumentsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSimilarRequest)
+  }
+);}
+
+
+
+export const getSearchTextCoverageUrl = (params?: SearchTextCoverageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/search/text-coverage?${stringifiedParams}` : `/api/v1/search/text-coverage`
+}
+
+/**
+ * Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.
+ * @summary Count files waiting for searchable text
+ */
+export const searchTextCoverage = async (params?: SearchTextCoverageParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchTextCoverage> => {
+
+  return sessionJSON<SearchTextCoverage>(getSearchTextCoverageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

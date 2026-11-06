@@ -74,11 +74,11 @@ settled reading positions retain their exact scroll offsets.
 
 ## Share the Go build cache across worktrees
 
-Make targets and CI compile Go with `-trimpath`, so binaries record
-module-relative source paths instead of absolute ones. Without it, Go caches
-every package separately for each checkout directory, and each git worktree
-grows the build cache by another full copy. With it, identical source in any
-checkout reuses the same cache entries.
+Make targets, CI, and the container image compile Go with `-trimpath`, so
+binaries record module-relative source paths instead of absolute ones. Without
+it, Go caches every package separately for each checkout directory, and each
+git worktree grows the build cache by another full copy. With it,
+identical source in any checkout reuses the same cache entries.
 
 - Run `make <target> GOFLAGS=-trimpath=false` to opt out for one command.
 - Plain `go` commands outside Make do not add the flag. Run
@@ -361,7 +361,8 @@ terminal results and publication of retained text under rendition authority.
 Grouped photo imports include pairing, source replay, browser folder
 continuation and import progress.
 Photo metadata edits and undo, XMP conflict settlement and sidecar publication
-also use shared operations for explicit asset selections.
+also use shared operations for explicit asset selections. Quality scores, hidden-photo
+sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
@@ -554,7 +555,20 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
 GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
-GRANT INSERT ON documents.photo_hidden_credentials TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(passcode_hash)
+    ON documents.photo_hidden_credentials TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_hidden_failures TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(locked_until)
+    ON documents.photo_hidden_lockout TO docbank_runtime;
+GRANT INSERT, UPDATE(preference, revision, updated_at, burst_gap_seconds,
+    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds)
+    ON documents.photo_library_settings TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(state, focus, blur, brightness, color_red,
+    color_green, color_blue, framing, aesthetics, face_reports_json, face_inputs)
+    ON documents.photo_quality_signals TO docbank_runtime;
+GRANT INSERT, UPDATE(name, starred, revision, cover_asset_id, updated_at, deleted_at)
+    ON documents.photo_sets TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.photo_set_members TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
     copied_objects, copied_bytes, cancel_requested, error, receipt_json,
     updated_at, finished_at, retention_until)
@@ -1171,8 +1185,85 @@ candidate/undo protection and regeneration after restore; they do not qualify
 PostgreSQL people curation or restore. The two worker tables (explicit waiters
 and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
 sequence; a future metadata importer must advance it past imported IDs.
-Provider network execution, quality scoring, hidden-session management, people
-curation and public PostgreSQL vault opening remain unqualified.
+Provider network execution, people curation and public PostgreSQL vault opening
+remain unqualified. Quality scoring and hidden sessions use the contracts below.
+
+#### Photo quality and hidden sessions
+
+The shared Store discovers photos with ready grid previews, records quality
+scores or terminal unavailable results, and reads those results on both
+backends. Publication rechecks the current display version, source bytes and
+face inputs inside writer admission. A changed face box or observation queues
+new work; a late result cannot overwrite the current face report. Readers keep
+image scores while omitting stale face reports. Repeating the same input does
+not overwrite a terminal result. Replacing an evaluator removes its old cache
+in the same transaction as publication; failed publication preserves that cache.
+
+Face lists and their input signature come from one read snapshot. The signature
+uses each engine's JSON aggregation; it is an opaque, backend-local equality
+key, not a portable digest. Quality caches are disposable and excluded from
+metadata transfer. The face-to-candidate index supports dismissal checks without
+scanning all candidates. Retained dismissal tests qualify reading existing
+people decisions, not producing them on PostgreSQL.
+
+Hidden-photo operations configure and change passcodes, unlock and lock local
+sessions, record failed attempts and lockouts, and reset or disable the feature.
+Tokens remain in the owning Store's memory and disappear on restart. Expiry,
+explicit lock, passcode change and reset end access. A wrong passcode commits
+its failure record even though the operation returns an error. Disable unhides
+every asset, writes its receipt, refreshes XMP export work and removes the
+credential atomically. A failed disable retains both the credential and the
+live sessions. Hidden-state reads keep the visibility change ID, configuration
+and lockout in one snapshot.
+
+Visibility change IDs follow receipt insertion order, not timestamps or random
+UUID order. SQLite keeps its existing `rowid` query and operation index.
+PostgreSQL uses a private `receipt_order` identity column with a matching
+operation/order index. This ordinal is not part of logical metadata. Failure
+IDs also use a PostgreSQL identity column; a future importer of retained failure
+rows must use `OVERRIDING SYSTEM VALUE` and advance its sequence after inserting
+explicit IDs. Runtime roles need
+no sequence grants for these identity inserts.
+
+Photo settings, including hidden-session lifetime and inherited display
+preference, share the existing revision checks and receipts. Preference changes
+refresh affected displays and export work inside the write.
+
+The `photo-quality-hidden` contracts cover native publication, terminal and stale
+results, retained dismissal, lockout, expiry, revocation, settings, rollback and
+read snapshots. General photo browsing and quality filters, people curation,
+best-shot choices, portable restore and public PostgreSQL vault opening remain
+separate qualification boundaries.
+
+#### Photo albums
+
+The shared Store creates, renames, stars, duplicates and deletes albums, changes
+membership by explicit asset IDs, and reads album summaries on both backends.
+Mutations check the expected revision inside writer admission. Member changes,
+cover changes, revision advances and receipt chunks commit together; a failed
+receipt write leaves the prior album and membership intact. Repeated adds and
+removes preserve member timestamps and produce no new receipt when nothing
+changes. Duplication preserves member timestamps, star and cover choices.
+
+Summary reads use one repeatable-read snapshot for properties, counts and cover
+selection. They distinguish retained membership from currently visible photos.
+A cover needs a live display version and a ready preview for the requested
+recipe. A hidden, excluded or unavailable cover falls back to the newest visible
+member with a matching preview. A locked hidden cover is omitted from responses,
+including duplication, without erasing the stored choice. Explicit membership or
+cover changes involving hidden photos require a live hidden session. Existing
+audit restrictions on album mutations remain unchanged.
+
+SQLite retains its ordered membership index and forced cover join order. The
+query-plan check requires an indexed album seek without a temporary ordering
+sort. PostgreSQL uses ordinary joins and the same membership access indexes;
+its runtime role can insert albums, update their mutable properties, and insert
+or delete members. It cannot update member identities or timestamps in place.
+
+This qualifies explicit-ID Store operations. Search-selected populations,
+`SkipUnavailable` selection, browse pages and albums created from frozen query
+snapshots remain within the search and delivery qualification boundaries. The
+public PostgreSQL vault lifecycle is still unavailable.
 
 #### Photo checkouts
 
@@ -1740,21 +1831,27 @@ wait for it to expire.
 
 ## Verification contract
 
-All repository workflows use GitHub-hosted runners. The main CI workflow uses
+Repository workflows use GitHub-hosted runners. The main CI workflow uses
 Ubuntu 24.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
 arm64 uses `windows-11-vs2026-arm`. Each Windows architecture runs four package
 shards. Pull requests call `ci.yml` from `main`, so changes to that workflow take
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
+The exception is the `CI gate` job in `ci-pr.yml`, which only checks the CI
+run's result. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
+it does not wait in the GitHub-hosted queue after CI finishes.
+
 Go test jobs run `go test` through gotestsum, which the module pins as a Go
 tool. gotestsum reruns each failed test up to two more times. A test that passes
 on a rerun lets the job pass, and gotestsum lists it in
-`gotestsum/<suite>-reruns.txt`. When a test fails or is rerun, or the job itself
-is a rerun attempt, the job uploads the `gotestsum/*.json` reports as the
-`gotestsum-<suite>-attempt-<n>` artifact for 14 days. A flaky test therefore
-stays visible after the job passes, and a passing rerun attempt can be matched
-with the earlier failure. A clean first attempt uploads nothing.
+`gotestsum/<suite>-reruns.txt`. Linux, pure-Go, and macOS jobs upload the
+`gotestsum/*.json` reports on every run and list the ten slowest tests per report
+in the job summary. Other Go jobs upload when a test fails or is rerun, or the
+job itself is a rerun attempt. Reports use the
+`gotestsum-<suite>-attempt-<n>` artifact name and stay for 14 days. A flaky test
+therefore stays visible after the job passes, and a passing rerun attempt can
+be matched with the earlier failure.
 
 In CI, Vitest and Playwright also retry a failed test up to two more times and
 write JSON reports under `frontend/test-results/`. Each test step uploads its

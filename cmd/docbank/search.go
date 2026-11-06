@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -232,14 +233,29 @@ See docs/usage/search.md.`,
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 			}
 		}()
+		var hints []searchHint
+		if empty && strings.TrimSpace(query) != "" {
+			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			if coverageErr != nil {
+				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
+			}
+			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
+				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
+			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, opts.Fuzzy)
+		}
+		defer func() {
+			if retErr == nil && !searchJSON {
+				retErr = writeSearchHints(cmd, hints)
+			}
+		}()
 		if automatic.report != nil {
-			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep, hints)
 		}
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
 		if searchJSON {
-			return writeCLIJSON(cmd.OutOrStdout(), rep)
+			return writeCLIJSON(cmd.OutOrStdout(), lexicalSearchJSON{SearchReport: rep, Hints: hints})
 		}
 		if searchAgent {
 			return writeLexicalSearchAgent(cmd, query, rep, automatic)

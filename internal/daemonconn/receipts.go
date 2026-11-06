@@ -1036,6 +1036,20 @@ func (c *Connection) Search(ctx context.Context, query string, limit int) (api.S
 	return c.SearchWithOptions(ctx, query, limit, SearchOptions{})
 }
 
+// SearchTextCoverage reads recoverable text gaps after an empty search.
+func (c *Connection) SearchTextCoverage(ctx context.Context, opts SearchOptions) (api.SearchTextCoverage, error) {
+	params := apiclient.SearchTextCoverageQuery{PdfFilter: &opts.PDFFilter, SourcePresent: &opts.SourcePresent,
+		TagID: &opts.TagID, MimeType: &opts.MIMEType, ModifiedSince: &opts.ModifiedSince, ModifiedBefore: &opts.ModifiedBefore}
+	if opts.UnderNodeID != 0 {
+		params.UnderNodeID = &opts.UnderNodeID
+	}
+	out, err := c.API().SearchTextCoverage(ctx, &apiclient.SearchTextCoverageRequestOptions{Query: &params})
+	if err != nil {
+		return api.SearchTextCoverage{}, err
+	}
+	return *out, nil
+}
+
 // SearchWithOptions returns one bounded ranked or filter-only result set.
 func (c *Connection) SearchWithOptions(
 	ctx context.Context, query string, limit int, opts SearchOptions,

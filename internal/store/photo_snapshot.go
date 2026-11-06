@@ -86,7 +86,7 @@ func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snap
 				stamps[i].ID = id
 				stamps[i].AddedAt = now.Add(-time.Duration(i) * time.Nanosecond).Format(timestampLayout)
 			}
-			out, err = changePhotoSetMembersTx(ctx, tx, out, true, ids, stamps)
+			out, err = s.store.changePhotoSetMembersTx(ctx, tx, out, true, ids, stamps)
 			if err != nil {
 				return err
 			}

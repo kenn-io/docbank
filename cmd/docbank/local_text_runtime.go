@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/atomicfile"
@@ -25,7 +26,7 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 		if err == nil && choice.Version != 1 {
 			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
 		}
-		if err == nil && (choice.Profile != config.LocalTextProfile || (choice.Server != "auto" && choice.Server != "local")) {
+		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local")) {
 			err = errors.New("local-text selection requires a profile and auto or local server")
 		}
 	}
@@ -41,26 +42,57 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
 }
 
-// The built-in profile has its own index and leaves configured providers intact.
-func localTextCandidate(cfg config.Config, mode string) (config.Config, error) {
+// localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.
+func localTextCandidate(cfg config.Config, mode, name string) (config.Config, error) {
 	if mode != "auto" && mode != "local" {
 		return cfg, processing.ErrProfileNotConfigured
 	}
-	cfg.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
-	cfg.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
-	cfg.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
-	cfg.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
+	if name == config.LocalTextProfile {
+		name = ""
+	}
+	candidate := cfg
+	candidate.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
+	candidate.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
+	candidate.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
+	candidate.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
+	if name != "" {
+		recipe, ok := cfg.ProcessingProfiles[name]
+		if !ok {
+			return cfg, processing.ErrProfileNotConfigured
+		}
+		textBindings := 0
+		for _, binding := range recipe.Embeddings {
+			p, err := cfg.EmbeddingProfile(binding)
+			if err != nil {
+				return cfg, err
+			}
+			if p.InputKind != string(document.EmbeddingInputRenditionChunk) {
+				continue
+			}
+			p, err = config.LocalTextEmbedding(p, mode)
+			if err != nil {
+				return cfg, processing.ErrProfileNotConfigured
+			}
+			candidate.EmbeddingProfiles[binding] = p
+			textBindings++
+		}
+		if textBindings == 0 {
+			return cfg, processing.ErrProfileNotConfigured
+		}
+		candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{name: recipe}
+		return candidate, nil
+	}
 	var err error
-	cfg, err = cfg.WithLocalText()
+	candidate, err = candidate.WithLocalText()
 	if err != nil {
 		return cfg, err
 	}
-	profile := cfg.EmbeddingProfiles[config.LocalTextProfile]
-	profile.Runtime = new(*profile.Runtime)
-	profile.Runtime.ServerMode = mode
-	cfg.EmbeddingProfiles[config.LocalTextProfile] = profile
-	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles[config.LocalTextProfile]}
-	return cfg, nil
+	candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: candidate.ProcessingProfiles[config.LocalTextProfile]}
+	p := candidate.EmbeddingProfiles[config.LocalTextProfile]
+	p.Runtime = new(*p.Runtime)
+	p.Runtime.ServerMode = mode
+	candidate.EmbeddingProfiles[config.LocalTextProfile] = p
+	return candidate, nil
 }
 
 func localTextStartup(ctx context.Context, managed bool, _ string) error {

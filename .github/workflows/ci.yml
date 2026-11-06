@@ -425,16 +425,29 @@ jobs:
           --rerun-fails=2 --rerun-fails-report gotestsum/linux-amd64-cgo-modernc-restore-reruns.txt
           --packages ./docbank -- -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$'
 
-      # gotestsum writes a reruns file only after it reran a failed test. A job
-      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-linux-amd64-cgo-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      - &slowest-tests
+        name: Print slowest tests
+        if: always()
+        run: |
+          {
+            echo '### Slowest tests'
+            echo '```text'
+            for f in gotestsum/*.json; do
+              [ -f "$f" ] || continue
+              echo "# $f"
+              go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stop S3-compatible test service
         if: always()
@@ -477,16 +490,16 @@ jobs:
       - name: Test
         run: bash scripts/test-go-ci.sh
 
-      # gotestsum writes a reruns file only after it reran a failed test. A job
-      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-linux-amd64-purego-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      - *slowest-tests
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -521,16 +534,16 @@ jobs:
       - name: Test
         run: bash scripts/test-go-ci.sh
 
-      # gotestsum writes a reruns file only after it reran a failed test. A job
-      # rerun always uploads, so its passes can be matched with earlier failures.
       - name: Upload Go test results
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-darwin-arm64-cgo-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      - *slowest-tests
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
