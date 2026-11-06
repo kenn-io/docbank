@@ -127,14 +127,14 @@ type querySnapshotBuild struct {
 }
 
 type preparedQuerySnapshot struct {
-	finish            func() error
-	stopRequestCancel func() bool
-	ctx               context.Context
-	cancel            context.CancelFunc
-	build             *querySnapshotBuild
-	projection        SnapshotProjection
-	cached            *cachedQuerySnapshot
-	page              SnapshotPage
+	finish     func(context.Context) error
+	ctx        context.Context
+	tailCtx    context.Context
+	cancel     context.CancelFunc
+	build      *querySnapshotBuild
+	projection SnapshotProjection
+	cached     *cachedQuerySnapshot
+	page       SnapshotPage
 }
 
 type snapshotCacheStats struct {
@@ -222,13 +222,16 @@ func (s *QuerySnapshotService) Create(
 	if err != nil {
 		return SnapshotPage{}, err
 	}
-	finish := func() error {
+	finish := func(ctx context.Context) error {
 		published := false
 		defer func() {
 			prepared.cancel()
 			s.finishBuild(prepared.build, published)
 		}()
-		err := prepared.finish()
+		var err error
+		if prepared.finish != nil {
+			err = prepared.finish(ctx)
+		}
 		if errors.Is(err, ErrQuerySnapshotTooLarge) || errors.Is(err, ErrSnapshotAdmission) {
 			// Readers retain size and capacity failures. Deadline failures leave
 			// no entry, and readers see the snapshot gone.
@@ -246,22 +249,16 @@ func (s *QuerySnapshotService) Create(
 		}
 		return publishErr
 	}
-	if request.Photos || prepared.page.NextCursor == "" {
-		defer prepared.stopRequestCancel()
-		return prepared.page, finish()
-	}
-	if !prepared.stopRequestCancel() {
-		prepared.cancel()
-		s.finishBuild(prepared.build, false)
-		return SnapshotPage{}, ctx.Err()
+	if prepared.finish == nil {
+		return prepared.page, finish(prepared.ctx)
 	}
 	s.mu.Lock()
 	prepared.build.handedOff = true
 	s.mu.Unlock()
 	page := prepared.page
 	go func() {
-		if err := finish(); err != nil && !errors.Is(err, ErrQuerySnapshotTooLarge) {
-			slog.WarnContext(prepared.ctx, "finish query snapshot build", "error", err)
+		if err := finish(prepared.tailCtx); err != nil && !errors.Is(err, ErrQuerySnapshotTooLarge) {
+			slog.WarnContext(prepared.tailCtx, "finish query snapshot build", "error", err)
 		}
 	}()
 	return page, nil
@@ -281,7 +278,6 @@ func (s *QuerySnapshotService) CreateFacets(
 		return SnapshotProjection{}, err
 	}
 	defer func() {
-		prepared.stopRequestCancel()
 		prepared.cancel()
 		s.finishBuild(prepared.build, false)
 	}()
@@ -309,7 +305,6 @@ func (s *QuerySnapshotService) RunSaved(
 	}
 	published := false
 	defer func() {
-		prepared.stopRequestCancel()
 		prepared.cancel()
 		s.finishBuild(prepared.build, published)
 	}()
@@ -374,22 +369,21 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	options := defaultSnapshotMaterializeOptions()
+	buildCtx, stopBuild := context.WithTimeout(ctx, options.BuildTimeout)
 	// The service owns the tail after the creating request returns.
-	buildCtx, cancel := context.WithTimeout(snapshotBuildParent(ctx, saved != nil), options.BuildTimeout)
-	stopRequestCancel := context.AfterFunc(ctx, cancel)
+	tailCtx, stopTail := context.WithTimeout(context.WithoutCancel(ctx), options.BuildTimeout)
+	cancel := func() {
+		stopBuild()
+		stopTail()
+	}
 	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
-		stopRequestCancel()
 		cancel()
 		return preparedQuerySnapshot{}, err
 	}
 	handedOff := false
 	defer func() {
 		if !handedOff {
-			if err != nil && ctx.Err() != nil {
-				err = ctx.Err()
-			}
-			stopRequestCancel()
 			cancel()
 			s.finishBuild(build, false)
 		}
@@ -406,8 +400,8 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	options.Now = s.now
 	options.SavedQuery = saved
 	var chargedRows, chargedBytes int64
-	options.Charge = func(rows, bytes int64) error {
-		if err := buildCtx.Err(); err != nil {
+	charge := func(ctx context.Context, rows, bytes int64) error {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		chargedRows += rows
@@ -418,10 +412,11 @@ func (s *QuerySnapshotService) prepareSnapshot(
 			}
 		}
 		if s.chargeHook != nil {
-			return s.chargeHook(buildCtx, owner, rows, bytes)
+			return s.chargeHook(ctx, owner, rows, bytes)
 		}
 		return nil
 	}
+	options.Charge = func(rows, bytes int64) error { return charge(buildCtx, rows, bytes) }
 	projection, memberships, err := s.store.materializeUnhydratedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
@@ -431,7 +426,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	if request.FacetsOnly {
 		handedOff = true
-		return preparedQuerySnapshot{ctx: buildCtx, cancel: cancel, build: build, projection: projection, stopRequestCancel: stopRequestCancel}, nil
+		return preparedQuerySnapshot{ctx: buildCtx, cancel: cancel, build: build, projection: projection}, nil
 	}
 
 	rows := projection.Rows
@@ -454,9 +449,10 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		created: now, lastUsed: now,
 		serializedBytes: projection.SerializedBytes,
 	}
-	finish := func() error {
+	finish := func(ctx context.Context) error {
+		options.Charge = func(rows, bytes int64) error { return charge(ctx, rows, bytes) }
 		hydrateSnapshotRows(rows[firstEnd:], memberships)
-		tail, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[firstEnd:], memberships, firstEnd)
+		tail, err := encodeSnapshotRows(ctx, options, &projection.SerializedBytes, rows[firstEnd:], memberships, firstEnd)
 		if err != nil {
 			return err
 		}
@@ -471,13 +467,13 @@ func (s *QuerySnapshotService) prepareSnapshot(
 			}
 		}
 		cached.bytes, cached.serializedBytes = actualBytes, projection.SerializedBytes
-		return buildCtx.Err()
+		return ctx.Err()
 	}
 	if saved != nil || request.Photos || firstEnd == len(rows) {
-		if err := finish(); err != nil {
+		if err := finish(buildCtx); err != nil {
 			return preparedQuerySnapshot{}, err
 		}
-		finish = func() error { return nil }
+		finish = nil
 	}
 	page, err := s.renderPage(cached, 0)
 	if err != nil {
@@ -485,18 +481,9 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	handedOff = true
 	return preparedQuerySnapshot{
-		ctx: buildCtx, cancel: cancel, build: build, projection: projection,
-		cached: cached, page: page, finish: finish, stopRequestCancel: stopRequestCancel,
+		ctx: buildCtx, tailCtx: tailCtx, cancel: cancel, build: build, projection: projection,
+		cached: cached, page: page, finish: finish,
 	}, nil
-}
-
-// snapshotBuildParent keeps synchronous saved runs on the caller's context so
-// its deadline survives as context.DeadlineExceeded; other builds detach.
-func snapshotBuildParent(ctx context.Context, synchronous bool) context.Context {
-	if synchronous {
-		return ctx
-	}
-	return context.WithoutCancel(ctx)
 }
 
 func (s *QuerySnapshotService) beginSavedRunFinalization(prepared preparedQuerySnapshot) error {
