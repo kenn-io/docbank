@@ -23,9 +23,9 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		{name: "automatic retries", mode: "hybrid", versions: true, want: []string{"local-text:first:hybrid", "local-text:second:hybrid"}, wantProfile: "local-text", actual: "hybrid"},
 		{name: "exhausted hybrid", mode: "hybrid", failures: true, want: []string{"local-text:first:hybrid", "local-text:second:hybrid", "supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "processing_failed"},
 		{name: "exhausted semantic", mode: "semantic", failures: true, want: []string{"local-text:first:semantic", "local-text:second:semantic"}, code: "semantic_unavailable", guidance: "processing_failed"},
-		{name: "hybrid captions", mode: "hybrid", profile: "supplied-captions", binding: "first", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
-		{name: "auto captions", mode: "auto", profile: "supplied-captions", binding: "first", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
-		{name: "semantic captions", mode: "semantic", profile: "supplied-captions", binding: "first", code: "semantic_unavailable", guidance: "local-text"},
+		{name: "hybrid captions", mode: "hybrid", profile: "supplied-captions", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
+		{name: "auto captions", mode: "auto", profile: "supplied-captions", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
+		{name: "semantic captions", mode: "semantic", profile: "supplied-captions", want: []string{"supplied-captions::semantic"}, code: "semantic_unavailable", guidance: "local-text"},
 		{name: "explicit binding", mode: "hybrid", profile: "local-text", binding: "second", want: []string{"local-text:second:hybrid"}, wantProfile: "local-text", actual: "hybrid"},
 		{name: "lexical explicit binding", mode: "lexical", profile: "local-text", binding: "second", want: []string{"local-text:second:lexical"}, wantProfile: "local-text", actual: "lexical"},
 		{name: "unknown profile", mode: "hybrid", profile: "default", code: "processing_profile_unavailable", guidance: "local-text"},
@@ -47,10 +47,17 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 					if tc.versions {
 						assert.Equal(t, 1, resolutions)
 					}
-					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "supplied-captions"}, {Name: "local-text", QueryEmbeddingBindings: []string{"second", "first"}}})
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{{Name: "supplied-captions"}, {Name: "local-text", EmbeddingBindings: []string{"first", "second"}, QueryEmbeddingBindings: []string{"second", "first"}}})
 				case "/api/v1/search":
 					var request api.DocumentSearchRequest
 					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+						return
+					}
+					if request.Profile == "supplied-captions" && request.Mode == "semantic" {
+						attempts = append(attempts, "supplied-captions::semantic")
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(http.StatusUnprocessableEntity)
+						_, _ = fmt.Fprint(w, `{"status":422,"code":"semantic_unavailable"}`)
 						return
 					}
 					assert.Equal(t, "refund", request.Query)
@@ -115,7 +122,7 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 			if tc.guidance != "" {
 				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), tc.guidance)
 				if tc.failures {
-					require.Equal(t, []any{"processing_failed"}, output["skipped_reasons"])
+					require.Contains(t, output["skipped_reasons"], "processing_failed")
 				}
 			}
 		})

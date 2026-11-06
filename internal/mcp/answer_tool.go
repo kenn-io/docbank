@@ -110,12 +110,16 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 	selected := profiles[0]
 	candidates := daemonconn.AutomaticSearchCandidates(profiles)
 	if input.Profile != "" {
-		selected = api.ProcessingProfileSummary{Name: input.Profile}
+		found := false
 		for _, p := range profiles {
 			if p.Name == input.Profile {
 				selected = p
+				found = true
 				break
 			}
+		}
+		if !found {
+			return selected, nil, api.NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", "processing profile is not configured")
 		}
 		if input.BindingID != "" {
 			candidates = []daemonconn.SearchCandidate{{Profile: input.Profile, Binding: input.BindingID}}
@@ -174,9 +178,23 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
 			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
-		report, selected, binding, failure, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", "hybrid", run)
+		attempt, err := tryProfileSearch(ctx, profiles, selected, candidates, func(code string) bool {
+			return input.Profile == "" && daemonconn.BindingSearchFailure(code)
+		}, func(profile, binding string) (api.DocumentSearchReport, error) {
+			return run(profile, binding, "hybrid")
+		})
 		if err != nil {
-			return response{}, err
+			facts, _ := toolProblemFacts(err)
+			if input.Profile != "" || !daemonconn.BindingSearchFailure(facts.Code) {
+				return response{}, err
+			}
+		}
+		report, selected, binding, failure := attempt.value, attempt.profile, attempt.binding, attempt.failure
+		if binding == "" {
+			report, err = run(selected.Name, "", "lexical")
+			if err != nil {
+				return response{}, err
+			}
 		}
 
 		docs, err := resolveSearchSummaries(ctx, c, report.Results)
@@ -339,41 +357,38 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	}
 }
 
-// executeProfileSearch shares answer_question's candidate order and retry policy.
-func executeProfileSearch(ctx context.Context, profiles []api.ProcessingProfileSummary, selected api.ProcessingProfileSummary, candidates []daemonconn.SearchCandidate, explicit bool, mode string, run func(string, string, string) (api.DocumentSearchReport, error)) (api.DocumentSearchReport, api.ProcessingProfileSummary, string, string, error) {
-	var report api.DocumentSearchReport
+type profileSearchAttempt[T any] struct {
+	value            T
+	profile          api.ProcessingProfileSummary
+	binding, failure string
+}
+
+// tryProfileSearch shares candidate order while callers decide retry and fallback policy.
+func tryProfileSearch[T any](ctx context.Context, profiles []api.ProcessingProfileSummary, selected api.ProcessingProfileSummary, candidates []daemonconn.SearchCandidate, retry func(string) bool, run func(string, string) (T, error)) (profileSearchAttempt[T], error) {
+	attempt := profileSearchAttempt[T]{profile: selected}
 	var err error
-	var failure string
-	if mode != "lexical" {
-		for _, candidate := range candidates {
-			report, err = run(candidate.Profile, candidate.Binding, mode)
-			if err == nil {
-				for _, profile := range profiles {
-					if profile.Name == candidate.Profile {
-						selected = profile
-						break
-					}
+	for _, candidate := range candidates {
+		attempt.value, err = run(candidate.Profile, candidate.Binding)
+		if err == nil {
+			for _, profile := range profiles {
+				if profile.Name == candidate.Profile {
+					attempt.profile = profile
+					break
 				}
-				return report, selected, candidate.Binding, failure, nil
 			}
-			if ctx.Err() != nil {
-				return report, selected, "", failure, ctx.Err()
-			}
-			code, _ := daemonconn.ProblemCode(err)
-			if !daemonconn.BindingSearchFailure(code) {
-				return report, selected, "", failure, err
-			}
-			if failure == "" {
-				failure = code
-			}
-			if explicit {
-				return report, selected, "", failure, err
-			}
+			attempt.binding = candidate.Binding
+			return attempt, nil
 		}
-		if mode == "semantic" {
-			return report, selected, "", failure, &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles, failure)}
+		if ctx.Err() != nil {
+			return attempt, ctx.Err()
+		}
+		facts, _ := toolProblemFacts(err)
+		if !retry(facts.Code) {
+			return attempt, err
+		}
+		if attempt.failure == "" {
+			attempt.failure = facts.Code
 		}
 	}
-	report, err = run(selected.Name, "", "lexical")
-	return report, selected, "", failure, err
+	return attempt, err
 }

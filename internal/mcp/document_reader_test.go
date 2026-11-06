@@ -26,6 +26,11 @@ func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server,
 		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, service.Shutdown(context.Background())) })
+	return newSearchProcessingServer(t, f, service), service, profileName
+}
+
+func newSearchProcessingServer(t *testing.T, f *nativeExportFixture, service *processing.Service) *Server {
+	t.Helper()
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-export-key"
 	apiServer := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
@@ -33,7 +38,7 @@ func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server,
 	httpServer := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(httpServer.Close)
 	daemon := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
-	return daemon, service, profileName
+	return daemon
 }
 
 func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
@@ -170,4 +175,16 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 		}
 	}
 	assertSchemaRejects(t, catalogMap(toolCatalog(ServerOptions{}))["find_conflicts"].InputSchema, map[string]any{"query": "refund", "filters": map[string]any{}})
+}
+
+func callSearchDocumentReader(t *testing.T, daemon *Server, reader *api.DocumentReader, embedded bool, args map[string]any) map[string]any {
+	t.Helper()
+	if !embedded {
+		return exportCall(t, daemon, "search_documents", args)
+	}
+	raw, err := json.Marshal(args)
+	require.NoError(t, err)
+	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
+	require.NoError(t, err)
+	return structuredMap(t, result.StructuredContent)
 }

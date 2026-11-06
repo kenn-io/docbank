@@ -810,6 +810,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrPurgePlanChanged, http.StatusConflict, "derivative_purge_plan_changed", "derivative purge plan changed after preview"},
 		{processing.ErrInvalidPurgeRequest, http.StatusUnprocessableEntity, "invalid_derivative_purge", "derivative purge request is invalid"},
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
+		{processing.ErrSemanticUnavailable, http.StatusUnprocessableEntity, "semantic_unavailable", "semantic retrieval is not configured"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},

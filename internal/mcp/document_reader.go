@@ -127,6 +127,15 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
+	if name == "search_documents" {
+		facts, _ := toolProblemFacts(err)
+		messages := map[string]string{"semantic_unavailable": "Search by meaning is unavailable.", "processing_failed": "Document search failed; check the daemon log before retrying."}
+		if message, ok := messages[facts.Code]; ok {
+			if result, ok := toolErrorResult(toolErrorOutput{Code: facts.Code, Message: message}); ok {
+				return result, nil
+			}
+		}
+	}
 	if name == "answer_question" {
 		facts, _ := toolProblemFacts(err)
 		code := facts.Code

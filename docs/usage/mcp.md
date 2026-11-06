@@ -345,7 +345,9 @@ Search without guessing a profile:
 {"name":"search_documents","arguments":{"query":"refund","filters":{}}}
 ```
 
-An unknown profile returns `processing_profile_unavailable` with the available names, indicating when names are omitted to fit the error limit. If a profile has no query-capable binding, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. When automatic binding attempts fail, `skipped_reasons` reports the first failure code instead. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance instead of lexical results.
+With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
+
+An unknown profile returns `processing_profile_unavailable` with the available names, indicating when names are omitted to fit the error limit. If a profile has no query-capable binding, `hybrid` and `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. After retryable binding failures, hybrid search returns lexical results with the first failure code in `skipped_reasons`, including with an explicit profile or binding. `semantic` returns `semantic_unavailable` with the failure cause or setup guidance. Invalid source selections and unknown binding names retain their own errors. A configured image-only binding permits lexical fallback.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing

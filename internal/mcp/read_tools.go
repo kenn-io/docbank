@@ -453,47 +453,72 @@ func searchDocuments(
 		if err != nil {
 			return documentSearchResponse{}, err
 		}
-		if input.Profile != "" {
-			found := slices.ContainsFunc(profiles, func(p api.ProcessingProfileSummary) bool { return p.Name == input.Profile })
-			if !found {
-				return documentSearchResponse{problem: availableProfilesError(profiles)}, nil
-			}
-		}
 		selected, candidates, err := selectAnswerSearch(profiles, answerInput{Profile: input.Profile, BindingID: input.BindingID, Rerank: input.Rerank})
 		if err != nil {
+			facts, _ := toolProblemFacts(err)
+			if facts.Code == "processing_profile_unavailable" {
+				return documentSearchResponse{problem: availableProfilesError(profiles)}, nil
+			}
 			return documentSearchResponse{}, err
 		}
-		if len(selected.QueryEmbeddingBindings) == 0 && input.Profile != "" {
-			candidates = nil
+		run := func(profile, binding, mode string) (documentSearchResponse, error) {
+			request := input
+			request.Profile, request.BindingID, request.Mode = profile, binding, mode
+			return runDocumentSearch(ctx, c, request, false, &resolution)
 		}
-		var result documentSearchResponse
-		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
-			attempt := input
-			if input.Mode == "lexical" {
-				binding = input.BindingID
+		mode := input.Mode
+		if mode == "auto" && input.Profile == "" {
+			mode = "hybrid"
+		}
+		retry := func(code string) bool {
+			return code != "not_found" && (code == "semantic_unavailable" || daemonconn.BindingSearchFailure(code))
+		}
+		var attempt profileSearchAttempt[documentSearchResponse]
+		attempt.profile = selected
+		if mode != "lexical" && len(candidates) > 0 && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
+			attempt, err = tryProfileSearch(ctx, profiles, selected, candidates, retry, func(profile, binding string) (documentSearchResponse, error) { return run(profile, binding, mode) })
+		} else if mode == "semantic" {
+			attempt.value, err = run(selected.Name, input.BindingID, mode)
+			facts, _ := toolProblemFacts(err)
+			if retry(facts.Code) {
+				attempt.failure = facts.Code
 			}
-			attempt.Profile, attempt.BindingID, attempt.Mode = profile, binding, mode
-			var err error
-			result, err = runDocumentSearch(ctx, c, attempt, false, &resolution)
-			return result.report, err
 		}
-		report, selected, binding, failure, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", input.Mode, run)
 		if err != nil {
-			if problem, ok := errors.AsType[*searchProfileError](err); ok {
-				return documentSearchResponse{problem: problem}, nil
+			facts, _ := toolProblemFacts(err)
+			if !retry(facts.Code) {
+				return documentSearchResponse{}, err
 			}
-			return documentSearchResponse{}, err
-		}
-		report.RequestedMode = input.Mode
-		if input.Mode != "lexical" && binding == "" {
-			if failure != "" {
-				report.Degradations = append(report.Degradations, failure)
-			} else {
-				report.Degradations = append(report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
+			if mode == "semantic" {
+				failure := attempt.failure
+				if facts.Code == "semantic_unavailable" && len(selected.QueryEmbeddingBindings) == 0 {
+					failure = ""
+				}
+				return documentSearchResponse{problem: &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles, failure)}}, nil
 			}
 		}
-		result.report, result.profile = report, selected.Name
-		return result, nil
+		result := attempt.value
+		if attempt.binding == "" && mode != "semantic" {
+			binding := input.BindingID
+			if input.Mode != "lexical" && slices.Contains(selected.EmbeddingBindings, binding) && !slices.Contains(selected.QueryEmbeddingBindings, binding) {
+				binding = ""
+			}
+			result, err = run(selected.Name, binding, "lexical")
+			if err != nil {
+				return documentSearchResponse{}, err
+			}
+			if input.Mode != "lexical" {
+				if attempt.failure != "" {
+					result.report.Degradations = append(result.report.Degradations, attempt.failure)
+				}
+				if len(selected.QueryEmbeddingBindings) == 0 {
+					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
+				}
+			}
+		}
+		result.report.RequestedMode, result.profile = input.Mode, attempt.profile.Name
+		result.documents, err = resolveSearchSummaries(ctx, c, result.report.Results)
+		return result, err
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
@@ -565,11 +590,7 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 	if len(report.Results) == 0 {
 		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 	}
-	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
-	if callErr != nil {
-		return documentSearchResponse{}, callErr
-	}
-	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
+	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report}, nil
 }
 
 // retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.

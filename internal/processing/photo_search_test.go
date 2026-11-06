@@ -62,6 +62,14 @@ func TestDocumentSearchSelectsTextBindingInMixedProfile(t *testing.T) {
 		require.Equal(t, "lexical", string(report.ActualMode))
 		require.Empty(t, report.Results)
 		require.Empty(t, x.service.Profiles()[0].QueryEmbeddingBindings)
+		for _, binding := range []string{"", x.binding.Name, "missing"} {
+			_, err := x.service.Search(t.Context(), SearchRequest{Profile: "images", Query: "synthetic", Mode: "semantic", BindingID: binding, AllLive: &store.SearchOptions{}})
+			if binding == "missing" {
+				require.ErrorIs(t, err, store.ErrNotFound)
+			} else {
+				require.ErrorIs(t, err, ErrSemanticUnavailable)
+			}
+		}
 	})
 	t.Run("mixed profile", func(t *testing.T) {
 		f := newPhotoDescriptionFixture(t)

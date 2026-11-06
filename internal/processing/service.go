@@ -52,6 +52,7 @@ const (
 var (
 	ErrForeignVault              = errors.New("processing source fence belongs to another vault")
 	ErrProfileNotConfigured      = errors.New("processing profile is not configured")
+	ErrSemanticUnavailable       = errors.New("semantic retrieval is not configured")
 	ErrPlanChanged               = errors.New("processing plan changed after preview")
 	ErrConsentRequired           = errors.New("processing consent is required")
 	ErrConsentSaved              = errors.New("processing consent was saved")
@@ -1719,12 +1720,20 @@ func (service *Service) prepareSearch(
 	searcherConfig := retrieval.SearcherConfig{Backend: service.catalog,
 		Owner: "embedded-document-search", LeaseDuration: 5 * time.Minute,
 		MediaEvidence: service.mediaEvidence}
+	if request.BindingID != "" {
+		if _, err := selectEmbeddingBinding(profile.portable, request.BindingID); err != nil {
+			return preparedSearch{}, err
+		}
+	}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
 		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
 		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
+			if errors.Is(bindingErr, store.ErrNotFound) && mode == retrieval.ModeSemantic {
+				return preparedSearch{}, ErrSemanticUnavailable
+			}
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
@@ -1736,7 +1745,7 @@ func (service *Service) prepareSearch(
 				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 		}
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
-		return preparedSearch{}, errors.New("semantic retrieval is not configured")
+		return preparedSearch{}, ErrSemanticUnavailable
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {

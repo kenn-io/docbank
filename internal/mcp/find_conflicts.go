@@ -52,6 +52,11 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 		if err != nil {
 			return result, err
 		}
+		result.documents, err = resolveSearchSummaries(ctx, daemonDocumentClient{c}, result.report.Results)
+		if err != nil {
+			return result, err
+		}
+
 		sources = make([]grounding.Source, len(result.report.Results))
 		for i, hit := range result.report.Results {
 			if !answerContentExcerpt(hit) {

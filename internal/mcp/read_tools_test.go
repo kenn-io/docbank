@@ -267,6 +267,10 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 		arguments        map[string]any
 		status           int
 	}{
+		{name: "semantic unavailable", tool: "search_documents", code: "semantic_unavailable", status: http.StatusUnprocessableEntity,
+			arguments: map[string]any{"query": "synthetic", "profile": "local", "mode": "lexical", "filters": map[string]any{}}},
+		{name: "processing failed", tool: "search_documents", code: "processing_failed", status: http.StatusBadGateway,
+			arguments: map[string]any{"query": "synthetic", "profile": "local", "mode": "lexical", "filters": map[string]any{}}},
 		{name: "reranking unavailable", tool: "search_documents", code: "reranking_unavailable", status: http.StatusUnprocessableEntity,
 			arguments: map[string]any{"query": "synthetic", "profile": "local", "filters": map[string]any{}, "rerank": true}},
 		{name: "reranking failed", tool: "search_documents", code: "reranking_failed", status: http.StatusBadGateway,
@@ -298,11 +302,9 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 				return daemonconn.New(daemon.URL, ""), nil
 			}, func(*daemonconn.Connection) error { return nil })
-			result, err := invokeReadTool(t.Context(), lease, test.tool, test.arguments)
-			require.NoError(t, err)
-			require.True(t, result.IsError)
-			encoded, err := json.Marshal(result)
-			require.NoError(t, err)
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
+			encoded := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": test.tool, "arguments": test.arguments}))
+			require.Equal(t, true, decodeResult(t, encoded)["isError"])
 			assert.Contains(t, string(encoded), `"code":"`+test.code+`"`)
 			assert.NotContains(t, string(encoded), "/synthetic/path")
 			assert.NotContains(t, string(encoded), "raw-provider-response")
