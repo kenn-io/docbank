@@ -71,9 +71,6 @@ func (s *Store) DeleteSupersession(ctx context.Context, successorID, predecessor
 }
 func (s *Store) changeSupersession(ctx context.Context, successorID, predecessorID, revision int64, note *string, put bool) (SupersessionChange, error) {
 	var result SupersessionChange
-	if successorID == predecessorID {
-		return result, fmt.Errorf("self link: %w", ErrInvalidSupersession)
-	}
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		n, err := nodeByIDTx(ctx, tx, predecessorID)
 		if err != nil {
