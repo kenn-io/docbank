@@ -60,6 +60,15 @@ func ValidateEffectiveWindow(w EffectiveWindow) error {
 	return nil
 }
 
+// SuccessorApplies reports whether a successor takes effect on a validated date
+// and window. An undated successor waits until the node's inclusive end passes.
+func SuccessorApplies(asOf string, own EffectiveWindow, successor SuccessorStart) bool {
+	if successor.From == "" {
+		return own.To == "" || own.To < asOf
+	}
+	return successor.From <= asOf
+}
+
 // EvaluateValidity applies precedence to a validated date and window. The
 // boolean indicates an undated successor when supersession applies.
 func EvaluateValidity(asOf string, own EffectiveWindow, successors []SuccessorStart) (ValidityState, bool) {
@@ -68,12 +77,9 @@ func EvaluateValidity(asOf string, own EffectiveWindow, successors []SuccessorSt
 	}
 	superseded, undated := false, false
 	for _, successor := range successors {
-		if successor.From == "" {
-			if own.To == "" || own.To < asOf {
-				superseded, undated = true, true
-			}
-		} else if successor.From <= asOf {
+		if SuccessorApplies(asOf, own, successor) {
 			superseded = true
+			undated = undated || successor.From == ""
 		}
 	}
 	if superseded {
