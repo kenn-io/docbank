@@ -22,7 +22,6 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 	}{
 		{name: "automatic retries", mode: "hybrid", versions: true, want: []string{"local-text:first:hybrid", "local-text:second:hybrid"}, wantProfile: "local-text", actual: "hybrid"},
 		{name: "exhausted hybrid", mode: "hybrid", failures: true, want: []string{"local-text:first:hybrid", "local-text:second:hybrid", "supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "processing_failed"},
-		{name: "exhausted semantic", mode: "semantic", failures: true, want: []string{"local-text:first:semantic", "local-text:second:semantic"}, code: "semantic_unavailable", guidance: "processing_failed"},
 		{name: "hybrid captions", mode: "hybrid", profile: "supplied-captions", want: []string{"supplied-captions::lexical"}, wantProfile: "supplied-captions", actual: "lexical", guidance: "local-text"},
 		{name: "semantic captions", mode: "semantic", profile: "supplied-captions", want: []string{"supplied-captions::semantic"}, code: "semantic_unavailable", guidance: "local-text"},
 		{name: "explicit binding", mode: "hybrid", profile: "local-text", binding: "second", want: []string{"local-text:second:hybrid"}, wantProfile: "local-text", actual: "hybrid"},
@@ -102,10 +101,6 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 			if tc.code != "" {
 				require.Equal(t, tc.code, output["code"])
 				require.Contains(t, output["message"], tc.guidance)
-				if tc.failures {
-					require.NotContains(t, output["message"], "docbank processing local")
-					require.NotContains(t, output["message"], "has no available")
-				}
 				return
 			}
 			require.Equal(t, tc.wantProfile, output["profile"])

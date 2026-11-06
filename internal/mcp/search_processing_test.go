@@ -66,6 +66,8 @@ func TestSearchDocumentsRealProviderSelection(t *testing.T) {
 				if mode == "semantic" {
 					require.Equal(t, "semantic_unavailable", output["code"])
 					require.Contains(t, output["message"], failure)
+					require.NotContains(t, output["message"], "docbank processing local")
+					require.NotContains(t, output["message"], "has no available")
 				} else {
 					require.Equal(t, "lexical", output["actual_mode"])
 					require.Contains(t, output["skipped_reasons"], failure)

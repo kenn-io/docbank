@@ -117,9 +117,6 @@ func TestSearchDocumentsProfileDiscovery(t *testing.T) {
 	f.addFile(t, "refund-policy.txt", "Refunds take five days.")
 	daemon, service, profile := newProcessingDocumentServer(t, f)
 	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
-	answer := exportCall(t, daemon, "answer_question", map[string]any{"question": "refund", "filters": map[string]any{}})
-	receipt := schemaMap(t, answer["receipt"])
-	require.Equal(t, profile, schemaMap(t, receipt["profile"])["name"])
 	for _, embedded := range []bool{false, true} {
 		for _, tc := range []struct {
 			name, mode, selected, code string

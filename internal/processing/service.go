@@ -1737,7 +1737,7 @@ func (service *Service) prepareSearch(
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
-			if (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid) && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
 				return preparedSearch{}, ErrSemanticUnavailable
 			}
 			request.BindingID = binding.Name

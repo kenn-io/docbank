@@ -479,10 +479,6 @@ func searchDocuments(
 			attempt, err = tryProfileSearch(ctx, profiles, selected, candidates, retry, func(profile, binding string) (documentSearchResponse, error) { return run(profile, binding, mode) })
 		} else if mode == "semantic" {
 			attempt.value, err = run(selected.Name, input.BindingID, mode)
-			facts, _ := toolProblemFacts(err)
-			if retry(facts.Code) {
-				attempt.failure = facts.Code
-			}
 		}
 		if err != nil {
 			facts, _ := toolProblemFacts(err)
@@ -490,11 +486,7 @@ func searchDocuments(
 				return documentSearchResponse{}, err
 			}
 			if mode == "semantic" {
-				failure := attempt.failure
-				if facts.Code == "semantic_unavailable" && len(selected.QueryEmbeddingBindings) == 0 {
-					failure = ""
-				}
-				return documentSearchResponse{problem: &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles, failure)}}, nil
+				return documentSearchResponse{problem: &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles, attempt.failure)}}, nil
 			}
 		}
 		result := attempt.value
@@ -517,8 +509,7 @@ func searchDocuments(
 			}
 		}
 		result.report.RequestedMode, result.profile = input.Mode, attempt.profile.Name
-		result.documents, err = resolveSearchSummaries(ctx, c, result.report.Results)
-		return result, err
+		return result, nil
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
@@ -589,7 +580,11 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 	if len(report.Results) == 0 {
 		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 	}
-	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report}, nil
+	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
+	if callErr != nil {
+		return documentSearchResponse{}, callErr
+	}
+	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
 }
 
 // retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
