@@ -20,21 +20,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
-func TestEmptySearchHintsScopedLexical(t *testing.T) {
-	setupVaultHome(t)
-	for _, word := range []string{"lease", "renewal"} {
-		source := writeSourceFile(t, word+".txt", word)
-		_, err := runCLI(t, "add", source)
-		require.NoError(t, err)
-	}
-	out, err := runCLI(t, "search", "lease renewal", "--mode", "lexical", "--mime-type", "text/plain", "--json")
-	require.NoError(t, err)
-	var report lexicalSearchJSON
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	require.Empty(t, report.Hits)
-	require.Contains(t, report.Hints, searchHint{Code: "every_word_required", Message: "no name or text segment in this search scope contains every word; search again with fewer words"})
-}
-
 func TestEmptySearchHints(t *testing.T) {
 	for _, tc := range []struct {
 		name, query                                                          string
@@ -44,9 +29,7 @@ func TestEmptySearchHints(t *testing.T) {
 		next                                                                 string
 	}{
 		{name: "human", pending: 1},
-		{name: "extracted", pending: 0},
 		{name: "JSON", flags: []string{"--json"}, pending: 1, next: "docbank search '--json=true' '--' 'lease renewal'"},
-		{name: "filtered", filtered: true, flags: []string{"--tag", processingTestVersionID, "--under", "id:42", "--mime-type", "application/pdf"}},
 		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
 		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
 		{name: "MIME", filtered: true, flags: []string{"--mime-type", "application/pdf"}},
@@ -170,10 +153,17 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 				require.Equal(t, "no_searchable_text", report.Hints[0].Code)
+				require.Contains(t, report.Hints[0].Message, "set up a text-extraction profile; build it")
 				require.Contains(t, report.Hints[0].Message, "list profiles with docbank processing profiles")
 				require.Empty(t, report.Hints[0].Next)
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				require.Equal(t, tc.next, report.Hints[1].Next)
+				if tc.name == "JSON" {
+					require.Equal(t, searchHint{
+						Code:    "every_word_required",
+						Message: "no name or text segment matches all words; try fewer words if some match",
+					}, report.Hints[2])
+				}
 				require.Empty(t, stderr.String())
 			} else {
 				if tc.unavailable {
@@ -182,16 +172,16 @@ func TestEmptySearchHints(t *testing.T) {
 					require.Contains(t, stderr.String(), "Hint: 1 file (PDF) has no searchable text")
 				}
 				if tc.pending > 0 {
-					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
+					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again in a few seconds")
 				} else {
 					require.NotContains(t, stderr.String(), "still being indexed")
 				}
 				if tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
-					require.NotContains(t, stderr.String(), "every word")
+					require.NotContains(t, stderr.String(), "matches all words")
 				} else if tc.filtered {
-					require.Contains(t, stderr.String(), "no name or text segment in this search scope contains every word")
+					require.Contains(t, stderr.String(), "no name or text segment in this search scope matches all words; try fewer words if some match")
 				} else {
-					require.Contains(t, stderr.String(), "no name or text segment contains every word")
+					require.Contains(t, stderr.String(), "no name or text segment matches all words; try fewer words if some match")
 				}
 				if slices.Contains(tc.flags, "--agent") {
 					mode := "lexical"

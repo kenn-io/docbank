@@ -52,7 +52,7 @@ processing report with `actual_mode`, `coverage`, and `results`, plus a
 `folders` array of ordinary folder name hits. Check for `actual_mode` to tell
 the shapes apart, or pass `--mode lexical` to always get the ordinary report.
 
-Empty lexical and hybrid reports can include
+Empty lexical and automatic hybrid reports can include
 [`hints`](searching.md#why-did-a-text-search-find-nothing), which other output
 modes print on stderr.
 
