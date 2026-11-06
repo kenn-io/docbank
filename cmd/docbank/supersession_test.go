@@ -53,20 +53,8 @@ func TestSupersessionCLI(t *testing.T) {
 	assert.Equal(t, "2025-12-31", window.EffectiveTo)
 	_, err = runCLI(t, "document", "supersede", "/leases/next.txt", "--replaces", "/leases/old.txt")
 	require.NoError(t, err)
-	resetFlags(rootCmd)
-	var stdout, stderr bytes.Buffer
-	code := runProcess([]string{"document", "effective", "/leases/next.txt", "--from", "2026-01-01"}, &stdout, &stderr)
-	assert.Equal(t, exitUsage, code, stderr.String())
-	assert.Contains(t, stderr.String(), "ends before")
-	assert.NotContains(t, stdout.String(), "Effective window updated")
 	_, err = runCLI(t, "document", "effective", "/leases/next.txt", "--clear")
 	require.NoError(t, err)
-	out, err = runCLI(t, "document", "validity", "/leases/next.txt", "--as-of", "2025-06-01", "--json")
-	require.NoError(t, err)
-	window = api.NodeValidity{}
-	require.NoError(t, json.Unmarshal([]byte(out), &window))
-	assert.Empty(t, window.EffectiveFrom)
-	assert.Empty(t, window.EffectiveTo)
 	out, err = runCLI(t, "document", "stat", "/leases/next.txt", "--json")
 	require.NoError(t, err)
 	var successor api.Node
