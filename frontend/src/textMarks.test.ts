@@ -1,5 +1,7 @@
 import { expect, it } from "vite-plus/test";
-import { markText } from "./textMarks.js";
+import * as hegel from "@hegeldev/hegel";
+import * as gs from "@hegeldev/hegel/generators";
+import { markText, nextTextMatch } from "./textMarks.js";
 
 it("uses deterministic source priority for overlaps and preserves UTF-16 offsets", () => {
   const result = markText("😀ALPHA alphabet", {
@@ -31,4 +33,44 @@ it("bounds matches without fabricating partial success", () => {
   const result = markText("x ".repeat(5_010), { queryTerms: ["x"] });
   expect(result.matches).toHaveLength(5_000);
   expect(result.truncated).toBe(true);
+});
+
+it("wraps match navigation in both directions for every bounded match count", () =>
+  hegel.test(
+    (tc) => {
+      const count = tc.draw(gs.integers({ minValue: 1, maxValue: 5000 }));
+      const index = tc.draw(gs.integers({ minValue: 0, maxValue: count - 1 }));
+      const next = nextTextMatch(index, 1, count);
+      const previous = nextTextMatch(index, -1, count);
+      expect(next).toBeGreaterThanOrEqual(0);
+      expect(next).toBeLessThan(count);
+      expect(nextTextMatch(next, -1, count)).toBe(index);
+      expect(nextTextMatch(previous, 1, count)).toBe(index);
+      expect(nextTextMatch(count - 1, 1, count)).toBe(0);
+      expect(nextTextMatch(0, -1, count)).toBe(count - 1);
+    },
+    { testCases: 2000, database: hegel.Database.disabled },
+  ));
+
+it("preserves arbitrary Unicode context around literal search terms", () =>
+  hegel.test(
+    (tc) => {
+      const before = tc.draw(gs.text({ maxSize: 500 }));
+      const term = tc.draw(gs.text({ minSize: 1, maxSize: 30 }));
+      const after = tc.draw(gs.text({ maxSize: 500 }));
+      const text = `${before}\n${term}\n${after}`;
+      const marked = markText(text, { queryTerms: [term] });
+      expect(marked.segments.map((segment) => segment.text).join("")).toBe(text);
+      expect(marked.matches.length).toBeGreaterThan(0);
+      for (const match of marked.matches) {
+        expect(text.slice(match.start, match.end)).toBe(match.text);
+        expect(match.source).toBe("query");
+      }
+    },
+    { testCases: 2000, database: hegel.Database.disabled },
+  ));
+
+it("keeps navigation at zero when no text matches are available", () => {
+  expect(nextTextMatch(0, 1, 0)).toBe(0);
+  expect(nextTextMatch(0, -1, 0)).toBe(0);
 });

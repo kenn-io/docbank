@@ -5015,6 +5015,7 @@
                     authorizationRevision={currentInspectorNode!.revision}
                     profileName={snapshot.state.options?.profile ?? ""}
                     observed={selectedRenditionObservation}
+                    searchContext={!!snapshot.state.firstPage?.query.text.trim()}
                     queryTerms={snapshotQueryTerms}
                     queryHighlightError={snapshotQueryHighlightError}
                     highlightSets={inspectorHighlightSets}
