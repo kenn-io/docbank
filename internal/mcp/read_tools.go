@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -442,6 +441,14 @@ func searchDocuments(
 	input.Mode = effectiveSearchMode(input.Mode)
 
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
+		var resolution api.DocumentSourceFenceResolution
+		if input.Filters == nil {
+			var err error
+			resolution, err = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
+			if err != nil {
+				return documentSearchResponse{}, err
+			}
+		}
 		profiles, err := c.ListDocumentProcessingProfiles(ctx)
 		if err != nil {
 			return documentSearchResponse{}, err
@@ -449,11 +456,7 @@ func searchDocuments(
 		if input.Profile != "" {
 			found := slices.ContainsFunc(profiles, func(p api.ProcessingProfileSummary) bool { return p.Name == input.Profile })
 			if !found {
-				names := make([]string, 0, len(profiles))
-				for _, p := range profiles {
-					names = append(names, p.Name)
-				}
-				return documentSearchResponse{}, &searchProfileError{code: "processing_profile_unavailable", message: "Available processing profiles: " + strings.Join(names, ", ")}
+				return documentSearchResponse{problem: availableProfilesError(profiles)}, nil
 			}
 		}
 		selected, candidates, err := selectAnswerSearch(profiles, answerInput{Profile: input.Profile, BindingID: input.BindingID, Rerank: input.Rerank})
@@ -471,16 +474,23 @@ func searchDocuments(
 			}
 			attempt.Profile, attempt.BindingID, attempt.Mode = profile, binding, mode
 			var err error
-			result, err = runDocumentSearch(ctx, c, attempt, false)
+			result, err = runDocumentSearch(ctx, c, attempt, false, &resolution)
 			return result.report, err
 		}
-		report, selected, binding, _, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", input.Mode, run)
+		report, selected, binding, failure, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", input.Mode, run)
 		if err != nil {
+			if problem, ok := errors.AsType[*searchProfileError](err); ok {
+				return documentSearchResponse{problem: problem}, nil
+			}
 			return documentSearchResponse{}, err
 		}
 		report.RequestedMode = input.Mode
 		if input.Mode != "lexical" && binding == "" {
-			report.Degradations = append(report.Degradations, semanticSearchGuidance(selected.Name, profiles))
+			if failure != "" {
+				report.Degradations = append(report.Degradations, failure)
+			} else {
+				report.Degradations = append(report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
+			}
 		}
 		result.report, result.profile = report, selected.Name
 		return result, nil
@@ -488,6 +498,10 @@ func searchDocuments(
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
+	if result.problem != nil {
+		return searchDocumentsOutput{}, nil, result.problem
+	}
+
 	output := searchDocumentsOutput{VaultID: result.vaultID, Profile: result.profile,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
@@ -516,6 +530,7 @@ func searchDocuments(
 }
 
 type documentSearchResponse struct {
+	problem    *searchProfileError
 	profile    string
 	resolution api.DocumentSourceFenceResolution
 	vaultID    string
@@ -523,7 +538,7 @@ type documentSearchResponse struct {
 	documents  []api.DocumentSummary
 }
 
-func runDocumentSearch(ctx context.Context, c documentClient, input searchDocumentsInput, contentFirst bool) (documentSearchResponse, error) {
+func runDocumentSearch(ctx context.Context, c documentClient, input searchDocumentsInput, contentFirst bool, resolved *api.DocumentSourceFenceResolution) (documentSearchResponse, error) {
 	request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
 		Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: contentFirst}
 	var resolution api.DocumentSourceFenceResolution
@@ -533,9 +548,13 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		request.Scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
 		report, callErr = c.SearchDocuments(ctx, request)
 	} else {
-		resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
-		if callErr != nil {
-			return documentSearchResponse{}, callErr
+		if resolved != nil {
+			resolution = *resolved
+		} else {
+			resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
+			if callErr != nil {
+				return documentSearchResponse{}, callErr
+			}
 		}
 		request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
 		report, callErr = searchResolvedDocuments(ctx, c, request)
@@ -979,7 +998,10 @@ func resolveSearchSummaries(ctx context.Context, c documentClient, results []api
 	return c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
 }
 
-func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary) string {
+func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary, failure string) string {
+	if failure != "" {
+		return "Search by meaning failed: " + failure + "."
+	}
 	message := fmt.Sprintf("Profile %q has no available search by meaning.", name)
 	for _, profile := range profiles {
 		if profile.Name != name && len(profile.QueryEmbeddingBindings) > 0 {
@@ -987,4 +1009,19 @@ func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary
 		}
 	}
 	return message + " Run docbank processing local to add it."
+}
+
+func availableProfilesError(profiles []api.ProcessingProfileSummary) *searchProfileError {
+	problem := &searchProfileError{code: "processing_profile_unavailable", message: "Available processing profiles:"}
+	for index, profile := range profiles {
+		message := problem.message + " " + profile.Name
+		suffix := fmt.Sprintf(" (%d names omitted)", len(profiles)-index-1)
+		encoded, err := json.Marshal(toolErrorOutput{Code: problem.code, Message: message + suffix})
+		if err != nil || len(encoded) > maxToolErrorBytes {
+			problem.message += fmt.Sprintf(" (%d names omitted)", len(profiles)-index)
+			break
+		}
+		problem.message = message
+	}
+	return problem
 }

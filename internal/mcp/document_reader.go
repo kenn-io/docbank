@@ -59,19 +59,9 @@ func daemonDocumentSession(lease *daemonLease) documentReadSession {
 
 func daemonClientSession[C documentClient](lease *daemonLease, client func(*daemonconn.Connection) C) func(context.Context, func(context.Context, C) error) error {
 	return func(ctx context.Context, call func(context.Context, C) error) error {
-		var guidance *searchProfileError
 		_, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
-			err := call(ctx, client(c))
-			// Keep locally constructed guidance outside the daemon error sanitizer.
-			if local, ok := errors.AsType[*searchProfileError](err); ok {
-				guidance = local
-				return struct{}{}, nil
-			}
-			return struct{}{}, err
+			return struct{}{}, call(ctx, client(c))
 		})
-		if err == nil && guidance != nil {
-			return guidance
-		}
 		return err
 	}
 }

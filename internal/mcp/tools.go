@@ -321,13 +321,13 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		if strings.TrimSpace(question) == "" {
 			return false
 		}
+		fallthrough
+	case "search_documents", "find_conflicts":
 		if _, binding := arguments["binding_id"]; binding {
 			if _, profile := arguments["profile"]; !profile {
 				return false
 			}
 		}
-		fallthrough
-	case "search_documents", "find_conflicts":
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil

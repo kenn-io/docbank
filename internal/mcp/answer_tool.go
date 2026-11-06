@@ -83,12 +83,10 @@ type answerOutput struct {
 	Receipt          answerReceipt    `json:"receipt"`
 }
 
-type answerClient = documentClient
-
-type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
+type answerReadSession func(context.Context, func(context.Context, documentClient) error) error
 
 func daemonAnswerSession(lease *daemonLease) answerReadSession {
-	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
+	return daemonClientSession(lease, func(c *daemonconn.Connection) documentClient { return daemonDocumentClient{c} })
 }
 
 var answerErrorMessages = map[string]string{
@@ -155,7 +153,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		executed  bool
 		documents []api.DocumentSummary
 	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		filters := input.Filters
 		if filters == nil && len(input.ContentVersionIDs) == 0 {
 			filters = &api.DocumentSourceFenceFilters{}
@@ -362,15 +360,21 @@ func executeProfileSearch(ctx context.Context, profiles []api.ProcessingProfileS
 				return report, selected, "", failure, ctx.Err()
 			}
 			code, _ := daemonconn.ProblemCode(err)
-			if explicit || !daemonconn.BindingSearchFailure(code) {
+			if !daemonconn.BindingSearchFailure(code) {
 				return report, selected, "", failure, err
 			}
 			if failure == "" {
 				failure = code
 			}
+			if explicit {
+				if mode == "semantic" {
+					break
+				}
+				return report, selected, "", failure, err
+			}
 		}
 		if mode == "semantic" {
-			return report, selected, "", failure, &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles)}
+			return report, selected, "", failure, &searchProfileError{code: "semantic_unavailable", message: semanticSearchGuidance(selected.Name, profiles, failure)}
 		}
 	}
 	report, err = run(selected.Name, "", "lexical")
