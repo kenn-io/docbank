@@ -1771,3 +1771,69 @@ func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT folder_key FROM photo_timeline t JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, dated.ID).Scan(&folder))
 	require.Equal(t, "z"+datedFolder, folder)
 }
+
+func TestPhotoFacetsCountSharedValuesOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	var ids []string
+	for i, camera := range [][2]string{{"Canon", "CANON"}, {"canon", ""}, {"", "Model"}, {"", ""}, {"Canon", "CANON"}} {
+		hash := browseHash(fmt.Sprint("grouped", i))
+		if i == 4 {
+			hash = browseHash("grouped0")
+		}
+		node := browsePhotoNode(t, s, fmt.Sprintf("grouped-%d.jpg", i), hash, "image/jpeg")
+		browsePhotoMetadata(t, s, node, fmt.Sprint("grouped", i),
+			photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(camera[0])),
+			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(camera[1])),
+			photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens")),
+			photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2024-01-01", "2024-01-01", document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		ids = append(ids, asset.ID)
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(3), Flag: new("pick"), Label: new("red")}}})
+		require.NoError(t, err)
+	}
+	var sets []PhotoSet
+	for i, name := range []string{"Live", "Second", "Gone"} {
+		set, err := s.CreatePhotoSet(t.Context(), name)
+		require.NoError(t, err)
+		members := [][]string{ids[:2], ids[:1], ids[1:3]}[i]
+		set, err = s.ChangePhotoSetMembers(t.Context(), set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: members})
+		require.NoError(t, err)
+		sets = append(sets, set)
+	}
+	_, err := s.DeletePhotoSet(t.Context(), sets[2].ID, sets[2].Revision)
+	require.NoError(t, err)
+	for _, raw := range []string{`{}`, `{"filters":{"flags":["pick"]}}`, `{"filters":{"has_duplicates":true}}`} {
+		duplicates := strings.Contains(raw, "has_duplicates")
+		total, missingCamera, missingSet, canon, live := int64(5), int64(1), int64(3), int64(3), int64(2)
+		camera := []SnapshotFacetValue{{Key: "CANON", Label: "CANON", Count: canon}, {Key: "Model", Label: "Model", Count: 1}}
+		if duplicates {
+			total, missingCamera, missingSet, live = 2, 0, 1, 1
+			camera = []SnapshotFacetValue{{Key: "CANON", Label: "CANON", Count: 2}}
+		}
+		want := map[string][]SnapshotFacetValue{
+			"camera":   camera,
+			"lens":     {{Key: "Lens", Label: "Lens", Count: total}},
+			"year":     {{Key: "2024", Label: "2024", Count: total}},
+			"location": {},
+			"set":      {{Key: sets[0].ID, Label: "Live", Count: live}, {Key: sets[1].ID, Label: "Second", Count: 1}},
+			"rating":   {{Key: "3", Label: "3", Count: total}},
+			"flag":     {{Key: "pick", Label: "pick", Count: total, Selected: strings.Contains(raw, "flags")}},
+			"label":    {{Key: "red", Label: "red", Count: total}},
+		}
+		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, raw), PageSize: 1, Facets: []string{"camera", "lens", "year", "location", "set", "rating", "flag", "label"}}, nil)
+		require.NoError(t, err, raw)
+		for _, facet := range page.Facets {
+			require.True(t, facet.Available, facet.Dimension)
+			require.Equal(t, total, *facet.Total, facet.Dimension)
+			missing := map[string]int64{"camera": missingCamera, "set": missingSet, "location": total}
+			require.Equal(t, missing[facet.Dimension], *facet.Missing, facet.Dimension)
+			if facet.Dimension == "set" {
+				require.ElementsMatch(t, want[facet.Dimension], facet.Values)
+			} else {
+				require.Equal(t, want[facet.Dimension], facet.Values, facet.Dimension)
+			}
+		}
+	}
+}
