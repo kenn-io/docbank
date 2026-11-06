@@ -677,9 +677,10 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 		{Outcome: "skipped", CandidateCount: 0},
 	} {
 		report := base
-		if receipt.Outcome == "skipped" {
+		switch receipt.Outcome {
+		case "skipped":
 			report.Results = nil
-		} else if receipt.Outcome == "degraded" {
+		case "degraded":
 			report.Degradations = []string{"reranking_degraded"}
 		}
 		report.Reranking = receipt
