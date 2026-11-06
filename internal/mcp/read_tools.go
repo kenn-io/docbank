@@ -474,16 +474,13 @@ func searchDocuments(
 			result, err = runDocumentSearch(ctx, c, attempt, false)
 			return result.report, err
 		}
-		report, selected, binding, failure, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", input.Mode, run)
+		report, selected, binding, _, err := executeProfileSearch(ctx, profiles, selected, candidates, input.Profile != "", input.Mode, run)
 		if err != nil {
 			return documentSearchResponse{}, err
 		}
 		report.RequestedMode = input.Mode
 		if input.Mode != "lexical" && binding == "" {
 			report.Degradations = append(report.Degradations, semanticSearchGuidance(selected.Name, profiles))
-			if failure != "" {
-				report.Degradations = append(report.Degradations, failure)
-			}
 		}
 		result.report, result.profile = report, selected.Name
 		return result, nil

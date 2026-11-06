@@ -409,11 +409,7 @@ func (e *searchProfileError) Error() string { return e.message }
 
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
 	if guidance, ok := errors.AsType[*searchProfileError](err); ok {
-		message := guidance.message
-		if len(message) > 2048 {
-			message = message[:2048]
-		}
-		return toolErrorResult(toolErrorOutput{Code: guidance.code, Message: message})
+		return toolErrorResult(toolErrorOutput{Code: guidance.code, Message: guidance.message})
 	}
 	code, observed := stableDomainError(err)
 	return domainToolErrorResult(code, observed)
@@ -453,9 +449,6 @@ func toolProblemFacts(err error) (daemonconn.ProblemFacts, bool) {
 func stableDomainError(err error) (string, int) {
 	if err == nil {
 		return "", 0
-	}
-	if guidance, ok := errors.AsType[*searchProfileError](err); ok {
-		return guidance.code, 0
 	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {

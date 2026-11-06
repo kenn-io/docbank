@@ -137,7 +137,7 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
-	if name == "answer_question" || name == "search_documents" {
+	if name == "answer_question" {
 		facts, _ := toolProblemFacts(err)
 		code := facts.Code
 		if _, ok := answerErrorMessages[code]; ok {
