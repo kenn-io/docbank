@@ -72,7 +72,7 @@ var supersedeCmd = &cobra.Command{
 		if receipt.Changed {
 			status = "updated"
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Document validity %s: %s\n", status, formatNodeSelector(next.ID))
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Document validity %s: %s\n", status, formatNodeSelector(receipt.Node.ID))
 		if err != nil {
 			return fmt.Errorf("writing document validity update: %w", err)
 		}
@@ -188,12 +188,20 @@ var validityCmd = &cobra.Command{
 			}
 		}
 		for _, link := range view.Predecessors {
-			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Replaces: %s\n", formatNodeSelector(link.PredecessorID)); err != nil {
+			note := ""
+			if link.Note != "" {
+				note = " " + link.Note
+			}
+			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Replaces: %s%s\n", formatNodeSelector(link.PredecessorID), note); err != nil {
 				return fmt.Errorf("writing document validity: %w", err)
 			}
 		}
 		for _, link := range view.Successors {
-			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Successor: %s\n", formatNodeSelector(link.SuccessorID)); err != nil {
+			note := ""
+			if link.Note != "" {
+				note = " " + link.Note
+			}
+			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Successor: %s%s\n", formatNodeSelector(link.SuccessorID), note); err != nil {
 				return fmt.Errorf("writing document validity: %w", err)
 			}
 		}

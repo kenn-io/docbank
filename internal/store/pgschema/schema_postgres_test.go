@@ -361,3 +361,18 @@ func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	_, err = Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 }
+
+func TestSetupRejectsPriorDeclarationLayout(t *testing.T) {
+	t.Parallel()
+	db, owner := pgtest.NewDatabase(t)
+	ctx := t.Context()
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
+	_, err := Setup(ctx, db, cfg)
+	require.NoError(t, err)
+	// Development schema 1 predates document declarations.
+	_, err = db.ExecContext(ctx, `DROP TABLE documents.node_supersessions, documents.node_effective_windows;
+		UPDATE documents.vault_metadata SET schema_version=1 WHERE singleton=1`)
+	require.NoError(t, err)
+	_, err = Setup(ctx, db, cfg)
+	require.ErrorContains(t, err, "recreate this schema")
+}

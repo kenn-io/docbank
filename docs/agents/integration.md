@@ -538,12 +538,15 @@ Each line carries `cursor`, `kind`, `node_id`, and `revision`. Save the cursor a
 | `version_added` | A content version was replaced, confirmed with new bytes, or reverted, or the node's content history was pruned. |
 | `moved` | A node changed its name or parent. |
 | `tagged` | The node's tags changed, including a tag rename or deletion. |
+| `validity_changed` | A replacement link or effective window changed. Refresh the node's validity view. |
 | `trashed` | A node was trashed, including each affected descendant. |
 | `restored` | A node was restored, including each affected descendant. |
 | `processed` | Completed publication of new or changed readable derived output, such as text, source metadata, an email inventory, a terminal email body result, an email PDF, a photo description, or face detection. |
 | `removed` | A node was permanently deleted by package cancellation, failed import cleanup, or trash purge, including each deleted descendant. |
 
 The feed retains the latest 100,000 events. Repeated no-op assignments, deduplicated imports, parent-directory revision bumps, processing failures, invalidation, explicit derivative purge, and embedding-index updates emit nothing. Use job status for processing failures. Extractor fingerprint changes with identical source-metadata facts, dismissed or fully filtered photo descriptions, and unchanged or fully protected face results also emit nothing. Photo authored metadata, including ratings, flags, captions, and color labels, stays silent. Keyword changes using existing tags emit `tagged` events. Manual face/person edits, album and asset organization, display choices, and hide/unhide operations stay silent. Events carry node identity and revision, and an API key can observe file nodes belonging to hidden photos. Browser sessions cannot read this feed.
+
+Link changes emit `validity_changed` for both endpoints. Effective-window changes emit it for the edited node and its live direct predecessors, whose standing can depend on that window. Dependent nodes keep their revision; consumers must refresh even when the event's revision matches their cached revision. Repeated declarations and window writes, and removal of absent declarations, emit nothing.
 
 Email inventory selection and a new terminal body result each emit an event, including when a body changes from pending to unavailable. Republishing the selected inventory or an existing body result stays silent.
 

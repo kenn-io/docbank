@@ -3,7 +3,6 @@ package document
 import (
 	"errors"
 	"fmt"
-	"time"
 )
 
 // ValidityState describes whether a document is in force on a calendar date.
@@ -29,8 +28,7 @@ func ValidateDate(date string) error {
 	if date == "" {
 		return nil
 	}
-	parsed, err := time.Parse("2006-01-02", date)
-	if err != nil || parsed.Format("2006-01-02") != date {
+	if _, err := eventCivil(date, "date"); err != nil {
 		return fmt.Errorf("invalid calendar date %q", date)
 	}
 	return nil

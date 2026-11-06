@@ -133,10 +133,10 @@ func TestSupersessionCLIOnlySendsExplicitNote(t *testing.T) {
 
 	out, err := runCLI(t, "document", "supersede", "id:5", "--replaces", "id:3")
 	require.NoError(t, err)
-	assert.Equal(t, "Document validity unchanged: id:5\n", out)
+	assert.Equal(t, "Document validity unchanged: id:3\n", out)
 	out, err = runCLI(t, "document", "supersede", "id:5", "--replaces", "id:3", "--note", "")
 	require.NoError(t, err)
-	assert.Equal(t, "Document validity updated: id:5\n", out)
+	assert.Equal(t, "Document validity updated: id:3\n", out)
 	require.Len(t, requestBodies, 2)
 	assert.NotContains(t, requestBodies[0], "note")
 	require.Contains(t, requestBodies[1], "note")
@@ -164,4 +164,25 @@ func TestSupersessionCLIRejectsInvalidFlags(t *testing.T) {
 		_, err := runCLI(t, tc.args...)
 		require.ErrorContains(t, err, tc.want)
 	}
+}
+
+func TestValidityShowsNotes(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/nodes/5":
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 5, Path: "/lease.txt", Revision: 1}))
+		case "GET /api/v1/nodes/5/validity":
+			assert.NoError(t, json.MarshalWrite(w, api.NodeValidity{
+				Node: api.Node{ID: 5, Path: "/lease.txt", Revision: 1}, State: "superseded", AsOf: "2025-06-01",
+				Predecessors: []api.SupersessionLink{{PredecessorID: 3, Note: "annual renewal"}, {PredecessorID: 4}},
+				Successors:   []api.SupersessionLink{{SuccessorID: 6, Note: "corrected terms"}, {SuccessorID: 7}},
+			}))
+		default:
+			http.Error(w, r.URL.Path, http.StatusNotFound)
+		}
+	})
+	out, err := runCLI(t, "document", "validity", "id:5", "--as-of", "2025-06-01")
+	require.NoError(t, err)
+	assert.Equal(t, "/lease.txt: superseded (as of 2025-06-01)\nReplaces: id:3 annual renewal\nReplaces: id:4\nSuccessor: id:6 corrected terms\nSuccessor: id:7\n", out)
 }

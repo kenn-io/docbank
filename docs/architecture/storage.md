@@ -147,6 +147,9 @@ A link write checks and advances the predecessor's revision. A date-window
 write checks and advances its node's revision. Repeating an unchanged write or
 removing an absent declaration preserves the revision. Both link endpoints
 must be live files when declared. Windows also require a live file.
+Changed declarations record `validity_changed` feed events in the same transaction.
+See [React to vault changes](../agents/integration.md#react-to-vault-changes)
+for the affected nodes and refresh rules.
 See [Audit restrictions](#audit-restrictions) for audited vaults.
 
 Go validates notes, dates, endpoint kinds, and graph structure before authority

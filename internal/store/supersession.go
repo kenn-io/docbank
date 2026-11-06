@@ -132,6 +132,9 @@ func (s *Store) changeSupersession(ctx context.Context, successorID, predecessor
 			if err = bumpRevisionTx(ctx, tx, n.ID, nowRFC3339()); err != nil {
 				return err
 			}
+			if err = recordVaultChangesTx(ctx, tx, "validity_changed", predecessorID, successorID); err != nil {
+				return err
+			}
 			n, err = nodeByIDTx(ctx, tx, n.ID)
 			if err != nil {
 				return err
@@ -189,6 +192,20 @@ func (s *Store) changeWindow(ctx context.Context, id, revision int64, w document
 				return err
 			}
 			if err = bumpRevisionTx(ctx, tx, id, nowRFC3339()); err != nil {
+				return err
+			}
+			ids := []int64{}
+			if err = queryRows(ctx, tx, `SELECT id FROM nodes WHERE id=$1 OR (trashed_at IS NULL AND id IN (SELECT predecessor_node_id FROM node_supersessions WHERE successor_node_id=$1)) ORDER BY id`, []any{id}, func(rows *sql.Rows) error {
+				var affected int64
+				if err := rows.Scan(&affected); err != nil {
+					return err
+				}
+				ids = append(ids, affected)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err = recordVaultChangesTx(ctx, tx, "validity_changed", ids...); err != nil {
 				return err
 			}
 			n, err = nodeByIDTx(ctx, tx, id)

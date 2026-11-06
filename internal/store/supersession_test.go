@@ -407,3 +407,99 @@ func TestAuditedRestoreRejectsChangedValidity(t *testing.T) {
 		})
 	}
 }
+
+func TestSupersessionChangeFeed(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a"), 1, "text/plain")
+	require.NoError(t, err)
+	next, err := s.CreateFile(ctx, s.RootID(), "next.txt", fakeHash("b"), 1, "text/plain")
+	require.NoError(t, err)
+	_, cursor, err := s.VaultChanges(ctx, "", 500)
+	require.NoError(t, err)
+	for _, step := range []struct {
+		name  string
+		write func() (SupersessionChange, error)
+		ids   []int64
+	}{
+		{"declare", func() (SupersessionChange, error) {
+			return s.PutSupersession(ctx, next.ID, old.ID, UnconditionalRev, new("renewal"))
+		}, []int64{old.ID, next.ID}},
+		{"repeat declaration", func() (SupersessionChange, error) {
+			return s.PutSupersession(ctx, next.ID, old.ID, UnconditionalRev, nil)
+		}, nil},
+		{"edit note", func() (SupersessionChange, error) {
+			return s.PutSupersession(ctx, next.ID, old.ID, UnconditionalRev, new("corrected renewal"))
+		}, []int64{old.ID, next.ID}},
+		{"window", func() (SupersessionChange, error) {
+			return s.PutEffectiveWindow(ctx, next.ID, UnconditionalRev, "2026-01-01", "")
+		}, []int64{old.ID, next.ID}},
+		{"repeat window", func() (SupersessionChange, error) {
+			return s.PutEffectiveWindow(ctx, next.ID, UnconditionalRev, "2026-01-01", "")
+		}, nil},
+		{"clear window", func() (SupersessionChange, error) { return s.DeleteEffectiveWindow(ctx, next.ID, UnconditionalRev) }, []int64{old.ID, next.ID}},
+		{"repeat clear", func() (SupersessionChange, error) { return s.DeleteEffectiveWindow(ctx, next.ID, UnconditionalRev) }, nil},
+		{"remove", func() (SupersessionChange, error) {
+			return s.DeleteSupersession(ctx, next.ID, old.ID, UnconditionalRev)
+		}, []int64{old.ID, next.ID}},
+		{"repeat remove", func() (SupersessionChange, error) {
+			return s.DeleteSupersession(ctx, next.ID, old.ID, UnconditionalRev)
+		}, nil},
+		{"unlinked window", func() (SupersessionChange, error) {
+			return s.PutEffectiveWindow(ctx, next.ID, UnconditionalRev, "2026-01-01", "")
+		}, []int64{next.ID}},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			_, err := step.write()
+			require.NoError(t, err)
+			changes, head, err := s.VaultChanges(ctx, cursor, 500)
+			require.NoError(t, err)
+			require.Len(t, changes, len(step.ids))
+			for i, id := range step.ids {
+				require.Equal(t, id, changes[i].NodeID)
+				require.Equal(t, "validity_changed", changes[i].Kind)
+				node, err := s.NodeByID(ctx, id)
+				require.NoError(t, err)
+				require.Equal(t, node.Revision, changes[i].Revision)
+			}
+			if len(step.ids) == 0 {
+				require.Equal(t, cursor, head)
+			}
+			cursor = head
+		})
+	}
+}
+
+func TestSupersessionChangeFeedFailureRollsBack(t *testing.T) {
+	t.Parallel()
+	for _, window := range []bool{false, true} {
+		t.Run(fmt.Sprintf("window=%t", window), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a"), 1, "text/plain")
+			require.NoError(t, err)
+			next, err := s.CreateFile(ctx, s.RootID(), "next.txt", fakeHash("b"), 1, "text/plain")
+			require.NoError(t, err)
+			_, cursor, err := s.VaultChanges(ctx, "", 500)
+			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, `CREATE TRIGGER fail_validity_feed BEFORE INSERT ON vault_changes BEGIN SELECT RAISE(ABORT,'feed unavailable'); END`)
+			require.NoError(t, err)
+			if window {
+				_, err = s.PutEffectiveWindow(ctx, old.ID, old.Revision, "2026-01-01", "")
+			} else {
+				_, err = s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
+			}
+			require.ErrorContains(t, err, "feed unavailable")
+			view, err := s.NodeValidity(ctx, old.ID, "2026-01-01")
+			require.NoError(t, err)
+			require.Equal(t, old.Revision, view.Node.Revision)
+			require.Empty(t, view.Successors)
+			require.Empty(t, view.Window.From)
+			changes, head, err := s.VaultChanges(ctx, cursor, 500)
+			require.NoError(t, err)
+			require.Empty(t, changes)
+			require.Equal(t, cursor, head)
+		})
+	}
+}

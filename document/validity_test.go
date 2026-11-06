@@ -76,6 +76,7 @@ func TestValidateEffectiveWindow(t *testing.T) {
 	}{
 		{EffectiveWindow{}, true}, {EffectiveWindow{From: "2024-02-29", To: "2024-02-29"}, true},
 		{EffectiveWindow{From: "2023-02-29"}, false}, {EffectiveWindow{From: "2024-2-01"}, false},
+		{EffectiveWindow{From: "0000-01-01"}, false}, {EffectiveWindow{To: "0000-01-01"}, false},
 		{EffectiveWindow{From: "2025-01-01", To: "2024-12-31"}, false},
 	} {
 		if err := ValidateEffectiveWindow(tt.w); (err == nil) != tt.valid {
