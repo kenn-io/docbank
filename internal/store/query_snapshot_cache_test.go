@@ -18,18 +18,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func setupSnapshotPageFixture(t *testing.T, s *Store) time.Time {
+	t.Helper()
+	for i := range 51 {
+		name := fmt.Sprintf("%02d.txt", i)
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("cache-"+name), int64(i+1), "text/plain")
+		require.NoError(t, err)
+	}
+	return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+}
+
 func TestQuerySnapshotCachePagesAreOpaqueOwnedAndCallerIsolated(t *testing.T) {
 	t.Parallel()
 	for _, driverCase := range walkTestDrivers() {
 		t.Run(driverCase.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driverCase.driver)
-			for i := range 51 {
-				name := strings.Repeat("0", 2-len(string(rune('0'+i/10)))) + string(rune('0'+i/10)) + string(rune('0'+i%10)) + ".txt"
-				_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("cache-"+name), int64(i+1), "text/plain")
-				require.NoError(t, err)
-			}
-
-			now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+			now := setupSnapshotPageFixture(t, s)
 			service := newQuerySnapshotService(s, querySnapshotServiceOptions{
 				Now:     func() time.Time { return now },
 				Rand:    bytes.NewReader(bytes.Repeat([]byte{0x11}, snapshotIDBytes)),
@@ -621,12 +625,8 @@ type snapshotTailFixture struct {
 func newSnapshotTailFixture(t *testing.T, request SnapshotRequest) snapshotTailFixture {
 	t.Helper()
 	s := newTestStore(t)
-	for i := range 51 {
-		name := fmt.Sprintf("%02d.txt", i)
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("tail-"+name), 1, "text/plain")
-		require.NoError(t, err)
-	}
-	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	fixedNow := setupSnapshotPageFixture(t, s)
+	now := func() time.Time { return fixedNow }
 	request, err := normalizeQuerySnapshotRequest(request)
 	require.NoError(t, err)
 	var charges int
