@@ -755,6 +755,76 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 	}
 }
 
+func TestQuerySnapshotCacheRejectsInvalidatedFirstPageHandoff(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"revoke", "request expiry", "shutdown"} {
+		t.Run(action, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50}
+				fixture := newSnapshotTailFixture(t, request)
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				var service *QuerySnapshotService
+				var charges int
+				service = newQuerySnapshotService(fixture.store, querySnapshotServiceOptions{
+					Now: fixture.now,
+					ChargeHook: func(context.Context, string, int64, int64) error {
+						charges++
+						if charges == fixture.chargesBeforeTail {
+							switch action {
+							case "revoke":
+								service.Revoke("owner")
+							case "request expiry":
+								<-ctx.Done()
+							case "shutdown":
+								service.Stop()
+							}
+						}
+						return nil
+					},
+				})
+				defer func() { require.NoError(t, service.Close()) }()
+				page, err := service.Create(ctx, "owner", request)
+				want := context.Canceled
+				if action == "request expiry" {
+					want = context.DeadlineExceeded
+				}
+				require.ErrorIs(t, err, want)
+				assert.Empty(t, page)
+				assert.Equal(t, snapshotCacheStats{}, service.stats())
+				assert.Empty(t, service.ownerHandles)
+			})
+		})
+	}
+}
+
+func TestQuerySnapshotCacheTailPanicReleasesReservation(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50}
+		fixture := newSnapshotTailFixture(t, request)
+		var charges int
+		service := newQuerySnapshotService(fixture.store, querySnapshotServiceOptions{
+			Now: fixture.now,
+			ChargeHook: func(context.Context, string, int64, int64) error {
+				charges++
+				if charges == fixture.chargesBeforeTail+1 {
+					panic("synthetic snapshot tail panic")
+				}
+				return nil
+			},
+		})
+		defer func() { require.NoError(t, service.Close()) }()
+		first, err := service.Create(t.Context(), "owner", request)
+		require.NoError(t, err)
+		require.NotEmpty(t, first.NextCursor)
+		_, err = service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+		require.ErrorIs(t, err, ErrSnapshotGone)
+		assert.Equal(t, snapshotCacheStats{}, service.stats())
+		assert.Empty(t, service.ownerHandles)
+	})
+}
+
 func TestQuerySnapshotCacheMembershipReadRespectsByteBudget(t *testing.T) { //nolint:paralleltest // measures heap allocations, so it runs alone
 	// Keep allocation measurement separate from this package's parallel tests.
 	for _, count := range []int{1, 128} {

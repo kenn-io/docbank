@@ -253,11 +253,31 @@ func (s *QuerySnapshotService) Create(
 		return prepared.page, finish(prepared.ctx)
 	}
 	s.mu.Lock()
+	err = ctx.Err()
+	if err == nil {
+		err = prepared.ctx.Err()
+	}
+	active, ok := s.builds[prepared.build.id]
+	if err == nil && (s.closed || !ok || active.invalidated) {
+		err = context.Canceled
+	}
+	if err != nil {
+		s.mu.Unlock()
+		prepared.cancel()
+		s.finishBuild(prepared.build, false)
+		return SnapshotPage{}, err
+	}
 	prepared.build.handedOff = true
 	s.mu.Unlock()
 	page := prepared.page
 	go func() {
-		if err := finish(prepared.tailCtx); err != nil && !errors.Is(err, ErrQuerySnapshotTooLarge) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				slog.WarnContext(prepared.tailCtx, "finish query snapshot build panicked", "panic", recovered)
+			}
+		}()
+		if err := finish(prepared.tailCtx); err != nil &&
+			!errors.Is(err, context.Canceled) && !errors.Is(err, ErrSnapshotAdmission) && !errors.Is(err, ErrQuerySnapshotTooLarge) {
 			slog.WarnContext(prepared.tailCtx, "finish query snapshot build", "error", err)
 		}
 	}()
