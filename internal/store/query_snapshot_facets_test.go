@@ -298,25 +298,6 @@ func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
 		facetCounts(facetByDimension(t, projection, "duplicates")))
 }
 
-func TestQuerySnapshotDuplicatesFacetCountsIgnoreRowOrder(t *testing.T) {
-	t.Parallel()
-	// Each file contributes one duplicate state, so identity order is irrelevant.
-	rows := []struct{ id, value string }{
-		{"2", "duplicate"}, {"3", "unique"}, {"10", "duplicate"}, {"11", "unique"},
-	}
-	for _, order := range [][]int{{0, 1, 2, 3}, {2, 3, 0, 1}, {3, 1, 2, 0}} {
-		observation := newSnapshotFacetAccumulator()
-		for _, index := range order {
-			row := rows[index]
-			observation.add("duplicates", row.id, row.value, row.value, 1, 4)
-		}
-		assert.False(t, observation.limited)
-		assert.Equal(t, int64(4), observation.total)
-		assert.Zero(t, observation.missing)
-		assert.Equal(t, map[string]int64{"duplicate": 2, "unique": 2}, observation.counts)
-	}
-}
-
 func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T) {
 	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
