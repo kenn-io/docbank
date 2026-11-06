@@ -653,6 +653,24 @@ test("masks selected PDF text using native spans and verified delivery", async (
           await field.fill(String(index + 1));
           await field.press("Enter");
         }
+        // Page readiness alone does not mean navigation and tiling have settled.
+        await expect(drawer.locator(`[data-review-page="${index + 1}"]`)).toBeInViewport();
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+            ),
+        );
+        await expect
+          .poll(() =>
+            host.evaluate(async (el) =>
+              (await (el as HTMLElement & { registry: Promise<PluginRegistry> }).registry)
+                .getPlugin<ViewportPlugin>("viewport")!
+                .provides()
+                .isScrolling(),
+            ),
+          )
+          .toBe(false);
         await expect(draw).toBeEnabled({ timeout: 60000 });
         await host.evaluate(
           async (el, { index, target }) => {
