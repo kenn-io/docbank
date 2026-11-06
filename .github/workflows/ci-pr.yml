@@ -1,6 +1,6 @@
 name: CI
 
-# Temporarily run the proposed workflow revision to measure its test reports.
+# PR and merge-group candidates run ci.yml@main on GitHub-hosted runners; ci.yml changes apply after merging to main.
 on:
   pull_request:
   merge_group:
@@ -11,7 +11,7 @@ permissions: read-all
 jobs:
   run:
     cache-mode: read
-    uses: kenn-io/docbank/.github/workflows/ci.yml@4fafdfc6c1c07329de9b64b8c47915ec374ecfe9
+    uses: kenn-io/docbank/.github/workflows/ci.yml@main
 
   gate:
     name: CI gate
