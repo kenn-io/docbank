@@ -619,13 +619,13 @@ func TestCheckoutValidationBacksOffAndLogsChangedErrors(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				var log bytes.Buffer
-				readable := false
+				var readable atomic.Bool
 				attempts := 0
 				var times []time.Time
 				done := make(chan error, 1)
 				go func() {
 					done <- waitForCheckoutValidation(ctx, func(context.Context) error {
-						if readable {
+						if readable.Load() {
 							return nil
 						}
 						attempts++
@@ -644,7 +644,7 @@ func TestCheckoutValidationBacksOffAndLogsChangedErrors(t *testing.T) {
 				default:
 				}
 				if succeeds {
-					readable = true
+					readable.Store(true)
 					require.NoError(t, <-done)
 				} else {
 					cancel()

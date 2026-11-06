@@ -93,6 +93,67 @@ var backendSuites = []backendSuite{
 		}},
 		{"PhotoFaceDetectionCapacityRollback", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionCapacityRollback(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionCapacityRollback(t, newPostgresQueryStore) }},
 	}},
+	{name: "photo-checkout", postgres: "native operations", scope: "Checkout selection, publication, observation, commit-back and retirement; excludes public vault opening and filesystem workers.", scenarios: []backendScenario{
+		{"PhotoCheckoutCommitAndRebind", func(t *testing.T) { t.Helper(); checkPhotoCheckoutCommitAndRebind(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutCommitAndRebind(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutAlbumSelection", nil, checkPhotoCheckoutAlbumSelectionPostgres},
+		{"PhotoCheckoutPublicationRecovery", nil, checkPhotoCheckoutPublicationRecoveryPostgres},
+		{"PhotoCheckoutCommitRollback", nil, checkPhotoCheckoutCommitRollbackPostgres},
+		{"PhotoCheckoutCommitSnapshot", nil, checkPhotoCheckoutCommitSnapshotPostgres},
+		{"PhotoCheckoutObservationBatches", nil, checkPhotoCheckoutObservationBatchesPostgres},
+		{"PreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication", func(t *testing.T) {
+			t.Helper()
+			checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutCreateValidation", func(t *testing.T) { t.Helper(); checkPhotoCheckoutCreateValidation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutCreateValidation(t, newPostgresQueryStore) }},
+
+		{"PhotoCheckoutStatusTracksOperationAcrossPauseAndFinish", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutConflictsAndEntryPaths", func(t *testing.T) { t.Helper(); checkPhotoCheckoutConflictsAndEntryPaths(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutConflictsAndEntryPaths(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutPreservesNodeBasenameWithoutProvenance", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutSkipsNamesTooLongForTheDestination", func(t *testing.T) { t.Helper(); checkPhotoCheckoutSkipsNamesTooLongForTheDestination(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutSkipsNamesTooLongForTheDestination(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutNamesURLImportsByDocument", func(t *testing.T) { t.Helper(); checkPhotoCheckoutNamesURLImportsByDocument(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutNamesURLImportsByDocument(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutEntryRequiresFrozenEligibleSource", func(t *testing.T) { t.Helper(); checkPhotoCheckoutEntryRequiresFrozenEligibleSource(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutEntryRequiresFrozenEligibleSource(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutRetireAfterAuditActivation", func(t *testing.T) { t.Helper(); checkPhotoCheckoutRetireAfterAuditActivation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutRetireAfterAuditActivation(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutYearFolderUsesTimelineDay", func(t *testing.T) { t.Helper(); checkPhotoCheckoutYearFolderUsesTimelineDay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutYearFolderUsesTimelineDay(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutSkipsDuplicateNamesWithBoundedDetails", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutScanOrCommitRequiresReservation", func(t *testing.T) { t.Helper(); checkPhotoCheckoutScanOrCommitRequiresReservation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutScanOrCommitRequiresReservation(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "photo-import", postgres: "native operations", scope: "Grouped RAW/JPEG/sidecar ingestion, source replay, explicit pairing, browser continuation and import progress; excludes authored editing and XMP publication.", scenarios: []backendScenario{
 		{"PhotoImportRollback", nil, checkPhotoImportRollbackPostgres},
 		{"PhotoImportAcceptedSidecar", nil, checkPhotoImportAcceptedSidecarPostgres},
@@ -1096,7 +1157,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "People curation, best-shot/representative choices, hidden-session management, photo review and checkout remain unqualified. Photo query selection is covered by the search boundary."},
+	{name: "photo-editing", postgres: "unqualified", scope: "People curation, best-shot/representative choices, hidden-session management and photo review remain unqualified. Photo query selection is covered by the search boundary."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{

@@ -566,6 +566,12 @@ GRANT INSERT, DELETE, UPDATE(producer_fingerprint, caption, tags_json, visible_t
   ON documents.photo_suggestions TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(x, y, width, height, roll, facing, eyes_open, smile,
   detector_fingerprint, revision) ON documents.photo_faces TO docbank_runtime;
+GRANT INSERT, UPDATE(last_operation_id, destination, destination_identity, state,
+    destination_reserved, error, retention_released, retired_at, retirement_requested)
+    ON documents.photo_checkouts TO docbank_runtime;
+GRANT INSERT, UPDATE(published, base_held, observed_identity, observed_hash,
+    observed_size, observed_mtime, observed_since, working_state, version_id,
+    blob_hash, size) ON documents.photo_checkout_entries TO docbank_runtime;
 GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
 GRANT INSERT, UPDATE(generation_id, published_at)
     ON documents.visual_preview_heads TO docbank_runtime;
@@ -602,19 +608,32 @@ role, directly or indirectly. This ownership check is separate from object
 privileges: an owner can revoke its own write privileges and still retain the
 authority to alter objects or grant those privileges again.
 
-PostgreSQL support is unreleased. Edit the canonical DDL directly; do not assign
-layout versions, add compatibility gates, or write migrations for development
-schemas. Recreate disposable test databases when the schema changes.
+PostgreSQL schemas are disposable until the first deployment whose data must
+survive upgrades. An ordinary Docbank release does not establish that boundary:
+the public vault lifecycle still opens only SQLite. Edit
+`internal/store/pgschema/schema.sql` directly and increment `pgschema.SchemaVersion`
+whenever it changes, including indexes and column defaults. No migrations are
+needed during this period. `Setup` records the version in `vault_metadata` in the
+installation transaction. Both `Setup` and runtime `Validate` reject a missing or
+different version with a "recreate this schema" error; neither repairs it. Recreate
+only disposable development schemas with the current build, never retained data.
 
-The first release with PostgreSQL support establishes its schema version and
-upgrade floor, independently of SQLite layout versions and JSONL format versions.
-Subsequent changes require numbered
-`NNNNNN_description.up.sql` transitions, with the target version in the filename.
+Before the first retained deployment, establish the current schema as migration
+1 (`000001_initial_schema.up.sql`) and add a CI check that installs the numbered
+chain and compares it with the canonical schema. This is the PostgreSQL upgrade
+floor, independent of SQLite layout versions and JSONL format versions. From
+that cutoff onward, every change to the schema needs a numbered
+`NNNNNN_description.up.sql` transition, including indexes or defaults added while
+porting an operation. A port that changes only Go or queries needs none. Keep at
+most one new migration per PR; revise it while it remains branch-only and has
+been applied only to disposable databases.
+
 Keep one complete forward chain, and commit each transition and its version
 together under the setup lock. Runtime startup never migrates. Once a migration
 reaches main or a deployed database it is immutable; fix forward. Recovery uses
 a pre-upgrade backup and compatible binary, not down migrations. This discipline
-does not change SQLite's JSONL cutover policy.
+does not change SQLite's JSONL cutover policy. The migration chain and its CI
+comparison must land before retained PostgreSQL deployments are supported.
 
 Do not add SQL `CHECK` constraints. Value validation belongs in Go and must be
 shared by writes, imports, restores and audits. Primary keys, foreign keys,
@@ -653,7 +672,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; versioning starts with the first PostgreSQL release, and a public vault is not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; development versions reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
@@ -1115,7 +1134,7 @@ choices, generated sidecars, undo, audit history, queue invalidation and rollbac
 Face and description records also participate in metadata preparation; their
 native processing lifecycle is covered by the `photo-analysis` suite below. Query-based selections,
 `SkipUnavailable`, best-shot/representative choices, hidden-session management,
-photo review and checkout, and public PostgreSQL vault opening remain unqualified.
+photo review, and public PostgreSQL vault opening remain unqualified.
 The processing worker's XML encoding and filesystem publication still run through
 the SQLite vault; this qualification covers their Store calls.
 
@@ -1155,6 +1174,38 @@ sequence; a future metadata importer must advance it past imported IDs.
 Provider network execution, quality scoring, hidden-session management, people
 curation and public PostgreSQL vault opening remain unqualified.
 
+#### Photo checkouts
+
+The shared Store can select and freeze checkout files, record their publication,
+inspect working copies, commit edited content, rebind a destination and retire a
+checkout on either backend. Selection supports photo IDs, existing albums, year
+ranges and the whole library. It uses the existing display, visibility and
+capture-date rules without executing a general search query. Combined selectors
+deduplicate photos; hidden, excluded and trashed photos remain unavailable.
+
+Every checkout write uses writer admission. Publication commits its recovery
+intent before invoking the filesystem callback, then records completion in a
+separate transaction. The callback runs once. Cancellation after publication
+still permits completion recording. If recording fails, the committed intent
+keeps the source version retained until recovery or retirement; no database
+rollback can undo the external copy.
+
+Commit-back rechecks the frozen version, file pairing, destination identity and
+operation. Content, provenance, its replay receipt, the advanced checkout base
+and progress counters commit together. Retrying a completed entry preserves
+the same content and counters. Admission reads its receipt and authority from
+one snapshot. Observation batches and destination binding also roll back as a
+unit. On SQLite, observations drive the join from each bounded JSON batch and
+seek entries by checkout and file ID; a query-plan test covers this without
+statistics. Retiring a checkout releases its retained versions without deleting
+copies.
+
+The `photo-checkout` contracts exercise native operations, late publication and
+commit failures, batched observation rollback, snapshots and retained-version
+holds. Existing albums are inputs to selection; this does not qualify album
+editing. Filesystem workers, portable metadata import and restore, general photo
+query selection and public PostgreSQL vault opening remain separate.
+
 #### Recoverable deletion
 
 Native document and folder trash, photo-group trash, trash browsing and restore
@@ -1179,7 +1230,7 @@ assets from multiple statements. Backend qualification compares populated photo
 state, receipts and export inputs against SQLite and validates the resulting
 ordinary and audited metadata.
 
-Photo review and checkout, portable backup/restore and public PostgreSQL vault
+Photo review, portable backup/restore and public PostgreSQL vault
 opening remain unqualified.
 
 #### Permanent cleanup

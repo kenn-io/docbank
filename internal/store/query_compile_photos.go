@@ -170,9 +170,7 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		// photo_technical_metadata join on the version's blob_hash, and photo_technical_metadata only ever sets
 		// capture_date alongside a non-empty capture_sort_key, so a placed file's EXIF day already equals pl.day.
 		return c.compilePhotoVersionPredicate(func(alias string) string {
-			timeline := `SELECT 1 FROM photo_files tf JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id`
-			return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ?) OR EXISTS (` +
-				`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ?))`
+			return photoCaptureDatePredicate(alias, operator, "?")
 		}, value, value), nil
 	case "gps":
 		bounds, err := query.ParseGPSOperand(value)
@@ -301,4 +299,12 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return quality(alias) + ` AND q.` + column + operator + ` ?)`
 	}, args...), nil
+}
+
+// photoCaptureDatePredicate keeps checkout year selection and photo queries on
+// the same timeline/source-metadata date rule. The parameter may occur twice.
+func photoCaptureDatePredicate(alias, operator, parameter string) string {
+	timeline := `SELECT 1 FROM photo_files tf JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id`
+	return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ` + parameter + `) OR EXISTS (` +
+		`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ` + parameter + `))`
 }

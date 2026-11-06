@@ -27,11 +27,11 @@ var backendMaintenanceEffects = []backendMaintenance{
  content_versions_promote_rendition_staging content_versions_revoke_derivative_purge`},
 	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events contracts; people publication remains unqualified", `
  document_event_heads_deleted content_versions_invalidate_person_bindings`},
-	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/photo-import/sources/retention contracts; SQLite pending table is a trigger intermediate", `
+	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/photo-import/photo-checkout/sources/retention contracts; SQLite pending table is a trigger intermediate", `
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
  photo_timeline_version_delete photo_timeline_version_change
  photo_timeline_binding_insert photo_timeline_correction_insert`},
-	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/trash/retention/organization/photo-edit/photo-analysis contracts", `
+	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis contracts", `
  photo_xmp_unsettled_refresh photo_xmp_unsettled_file_insert photo_xmp_unsettled_file_update
  photo_xmp_unsettled_file_delete photo_xmp_unsettled_asset_insert photo_xmp_unsettled_asset_update
  photo_xmp_unsettled_node_update photo_xmp_unsettled_node_insert photo_xmp_unsettled_node_delete

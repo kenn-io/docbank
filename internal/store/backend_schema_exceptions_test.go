@@ -43,7 +43,6 @@ var deferredBackendIndexes = map[string]string{
 	"person_identities_person":                    "person_identities",
 	"person_identities_value":                     "person_identities",
 	"persons_name_folded":                         "persons",
-	"photo_change_receipts_checkout_commit":       "photo_change_receipts",
 	"photo_faces_assertion":                       "photo_faces",
 	"photo_set_members_added":                     "photo_set_members",
 	"photo_set_members_asset":                     "photo_set_members",

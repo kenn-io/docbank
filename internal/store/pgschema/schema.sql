@@ -2,7 +2,8 @@
 -- restore.
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
-    vault_uid      UUID NOT NULL UNIQUE
+    vault_uid      UUID NOT NULL UNIQUE,
+    schema_version INTEGER NOT NULL
 );
 
 -- Allocation is transactional: audit replay requires consecutive committed IDs.
@@ -2334,6 +2335,9 @@ CREATE INDEX photo_assets_display_override_file ON {{schema}}.photo_assets(displ
 CREATE INDEX photo_faces_version ON {{schema}}.photo_faces(content_version_id, face_id);
 CREATE INDEX person_candidate_faces_version ON {{schema}}.person_candidate_faces(content_version_id, candidate_id);
 CREATE INDEX photo_checkout_entries_version ON {{schema}}.photo_checkout_entries(version_id);
+CREATE INDEX photo_change_receipts_checkout_commit ON {{schema}}.photo_change_receipts(
+    (after_json::jsonb #>> '{operation_id}'), (after_json::jsonb #>> '{file_id}')
+) WHERE operation='checkout_commit';
 
 -- Exact cleanup survives removal of logical blob membership.
 CREATE TABLE {{schema}}.gc_loose_retirements (

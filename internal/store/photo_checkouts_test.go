@@ -386,37 +386,49 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutCreateValidation(t *testing.T) {
+type checkoutRejectedCase struct {
+	name                                       string
+	limit                                      int64
+	withAsset, explicitSelection, auditRefusal bool
+	setSelection, overflow                     bool
+	selection                                  PhotoCheckoutSelection
+	expectedErr                                error
+	errorText                                  string
+}
+
+func TestPhotoCheckoutCreateInputValidation(t *testing.T) {
 	t.Parallel()
-	type rejectedCase struct {
-		name                                       string
-		limit                                      int64
-		withAsset, explicitSelection, auditRefusal bool
-		setSelection, overflow                     bool
-		selection                                  PhotoCheckoutSelection
-		expectedErr                                error
-		errorText                                  string
-	}
-	cases := []rejectedCase{
+	checkPhotoCheckoutRejected(t, newTestStore, []checkoutRejectedCase{
 		{name: "all with assets", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{All: true, AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, errorText: "all cannot be combined"},
-		{name: "empty all", limit: 100, errorText: "selection contains no files"},
-		{name: "empty years", withAsset: true, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 1900, To: 1900}}, errorText: "selection contains no files"},
 		{name: "empty selection", limit: 100, setSelection: true, errorText: "select assets, albums, years, or all"},
 		{name: "invalid asset ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AssetIDs: []string{"bad"}}},
 		{name: "invalid album ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AlbumIDs: []string{"bad"}}},
 		{name: "invalid year start", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 0, To: 2024}}},
 		{name: "invalid year range", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2025, To: 2024}}},
 		{name: "invalid year end", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 10000}}},
+		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
+		{name: "all without limit", withAsset: true, errorText: "all requires a positive byte_limit"},
+	})
+}
+
+func checkPhotoCheckoutCreateValidation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	checkPhotoCheckoutRejected(t, newStore, []checkoutRejectedCase{
+		{name: "empty all", limit: 100, errorText: "selection contains no files"},
+		{name: "empty years", withAsset: true, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 1900, To: 1900}}, errorText: "selection contains no files"},
 		{name: "unknown asset ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, expectedErr: ErrNotFound},
 		{name: "byte overflow", limit: 100, withAsset: true, overflow: true},
 		{name: "audit refusal", limit: 100, withAsset: true, explicitSelection: true, auditRefusal: true},
-		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
-		{name: "all without limit", withAsset: true, errorText: "all requires a positive byte_limit"},
 		{name: "insufficient limit", limit: 19, withAsset: true, errorText: "selected bytes exceed byte_limit"},
-	}
+	})
+}
+
+func checkPhotoCheckoutRejected(t *testing.T, newStore func(*testing.T) *Store, cases []checkoutRejectedCase) {
+	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			selection := PhotoCheckoutSelection{All: true}
 			if tc.setSelection {
 				selection = tc.selection
@@ -493,9 +505,10 @@ func TestPhotoCheckoutOperationEligibility(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
+func checkPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	albumAsset(t, s, "photo.jpg")
 	checkout, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "", 20)
 	require.NoError(t, err)
@@ -568,7 +581,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 		require.Greater(t, last.Entries[0].FileID, first.Entries[0].FileID)
 	})
 	t.Run("child operations preserve lifecycle", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		albumAsset(t, s, "partial.jpg")
 		c, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 20)
 		require.NoError(t, err)
@@ -581,7 +594,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 		for _, creationState := range []string{"failed", "completed"} {
 			outcome, operationError, wantError := StorageOperationCompleted, "", "partial"
 			if creationState == "completed" {
-				s = newTestStore(t)
+				s = newStore(t)
 				albumAsset(t, s, "photo.jpg")
 				c, op, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 100)
 				require.NoError(t, err)
@@ -606,7 +619,8 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	})
 }
 
-func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
+func checkPhotoCheckoutConflictsAndEntryPaths(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name, sidecar, trashRole, captureDate string
@@ -620,7 +634,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/IMG.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			source := t.TempDir()
 			run, err := s.BeginIngest(ctx, "photo-import", source)
@@ -695,7 +709,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 		})
 	}
 	t.Run("first observation after replacement pruning and rename", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 		require.NoError(t, err)
@@ -766,7 +780,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 			if runtime.GOOS == "windows" && strings.HasPrefix(tc.sourcePath, "/camera/") {
 				t.Skip("source basename is incompatible with Windows filenames")
 			}
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			var asset PhotoAsset
 			if tc.sourcePath == "" {
@@ -794,12 +808,13 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t *testing.T) {
+func checkPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("node basename is incompatible with Windows filenames")
 	}
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, `C:\capture.jpg`)
 	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
@@ -810,9 +825,10 @@ func TestPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t *testing.T) {
 	require.Equal(t, "undated/"+asset.ID+`/C:\capture.jpg`, entries[0].Path)
 }
 
-func TestPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T) {
+func checkPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	kept := albumAsset(t, s, "kept.jpg")
 	tooLong := albumAsset(t, s, strings.Repeat("a", 252)+".jpg")
@@ -835,9 +851,10 @@ func TestPhotoCheckoutSkipsNamesTooLongForTheDestination(t *testing.T) {
 	require.NotContains(t, skipped, kept.ID)
 }
 
-func TestPhotoCheckoutNamesURLImportsByDocument(t *testing.T) {
+func checkPhotoCheckoutNamesURLImportsByDocument(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	source := "https://example.com/download?id=7&sig=" + strings.Repeat("a", 300)
 	fetch := fmt.Sprintf(`{"version":1,"requested_url":%q,"final_url":"https://example.com/filing.png","fetched_at":"2026-10-01T12:34:56Z"}`, source)
@@ -856,11 +873,12 @@ func TestPhotoCheckoutNamesURLImportsByDocument(t *testing.T) {
 	require.Equal(t, "filing.png", path.Base(entries[0].Path))
 }
 
-func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
+func checkPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, mutation := range []string{"trashed", "retargeted", "unpublished", "detached own file"} {
 		t.Run(mutation, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			source := t.TempDir()
 			run, err := s.BeginIngest(ctx, "photo-import", source)
@@ -1146,16 +1164,12 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 	})
 }
 
-// TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication covers
-// recovery after a destination can no longer be confirmed: a reconcile that
-// cannot verify a previously published entry still clears its published
-// flag (ObservePhotoCheckout), but PreserveUncertainPhotoCheckoutHolds must
-// run first so the source version stays held, matching the documented
-// "published or uncertain copies retain their bases until retirement"
-// guarantee.
-func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testing.T) {
+// Recovery must retain an uncertain copy's base after reconciliation clears
+// the durable publication intent, even when publication was never recorded.
+func checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "photo.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
@@ -1165,7 +1179,12 @@ func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testin
 	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+	// Interrupt at the external-copy boundary, after intent is committed but
+	// before completion can set published or base_held. Recovery sees this
+	// same state if the process stops after installing the working copy.
+	require.PanicsWithValue(t, "copy interrupted", func() {
+		_ = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { panic("copy interrupted") })
+	})
 
 	require.NoError(t, s.PreserveUncertainPhotoCheckoutHolds(ctx, checkout.ID, op.ID))
 	require.NoError(t, s.ObservePhotoCheckout(ctx, checkout.ID, op.ID, nil))
@@ -1190,9 +1209,10 @@ func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testin
 	require.Equal(t, 1, pruned.DeletedVersions, "retirement releases the hold")
 }
 
-func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
+func checkPhotoCheckoutRetireAfterAuditActivation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "photo.jpg")
 	checkout, operation, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
@@ -1208,9 +1228,10 @@ func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
 	require.Equal(t, retired, persisted)
 }
 
-func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
+func checkPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
@@ -1228,9 +1249,10 @@ func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
 
 // Creation resolves the selection without the write lock. A base purged
 // before the lock must not be frozen into a checkout.
-func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
+func checkPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	kept := albumAsset(t, s, "kept.jpg")
 	purged := albumAsset(t, s, "purged.jpg")
@@ -1272,9 +1294,10 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	require.Equal(t, kept.Files[0].ID, frozen[0].FileID)
 }
 
-func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
+func checkPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	good := albumAsset(t, s, "good.jpg")
 	duplicateAssets := map[string][]string{}
@@ -1365,7 +1388,7 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 		if runtime.GOOS != "windows" {
 			t.Skip("Windows filename policy")
 		}
-		s := newTestStore(t)
+		s := newStore(t)
 		albumAsset(t, s, "first?.jpg")
 		for _, name := range []string{"second:.jpg", "valid.jpg"} {
 			_, err := s.CreateFile(t.Context(), s.RootID(), name, browseHash(name), 10, "image/jpeg")
@@ -1409,6 +1432,23 @@ func TestPhotoCheckoutObservationBatchesKeepSummaryAndRollback(t *testing.T) {
 		}
 		observations = append(observations, observation)
 	}
+	// Without statistics, SQLite must drive the join from the small batch,
+	// seeking each entry by its complete key instead of scanning the checkout.
+	batch, err := json.Marshal(observations[:256])
+	require.NoError(t, err)
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+s.photoCheckoutObservationsSQL(false), string(batch), c.ID)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Regexp(t, `SEARCH matched .*\(checkout_id=\? AND file_id=\?\)`, strings.Join(plan, "\n"))
 	require.NoError(t, s.ObservePhotoCheckoutEntries(t.Context(), c.ID, "identity", observations))
 	counts, paths, err := s.PhotoCheckoutWorkingSummary(t.Context(), c.ID, 10)
 	require.NoError(t, err)
@@ -1436,11 +1476,12 @@ func TestPhotoCheckoutObservationBatchesKeepSummaryAndRollback(t *testing.T) {
 	require.Equal(t, map[string]int64{"clean": 129, "missing": 129}, counts)
 }
 
-func TestPhotoCheckoutScanOrCommitRequiresReservation(t *testing.T) {
+func checkPhotoCheckoutScanOrCommitRequiresReservation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, kind := range []string{StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit} {
 		t.Run(kind, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			albumAsset(t, s, "photo.jpg")
 			c, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 100)
 			require.NoError(t, err)

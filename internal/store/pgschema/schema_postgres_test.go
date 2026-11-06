@@ -172,6 +172,42 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
+	t.Run("schema version mismatch", func(t *testing.T) {
+		// Both the setup and runtime entry points must refuse incompatible
+		// schemas without rewriting the version, identity or existing data.
+		checkRefused := func(t *testing.T) {
+			t.Helper()
+			var before, after sql.NullString
+			query := `SELECT to_jsonb(m)->>'schema_version' FROM documents.vault_metadata m`
+			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&before))
+			_, err := Setup(t.Context(), setup, cfg)
+			require.ErrorContains(t, err, "recreate this schema")
+			_, err = Validate(t.Context(), runtime, cfg)
+			require.ErrorContains(t, err, "recreate this schema")
+			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&after))
+			require.Equal(t, before, after)
+			var kept uuid.UUID
+			require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT vault_uid FROM documents.vault_metadata`).Scan(&kept))
+			require.Equal(t, id, kept)
+		}
+		for _, version := range []int{0, SchemaVersion + 1} {
+			t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
+				_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_version=$1`, version)
+				require.NoError(t, err)
+				checkRefused(t)
+			})
+		}
+		_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_version=$1`, SchemaVersion)
+		require.NoError(t, err)
+		actual, err := Validate(t.Context(), runtime, cfg)
+		require.NoError(t, err)
+		require.Equal(t, id, actual)
+		t.Run("unversioned schema", func(t *testing.T) {
+			_, err := admin.ExecContext(t.Context(), `ALTER TABLE documents.vault_metadata DROP COLUMN schema_version`)
+			require.NoError(t, err)
+			checkRefused(t)
+		})
+	})
 }
 
 func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
@@ -180,7 +216,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111')`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata(singleton,vault_uid,schema_version) SELECT 2,'11111111-1111-4111-8111-111111111111',schema_version FROM documents.vault_metadata`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},

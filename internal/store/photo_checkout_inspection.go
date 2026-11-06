@@ -20,7 +20,7 @@ func (s *Store) PreparePhotoCheckoutOperation(ctx context.Context, request Photo
 	var op StorageOperation
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		c, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, request.CheckoutID))
+		c, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=$1`, request.CheckoutID))
 		if err != nil {
 			return err
 		}
@@ -40,7 +40,7 @@ func (s *Store) PreparePhotoCheckoutOperation(ctx context.Context, request Photo
 			return err
 		}
 		var total int64
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=?`, c.ID).Scan(&total); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=$1`, c.ID).Scan(&total); err != nil {
 			return err
 		}
 		create := localOperationCreate(kind, string(encoded))
@@ -49,7 +49,7 @@ func (s *Store) PreparePhotoCheckoutOperation(ctx context.Context, request Photo
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET last_operation_id=? WHERE checkout_id=?`, op.ID, c.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET last_operation_id=$1 WHERE checkout_id=$2`, op.ID, c.ID)
 		if err != nil {
 			return err
 		}
@@ -61,8 +61,10 @@ func (s *Store) PreparePhotoCheckoutOperation(ctx context.Context, request Photo
 
 // ReportPhotoCheckoutProgress preserves publication counters while hashing.
 func (s *Store) ReportPhotoCheckoutProgress(ctx context.Context, id string, files int64, receipt string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=?,receipt_json=?,updated_at=? WHERE operation_id=? AND state='running'`, files, receipt, nowRFC3339(), id)
-	return requireOneStorageOperationRow(result, err, id, "reporting checkout verification")
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=$1,receipt_json=$2,updated_at=$3 WHERE operation_id=$4 AND state='running'`, files, receipt, nowRFC3339(), id)
+		return requireOneStorageOperationRow(result, err, id, "reporting checkout verification")
+	})
 }
 
 func (s *Store) FinishPhotoCheckoutOperation(ctx context.Context, c PhotoCheckout, state StorageOperationState, receipt, failure string) error {
@@ -73,7 +75,7 @@ func (s *Store) FinishPhotoCheckoutOperation(ctx context.Context, c PhotoCheckou
 		if err := json.Unmarshal([]byte(receipt), &progress); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=CASE WHEN ? THEN total_objects ELSE ? END WHERE operation_id=?`, state == StorageOperationCompleted, progress.Files, c.LastOperationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=CASE WHEN $1 THEN total_objects ELSE $2 END WHERE operation_id=$3`, state == StorageOperationCompleted, progress.Files, c.LastOperationID); err != nil {
 			return err
 		}
 		if err := finishStorageOperationTx(ctx, tx, c.LastOperationID, state, receipt, failure, time.Now().Add(30*24*time.Hour)); err != nil {
