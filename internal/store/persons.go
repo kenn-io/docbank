@@ -359,7 +359,17 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		hideLocked := scope != nil && scope.ExpiresAt == nil
 		// The recent walk adds its own photo check, reusing its evidence joins.
 		prefix := document.FoldPersonName(query)
-		candidates, args := peopleCandidatesSQL(prefix, options.PhotoSummary && !options.RecentFirst, !hideLocked)
+		photosOnly := options.PhotoSummary && !options.RecentFirst
+		usePhotoSet := hideLocked && scope.Configured
+		candidates, args := peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
+		if photosOnly && !usePhotoSet {
+			joins, where := personPhotoSource(!hideLocked)
+			// Unary + keeps SQLite on the name index so it can stop after the page fills.
+			candidates += `+persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
+ AND EXISTS (SELECT 1 FROM person_document_assertions assertion
+ CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted') AND `
+		}
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
@@ -509,7 +519,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		}
 		slices.SortFunc(people, comparePeopleRecent)
 	}
-	if len(people) < limit {
+	if !photosOnly && len(people) < limit {
 		if prefix != "" {
 			// The cursor can skip ranked groups. Exclude those groups from the
 			// existing unranked tail as well as groups returned on this page.
@@ -531,9 +541,6 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		}
 		// Exhausting the walk identifies all eligible ranked groups. The rest
 		// use the name index and stop as soon as the page fills.
-		if photosOnly {
-			candidates += personHasPhotoSQL(!hideLocked, "") + " AND "
-		}
 		unrankedNames := make([]string, 0, len(names))
 		for name := range names {
 			unrankedNames = append(unrankedNames, name)
