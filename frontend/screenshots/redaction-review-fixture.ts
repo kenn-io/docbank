@@ -1,4 +1,22 @@
 import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
+import { expect, type Locator } from "@playwright/test";
+
+export async function turnReviewPage(target: Locator, n: number) {
+  const field = target.getByRole("textbox", { name: "", exact: true });
+  // The reader rewrites this box whenever its current page changes, even
+  // between the fill and Enter. Retype until the page sticks.
+  await expect(async () => {
+    if ((await field.inputValue()) !== String(n)) {
+      await field.fill(String(n));
+      await field.press("Enter");
+    }
+    await expect(target.getByRole("switch", { name: "Draw rectangle", exact: true })).toBeEnabled({
+      timeout: 5000,
+    });
+    await expect(field).toHaveValue(String(n), { timeout: 1000 });
+  }).toPass({ timeout: 60000 });
+}
+
 // Independent PDF authoring keeps crop/rotation expectations literal in the browser test.
 export function croppedReviewPDF(kind: "control" | "fractional" | "quantized" = "control"): Buffer {
   const fractional = kind === "fractional";

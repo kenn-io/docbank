@@ -1,4 +1,5 @@
 import { test, expect, type Locator } from "@playwright/test";
+import { turnReviewPage } from "./redaction-review-fixture.js";
 import type { RedactionMask, RedactionPreparation } from "../src/generated/docbank.js";
 import type {
   PluginRegistry,
@@ -508,9 +509,7 @@ test("masks selected PDF text using native spans and verified delivery", async (
           await expect(drawer.getByRole("button", { name: "Remove", exact: true })).toHaveCount(1);
         }
         for (const n of [2, 3, 4]) {
-          const field = drawer.getByRole("textbox", { name: "", exact: true });
-          await field.fill(String(n));
-          await field.press("Enter");
+          await turnReviewPage(drawer, n);
           await expect(drawer.locator(`[data-review-page="${n}"]`)).toBeInViewport();
           await page.evaluate(
             () =>
@@ -649,9 +648,7 @@ test("masks selected PDF text using native spans and verified delivery", async (
         add = drawer.getByRole("button", { name: "Mask selected text", exact: true });
       for (const [index, entry] of cases.entries()) {
         if (index) {
-          const field = drawer.getByRole("textbox", { name: "", exact: true });
-          await field.fill(String(index + 1));
-          await field.press("Enter");
+          await turnReviewPage(drawer, index + 1);
         }
         // Page readiness alone does not mean navigation and tiling have settled.
         await expect(drawer.locator(`[data-review-page="${index + 1}"]`)).toBeInViewport();
