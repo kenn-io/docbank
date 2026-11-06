@@ -155,7 +155,7 @@ func TestLocalTextSelection(t *testing.T) {
 	process(service, "bbb-incompatible")
 	rebuild, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
-	require.Contains(t, rebuild.VectorEffect, "Rebuild required")
+	require.Contains(t, rebuild.VectorEffect, "Adds separate index")
 	setup.Selected = "local-text"
 	continued, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)

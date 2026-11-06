@@ -75,7 +75,7 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 		trial, err := setup.Candidate(mode, candidate)
 		if errors.Is(err, ErrProfileNotConfigured) {
 			if indexed && setup.Selected != config.LocalTextProfile {
-				effect = "Rebuild required"
+				effect = "Adds separate index"
 			}
 			continue
 		}
