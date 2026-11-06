@@ -962,6 +962,18 @@ node/content-version membership observed at creation. It also carries exact
 content replacements, or dependency changes do not rewrite an existing
 snapshot. Create another snapshot to observe them.
 
+Documents snapshot creation returns after freezing membership, order, totals,
+facets, and the first page. Later display rows finish from the same creation-time
+observations in memory, after the database read closes. A page or member-copy
+request waits for that build to finish within its 30-second bound. A later size
+or cache-admission failure returns the same error as creation would, on every
+subsequent page or member request. Saved runs and Photos finish all rows before
+returning.
+
+`snapshot_fingerprint` covers the query, dependency revisions, generation,
+coverage, ordered members including their revisions, and facets. It excludes
+row display content.
+
 `POST /workspace/queries/{id}/pages` accepts only the required `cursor`. Send
 the returned `next_cursor` or `previous_cursor` unchanged. It is bound to the
 snapshot, owner, ordering, direction, and page size. The response omits a
@@ -988,7 +1000,9 @@ within its coverage, member, or time budget returns `available: false` with a
 Materialization admits at most 250,000 rows and 64 KiB of serialized data per
 row. Across the daemon, the cache admits at most 1,000,000 rows and 512 MiB of
 serialized snapshot data, with at most eight handles per authenticated owner
-and two snapshot builders at once. A build has 30 seconds. All requested facets share a
+and two snapshot builders at once. Documents builds release their builder slot
+after returning the first page, while retaining their handle and cache
+reservation until publication. A build has 30 seconds. All requested facets share a
 five-second facet budget. Handles expire after 15 minutes idle or 30 minutes
 absolute lifetime. These are cache-admission bounds, not a claim that the
 process uses at most 512 MiB of RSS.

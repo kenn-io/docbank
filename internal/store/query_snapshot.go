@@ -137,18 +137,19 @@ type SnapshotProjection struct {
 }
 
 type snapshotMaterializeOptions struct {
-	PhotoRanking       *PhotoRanking
-	MaterializeFacet   func(context.Context, string) (SnapshotFacet, error)
-	MaxRows            int64
-	MaxRowBytes        int64
-	MaxSerializedBytes int64
-	FacetMemberLimit   int64
-	BuildTimeout       time.Duration
-	FacetTimeout       time.Duration
-	Now                func() time.Time
-	Charge             func(rows, bytes int64) error
-	Photos             bool
-	SavedQuery         *savedQuerySnapshotInput
+	DeferredMemberships *snapshotMemberships
+	PhotoRanking        *PhotoRanking
+	MaterializeFacet    func(context.Context, string) (SnapshotFacet, error)
+	MaxRows             int64
+	MaxRowBytes         int64
+	MaxSerializedBytes  int64
+	FacetMemberLimit    int64
+	BuildTimeout        time.Duration
+	FacetTimeout        time.Duration
+	Now                 func() time.Time
+	Charge              func(rows, bytes int64) error
+	Photos              bool
+	SavedQuery          *savedQuerySnapshotInput
 }
 
 type savedQuerySnapshotInput struct {
@@ -296,6 +297,16 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				ranking := *projection.PhotoRanking
 				ranking.Members = nil
 				projection.PhotoRanking = &ranking
+			}
+		}
+		if !request.FacetsOnly {
+			if options.DeferredMemberships != nil {
+				*options.DeferredMemberships = memberships
+			} else {
+				hydrateSnapshotRows(projection.Rows, memberships)
+				if _, err := encodeSnapshotRows(ctx, options, &projection.SerializedBytes, projection.Rows, 0); err != nil {
+					return err
+				}
 			}
 		}
 		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, memberships, options, &projection.SerializedBytes)
@@ -486,7 +497,6 @@ func materializeSnapshotRows(
 		return nil, err
 	}
 	var photos []PhotoBrowseRow
-	var photoRowBytes []int64
 	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	photoColumns := `'','',NULL`
@@ -530,6 +540,9 @@ func materializeSnapshotRows(
 			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &row.AssetID, &row.SortKey, &row.Flag); err != nil {
 			return nil, fmt.Errorf("scanning query snapshot row: %w", err)
 		}
+		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, 0); err != nil {
+			return nil, err
+		}
 		projection.Rows = append(projection.Rows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -548,38 +561,15 @@ func materializeSnapshotRows(
 	}
 	for i := range projection.Rows {
 		row := &projection.Rows[i]
-		member := memberships[row.NodeID]
-		row.Tags, row.CollectionIDs = member.Tags, member.CollectionIDs
-		if len(row.CollectionIDs) > 0 {
-			row.DisplayCollectionID = row.CollectionIDs[0]
-			row.DisplayCollectionLabel = member.DisplayCollectionLabel
-		}
-		row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = member.CoverageState, member.CoverageBuildID, member.CoverageAttachmentID
-		row.MediaFamily = query.ClassifyMedia(row.MIMEType, row.Name)
 		if !options.Photos {
 			row.SortKey, err = snapshotSortKey(*row, compiled.Query.Sort.Field)
 		}
 		if err != nil {
 			return nil, err
 		}
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return nil, fmt.Errorf("encoding query snapshot row: %w", err)
-		}
-		rowBytes := int64(len(encoded))
-		if rowBytes > options.MaxRowBytes {
-			return nil, fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, rowBytes)
-		}
-		if i != 0 {
-			rowBytes++ // JSON array separator; container brackets were charged before the query.
-		}
-		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, rowBytes); err != nil {
-			return nil, err
-		}
 		projection.TotalBytes += row.Size
 		if annotatePhotos {
 			photos = append(photos, PhotoBrowseRow{AssetID: row.AssetID})
-			photoRowBytes = append(photoRowBytes, int64(len(encoded)))
 		}
 	}
 	if annotatePhotos {
@@ -592,17 +582,6 @@ func materializeSnapshotRows(
 			}
 			row := &projection.Rows[i]
 			row.SuggestionMatch = true
-			encoded, err := json.Marshal(row)
-			if err != nil {
-				return nil, fmt.Errorf("encoding query snapshot row: %w", err)
-			}
-			rowBytes := int64(len(encoded))
-			if rowBytes > options.MaxRowBytes {
-				return nil, fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
-			}
-			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, rowBytes-photoRowBytes[i]); err != nil {
-				return nil, err
-			}
 		}
 	}
 	projection.Total = int64(len(projection.Rows))
@@ -612,6 +591,45 @@ func materializeSnapshotRows(
 		sortSnapshotRows(projection.Rows, compiled.Query.Sort)
 	}
 	return memberships, nil
+}
+
+func hydrateSnapshotRows(rows []SnapshotRow, memberships snapshotMemberships) {
+	for i := range rows {
+		row := &rows[i]
+		member := memberships[row.NodeID]
+		row.Tags, row.CollectionIDs = member.Tags, member.CollectionIDs
+		if len(row.CollectionIDs) > 0 {
+			row.DisplayCollectionID = row.CollectionIDs[0]
+			row.DisplayCollectionLabel = member.DisplayCollectionLabel
+		}
+		row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = member.CoverageState, member.CoverageBuildID, member.CoverageAttachmentID
+		row.MediaFamily = query.ClassifyMedia(row.MIMEType, row.Name)
+	}
+}
+
+func encodeSnapshotRows(ctx context.Context, options snapshotMaterializeOptions, used *int64, rows []SnapshotRow, offset int) ([][]byte, error) {
+	encoded := make([][]byte, len(rows))
+	for i := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(rows[i])
+		if err != nil {
+			return nil, fmt.Errorf("encoding query snapshot row: %w", err)
+		}
+		bytes := int64(len(raw))
+		if bytes > options.MaxRowBytes {
+			return nil, fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, rows[i].NodeID, bytes)
+		}
+		if offset+i > 0 {
+			bytes++ // JSON array separator; brackets are charged before the query.
+		}
+		if err := chargeSnapshotMaterialization(options, used, 0, bytes); err != nil {
+			return nil, err
+		}
+		encoded[i] = raw
+	}
+	return encoded, nil
 }
 
 func snapshotSortKey(row SnapshotRow, field string) (string, error) {
@@ -689,7 +707,7 @@ type snapshotFingerprintPayload struct {
 	Dependencies []query.Dependency `json:"dependencies"`
 	Generation   SnapshotGeneration `json:"generation"`
 	Coverage     CoverageSelection  `json:"coverage"`
-	Rows         []SnapshotRow      `json:"rows"`
+	Members      []SnapshotMember   `json:"members"`
 	Facets       []SnapshotFacet    `json:"facets"`
 }
 
@@ -697,7 +715,7 @@ func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
 		PhotoRanking: projection.PhotoRanking, Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
-		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
+		Coverage: projection.Coverage, Members: snapshotMembers(projection.Rows), Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encoding snapshot fingerprint: %w", err)

@@ -99,6 +99,7 @@ type querySnapshotServiceOptions struct {
 }
 
 type cachedQuerySnapshot struct {
+	err             error
 	id              string
 	owner           string
 	metadata        []byte
@@ -111,6 +112,8 @@ type cachedQuerySnapshot struct {
 }
 
 type querySnapshotBuild struct {
+	done                chan struct{}
+	handedOff           bool
 	facetsOnly          bool
 	id                  uint64
 	snapshotID          string
@@ -123,12 +126,14 @@ type querySnapshotBuild struct {
 }
 
 type preparedQuerySnapshot struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	build      *querySnapshotBuild
-	projection SnapshotProjection
-	cached     *cachedQuerySnapshot
-	page       SnapshotPage
+	finish            func() error
+	stopRequestCancel func() bool
+	ctx               context.Context
+	cancel            context.CancelFunc
+	build             *querySnapshotBuild
+	projection        SnapshotProjection
+	cached            *cachedQuerySnapshot
+	page              SnapshotPage
 }
 
 type snapshotCacheStats struct {
@@ -216,16 +221,41 @@ func (s *QuerySnapshotService) Create(
 	if err != nil {
 		return SnapshotPage{}, err
 	}
-	published := false
-	defer func() {
-		prepared.cancel()
-		s.finishBuild(prepared.build, published)
-	}()
-	if err := s.publishBuild(prepared.build, prepared.cached); err != nil {
-		return SnapshotPage{}, err
+	finish := func() error {
+		published := false
+		defer func() {
+			prepared.cancel()
+			s.finishBuild(prepared.build, published)
+		}()
+		err := prepared.finish()
+		if err != nil {
+			prepared.cached = &cachedQuerySnapshot{
+				id: prepared.build.snapshotID, owner: owner, err: err,
+				created: prepared.cached.created, lastUsed: prepared.cached.created,
+			}
+		}
+		publishErr := s.publishBuild(prepared.build, prepared.cached)
+		published = publishErr == nil
+		if err != nil {
+			return err
+		}
+		return publishErr
 	}
-	published = true
-	return prepared.page, nil
+	if request.Photos || prepared.page.NextCursor == "" {
+		defer prepared.stopRequestCancel()
+		return prepared.page, finish()
+	}
+	if !prepared.stopRequestCancel() {
+		prepared.cancel()
+		s.finishBuild(prepared.build, false)
+		return SnapshotPage{}, ctx.Err()
+	}
+	s.mu.Lock()
+	prepared.build.handedOff = true
+	s.mu.Unlock()
+	page := prepared.page
+	go func() { _ = finish() }()
+	return page, nil
 }
 
 // CreateFacets materializes a counts-only projection for a facets_only
@@ -242,6 +272,7 @@ func (s *QuerySnapshotService) CreateFacets(
 		return SnapshotProjection{}, err
 	}
 	defer func() {
+		prepared.stopRequestCancel()
 		prepared.cancel()
 		s.finishBuild(prepared.build, false)
 	}()
@@ -269,6 +300,7 @@ func (s *QuerySnapshotService) RunSaved(
 	}
 	published := false
 	defer func() {
+		prepared.stopRequestCancel()
 		prepared.cancel()
 		s.finishBuild(prepared.build, published)
 	}()
@@ -333,15 +365,19 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	options := defaultSnapshotMaterializeOptions()
-	buildCtx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
+	// The service owns the tail after the creating request returns.
+	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), options.BuildTimeout)
+	stopRequestCancel := context.AfterFunc(ctx, cancel)
 	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
+		stopRequestCancel()
 		cancel()
 		return preparedQuerySnapshot{}, err
 	}
 	handedOff := false
 	defer func() {
 		if !handedOff {
+			stopRequestCancel()
 			cancel()
 			s.finishBuild(build, false)
 		}
@@ -374,6 +410,8 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		}
 		return nil
 	}
+	var memberships snapshotMemberships
+	options.DeferredMemberships = &memberships
 	projection, err := s.store.materializeNormalizedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
@@ -383,41 +421,53 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	if request.FacetsOnly {
 		handedOff = true
-		return preparedQuerySnapshot{ctx: buildCtx, cancel: cancel, build: build, projection: projection}, nil
+		return preparedQuerySnapshot{ctx: buildCtx, cancel: cancel, build: build, projection: projection, stopRequestCancel: stopRequestCancel}, nil
 	}
 
-	encodedRows := make([][]byte, len(projection.Rows))
-	var encodedRowBytes int64
-	for i := range projection.Rows {
-		if err := buildCtx.Err(); err != nil {
-			return preparedQuerySnapshot{}, err
-		}
-		encodedRows[i], err = json.Marshal(projection.Rows[i])
-		if err != nil {
-			return preparedQuerySnapshot{}, fmt.Errorf("encoding cached query snapshot row: %w", err)
-		}
-		encodedRowBytes += int64(len(encodedRows[i]))
-		projection.Rows[i] = SnapshotRow{}
+	rows := projection.Rows
+	firstEnd := min(len(rows), projection.PageSize)
+	hydrateSnapshotRows(rows[:firstEnd], memberships)
+	firstRows, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[:firstEnd], 0)
+	if err != nil {
+		return preparedQuerySnapshot{}, err
 	}
+	encodedRows := make([][]byte, len(rows))
+	copy(encodedRows, firstRows)
 	projection.Rows = nil
 	metadata, err := json.Marshal(projection)
 	if err != nil {
 		return preparedQuerySnapshot{}, fmt.Errorf("encoding cached query snapshot metadata: %w", err)
 	}
-	actualBytes := int64(len(metadata)) + encodedRowBytes + querySnapshotHandleOverhead + int64(len(owner)+len(build.snapshotID))
-	if actualBytes > build.reservedBytes {
-		if err := s.chargeBuild(build, 0, actualBytes-build.reservedBytes); err != nil {
-			return preparedQuerySnapshot{}, err
-		}
-	}
-	if err := buildCtx.Err(); err != nil {
-		return preparedQuerySnapshot{}, err
-	}
 	now := s.now().UTC()
 	cached := &cachedQuerySnapshot{
 		id: build.snapshotID, owner: owner, metadata: metadata, rows: encodedRows,
-		created: now, lastUsed: now, bytes: actualBytes,
+		created: now, lastUsed: now,
 		serializedBytes: projection.SerializedBytes,
+	}
+	finish := func() error {
+		hydrateSnapshotRows(rows[firstEnd:], memberships)
+		tail, err := encodeSnapshotRows(buildCtx, options, &projection.SerializedBytes, rows[firstEnd:], firstEnd)
+		if err != nil {
+			return err
+		}
+		copy(encodedRows[firstEnd:], tail)
+		actualBytes := int64(len(metadata)) + querySnapshotHandleOverhead + int64(len(owner)+len(build.snapshotID))
+		for _, raw := range encodedRows {
+			actualBytes += int64(len(raw))
+		}
+		if actualBytes > build.reservedBytes {
+			if err := s.chargeBuild(build, 0, actualBytes-build.reservedBytes); err != nil {
+				return err
+			}
+		}
+		cached.bytes, cached.serializedBytes = actualBytes, projection.SerializedBytes
+		return buildCtx.Err()
+	}
+	if saved != nil || request.Photos || firstEnd == len(rows) {
+		if err := finish(); err != nil {
+			return preparedQuerySnapshot{}, err
+		}
+		finish = func() error { return nil }
 	}
 	page, err := s.renderPage(cached, 0)
 	if err != nil {
@@ -426,7 +476,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	handedOff = true
 	return preparedQuerySnapshot{
 		ctx: buildCtx, cancel: cancel, build: build, projection: projection,
-		cached: cached, page: page,
+		cached: cached, page: page, finish: finish, stopRequestCancel: stopRequestCancel,
 	}, nil
 }
 
@@ -478,7 +528,7 @@ func (s *QuerySnapshotService) page(
 	if err := ctx.Err(); err != nil {
 		return SnapshotPage{}, err
 	}
-	cached, err := s.lookup(owner, snapshotID)
+	cached, err := s.lookup(ctx, owner, snapshotID)
 	if err != nil {
 		return SnapshotPage{}, err
 	}
@@ -571,7 +621,7 @@ func (s *QuerySnapshotService) copyMembersBounded(ctx context.Context, owner, sn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cached, err := s.lookup(owner, snapshotID)
+	cached, err := s.lookup(ctx, owner, snapshotID)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +766,13 @@ func (s *QuerySnapshotService) admitBuild(
 	}
 	s.purgeExpiredLocked(s.now().UTC())
 	// Counts and snapshots take separate builder slots so neither blocks the other.
-	if s.activeBuildsLocked(facetsOnly) >= s.limits.MaxBuilders {
+	builders := 0
+	for _, build := range s.builds {
+		if build.facetsOnly == facetsOnly && !build.handedOff {
+			builders++
+		}
+	}
+	if builders >= s.limits.MaxBuilders {
 		return nil, false, ErrSnapshotBusy
 	}
 	if _, exists := s.snapshots[snapshotID]; exists {
@@ -739,7 +795,7 @@ func (s *QuerySnapshotService) admitBuild(
 	}
 	s.nextBuildID++
 	build := &querySnapshotBuild{
-		id: s.nextBuildID, snapshotID: snapshotID, owner: owner, cancel: cancel, facetsOnly: facetsOnly, protectedSnapshotID: protectedSnapshotID,
+		done: make(chan struct{}), id: s.nextBuildID, snapshotID: snapshotID, owner: owner, cancel: cancel, facetsOnly: facetsOnly, protectedSnapshotID: protectedSnapshotID,
 	}
 	s.builds[build.id] = build
 	if !facetsOnly {
@@ -828,23 +884,43 @@ func (s *QuerySnapshotService) finishBuild(build *querySnapshotBuild, published 
 			}
 		}
 	}
+	close(build.done)
 	s.mu.Unlock()
 	s.wg.Done()
 }
 
-func (s *QuerySnapshotService) lookup(owner, snapshotID string) (cachedQuerySnapshot, error) {
-	now := s.now().UTC()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.purgeExpiredLocked(now)
-	cached, ok := s.snapshots[snapshotID]
-	if !ok || cached.owner != owner {
-		return cachedQuerySnapshot{}, ErrSnapshotGone
+func (s *QuerySnapshotService) lookup(ctx context.Context, owner, snapshotID string) (cachedQuerySnapshot, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return cachedQuerySnapshot{}, err
+		}
+		s.mu.Lock()
+		now := s.now().UTC()
+		s.purgeExpiredLocked(now)
+		if cached := s.snapshots[snapshotID]; cached != nil && cached.owner == owner {
+			s.serial++
+			cached.used, cached.lastUsed = s.serial, now
+			result := *cached
+			s.mu.Unlock()
+			return result, result.err
+		}
+		var done <-chan struct{}
+		for _, build := range s.builds {
+			if build.snapshotID == snapshotID && build.owner == owner && !build.invalidated && !s.closed {
+				done = build.done
+				break
+			}
+		}
+		s.mu.Unlock()
+		if done == nil {
+			return cachedQuerySnapshot{}, ErrSnapshotGone
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return cachedQuerySnapshot{}, ctx.Err()
+		}
 	}
-	s.serial++
-	cached.used = s.serial
-	cached.lastUsed = now
-	return *cached, nil
 }
 
 func (s *QuerySnapshotService) renderPage(cached *cachedQuerySnapshot, start int64) (SnapshotPage, error) {
@@ -998,7 +1074,7 @@ func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor 
 	if request.PhotoHidden {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
-	cached, err := s.lookup(owner, id)
+	cached, err := s.lookup(ctx, owner, id)
 	if err != nil {
 		return SnapshotPage{}, err
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -466,6 +467,8 @@ func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			first, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50})
 			require.NoError(t, err)
+			_, err = service.CopyMembers(t.Context(), "owner", first.SnapshotID, first.MemberHash)
+			require.NoError(t, err)
 			baseline := service.stats()
 			tag, err := s.CreateTag(t.Context(), strings.Repeat("x", 65<<10))
 			require.NoError(t, err)
@@ -479,12 +482,12 @@ func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
 				assert.Empty(t, counts.Rows)
 				assert.Equal(t, baseline, service.stats())
 			}
-			original := service.limits
+			original := service.limits.MaxRows
 			service.limits.MaxRows = baseline.CachedRows
 			_, err = service.CreateFacets(t.Context(), "owner", request)
 			require.NoError(t, err)
 			assert.Equal(t, baseline, service.stats())
-			service.limits = original
+			service.limits.MaxRows = original
 			page, err := service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
 			require.NoError(t, err)
 			require.Len(t, page.Rows, 2)
@@ -583,4 +586,205 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 			assert.Equal(t, snapshotCacheStats{}, service.stats())
 		})
 	}
+}
+
+func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"freeze", "cancel request and waiter", "revoke"} {
+		t.Run(action, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := newTestStore(t)
+				for i := range 51 {
+					name := fmt.Sprintf("%02d.txt", i)
+					_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("handoff-"+name), 1, "text/plain")
+					require.NoError(t, err)
+				}
+				request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50, Facets: []string{"tags", "size"}}
+				now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+				frozen, err := s.materializeQuerySnapshot(t.Context(), request, snapshotMaterializeOptions{Now: now})
+				require.NoError(t, err)
+				started, release := make(chan struct{}), make(chan struct{})
+				var unblock sync.Once
+				lastRow, err := json.Marshal(frozen.Rows[50])
+				require.NoError(t, err)
+				beforeTail := frozen.SerializedBytes - int64(len(lastRow)) - 1
+				var charged int64
+				service := newQuerySnapshotService(s, querySnapshotServiceOptions{
+					Now: now,
+					ChargeHook: func(ctx context.Context, _ string, _, bytes int64) error {
+						charged += bytes
+						if charged > beforeTail {
+							close(started)
+							select {
+							case <-release:
+							case <-ctx.Done():
+								return ctx.Err()
+							}
+						}
+						return nil
+					},
+				})
+				t.Cleanup(func() {
+					unblock.Do(func() { close(release) })
+					require.NoError(t, service.Close())
+				})
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				first, err := service.Create(ctx, "owner", request)
+				require.NoError(t, err)
+				require.Len(t, first.Rows, 50)
+				require.NotEmpty(t, first.NextCursor)
+				<-started
+				stats := service.stats()
+				assert.Equal(t, int64(1), stats.ActiveBuilders)
+				assert.Equal(t, int64(1), stats.ReservedHandles)
+				assert.Zero(t, stats.CachedRows)
+				assert.Positive(t, stats.ReservedRows)
+				if action == "revoke" {
+					service.Revoke("owner")
+					_, err = service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+					require.ErrorIs(t, err, ErrSnapshotGone)
+					require.NoError(t, service.Close())
+					assert.Equal(t, snapshotCacheStats{}, service.stats())
+					return
+				}
+				if action == "freeze" {
+					node, err := s.NodeByPath(t.Context(), "/50.txt")
+					require.NoError(t, err)
+					tag, err := s.CreateTag(t.Context(), "after creation")
+					require.NoError(t, err)
+					assigned, err := s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
+					require.NoError(t, err)
+					_, _, err = s.Move(t.Context(), node.ID, s.RootID(), "renamed.txt", assigned.Node.Revision)
+					require.NoError(t, err)
+				} else {
+					cancel()
+					waitCtx, stopWait := context.WithCancel(t.Context())
+					waiting := make(chan error, 1)
+					go func() {
+						_, err := service.Page(waitCtx, "owner", first.SnapshotID, first.NextCursor)
+						waiting <- err
+					}()
+					synctest.Wait()
+					select {
+					case err := <-waiting:
+						t.Fatalf("pending page returned before its rows were ready: %v", err)
+					default:
+					}
+					stopWait()
+					require.ErrorIs(t, <-waiting, context.Canceled)
+				}
+				unblock.Do(func() { close(release) })
+				next, err := service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+				require.NoError(t, err)
+				assert.Equal(t, frozen.Rows, append(first.Rows, next.Rows...))
+				assert.Equal(t, first.SnapshotFingerprint, next.SnapshotFingerprint)
+				assert.Equal(t, first.Facets, next.Facets)
+				assert.Equal(t, first.Total, next.Total)
+				assert.Equal(t, first.TotalBytes, next.TotalBytes)
+				members, err := service.CopyMembers(t.Context(), "owner", first.SnapshotID, first.MemberHash)
+				require.NoError(t, err)
+				assert.Equal(t, frozen.Rows[50].SnapshotMember, members[50])
+			})
+		})
+	}
+}
+
+func TestQuerySnapshotCacheLaterRowFailure(t *testing.T) {
+	t.Parallel()
+	for _, limit := range []struct {
+		name       string
+		tagBytes   int
+		cacheBytes int64
+		want       error
+	}{
+		{"row", 66 << 10, 0, ErrQuerySnapshotTooLarge},
+		{"cache", 30 << 10, 40 << 10, ErrSnapshotAdmission},
+	} {
+		t.Run(limit.name, func(t *testing.T) {
+			s := newTestStore(t)
+			for i := range 51 {
+				name := fmt.Sprintf("%02d.txt", i)
+				node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("large-later-"+name), 1, "text/plain")
+				require.NoError(t, err)
+				if i == 50 {
+					tag, err := s.CreateTag(t.Context(), strings.Repeat("x", limit.tagBytes))
+					require.NoError(t, err)
+					_, err = s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
+					require.NoError(t, err)
+				}
+			}
+			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxBytes: limit.cacheBytes}})
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			first, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50})
+			require.NoError(t, err)
+			require.Len(t, first.Rows, 50)
+			for range 2 {
+				_, err = service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+				require.ErrorIs(t, err, limit.want)
+				_, err = service.CopyMembers(t.Context(), "owner", first.SnapshotID, first.MemberHash)
+				require.ErrorIs(t, err, limit.want)
+			}
+		})
+	}
+}
+
+func TestQuerySnapshotCacheSuccessiveSearchesReleaseBuilderSlots(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		for i := range 51 {
+			name := fmt.Sprintf("%02d.txt", i)
+			_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("successive-"+name), 1, "text/plain")
+			require.NoError(t, err)
+		}
+		request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50}
+		now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+		frozen, err := s.materializeQuerySnapshot(t.Context(), request, snapshotMaterializeOptions{Now: now})
+		require.NoError(t, err)
+		lastRow, err := json.Marshal(frozen.Rows[50])
+		require.NoError(t, err)
+		beforeTail := frozen.SerializedBytes - int64(len(lastRow)) - 1
+		var mu sync.Mutex
+		charges := make(map[string]int64)
+		release := make(chan struct{})
+		service := newQuerySnapshotService(s, querySnapshotServiceOptions{
+			Now: now, Limits: snapshotCacheLimits{MaxHandles: 3},
+			ChargeHook: func(ctx context.Context, owner string, _, bytes int64) error {
+				mu.Lock()
+				charges[owner] += bytes
+				block := charges[owner] > beforeTail
+				mu.Unlock()
+				if block {
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				return nil
+			},
+		})
+		t.Cleanup(func() { close(release); require.NoError(t, service.Close()) })
+		for _, owner := range []string{"one", "two", "three"} {
+			first, err := service.Create(t.Context(), owner, request)
+			require.NoError(t, err)
+			require.Len(t, first.Rows, 50)
+			synctest.Wait()
+		}
+		_, err = service.Create(t.Context(), "four", request)
+		require.ErrorIs(t, err, ErrSnapshotAdmission, "background builds still reserve global handles")
+	})
+}
+
+func TestQuerySnapshotEncodingEnforcesCumulativeByteLimit(t *testing.T) {
+	t.Parallel()
+	options := defaultSnapshotMaterializeOptions()
+	options.MaxSerializedBytes = 1000
+	rows := []SnapshotRow{{Name: strings.Repeat("x", 200)}, {Name: strings.Repeat("y", 200)}}
+	var used int64
+	_, err := encodeSnapshotRows(t.Context(), options, &used, rows[:1], 0)
+	require.NoError(t, err)
+	_, err = encodeSnapshotRows(t.Context(), options, &used, rows[1:], 1)
+	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 }
