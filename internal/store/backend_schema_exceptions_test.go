@@ -43,8 +43,6 @@ var deferredBackendIndexes = map[string]string{
 	"person_identities_value":                     "person_identities",
 	"persons_name_folded":                         "persons",
 	"photo_faces_assertion":                       "photo_faces",
-	"photo_set_members_added":                     "photo_set_members",
-	"photo_set_members_asset":                     "photo_set_members",
 	"rendition_attachments_build":                 "rendition_attachments",
 	"term_report_history_recent":                  "term_report_history",
 	// This is a write invariant, not a deferred access optimization. The
