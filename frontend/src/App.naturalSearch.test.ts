@@ -1,12 +1,18 @@
 import * as actions from "./action-events.js";
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
+import * as rendition from "./renditionText.js";
 import type { SnapshotRow } from "./snapshots.js";
 import type { Node } from "./generated/docbank.js";
+
+vi.mock("./renditionText.js", () => ({
+  resolveRenditionText: vi.fn(),
+  readVerifiedRenditionText: vi.fn(),
+}));
 
 const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const baseVersion = "11111111-1111-4111-8111-111111111111";
@@ -17,8 +23,20 @@ afterEach(() => {
   cleanup();
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+});
+
+beforeEach(() => {
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
+    state: "verified_empty",
+    profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+    generationID: "",
+    attachmentID: "",
+    buildID: "",
+  });
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue("");
 });
 
 function json(value: unknown): Response {
@@ -130,6 +148,7 @@ function installHarness(options: HarnessOptions) {
     path: "/",
   };
   const postBodies: Record<string, unknown>[] = [];
+  const highlightQueries: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -219,6 +238,18 @@ function installHarness(options: HarnessOptions) {
         query_fingerprint: `sha256:${createHash("sha256").update(String(init?.body)).digest("hex")}`,
         dependencies: [],
       });
+    if (url === "/api/v1/queries/highlights") {
+      const query = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      highlightQueries.push(query);
+      return json({
+        query_fingerprint: `sha256:${createHash("sha256").update(String(init?.body)).digest("hex")}`,
+        dependencies: [],
+        terms: String(query.text ?? "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean),
+      });
+    }
     if (url === "/api/v1/processing/profiles") {
       if (options.profilesPending) return profilesPending;
       return options.profilesStatus
@@ -281,6 +312,7 @@ function installHarness(options: HarnessOptions) {
   return {
     fetchMock,
     postBodies,
+    highlightQueries,
     resolveRerank: (response: Response) => rerankResolve?.(response),
     resolveBase: (response: Response) => baseResolve?.(response),
     resolveProfiles: (response: Response) => profilesResolve?.(response),
@@ -306,6 +338,73 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.input(input, { target: { value } });
   await fireEvent.submit(input.closest("form")!);
 }
+
+it("opens verified text context for a selected result from a plain top-bar search", async () => {
+  const file = {
+    ...node(2, "message.eml", baseVersion),
+    mime_type: "message/rfc822; charset=utf-8",
+  };
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
+  });
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
+    state: "ready",
+    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
+    generationID: "c".repeat(64),
+    attachmentID: "d".repeat(64),
+    buildID: "e".repeat(64),
+    artifact: {
+      id: "synthetic-text",
+      sha256: "f".repeat(64),
+      size: 100,
+      mediaType: "text/markdown; charset=utf-8",
+    },
+  });
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
+    "Needle appears first. A second needle appears here.",
+  );
+
+  render(App);
+  await screen.findByRole("checkbox", { name: "Rerank results" });
+  await submitSearch("needle");
+  await screen.findByText("needle excerpt");
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "draft only" },
+  });
+  await fireEvent.click((await screen.findByText("needle excerpt")).closest("tr")!);
+
+  expect(await screen.findByRole("tab", { name: "Preview" })).toBeTruthy();
+  expect(await screen.findByText("Search match 1 of 2")).toBeTruthy();
+  expect(
+    screen
+      .getByLabelText("Verified text of message.eml")
+      .querySelectorAll('mark[data-source="query"]'),
+  ).toHaveLength(2);
+  expect(harness.highlightQueries).toEqual([
+    expect.objectContaining({ text: "needle", syntax: "simple" }),
+  ]);
+  expect(rendition.resolveRenditionText).toHaveBeenCalledWith(
+    "short-lived",
+    expect.objectContaining({ nodeID: file.id, name: file.name }),
+    expect.any(Number),
+    "private",
+    undefined,
+    expect.any(AbortSignal),
+  );
+
+  await fireEvent.click(screen.getByRole("button", { name: "Next search match" }));
+  expect(screen.getByText("Search match 2 of 2")).toBeTruthy();
+});
 
 it.each([
   [true, false],

@@ -113,7 +113,7 @@
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import TagRunNotice from "./TagRunNotice.svelte";
   import { canonicalQuery, parseQuery, type Query } from "./query.js";
-  import { readQueryHighlights } from "./queryHighlights.js";
+  import { readQueryHighlights, readSearchQueryHighlights } from "./queryHighlights.js";
   import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagPicker from "./TagPicker.svelte";
@@ -1102,6 +1102,7 @@
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let activeSearchProfileName = $state("");
   let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
@@ -1221,12 +1222,15 @@
   >([]);
   let snapshotQueryTerms = $state<string[]>([]);
   let snapshotQueryHighlightError = $state("");
+  let liveSearchQueryTerms = $state<string[]>([]);
+  let liveSearchQueryHighlightError = $state("");
   let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments" | "email">(
     "preview",
   );
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const liveSearchContext = $derived(!snapshotActive && activeQuery !== "");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
   const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
@@ -1458,6 +1462,30 @@
         if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
         else snapshotQueryHighlightError = cause instanceof Error ? cause.message : String(cause);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  });
+
+  $effect(() => {
+    const query = activeQuery;
+    const session = webSession;
+    const enabled = !snapshotActive && query !== "";
+    const controller = new AbortController();
+    let current = true;
+    liveSearchQueryTerms = [];
+    liveSearchQueryHighlightError = "";
+    if (!session || !enabled) return () => controller.abort();
+    void readSearchQueryHighlights(session, query, controller.signal)
+      .then((terms) => {
+        if (current) liveSearchQueryTerms = terms;
+      })
+      .catch((cause: unknown) => {
+        if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else liveSearchQueryHighlightError = cause instanceof Error ? cause.message : String(cause);
       });
     return () => {
       current = false;
@@ -1928,6 +1956,7 @@
     batchTagsTargets = null;
     shortcutHelpOpen = false;
     activeQuery = "";
+    activeSearchProfileName = "";
     activeTagID = "";
     naturalProfiles = [];
     naturalSearchMode = "names";
@@ -2063,6 +2092,7 @@
             : undefined,
       );
       activeQuery = "";
+      activeSearchProfileName = "";
       activeTagID = "";
       taggedInspected = 0;
       taggedTotal = 0;
@@ -2190,6 +2220,8 @@
         baseReport.truncated || nameReport.truncated,
         preferredSelectedID,
         refreshing,
+        false,
+        profile.name,
       );
       accepted = true;
       if (requestedSort) applyResultSort(requestedSort);
@@ -2257,6 +2289,7 @@
           preferredSelectedID,
           true,
           true,
+          profile.name,
         );
         naturalSearchNote = rerankingNote("applied");
         outcome = {
@@ -2383,6 +2416,7 @@
     preferredSelectedID: number | undefined,
     refreshing: boolean,
     preserveCurrentSelection = false,
+    profileName = "",
   ): void {
     const selectedBefore = preserveCurrentSelection ? selectedID : preferredSelectedID;
     replaceRows(nextRows, refreshing);
@@ -2395,6 +2429,7 @@
       selectedBefore,
     );
     activeQuery = query;
+    activeSearchProfileName = profileName;
     activeTagID = requestedTagID;
     taggedInspected = 0;
     taggedTotal = 0;
@@ -5117,6 +5152,10 @@
                     {processingRevision}
                     onprocess={(source) => void processInspectedSource(source)}
                     bind:activeTab={inspectorContentTab}
+                    profileName={liveSearchContext ? activeSearchProfileName : ""}
+                    searchContext={liveSearchContext}
+                    queryTerms={liveSearchContext ? liveSearchQueryTerms : []}
+                    queryHighlightError={liveSearchContext ? liveSearchQueryHighlightError : ""}
                     highlightSets={inspectorHighlightSets}
                     session={webSession}
                     source={selectedSource!}
