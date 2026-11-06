@@ -429,29 +429,36 @@ func materializeSnapshotRows(
 		coverageColumns = `COALESCE(pc.state,''), COALESCE(pc.build_id,''), COALESCE(pc.attachment_id,'')`
 		args = append(args, coverage.ProfileFingerprint, generationID)
 	}
+	// Read scoped collections once: repeated references expand the photo
+	// population enough to exceed SQLite's subquery limit.
 	rows, err := q.QueryContext(ctx, `WITH RECURSIVE
-		matched_members AS (`+statement+`),
-		tree_paths(node_id,id,parent_id,path) AS (
-			SELECT n.id,n.id,n.parent_id,n.name FROM nodes n JOIN matched_members m ON m.node_id=n.id
+		matched_members AS MATERIALIZED (`+statement+`),
+		parent_dirs AS (
+			SELECT DISTINCT n.parent_id FROM nodes n JOIN matched_members m ON m.node_id=n.id
+		), dir_paths(dir_id,id,parent_id,path) AS (
+			SELECT n.id,n.id,n.parent_id,n.name FROM nodes n JOIN parent_dirs d ON d.parent_id=n.id
 			UNION ALL
-			SELECT p.node_id,n.id,n.parent_id,
+			SELECT p.dir_id,n.id,n.parent_id,
 				CASE WHEN n.name='' THEN '/'||p.path ELSE n.name||'/'||p.path END
-			FROM nodes n JOIN tree_paths p ON n.id=p.parent_id
-		), `+CollectionMembershipCTE+coverageCTE+`
-		SELECT n.id,cv.version_id,cv.blob_hash,cv.size,n.revision,n.name,tp.path,
+			FROM nodes n JOIN dir_paths p ON n.id=p.parent_id
+		), `+matchedCollectionMembershipCTE+`,
+		row_collections AS (
+			SELECT node_id,json_group_array(ingest_id ORDER BY ingest_id) collection_ids,
+				MIN(ingest_id) display_collection_id
+			FROM collection_members GROUP BY node_id
+		)`+coverageCTE+`
+		SELECT n.id,cv.version_id,cv.blob_hash,cv.size,n.revision,n.name,dp.path||'/'||n.name,
 			COALESCE(cv.mime_type,''),n.modified_at,
 			COALESCE((SELECT json_group_array(json_object('id',id,'name',name,'revision',revision))
 				FROM (SELECT t.id,t.name,t.revision FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
 					WHERE nt.node_id=n.id ORDER BY t.id)),'[]'),
-			COALESCE((SELECT json_group_array(ingest_id) FROM (
-				SELECT ingest_id FROM collection_members WHERE node_id=n.id ORDER BY ingest_id)),'[]'),
-			COALESCE((SELECT ingest_id FROM collection_members WHERE node_id=n.id ORDER BY ingest_id LIMIT 1),''),
-			(SELECT l.label FROM collection_members cm LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id
-				WHERE cm.node_id=n.id ORDER BY cm.ingest_id LIMIT 1),
+			COALESCE(rc.collection_ids,'[]'),COALESCE(rc.display_collection_id,''),l.label,
 			`+coverageColumns+`,`+photoColumns+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		JOIN tree_paths tp ON tp.node_id=n.id AND tp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
+		LEFT JOIN row_collections rc ON rc.node_id=n.id
+		LEFT JOIN collection_labels l ON l.ingest_id=rc.display_collection_id
+		JOIN dir_paths dp ON dp.dir_id=n.parent_id AND dp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
 	if err != nil {
 		return fmt.Errorf("materializing query snapshot rows: %w", err)
 	}
@@ -478,8 +485,10 @@ func materializeSnapshotRows(
 		if int64(len(tagsJSON)) > options.MaxRowBytes || int64(len(collectionsJSON)) > options.MaxRowBytes {
 			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
 		}
-		if err := json.Unmarshal(tagsJSON, &row.Tags); err != nil {
-			return fmt.Errorf("decoding snapshot tags: %w", err)
+		if string(tagsJSON) != "[]" {
+			if err := json.Unmarshal(tagsJSON, &row.Tags); err != nil {
+				return fmt.Errorf("decoding snapshot tags: %w", err)
+			}
 		}
 		if err := json.Unmarshal(collectionsJSON, &row.CollectionIDs); err != nil {
 			return fmt.Errorf("decoding snapshot collections: %w", err)

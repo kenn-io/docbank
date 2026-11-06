@@ -301,8 +301,11 @@ func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {
 	assert.Equal(t, map[string]int64{
 		"complete": 2, "partial": 0, "failed": 0, "unprocessed": 4, "none": 0, "unavailable": 0,
 	}, facetCounts(facetByDimension(t, projection, "text_coverage")))
-	assert.Equal(t, map[string]int64{"duplicate": 2, "unique": 4},
-		facetCounts(facetByDimension(t, projection, "duplicates")))
+	duplicates := facetByDimension(t, projection, "duplicates")
+	assert.Equal(t, []SnapshotFacetValue{
+		{Key: "unique", Label: "unique", Count: 4},
+		{Key: "duplicate", Label: "duplicate", Count: 2},
+	}, duplicates.Values)
 }
 
 func TestQuerySnapshotFacetsRetainNestedFiltersAndGlobalDuplicates(t *testing.T) {

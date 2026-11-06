@@ -20,13 +20,14 @@ import (
 var photoFacetDimensions = []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField, snapshotFacetRating, snapshotFacetFlag, snapshotFacetLabel}
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates", "capture_day",
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, snapshotFacetDuplicates, "capture_day",
 }
 
 const (
 	snapshotFacetTags         = "tags"
 	snapshotFacetMediaFamily  = "media_family"
 	snapshotFacetTextCoverage = "text_coverage"
+	snapshotFacetDuplicates   = "duplicates"
 	snapshotFacetYear         = "year"
 	snapshotFacetRating       = "rating"
 	snapshotFacetFlag         = "flag"
@@ -132,7 +133,7 @@ func materializeSnapshotFacet(
 	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberLimit int64,
 ) (SnapshotFacet, error) {
 	facetQuery := queryWithoutSnapshotFacet(compiled.Query, dimension)
-	if dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
+	if dimension != snapshotFacetDuplicates && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
 	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q})
@@ -162,16 +163,19 @@ func materializeSnapshotFacet(
 		join = `JOIN processing_coverage pc ON pc.node_id=n.id AND pc.version_id=cv.version_id`
 		key, label = `pc.state`, `pc.state`
 		args = append(args, coverage.ProfileFingerprint, generationID)
-	case "duplicates":
+	case snapshotFacetDuplicates:
 		ctes = `, ` + CurrentContentMembershipCTE
 		key = `CASE WHEN EXISTS(SELECT 1 FROM current_content_members peer WHERE peer.blob_hash=cv.blob_hash AND peer.node_id<>n.id) THEN 'duplicate' ELSE 'unique' END`
-		label = key
+	}
+	order := ""
+	if dimension != snapshotFacetDuplicates {
+		order = ` ORDER BY ` + identity + `,` + key
 	}
 	rows, err := q.QueryContext(ctx, `WITH matched_members AS (`+statement+`)`+ctes+`
 		SELECT `+identity+`,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,`+key+`,`+label+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		`+join+` ORDER BY `+identity+`,`+key, args...)
+		`+join+order, args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
@@ -180,7 +184,10 @@ func materializeSnapshotFacet(
 		var size int64
 		var id, name, mimeType, modifiedAt, value, label string
 		err := rows.Scan(&id, &name, &mimeType, &size, &modifiedAt, &value, &label)
-		if dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
+		if dimension == snapshotFacetDuplicates {
+			label = value
+		}
+		if dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != snapshotFacetDuplicates {
 			value = snapshotFacetScalarValue(dimension, name, mimeType, modifiedAt, size)
 			label = value
 		}
@@ -392,7 +399,7 @@ func queryWithoutSnapshotFacet(value query.Query, dimension string) query.Query 
 		value.Filters.SizeMin, value.Filters.SizeMax = 0, nil
 	case snapshotFacetTextCoverage:
 		value.Filters.TextCoverage = nil
-	case "duplicates":
+	case snapshotFacetDuplicates:
 		value.Filters.HasDuplicates = false
 	}
 	return value
@@ -439,7 +446,7 @@ func fixedSnapshotFacetValues(dimension string) []string {
 		return []string{"lt_1_mib", "1_mib_to_10_mib", "10_mib_to_100_mib", "100_mib_to_1_gib", "gte_1_gib"}
 	case snapshotFacetTextCoverage:
 		return []string{"complete", "partial", "failed", "unprocessed", "none", "unavailable"}
-	case "duplicates":
+	case snapshotFacetDuplicates:
 		return []string{"duplicate", "unique"}
 	default:
 		return nil
@@ -484,7 +491,7 @@ func snapshotFacetSelected(value query.Query, dimension string) map[string]bool 
 		}
 	case snapshotFacetTextCoverage:
 		values = value.Filters.TextCoverage
-	case "duplicates":
+	case snapshotFacetDuplicates:
 		if value.Filters.HasDuplicates {
 			values = []string{"duplicate"}
 		}

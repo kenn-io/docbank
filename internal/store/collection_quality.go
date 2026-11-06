@@ -65,7 +65,7 @@ const (
 	collectionQualityTimeout    = 5 * time.Second
 )
 
-var collectionQualityFields = []string{"duplicates", "extension", "media_family", "media_type", "modified_month", "size", "text_coverage"}
+var collectionQualityFields = []string{snapshotFacetDuplicates, "extension", "media_family", "media_type", "modified_month", "size", "text_coverage"}
 
 func normalizeQualityFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
@@ -337,7 +337,7 @@ func qualityValue(row collectionQualityRow, field string, configured bool) strin
 			return ""
 		}
 		return row.State
-	case "duplicates":
+	case snapshotFacetDuplicates:
 		if row.DuplicateCount > 1 {
 			return "duplicate"
 		}
