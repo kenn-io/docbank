@@ -35,7 +35,9 @@ func newPreparationFixture(t *testing.T, text string) preparationFixture {
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.SetFont("Helvetica", "", 10)
 	pdf.AddPage()
-	pdf.Text(12, 24, text)
+	for index, line := range strings.Split(text, "\n") {
+		pdf.Text(12, 24+float64(index)*16, line)
+	}
 	var output bytes.Buffer
 	require.NoError(t, pdf.Output(&output))
 	data := output.Bytes()

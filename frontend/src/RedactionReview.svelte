@@ -2,7 +2,8 @@
   import { onMount, untrack } from "svelte";
   import { Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
   import OriginalPreview from "./OriginalPreview.svelte";
-  import type { PDFReviewBridge, ReaderReviewStatus } from "./pdfReview.js";
+  import type { PDFReviewBridge, ReaderReviewStatus, TextSelectionStatus } from "./pdfReview.js";
+  import { checkMaskBudget, maskBoxes } from "./pdfTextSelection.js";
   import PageCanvas from "./PageCanvas.svelte";
   import { pageBinding } from "./pages.js";
   import { APIError } from "./api-transport.js";
@@ -14,6 +15,7 @@
     type RedactionReview,
     type RedactionPreview,
     type PDFRedactionBox,
+    type PDFRedactionSelector,
   } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
   import { offerPreparedDownload } from "./download.js";
@@ -52,6 +54,9 @@
   >("preparing");
   let preparation = $state<RedactionPreparation>();
   let masks = $state<RedactionMask[]>([]);
+  let textGroups = $state<{ ids: string[]; page: number }[]>([]);
+  let textSelection = $state<TextSelectionStatus>({ busy: false, error: "" });
+  let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
   let preview = $state<RedactionPreview>();
   let expansion = $state<RedactionMask>();
@@ -90,21 +95,22 @@
     if (!preparation) return [];
     if (preview && review) return review.resolved.redact_boxes;
     return masks.flatMap((m) =>
-      m.selector.kind === "page"
-        ? (m.selector.pages ?? []).map((n) => {
-            const p = preparation!.map.pages[n - 1]!;
-            return {
-              page: n,
-              frame_sha256: p.frame_sha256,
-              x0: 0,
-              y0: 0,
-              x1: p.width,
-              y1: p.height,
-            };
-          })
-        : (m.selector.boxes ?? []),
+      maskBoxes(preparation!, m.selector).map((box) => ({
+        ...box,
+        outline: m.selector.kind !== "text",
+      })),
     );
   });
+  const maskItems = $derived(
+    masks.flatMap((mask) => {
+      const group = textGroups.find((g) => g.ids.includes(mask.id));
+      return group && group.ids[0] !== mask.id ? [] : [{ mask, group }];
+    }),
+  );
+  const expansionBoxes = $derived(
+    preparation && expansion ? maskBoxes(preparation, expansion.selector) : [],
+  );
+  const expansionKind = $derived(masks.find((m) => m.id === expansion?.id)?.selector.kind);
   const gapPages = $derived([...new Set(preparation?.map.gaps.map((g) => g.box.page) ?? [])]);
   function clearImage() {
     imageController.abort();
@@ -203,27 +209,44 @@
     error = "";
     notice = "";
   }
+  function addMask(selector: PDFRedactionSelector) {
+    if (busy || preview || !preparation) return;
+    const addition = { id: "00000000-0000-4000-8000-000000000001", selector };
+    try {
+      checkMaskBudget([...masks, addition]);
+      addition.id = randomUUID();
+      changed();
+      masks = [...masks, addition];
+    } catch (cause) {
+      fail(cause);
+    }
+  }
   function addBox(box: PDFRedactionBox) {
-    if (busy || preview || masks.length >= 256) return;
-    changed();
-    masks = [
-      ...masks,
-      {
-        id: randomUUID(),
-        selector: { kind: "rectangle", map_sha256: preparation!.map.sha256, boxes: [box] },
-      },
-    ];
+    addMask({ kind: "rectangle", map_sha256: preparation!.map.sha256, boxes: [box] });
+  }
+  function addSelectedText() {
+    const candidate = bridge?.selectedText();
+    if (!candidate || !preparation || busy || preview) return;
+    try {
+      // Admit with UUID-sized placeholders before allocating the mask IDs.
+      const additions: RedactionMask[] = candidate.spans.map((span) => ({
+        id: "00000000-0000-4000-8000-000000000001",
+        selector: { kind: "text", map_sha256: preparation!.map.sha256, span: { ...span } },
+      }));
+      checkMaskBudget([...masks, ...additions]);
+      additions.forEach((m) => (m.id = randomUUID()));
+      changed();
+      masks = [...masks, ...additions];
+      textGroups = [...textGroups, { ids: additions.map((m) => m.id), page: candidate.page }];
+      bridge?.clearSelection();
+      selectionAnnouncement = `Text mask ${maskItems.length} added on page ${candidate.page}.`;
+    } catch (cause) {
+      fail(cause);
+    }
   }
   function maskPage(pageNumber: number) {
-    if (busy || preview || !preparation || masks.length >= 256) return;
-    changed();
-    masks = [
-      ...masks,
-      {
-        id: randomUUID(),
-        selector: { kind: "page", map_sha256: preparation.map.sha256, pages: [pageNumber] },
-      },
-    ];
+    if (!preparation) return;
+    addMask({ kind: "page", map_sha256: preparation.map.sha256, pages: [pageNumber] });
   }
   async function revalidate(signal: AbortSignal) {
     const node = await getNode(source.nodeID, { session, signal });
@@ -370,7 +393,11 @@
     clearImage();
     clearTimeout(expiry);
     void discardRedactionPreviews({ session, keepalive: true }).catch(() => undefined);
+    bridge?.clearSelection();
     masks = [];
+    textGroups = [];
+    textSelection = { busy: false, error: "" };
+    selectionAnnouncement = "";
     preparation = undefined;
     review = undefined;
     preview = undefined;
@@ -444,12 +471,18 @@
             preparation,
             boxes,
             gaps: preparation?.map.gaps ?? [],
-            proposed: expansion?.selector.boxes ?? [],
+            proposed: expansionBoxes,
             drawing: drawing && !busy && !preview && !dialog,
             visible: tab === "original",
+            editable: phase === "editing" && !dialog && !preview && !busy,
             oncommit: addBox,
             ondrag: (value) => untrack(() => (dragging = value)),
             ondrawing: (value) => untrack(() => (drawing = value)),
+            onselection: (value) =>
+              untrack(() => {
+                textSelection = value;
+                selectionAnnouncement = "";
+              }),
           }
         : undefined}
       onbridge={(value) => (bridge = value)}
@@ -461,6 +494,8 @@
   </div>
   {#if active}
     <div class="redaction-editor">
+      <span class="kit-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</span>
+      {#if textSelection.error}<p class="notice" role="status">{textSelection.error}</p>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
       {#if phase === "preparing"}<p role="status"><Spinner size={16} /> Preparing PDF…</p>
@@ -533,12 +568,15 @@
               </p>{/if}
           </section>
           <aside aria-label="Masks and coverage">
-            <h3>Masks <span>{masks.length}</span></h3>
+            <h3>Masks <span>{maskItems.length}</span></h3>
             {#if masks.length === 0}<p class="notice">No masks</p>{/if}
             <ol>
-              {#each masks as mask, index (mask.id)}<li>
+              {#each maskItems as { mask, group }, index (mask.id)}<li>
                   <span
-                    >{#if mask.selector.kind === "page"}Whole page {mask.selector.pages?.join(", ")}
+                    >{#if group}Selected text · Page {group.page}
+                    {:else if mask.selector.kind === "page"}Whole page {mask.selector.pages?.join(
+                        ", ",
+                      )}
                     {:else}Rectangle {index + 1} · Page {[
                         ...new Set(mask.selector.boxes?.map((b) => b.page)),
                       ].join(", ")}{/if}</span
@@ -547,7 +585,8 @@
                     disabled={busy || !!preview}
                     onclick={() => {
                       changed();
-                      masks = masks.filter((m) => m.id !== mask.id);
+                      masks = masks.filter((m) => !(group?.ids ?? [mask.id]).includes(m.id));
+                      textGroups = textGroups.filter((g) => g !== group);
                     }}>Remove</Button
                   >
                 </li>{/each}
@@ -564,10 +603,14 @@
             {#if expansion}<section class="expansion" aria-label="Proposed mask expansion">
                 <h3>Expand mask?</h3>
                 <p>
-                  The selected region cuts through text. Review the full region before continuing.
+                  {#if expansionKind === "text"}
+                    The safety margin reaches nearby text. Review the added area before continuing.
+                  {:else}
+                    The selected region cuts through text. Review the full region before continuing.
+                  {/if}
                 </p>
                 <div class="gap-pages">
-                  {#each [...new Set(expansion.selector.boxes?.map((b) => b.page))] as n}
+                  {#each [...new Set(expansionBoxes.map((b) => b.page))] as n}
                     <Button size="sm" onclick={() => changePage(n)}>Page {n}</Button>
                   {/each}
                 </div>
@@ -647,13 +690,21 @@
               dragging = false;
               if (drawing) bridge?.focus();
             }}
-          />{#each [page] as pageNumber (pageNumber)}<Button
+          /><Button
+            disabled={busy ||
+              drawing ||
+              !imageReady ||
+              !textSelection.candidate ||
+              textSelection.busy}
+            onclick={addSelectedText}
+            >{textSelection.busy ? "Matching text…" : "Mask selected text"}</Button
+          >{#each [page] as pageNumber (pageNumber)}<Button
               disabled={busy || !imageReady || masks.length >= 256}
               onclick={() => maskPage(pageNumber)}>Mask whole page {pageNumber}</Button
             >{/each}<Button
             tone="info"
             surface="solid"
-            disabled={busy || dragging || masks.length === 0}
+            disabled={busy || dragging || textSelection.busy || masks.length === 0}
             onclick={() => void renderPreview()}>Preview redaction</Button
           >{/if}
       </div>
@@ -670,7 +721,7 @@
 {:else if dialog === "download" && preview}<Modal
     title="Download reviewed PDF?"
     onclose={() => (dialog = undefined)}
-    ><p>{title} · {preview.pages.length} pages · {masks.length} masks</p>
+    ><p>{title} · {preview.pages.length} pages · {maskItems.length} masks</p>
     <p>Downloads this reviewed result. The original is unchanged.</p>
     {#snippet footer()}<Button onclick={() => (dialog = undefined)}>Keep reviewing</Button><Button
         tone="info"

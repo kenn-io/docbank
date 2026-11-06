@@ -239,7 +239,9 @@ to 64 MiB and 16 pages. Empty files, saved-result sources and related previews
 cannot start a review. **Fit page** initially shows the whole page; choose
 **Fit width** or a percentage to inspect it more closely.
 
-1. Wait for the original page to render, then choose **Draw rectangle** or **Mask
+1. Wait for the original page to render. With **Draw rectangle** off, select a
+   passage on one page and choose **Mask selected text**. One Remove action
+   removes the whole selection. You can also draw rectangles or choose **Mask
    whole page**. To draw with the keyboard, focus the PDF, move with
    arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
    cancels the unfinished rectangle. The reader announces the page and cursor
@@ -247,8 +249,9 @@ cannot start a review. **Fit page** initially shows the whole page; choose
    directions after viewing rotation, and the crosshair stays the same size on
    screen at every zoom. Page and zoom changes cancel the unfinished rectangle too.
    Drawing stays on after each rectangle.
-2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
-   rectangle cuts through text, review the proposed expansion and explicitly
+2. Cover every coverage gap. An unordered gap needs a whole-page mask. A safety
+   margin can reach nearby text even when you selected complete words. Review
+   any proposed expansion and explicitly
    choose **Use expanded mask**, or keep editing.
 3. Choose **Preview redaction**. Inspect **Redacted** and **Text** on each page.
    The displayed page images are the exact images verified against this PDF.
@@ -262,6 +265,16 @@ differ from the server renderer. Server coverage gaps and the verified
 page is loading or has failed; **Retry page** retries a failed image. Cropped
 pages may use fractional point coordinates, but unsupported precision or a
 browser/server geometry disagreement still disables drawing.
+
+Text selection must match the server's prepared text uniquely. Repeated full
+contexts, differing extraction or an oversized passage require rectangle or
+whole-page marking instead. Ligatures and some non-Latin text may already have
+server coverage gaps. A selection can include several lines; matching selected
+line breaks are removed with the passage. Different extraction order can produce
+several text masks, shown as one removable group. Text masks use the existing
+256-mask limit, without a rectangle box for each glyph.
+An expansion covering separate text ranges becomes a rectangle mask on approval.
+It uses rectangle capacity and keeps whitespace between the selected glyphs.
 
 **Back to reading** discards masks and preview after confirmation, then restores
 the reading position. The original stays loaded. Original print and export are
