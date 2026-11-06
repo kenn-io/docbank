@@ -457,6 +457,12 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
         { animate: false },
       ),
     );
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);
     await expect(page.locator(".photo-map-cluster").filter({ hasText: /^2$/ })).toHaveCount(1);
     await page.locator(".photo-map-cluster").filter({ hasText: /^2$/ }).press("Enter");
