@@ -589,7 +589,7 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 }
 
-func TestQuerySnapshotRejectsOversizedTagBeforeReadingAllAssignments(t *testing.T) {
+func TestQuerySnapshotRejectsOversizedTagBeforeReadingAllAssignments(t *testing.T) { //nolint:paralleltest // measures heap allocations, so it runs alone
 	// Keep allocation measurement separate from this package's parallel tests.
 	s := newTestStore(t)
 	ctx := t.Context()

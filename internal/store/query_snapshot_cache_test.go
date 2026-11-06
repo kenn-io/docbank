@@ -707,7 +707,7 @@ func TestQuerySnapshotCacheFirstPageHandoff(t *testing.T) {
 	}
 }
 
-func TestQuerySnapshotCacheMembershipReadRespectsByteBudget(t *testing.T) {
+func TestQuerySnapshotCacheMembershipReadRespectsByteBudget(t *testing.T) { //nolint:paralleltest // measures heap allocations, so it runs alone
 	// Keep allocation measurement separate from this package's parallel tests.
 	for _, count := range []int{1, 128} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
