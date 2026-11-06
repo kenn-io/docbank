@@ -475,7 +475,7 @@ func searchDocuments(
 		}
 		nonQueryBinding := slices.Contains(selected.EmbeddingBindings, input.BindingID) && !slices.Contains(selected.QueryEmbeddingBindings, input.BindingID)
 		attempt := profileSearchAttempt[documentSearchResponse]{profile: selected}
-		if mode != "lexical" && len(candidates) > 0 && !nonQueryBinding && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
+		if mode != "lexical" && len(candidates) > 0 && (mode == "semantic" || !nonQueryBinding) && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
 			attempt, err = tryProfileSearch(ctx, profiles, selected, candidates, retry, func(profile, binding string) (documentSearchResponse, error) { return run(profile, binding, mode) })
 		} else if mode == "semantic" {
 			attempt.value, err = run(selected.Name, input.BindingID, mode)

@@ -37,6 +37,9 @@ func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
 				output := callSearchDocumentReader(t, daemon, reader, embedded, map[string]any{"query": "refund", "profile": "mixed", "binding_id": tc.binding, "mode": tc.mode, "filters": map[string]any{}})
 				if tc.code != "" {
 					require.Equal(t, tc.code, output["code"])
+					if tc.mode == "semantic" {
+						require.Equal(t, "Search by meaning failed: semantic_unavailable.", output["message"])
+					}
 					return
 				}
 				require.Equal(t, "mixed", output["profile"])
