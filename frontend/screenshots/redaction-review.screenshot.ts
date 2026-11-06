@@ -1,5 +1,5 @@
 import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
-import { croppedReviewPDF, turnReviewPage } from "./redaction-review-fixture.js";
+import { croppedReviewPDF, setReviewDrawing, turnReviewPage } from "./redaction-review-fixture.js";
 import { expect, test, type Route, type Locator } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -197,12 +197,8 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     ).toBeInViewport();
     const shortDraw = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
     await expect(shortDraw).toBeEnabled();
-    await shortDraw.check();
-    await expect(shortDraw).toBeChecked();
-    // A redraw can disable the switch between actionability and the click.
-    await expect(async () => {
-      await shortDraw.uncheck();
-    }).toPass({ timeout: 15000 });
+    await setReviewDrawing(shortDraw, true);
+    await setReviewDrawing(shortDraw, false);
     await page.screenshot({
       path: path.join(captures!, "redaction-short-editing.png"),
       animations: "disabled",
@@ -314,7 +310,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     const canvas = drawer.locator('[data-review-page="1"]');
     const drag = async (x0: number, y0: number, x1: number, y1: number) => {
       const toggle = drawer.getByRole("switch", { name: "Draw rectangle", exact: true });
-      if (!(await toggle.isChecked())) await toggle.click();
+      await setReviewDrawing(toggle, true);
       const rect = await canvas.boundingBox();
       if (!rect) throw new Error("Canvas absent");
       await page.mouse.move(
@@ -331,7 +327,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await expect(toggle).toBeChecked();
     };
     // Keyboard marks use the same authoritative boxes, and Escape cancels only a draft.
-    await drawToggle.check();
+    await setReviewDrawing(drawToggle, true);
     const cursorStatus = drawer.getByRole("status", { name: "Mask cursor", exact: true });
     await drawer.locator("embedpdf-container").focus();
     for (const [index, key] of [
@@ -819,7 +815,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       }
       if (i === 2) await page.setViewportSize({ width: 1280, height: 960 });
       const toggle = cropped.getByRole("switch", { name: "Draw rectangle", exact: true });
-      if (!(await toggle.isChecked())) await toggle.click();
+      await setReviewDrawing(toggle, true);
       const c = cropped.locator(`[data-review-page="${i + 1}"]`);
       await c.scrollIntoViewIfNeeded();
       await expect(async () => {
@@ -958,7 +954,10 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     await expect
       .poll(async () => (await fractionalLayer.boundingBox())!.y)
       .toBeLessThan(beforeScroll - 100);
-    await fractional.getByRole("switch", { name: "Draw rectangle", exact: true }).click();
+    await setReviewDrawing(
+      fractional.getByRole("switch", { name: "Draw rectangle", exact: true }),
+      true,
+    );
     await expect
       .poll(() =>
         fractionalLayer.evaluate((layer) => getComputedStyle(layer.parentElement!).cursor),

@@ -1,6 +1,13 @@
 import geometry from "../../internal/redactiontest/testdata/page-geometry.json" with { type: "json" };
 import { expect, type Locator } from "@playwright/test";
 
+export async function setReviewDrawing(toggle: Locator, checked: boolean) {
+  // A redraw can disable the switch between actionability and the click.
+  await expect(async () => {
+    await toggle.setChecked(checked);
+  }).toPass({ timeout: 15000 });
+}
+
 export async function turnReviewPage(target: Locator, n: number) {
   const field = target.getByRole("textbox", { name: "", exact: true });
   // The reader rewrites this box whenever its current page changes, even
