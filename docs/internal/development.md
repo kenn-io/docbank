@@ -1740,12 +1740,16 @@ wait for it to expire.
 
 ## Verification contract
 
-All repository workflows use GitHub-hosted runners. The main CI workflow uses
+Repository workflows use GitHub-hosted runners. The main CI workflow uses
 Ubuntu 24.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
 arm64 uses `windows-11-vs2026-arm`. Each Windows architecture runs four package
 shards. Pull requests call `ci.yml` from `main`, so changes to that workflow take
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
+
+The exception is the `CI gate` job in `ci-pr.yml`, which only checks the CI
+run's result. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
+it does not wait in the GitHub-hosted queue after CI finishes.
 
 Go test jobs run `go test` through gotestsum, which the module pins as a Go
 tool. gotestsum reruns each failed test up to two more times. A test that passes
