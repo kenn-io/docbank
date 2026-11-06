@@ -363,7 +363,16 @@ it.each([
           state,
         },
       },
-      tagSearch: { hits: [], limit: 1000, truncated },
+      tagSearch: {
+        hits: truncated
+          ? Array.from({ length: 1000 }, (_, index) => {
+              const file = node(index + 6, `content-${index}.txt`, baseVersion);
+              return { node: file, path: file.path, match: "content" };
+            })
+          : [],
+        limit: 1000,
+        truncated,
+      },
     });
     render(App);
     await screen.findAllByText("existing.txt");
