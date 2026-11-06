@@ -236,6 +236,92 @@ func facetCounts(facet SnapshotFacet) map[string]int64 {
 	return result
 }
 
+func TestQuerySnapshotFacetsSelectedTagAndCollection(t *testing.T) {
+	t.Parallel()
+	f := newSnapshotFacetFixture(t)
+	red, blue := f.tags[0].ID, f.tags[1].ID
+	first, second := f.collections[0].ID(), f.collections[1].ID()
+	for _, tc := range []struct {
+		name, value                        string
+		nodes                              []int64
+		tags, collections                  map[string]int64
+		tagTotal, tagMissing               int64
+		collectionTotal, collectionMissing int64
+		complete, unprocessed              int64
+		selectedDimension, selectedKey     string
+	}{
+		{"tag", fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, red), []int64{f.nodes["a"].ID, f.nodes["c"].ID},
+			map[string]int64{red: 2, blue: 1}, map[string]int64{first: 1, second: 2}, 6, 4, 2, 0, 2, 0, "tags", red},
+		{"collection", fmt.Sprintf(`{"filters":{"collection_ids":[%q]}}`, first), []int64{f.nodes["a"].ID, f.nodes["b"].ID},
+			map[string]int64{red: 1, blue: 1}, map[string]int64{first: 2, second: 2}, 2, 1, 6, 3, 1, 1, "collections", first},
+		{"collapse", `{"filters":{"collapse_duplicates":true}}`, []int64{f.nodes["a"].ID, f.nodes["b"].ID, f.nodes["zip"].ID, f.nodes["mp3"].ID, f.nodes["bin"].ID},
+			map[string]int64{red: 1, blue: 1}, map[string]int64{first: 2, second: 1}, 5, 4, 5, 3, 1, 4, "", ""},
+		{"empty", `{"filters":{"extensions":["absent"]}}`, nil,
+			map[string]int64{}, map[string]int64{}, 0, 0, 0, 0, 0, 0, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projection, err := f.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+				Query: snapshotTestQuery(t, tc.value), Coverage: f.selection,
+				Facets: []string{"collections", "tags", "text_coverage"},
+			})
+			require.NoError(t, err)
+			var nodes []int64
+			for _, row := range projection.Rows {
+				nodes = append(nodes, row.NodeID)
+			}
+			assert.ElementsMatch(t, tc.nodes, nodes)
+			for _, expected := range []struct {
+				dimension      string
+				counts         map[string]int64
+				total, missing int64
+			}{{"tags", tc.tags, tc.tagTotal, tc.tagMissing}, {"collections", tc.collections, tc.collectionTotal, tc.collectionMissing}} {
+				facet := facetByDimension(t, projection, expected.dimension)
+				require.True(t, facet.Available)
+				assert.Equal(t, expected.counts, facetCounts(facet))
+				assert.Equal(t, expected.total, *facet.Total)
+				assert.Equal(t, expected.missing, *facet.Missing)
+				for _, value := range facet.Values {
+					assert.Equal(t, expected.dimension == tc.selectedDimension && value.Key == tc.selectedKey, value.Selected)
+				}
+			}
+			coverage := facetByDimension(t, projection, "text_coverage")
+			require.True(t, coverage.Available)
+			assert.Equal(t, int64(len(tc.nodes)), *coverage.Total)
+			assert.Equal(t, map[string]int64{"complete": tc.complete, "unprocessed": tc.unprocessed, "partial": 0, "failed": 0, "none": 0, "unavailable": 0}, facetCounts(coverage))
+		})
+	}
+}
+
+func TestQuerySnapshotFacetsIgnoreBuiltMembershipFields(t *testing.T) {
+	t.Parallel()
+	f := newSnapshotFacetFixture(t)
+	dimensions := []string{"collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates"}
+	projection, err := f.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+		Query: snapshotTestQuery(t, `{}`), Coverage: f.selection, Facets: dimensions,
+	})
+	require.NoError(t, err)
+	err = f.store.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, generation LexicalGeneration) error {
+		compiled, err := (queryCompiler{}).compile(t.Context(), projection.Query, queryResolver{q: q})
+		require.NoError(t, err)
+		ids := make([]int64, len(projection.Rows))
+		for i := range projection.Rows {
+			row := &projection.Rows[i]
+			ids[i] = row.NodeID
+			row.Tags, row.CollectionIDs = nil, nil
+			row.DisplayCollectionID, row.DisplayCollectionLabel = "", nil
+			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = "", "", ""
+		}
+		memberships, err := readSnapshotMemberships(t.Context(), q, ids, f.selection, generation.ID)
+		require.NoError(t, err)
+		var used int64
+		facets, err := materializeSnapshotFacets(t.Context(), q, compiled, generation.ID, f.selection, dimensions, projection.Rows, memberships, snapshotMaterializeOptions{}.withDefaults(), &used)
+		require.NoError(t, err)
+		assert.Equal(t, projection.Facets, facets)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 // Returning a live filter population, counting memberships as documents, or
 // dropping fixed zero buckets changes these literal facet counts.
 func TestQuerySnapshotFacetsCoverEveryDimension(t *testing.T) {

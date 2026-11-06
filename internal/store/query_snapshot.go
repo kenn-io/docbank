@@ -273,6 +273,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		if generation.ID != "" {
 			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
 		}
+		var memberships snapshotMemberships
 		if !request.FacetsOnly {
 			projection.QueryFingerprint, err = query.Fingerprint(projection.Query)
 			if err != nil {
@@ -286,7 +287,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				execution.Query.Sort.Field = "name"
 				execution.Query.Sort.Direction = "asc"
 			}
-			err = materializeSnapshotRows(ctx, q, execution, generation.ID, coverage, options, &projection)
+			memberships, err = materializeSnapshotRows(ctx, q, execution, generation.ID, coverage, options, &projection)
 			if err != nil {
 				return err
 			}
@@ -297,7 +298,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				projection.PhotoRanking = &ranking
 			}
 		}
-		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, options, &projection.SerializedBytes)
+		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, memberships, options, &projection.SerializedBytes)
 		if err != nil {
 			return err
 		}
@@ -381,12 +382,108 @@ func validateSnapshotCoverageProfile(ctx context.Context, q metadataQuerier, sel
 	return nil
 }
 
+type snapshotMembership struct {
+	Tags                                                 []SnapshotTag
+	CollectionIDs                                        []string
+	DisplayCollectionLabel                               *string
+	ContentVersionID                                     string
+	CoverageState, CoverageBuildID, CoverageAttachmentID string
+}
+
+type snapshotMemberships map[int64]snapshotMembership
+
+// readSnapshotMemberships shares creation-time memberships between display rows and facets.
+func readSnapshotMemberships(ctx context.Context, q metadataQuerier, nodeIDs []int64, coverage CoverageSelection, generationID string) (snapshotMemberships, error) {
+	members := make(snapshotMemberships, len(nodeIDs))
+	for _, id := range nodeIDs {
+		members[id] = snapshotMembership{Tags: make([]SnapshotTag, 0), CollectionIDs: make([]string, 0)}
+	}
+	if len(nodeIDs) == 0 {
+		return members, nil
+	}
+	ids, err := json.Marshal(nodeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("encoding snapshot member IDs: %w", err)
+	}
+	const matched = `WITH matched_members AS (SELECT value AS node_id FROM json_each(?))`
+	read := func(ctx context.Context, statement string, args []any, scan func(*sql.Rows) error) error {
+		rows, err := q.QueryContext(ctx, matched+statement, args...)
+		if err != nil {
+			return fmt.Errorf("reading snapshot memberships: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			if err := scan(rows); err != nil {
+				return fmt.Errorf("scanning snapshot membership: %w", err)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("reading snapshot memberships: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("closing snapshot memberships: %w", err)
+		}
+		return nil
+	}
+	err = read(ctx, ` SELECT nt.node_id,t.id,t.name,t.revision
+		FROM matched_members m JOIN node_tags nt ON nt.node_id=m.node_id JOIN tags t ON t.id=nt.tag_id
+		ORDER BY nt.node_id,t.id`, []any{string(ids)}, func(rows *sql.Rows) error {
+		var id int64
+		var tag SnapshotTag
+		if err := rows.Scan(&id, &tag.ID, &tag.Name, &tag.Revision); err != nil {
+			return err
+		}
+		member := members[id]
+		member.Tags = append(member.Tags, tag)
+		members[id] = member
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = read(ctx, `, `+matchedCollectionMembershipCTE+`
+		SELECT cm.node_id,cm.ingest_id,l.label FROM collection_members cm
+		LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id ORDER BY cm.node_id,cm.ingest_id`, []any{string(ids)}, func(rows *sql.Rows) error {
+		var id int64
+		var collection string
+		var label sql.NullString
+		if err := rows.Scan(&id, &collection, &label); err != nil {
+			return err
+		}
+		member := members[id]
+		if len(member.CollectionIDs) == 0 {
+			member.DisplayCollectionLabel = stringPtr(label)
+		}
+		member.CollectionIDs = append(member.CollectionIDs, collection)
+		members[id] = member
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if coverage.Configuration == "configured" {
+		err = read(ctx, `, coverage_members AS (SELECT node_id FROM matched_members), `+processingCoverageCTE()+`
+			SELECT node_id,version_id,state,build_id,attachment_id FROM processing_coverage ORDER BY node_id`,
+			[]any{string(ids), coverage.ProfileFingerprint, generationID}, func(rows *sql.Rows) error {
+				var id int64
+				var member snapshotMembership
+				if err := rows.Scan(&id, &member.ContentVersionID, &member.CoverageState, &member.CoverageBuildID, &member.CoverageAttachmentID); err != nil {
+					return err
+				}
+				member.Tags, member.CollectionIDs, member.DisplayCollectionLabel = members[id].Tags, members[id].CollectionIDs, members[id].DisplayCollectionLabel
+				members[id] = member
+				return nil
+			})
+	}
+	return members, err
+}
+
 func materializeSnapshotRows(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generationID string,
 	coverage CoverageSelection, options snapshotMaterializeOptions, projection *SnapshotProjection,
-) error {
+) (snapshotMemberships, error) {
 	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
-		return err
+		return nil, err
 	}
 	var population compiledQueryFragment
 	var err error
@@ -406,11 +503,11 @@ func materializeSnapshotRows(
 		population, err = matchedPopulation(compiled, generationID, nil)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	statement, args, err := bindQueryPopulation(population, coverage, generationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var photos []PhotoBrowseRow
 	var photoRowBytes []int64
@@ -422,13 +519,6 @@ func materializeSnapshotRows(
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
 		photoOrder = ` ORDER BY m.photo_position`
 	}
-	coverageCTE, coverageJoin, coverageColumns := "", "", `'', '', ''`
-	if coverage.Configuration == "configured" {
-		coverageCTE = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTE()
-		coverageJoin = `LEFT JOIN processing_coverage pc ON pc.node_id=n.id AND pc.version_id=cv.version_id`
-		coverageColumns = `COALESCE(pc.state,''), COALESCE(pc.build_id,''), COALESCE(pc.attachment_id,'')`
-		args = append(args, coverage.ProfileFingerprint, generationID)
-	}
 	rows, err := q.QueryContext(ctx, `WITH RECURSIVE
 		matched_members AS (`+statement+`),
 		parent_dirs AS (
@@ -439,23 +529,14 @@ func materializeSnapshotRows(
 			SELECT p.dir_id,n.id,n.parent_id,
 				CASE WHEN n.name='' THEN '/'||p.path ELSE n.name||'/'||p.path END
 			FROM nodes n JOIN dir_paths p ON n.id=p.parent_id
-		), `+matchedCollectionMembershipCTE+coverageCTE+`
+		)
 		SELECT n.id,cv.version_id,cv.blob_hash,cv.size,n.revision,n.name,dp.path||'/'||n.name,
-			COALESCE(cv.mime_type,''),n.modified_at,
-			COALESCE((SELECT json_group_array(json_object('id',id,'name',name,'revision',revision))
-				FROM (SELECT t.id,t.name,t.revision FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
-					WHERE nt.node_id=n.id ORDER BY t.id)),'[]'),
-			COALESCE((SELECT json_group_array(ingest_id) FROM (
-				SELECT ingest_id FROM collection_members WHERE node_id=n.id ORDER BY ingest_id)),'[]'),
-			COALESCE((SELECT ingest_id FROM collection_members WHERE node_id=n.id ORDER BY ingest_id LIMIT 1),''),
-			(SELECT l.label FROM collection_members cm LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id
-				WHERE cm.node_id=n.id ORDER BY cm.ingest_id LIMIT 1),
-			`+coverageColumns+`,`+photoColumns+`
+			COALESCE(cv.mime_type,''),n.modified_at,`+photoColumns+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		JOIN dir_paths dp ON dp.dir_id=n.parent_id AND dp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
+		JOIN dir_paths dp ON dp.dir_id=n.parent_id AND dp.parent_id IS NULL `+photoOrder, args...)
 	if err != nil {
-		return fmt.Errorf("materializing query snapshot rows: %w", err)
+		return nil, fmt.Errorf("materializing query snapshot rows: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -466,74 +547,70 @@ func materializeSnapshotRows(
 			break
 		}
 		if int64(len(projection.Rows)) >= options.MaxRows {
-			return fmt.Errorf("%w: more than %d rows", ErrQuerySnapshotTooLarge, options.MaxRows)
+			return nil, fmt.Errorf("%w: more than %d rows", ErrQuerySnapshotTooLarge, options.MaxRows)
 		}
 		var row SnapshotRow
-		var tagsJSON, collectionsJSON []byte
-		var displayLabel sql.NullString
 		if err := rows.Scan(&row.NodeID, &row.ContentVersionID, &row.BlobHash, &row.Size, &row.Revision,
-			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &tagsJSON, &collectionsJSON,
-			&row.DisplayCollectionID, &displayLabel, &row.CoverageState, &row.CoverageBuildID,
-			&row.CoverageAttachmentID, &row.AssetID, &row.SortKey, &row.Flag); err != nil {
-			return fmt.Errorf("scanning query snapshot row: %w", err)
+			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &row.AssetID, &row.SortKey, &row.Flag); err != nil {
+			return nil, fmt.Errorf("scanning query snapshot row: %w", err)
 		}
-		if int64(len(tagsJSON)) > options.MaxRowBytes || int64(len(collectionsJSON)) > options.MaxRowBytes {
-			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
+		projection.Rows = append(projection.Rows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("materializing query snapshot rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("closing query snapshot rows: %w", err)
+	}
+	nodeIDs := make([]int64, len(projection.Rows))
+	for i, row := range projection.Rows {
+		nodeIDs[i] = row.NodeID
+	}
+	memberships, err := readSnapshotMemberships(ctx, q, nodeIDs, coverage, generationID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range projection.Rows {
+		row := &projection.Rows[i]
+		member := memberships[row.NodeID]
+		row.Tags, row.CollectionIDs = member.Tags, member.CollectionIDs
+		if len(row.CollectionIDs) > 0 {
+			row.DisplayCollectionID = row.CollectionIDs[0]
+			row.DisplayCollectionLabel = member.DisplayCollectionLabel
 		}
-		if string(tagsJSON) != "[]" {
-			if err := json.Unmarshal(tagsJSON, &row.Tags); err != nil {
-				return fmt.Errorf("decoding snapshot tags: %w", err)
-			}
-		}
-		if err := json.Unmarshal(collectionsJSON, &row.CollectionIDs); err != nil {
-			return fmt.Errorf("decoding snapshot collections: %w", err)
-		}
-		if row.Tags == nil {
-			row.Tags = make([]SnapshotTag, 0)
-		}
-		if row.CollectionIDs == nil {
-			row.CollectionIDs = make([]string, 0)
-		}
-		if displayLabel.Valid {
-			row.DisplayCollectionLabel = new(displayLabel.String)
+		if member.ContentVersionID == row.ContentVersionID {
+			row.CoverageState, row.CoverageBuildID, row.CoverageAttachmentID = member.CoverageState, member.CoverageBuildID, member.CoverageAttachmentID
 		}
 		row.MediaFamily = query.ClassifyMedia(row.MIMEType, row.Name)
 		if !options.Photos {
-			row.SortKey, err = snapshotSortKey(row, compiled.Query.Sort.Field)
+			row.SortKey, err = snapshotSortKey(*row, compiled.Query.Sort.Field)
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		encoded, err := json.Marshal(row)
 		if err != nil {
-			return fmt.Errorf("encoding query snapshot row: %w", err)
+			return nil, fmt.Errorf("encoding query snapshot row: %w", err)
 		}
 		rowBytes := int64(len(encoded))
 		if rowBytes > options.MaxRowBytes {
-			return fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, rowBytes)
+			return nil, fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, rowBytes)
 		}
-		if len(projection.Rows) != 0 {
+		if i != 0 {
 			rowBytes++ // JSON array separator; container brackets were charged before the query.
 		}
 		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, rowBytes); err != nil {
-			return err
+			return nil, err
 		}
 		projection.TotalBytes += row.Size
-		projection.Rows = append(projection.Rows, row)
 		if annotatePhotos {
 			photos = append(photos, PhotoBrowseRow{AssetID: row.AssetID})
 			photoRowBytes = append(photoRowBytes, int64(len(encoded)))
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("materializing query snapshot rows: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("closing query snapshot rows: %w", err)
-	}
 	if annotatePhotos {
 		if err := markSuggestionOnlyMatches(ctx, q, compiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
-			return err
+			return nil, err
 		}
 		for i, photo := range photos {
 			if !photo.MatchedAISuggestion {
@@ -543,14 +620,14 @@ func materializeSnapshotRows(
 			row.SuggestionMatch = true
 			encoded, err := json.Marshal(row)
 			if err != nil {
-				return fmt.Errorf("encoding query snapshot row: %w", err)
+				return nil, fmt.Errorf("encoding query snapshot row: %w", err)
 			}
 			rowBytes := int64(len(encoded))
 			if rowBytes > options.MaxRowBytes {
-				return fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
+				return nil, fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
 			}
 			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, rowBytes-photoRowBytes[i]); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -560,7 +637,7 @@ func materializeSnapshotRows(
 	} else {
 		sortSnapshotRows(projection.Rows, compiled.Query.Sort)
 	}
-	return nil
+	return memberships, nil
 }
 
 func snapshotSortKey(row SnapshotRow, field string) (string, error) {
