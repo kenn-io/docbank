@@ -26,10 +26,9 @@ func TestEmptySearchHints(t *testing.T) {
 		flags                                                                []string
 		hybrid, fileHit, nonempty, filterOnly, unavailable, folder, filtered bool
 		pending                                                              int
-		next                                                                 string
 	}{
 		{name: "human", pending: 1},
-		{name: "JSON", flags: []string{"--json"}, pending: 1, next: "docbank search '--json=true' '--' 'lease renewal'"},
+		{name: "JSON", flags: []string{"--json"}, pending: 1},
 		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
 		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
 		{name: "MIME", filtered: true, flags: []string{"--mime-type", "application/pdf"}},
@@ -37,11 +36,10 @@ func TestEmptySearchHints(t *testing.T) {
 		{name: "before", filtered: true, flags: []string{"--modified-before", "2000-01-01T00:00:00Z"}},
 		{name: "source", filtered: true, flags: []string{"--source-present"}},
 		{name: "PDF", filtered: true, flags: []string{"--pdf-filter", "pdf_has_javascript:true"}},
-		{name: "JSON quote", query: "tenant's lease", flags: []string{"--json"}, pending: 1},
 		{name: "agent", flags: []string{"--agent"}, pending: 1},
 		{name: "fuzzy", flags: []string{"--fuzzy"}, pending: 1},
 		{name: "hybrid agent with lexical file", flags: []string{"--agent"}, hybrid: true, fileHit: true, pending: 1},
-		{name: "hybrid JSON", flags: []string{"--json"}, hybrid: true, pending: 1, next: "docbank search '--json=true' '--' 'lease renewal'"},
+		{name: "hybrid JSON", flags: []string{"--json"}, hybrid: true, pending: 1},
 		{name: "nonempty", nonempty: true},
 		{name: "hybrid nonempty", hybrid: true, nonempty: true},
 		{name: "filter only", filterOnly: true},
@@ -153,11 +151,9 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 				require.Equal(t, "no_searchable_text", report.Hints[0].Code)
-				require.Contains(t, report.Hints[0].Message, "set up a text-extraction profile; build it")
+				require.Contains(t, report.Hints[0].Message, "use or set up a profile that can extract these files; build it")
 				require.Contains(t, report.Hints[0].Message, "list profiles with docbank processing profiles")
-				require.Empty(t, report.Hints[0].Next)
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
-				require.Equal(t, tc.next, report.Hints[1].Next)
 				if tc.name == "JSON" {
 					require.Equal(t, searchHint{
 						Code:    "every_word_required",
@@ -172,7 +168,7 @@ func TestEmptySearchHints(t *testing.T) {
 					require.Contains(t, stderr.String(), "Hint: 1 file (PDF) has no searchable text")
 				}
 				if tc.pending > 0 {
-					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again in a few seconds")
+					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
 				} else {
 					require.NotContains(t, stderr.String(), "still being indexed")
 				}

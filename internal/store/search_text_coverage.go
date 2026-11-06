@@ -25,7 +25,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out
 	}
 	formats := make(map[string]string)
 	for _, entry := range document.FormatMetadataCatalog() {
-		if !entry.Provider || SupportsTextExtractionMIME(entry.MediaType) {
+		if !entry.Provider || SupportsTextExtractionMIME(entry.MediaType) || emailMIME(entry.MediaType) {
 			continue
 		}
 		family := "other"

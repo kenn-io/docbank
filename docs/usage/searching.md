@@ -598,7 +598,7 @@ An empty CLI text search keeps its usual output and prints hints on stderr:
 how many files in the search scope need a processing profile, how many text
 files are still being indexed, and, for a multi-word lexical search, that one
 name or text segment must contain every word. `--json` carries them in a
-`hints` array of `code`, `message`, and, when one exists, a `next` command.
+`hints` array of `code` and `message`.
 
 ## Processing search
 
