@@ -732,6 +732,37 @@ func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
 
 func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {
 	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "existing-vault")
+	priorOwnership := seedOwnedVault(t, target)
+
+	_, err = backupapp.Restore(
+		t.Context(), repo, "test-version",
+		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
+	)
+	require.NoError(t, err)
+
+	restoredMetadata, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoredMetadata.Close()) }()
+	restoredOwnership := store.NewPackCatalog(restoredMetadata).PrimaryOwnership()
+	assert.NotEqual(t, priorOwnership, restoredOwnership)
+	restoredBlobs, err := blob.New(
+		store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, restoredBlobs.Close())
+}
+
+func TestRestoreKeepsMissLogsLocal(t *testing.T) {
+	fixture := newArchiveFixture(t)
 	cfg := config.Default().MissLog
 	cfg.Enabled = true
 	sourceLog := misslog.New(t.Context(), fixture.root, fixture.metadata.VaultID(), cfg, nil)
@@ -745,7 +776,7 @@ func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {
 	require.NoError(t, err)
 
 	target := filepath.Join(t.TempDir(), "existing-vault")
-	priorOwnership := seedOwnedVault(t, target)
+	seedOwnedVault(t, target)
 	targetLog := misslog.New(t.Context(), target, "synthetic-target", cfg, nil)
 	targetLog.Record(t.Context(), misslog.Request{Query: "synthetic target miss"})
 
@@ -767,17 +798,6 @@ func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {
 	receipts, err = restoredLog.List(t.Context(), 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, receipts)
-
-	restoredMetadata, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, restoredMetadata.Close()) }()
-	restoredOwnership := store.NewPackCatalog(restoredMetadata).PrimaryOwnership()
-	assert.NotEqual(t, priorOwnership, restoredOwnership)
-	restoredBlobs, err := blob.New(
-		store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"),
-	)
-	require.NoError(t, err)
-	require.NoError(t, restoredBlobs.Close())
 }
 
 func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) {

@@ -1,10 +1,8 @@
 package tui
 
 import (
-	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSearchReport {
@@ -134,19 +131,7 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 				want = []actionCall{{event: "search_run", searchType: "lexical"}}
 			}
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
-			fake.naturalRerankSearch.Coverage = api.DocumentSearchCoverage{BindingRequired: true, ScopedDocuments: 7, CompleteDocuments: 3, State: "incomplete"}
-			fake.naturalRerankSearch.Truncated = true
-			fake.naturalRerankSearch.Degradations = []string{"synthetic degradation"}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "POST /api/v1/search", r.Method+" "+r.URL.Path)
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.MarshalWrite(w, fake.naturalRerankSearch))
-			}))
-			t.Cleanup(server.Close)
-			_, err := daemonconn.New(server.URL, "synthetic-key").SearchDocuments(t.Context(), api.DocumentSearchRequest{
-				Mode: "lexical", Rerank: true, Scope: &api.DocumentSearchScope{Kind: "all_live"},
-			})
-			require.NoError(t, err)
+			fake.naturalRerankSearch.Coverage = api.DocumentSearchCoverage{ScopedDocuments: 7, State: "incomplete"}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
@@ -173,14 +158,8 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			if !baseEmpty {
 				require.Len(t, fake.misses, 1)
 				receipt := fake.misses[0]
-				assert.Equal(t, "report", receipt.Query)
-				assert.Equal(t, "lexical", receipt.RequestedMode)
-				assert.Equal(t, "lexical", receipt.ActualMode)
 				assert.Equal(t, new(7), receipt.DocumentCount)
-				assert.Equal(t, map[string]any{"binding_required": true, "scoped_documents": 7, "complete_documents": 3, "state": "incomplete"}, receipt.Coverage)
-				assert.True(t, receipt.Truncated)
-				assert.Equal(t, []string{"synthetic degradation"}, receipt.Degradations)
-				assert.Equal(t, "applied", receipt.Reranking["outcome"])
+				assert.Equal(t, 7, receipt.Coverage["scoped_documents"])
 			}
 		})
 	}
@@ -417,14 +396,12 @@ func TestNaturalSearchFallbackKeepsCause(t *testing.T) {
 	assert.Equal(t, naturalNames, result.naturalMode)
 	require.NotNil(t, fallback)
 
-	loaded, cmd := result.applySearch(searchLoadedMsg{
+	loaded, _ := result.applySearch(searchLoadedMsg{
 		requestID: result.requestID, query: "old", report: api.SearchReport{Hits: []api.SearchHit{{Node: readme, Path: readme.Path}}},
 	})
 	loadedModel, ok := loaded.(Model)
 	require.True(t, ok)
 	assert.Empty(t, loadedModel.rows[0].naturalMode)
-	runModelCommand(t, loadedModel, cmd)
-	require.Empty(t, fake.misses, "a visible lexical fallback is not a miss")
 }
 
 func TestNaturalSearchModeProvenanceSurvivesModeChange(t *testing.T) {

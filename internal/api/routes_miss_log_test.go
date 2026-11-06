@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -21,10 +22,18 @@ func TestDocumentSearchMissUsesKnownDocumentCounts(t *testing.T) {
 	unknownMiss := api.DocumentSearchMiss("synthetic question", "private", allLive, unknown)
 	assert.Nil(t, unknownMiss.DocumentCount)
 
-	known := api.DocumentSearchReport{Coverage: api.DocumentSearchCoverage{ScopedDocuments: 3, State: "incomplete"}}
+	known := api.DocumentSearchReport{
+		Coverage:  api.DocumentSearchCoverage{BindingRequired: true, ScopedDocuments: 3, CompleteDocuments: 1, State: "incomplete"},
+		Truncated: true, Degradations: []string{"synthetic degradation"},
+		Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", Cause: "synthetic cause", CandidateCount: 2},
+	}
 	knownMiss := api.DocumentSearchMiss("synthetic question", "private", allLive, known)
 	require.NotNil(t, knownMiss.DocumentCount)
 	assert.Equal(t, 3, *knownMiss.DocumentCount)
+	assert.Equal(t, map[string]any{"binding_required": true, "scoped_documents": 3, "complete_documents": 1, "state": "incomplete"}, knownMiss.Coverage)
+	assert.True(t, knownMiss.Truncated)
+	assert.Equal(t, []string{"synthetic degradation"}, knownMiss.Degradations)
+	assert.Equal(t, map[string]any{"outcome": "applied", "cause": "synthetic cause", "candidate_count": 2}, knownMiss.Reranking)
 
 	emptyFence := api.DocumentSearchRequest{Fence: api.DocumentSourceFence{VaultUID: "synthetic-vault"}}
 	emptyFenceMiss := api.DocumentSearchMiss("synthetic question", "private", emptyFence, unknown)
@@ -32,7 +41,7 @@ func TestDocumentSearchMissUsesKnownDocumentCounts(t *testing.T) {
 	assert.Zero(t, *emptyFenceMiss.DocumentCount)
 }
 
-func TestMissLogRecordsThirtyPhotoFilters(t *testing.T) {
+func TestMissLogRecordingAndManagement(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
 	filters := map[string]any{
@@ -46,49 +55,41 @@ func TestMissLogRecordsThirtyPhotoFilters(t *testing.T) {
 		"unevaluated": true, "gps_bounds": map[string]any{"south": "0", "north": "45", "west": "0", "east": "90"},
 	}
 	filters["syntax"], filters["corpus"], filters["hidden"] = "simple", "photos", false
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "synthetic photo", RequestedMode: "lexical", ActualMode: "lexical", Filters: filters})
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-	resp, body = get(t, ts, "/api/v1/miss-log", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var page api.MissLogPage
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Items, 1)
-	require.Equal(t, filters, page.Items[0].Filters)
-}
-
-func TestMissLogRecordingAndManagement(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
-	receipt := misslog.Request{
-		Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0),
+	for _, receipt := range []misslog.Request{
+		{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)},
+		{Query: "synthetic photo", RequestedMode: "lexical", ActualMode: "lexical", Filters: filters},
+	} {
+		t.Run(receipt.Query, func(t *testing.T) {
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			rows, err := listMisses(t, ts)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			resp, body = get(t, ts, "/api/v1/miss-log", nil)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+			var page api.MissLogPage
+			require.NoError(t, json.Unmarshal([]byte(body), &page))
+			require.Len(t, page.Items, 1)
+			require.Equal(t, receipt.Query, page.Items[0].Query)
+			require.Equal(t, receipt.Filters, page.Items[0].Filters)
+			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+rows[0].ID, nil, nil)
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			rows, err = listMisses(t, ts)
+			require.NoError(t, err)
+			require.Empty(t, rows)
+			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/missing", nil, nil)
+			require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
+			resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log", nil, nil)
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			rows, err = listMisses(t, ts)
+			require.NoError(t, err)
+			require.Empty(t, rows)
+		})
 	}
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-	rows, err := listMisses(t, ts)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	resp, body = get(t, ts, "/api/v1/miss-log", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-	var page api.MissLogPage
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Items, 1)
-	require.Equal(t, "synthetic empty submission", page.Items[0].Query)
-	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/"+rows[0].ID, nil, nil)
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-	rows, err = listMisses(t, ts)
-	require.NoError(t, err)
-	require.Empty(t, rows)
-	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log/missing", nil, nil)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodDelete, "/api/v1/miss-log", nil, nil)
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-	rows, err = listMisses(t, ts)
-	require.NoError(t, err)
-	require.Empty(t, rows)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
 		Query: "large", RequestedMode: "lexical", ActualMode: "lexical", Filters: map[string]any{"value": strings.Repeat("x", 64<<10)},
 	})
 	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, body)
@@ -115,76 +116,60 @@ func TestMissLogBrowserMayRecordButCannotManage(t *testing.T) {
 	}
 }
 
-func TestMissLogIdentifierLimits(t *testing.T) {
-	t.Parallel()
-	for _, field := range []string{"profile", "binding_id"} {
-		for _, size := range []int{128, 129, 256} {
-			t.Run(field+"/"+strconv.Itoa(size), func(t *testing.T) {
-				ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
-				value := strings.Repeat("x", size)
-				resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, map[string]any{
-					"query": "synthetic miss", "requested_mode": "lexical", "actual_mode": "lexical", "truncated": false, field: value,
-				})
-				rows, err := listMisses(t, ts)
-				require.NoError(t, err)
-				if size > 128 {
-					assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-					assert.Empty(t, rows)
-					return
-				}
-				require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-				require.Len(t, rows, 1)
-				if field == "profile" {
-					assert.Equal(t, value, rows[0].Profile)
-				} else {
-					assert.Equal(t, value, rows[0].BindingID)
-				}
-			})
-		}
-	}
-}
-
-func TestMissLogQueryLengthLimit(t *testing.T) {
-	t.Parallel()
-	for _, size := range []int{32768, 32769} {
-		t.Run(strconv.Itoa(size), func(t *testing.T) {
-			ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
-			query := strings.Repeat("x", size)
-			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
-				Query: query, RequestedMode: "lexical", ActualMode: "lexical",
-			})
-			rows, err := listMisses(t, ts)
-			require.NoError(t, err)
-			if size > 32768 {
-				assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-				assert.Empty(t, rows)
-				return
-			}
-			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
-			require.Len(t, rows, 1)
-			assert.Equal(t, query, rows[0].Query)
-		})
-	}
-}
-
 func TestMissLogInputLimits(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+	type validationCase struct {
+		name     string
+		fields   map[string]any
+		accepted bool
+	}
+	var tests []validationCase
+	for _, field := range []string{"profile", "binding_id", "query"} {
+		limit := 128
+		if field == "query" {
+			limit = 32768
+		}
+		for _, size := range []int{limit, limit + 1} {
+			tests = append(tests, validationCase{field + "/" + strconv.Itoa(size), map[string]any{field: strings.Repeat("x", size)}, size == limit})
+		}
+	}
 	for _, modes := range [][2]string{{"semnatic", "lexical"}, {"hybrid", "semnatic"}, {"", "lexical"}, {"hybrid", ""}} {
-		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{Query: "missing", RequestedMode: modes[0], ActualMode: modes[1]})
-		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		tests = append(tests, validationCase{"modes/" + modes[0] + "/" + modes[1], map[string]any{"requested_mode": modes[0], "actual_mode": modes[1]}, false})
 	}
 	for field, count := range map[string]int{"coverage": 33, "reranking": 9} {
 		properties := map[string]any{}
 		for i := range count {
 			properties[strconv.Itoa(i)] = true
 		}
-		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, map[string]any{"query": "missing", "requested_mode": "lexical", "actual_mode": "lexical", "truncated": false, field: properties})
-		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		tests = append(tests, validationCase{field, map[string]any{field: properties}, false})
 	}
-	rows, err := listMisses(t, ts)
-	require.NoError(t, err)
-	require.Empty(t, rows)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+			request := map[string]any{"query": "synthetic miss", "requested_mode": "lexical", "actual_mode": "lexical", "truncated": false}
+			maps.Copy(request, test.fields)
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, request)
+			rows, err := listMisses(t, ts)
+			require.NoError(t, err)
+			if !test.accepted {
+				assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+				assert.Empty(t, rows)
+				return
+			}
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			require.Len(t, rows, 1)
+			for field, value := range test.fields {
+				switch field {
+				case "profile":
+					assert.Equal(t, value, rows[0].Profile)
+				case "binding_id":
+					assert.Equal(t, value, rows[0].BindingID)
+				case "query":
+					assert.Equal(t, value, rows[0].Query)
+				}
+			}
+		})
+	}
 }
 
 func listMisses(t *testing.T, ts *httptest.Server) ([]misslog.Receipt, error) {

@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/kit/atomicfile"
 )
 
-func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
+func TestRecordingIsOptInAndBounded(t *testing.T) {
 	root := t.TempDir()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
@@ -64,7 +64,15 @@ func TestRecordingIsOptInBoundedAndSanitizesFailures(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join(root, "miss-log"))
 	require.NoError(t, err)
 	require.Empty(t, entries)
-	require.NoError(t, os.Remove(filepath.Join(root, "miss-log")))
+}
+
+func TestRecordingSanitizesDirectoryFailures(t *testing.T) {
+	root := t.TempDir()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	cfg := config.Default().MissLog
+	cfg.Enabled = true
+	svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "miss-log"), []byte("blocked"), 0600))
 	svc.Record(t.Context(), Request{Query: "another private secret"})
 	require.NotContains(t, logs.String(), "secret")

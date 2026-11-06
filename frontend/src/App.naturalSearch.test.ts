@@ -421,22 +421,12 @@ it("rechecks name matches after processing can make a file stale", async () => {
     onBaseSearch: () => liveFiles.splice(0),
   });
   render(App);
-  await screen.findByRole("combobox", { name: "Search syntax: Plain words" });
+  await screen.findAllByText("retired.txt");
+  await screen.findByRole("button", { name: "Move to trash" });
   await submitSearch("retired");
   await screen.findByText("No documents match the current filter.");
 
-  const searchCalls = harness.fetchMock.mock.calls
-    .filter(([url]) => {
-      const value = String(url);
-      return (
-        value === "/api/v1/search" ||
-        (value.startsWith("/api/v1/search?") &&
-          new URL(value, "https://example.com").searchParams.get("q") === "retired")
-      );
-    })
-    .map(([url, init]) => (String(url) === "/api/v1/search" ? "POST" : (init?.method ?? "GET")));
-  expect(searchCalls.indexOf("POST")).toBeGreaterThanOrEqual(0);
-  expect(searchCalls.lastIndexOf("GET")).toBeGreaterThan(searchCalls.indexOf("POST"));
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
   expect(screen.queryByRole("cell", { name: file.path })).toBeNull();
 });
 
@@ -474,23 +464,11 @@ it("keeps names and text on GET without a processing profile", async () => {
     .find((input) => input.startsWith("/api/v1/search?"));
   expect(searchURL).toContain("limit=1000");
   expect(searchURL).toContain(`tag_id=${tagID}`);
-  expect(new URL(searchURL!, "https://example.com").searchParams.get("skip_miss_log")).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  await waitFor(() => {
-    const searchURLs = harness.fetchMock.mock.calls
-      .map(([input]) => String(input))
-      .filter((input) => input.startsWith("/api/v1/search?"));
-    expect(searchURLs).toHaveLength(2);
-    expect(
-      new URL(searchURLs[1]!, "https://example.com").searchParams.get("skip_miss_log"),
-    ).toBeNull();
-  });
   expect(
     harness.fetchMock.mock.calls.some(
       ([input, init]) => String(input) === "/api/v1/search" && init?.method === "POST",
     ),
   ).toBe(false);
-  expect(harness.misses).toHaveLength(0);
   expect(screen.queryByText("Reranking results… Base results are shown.")).toBeNull();
 });
 
@@ -1132,16 +1110,6 @@ it("shows the empty-population note and reports a submitted search once", async 
   await screen.findByText("No documents match the current filter.");
   expect(harness.postBodies).toHaveLength(1);
   expect(searchRun).toHaveBeenCalledExactlyOnceWith("short-lived", "hybrid", true);
-  await waitFor(() => expect(harness.misses).toHaveLength(1));
-  expect(harness.postBodies[0]?.scope).toEqual({ kind: "all_live", filters: { tag_id: tagID } });
-  expect(harness.misses[0]).toMatchObject({
-    query: "nothing",
-    requested_mode: "hybrid",
-    actual_mode: "hybrid",
-    filters: { tag_id: tagID },
-    document_count: 0,
-    coverage: { state: "complete" },
-  });
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
   await waitFor(() => expect(harness.postBodies).toHaveLength(2));
   expect(searchRun).toHaveBeenCalledOnce();
@@ -1970,10 +1938,10 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each(["plain", "rerank", "fallback", "filtered"])(
+it.each(["plain", "rerank", "tag-filtered", "fallback", "filtered"])(
   "records an empty %s submission once",
   async (kind) => {
-    const rerank = kind === "rerank";
+    const rerank = kind === "rerank" || kind === "tag-filtered";
     const harness = installHarness({
       profiles: [
         {
@@ -1989,10 +1957,19 @@ it.each(["plain", "rerank", "fallback", "filtered"])(
       ...(kind === "fallback"
         ? { baseSearchStatus: 500, tagSearch: { hits: [], limit: 1000, truncated: false } }
         : {}),
+      ...(kind === "tag-filtered"
+        ? { tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID } }
+        : {}),
       rerankReport: report("hybrid", [], { outcome: "skipped", candidate_count: 0 }),
     });
     render(App);
     await screen.findAllByText("existing.txt");
+    if (kind === "tag-filtered") {
+      await fireEvent.click(
+        await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+      );
+      await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
+    }
     if (rerank)
       await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
     if (kind === "filtered") {
@@ -2027,6 +2004,13 @@ it.each(["plain", "rerank", "fallback", "filtered"])(
             }
           : { binding_id: "embed", actual_mode: "hybrid", document_count: 2 }),
     });
+    if (kind === "tag-filtered") {
+      expect(harness.postBodies[0]?.scope).toEqual({
+        kind: "all_live",
+        filters: { tag_id: tagID },
+      });
+      expect(harness.misses[0]).toMatchObject({ filters: { tag_id: tagID } });
+    }
     if (kind === "fallback" || kind === "filtered") return;
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     await waitFor(() => expect(harness.postBodies).toHaveLength(2));

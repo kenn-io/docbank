@@ -209,6 +209,72 @@ it("keeps a saved plain-words search's filters when the search text changes", as
     configurable: true,
     value: vi.fn(),
   });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/workspace/queries") {
+      const body = JSON.parse(String(init?.body));
+      searches.push(body.query);
+      return new Response(
+        JSON.stringify(
+          await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), [], {
+            page_size: body.page_size ?? 100,
+          }),
+        ),
+      );
+    }
+    if (url.includes("saved-queries"))
+      return new Response(JSON.stringify({ items: [record], total: 1, limit: 100, offset: 0 }));
+    const value = url.includes("/path?")
+      ? root
+      : url.includes("/children?")
+        ? { directory: root, items: [], total: 0, limit: 1000, offset: 0 }
+        : { items: [], total: 0, limit: 1000, offset: 0 };
+    return new Response(JSON.stringify(value));
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Searches" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Run Invoices" }));
+  await waitFor(() => expect(searches).toHaveLength(1));
+  await screen.findByText("No matching documents");
+  await waitFor(() => expect(reportSearch).toHaveBeenCalledWith("synthetic", "text", true));
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "receipts" } });
+  await fireEvent.submit(search.closest("form")!);
+  await waitFor(() => expect(searches).toHaveLength(2));
+  expect(searches[1]).toMatchObject({ text: "receipts", filters: { extensions: ["pdf"] } });
+});
+
+it("records a typed snapshot search miss but skips a saved-query run", async () => {
+  const reportSearch = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+  const saved = parseQuery(
+    JSON.stringify({ text: "invoice", filters: { extensions: ["pdf"] }, sort: { field: "size" } }),
+  );
+  const canonical = canonicalQuery(saved);
+  const record = {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "Invoices",
+    description: "",
+    kind: "query",
+    payload: JSON.parse(canonical),
+    revision: 1,
+    fingerprint: `sha256:${createHash("sha256").update(canonical).digest("hex")}`,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  const searches: unknown[] = [];
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/workspace/queries") {
@@ -242,7 +308,6 @@ it("keeps a saved plain-words search's filters when the search text changes", as
   await fireEvent.input(search, { target: { value: "receipts" } });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() => expect(searches).toHaveLength(2));
-  expect(searches[1]).toMatchObject({ text: "receipts", filters: { extensions: ["pdf"] } });
   await waitFor(() =>
     expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/miss-log")).toHaveLength(1),
   );

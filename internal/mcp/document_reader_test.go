@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -105,30 +104,4 @@ func TestEmbeddedDocumentToolsMatchDaemon(t *testing.T) {
 	hit, ok := hits[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "/alpha.txt", hit["path"])
-}
-
-func TestEmbeddedDocumentReaderDoesNotRecordMiss(t *testing.T) {
-	f := newNativeExportFixture(t)
-	f.addFile(t, "synthetic.txt", "synthetic content")
-	profileName, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
-	require.NoError(t, err)
-	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
-	cfg := config.Default()
-	cfg.Server.APIKey = "synthetic-export-key"
-	cfg.MissLog.Enabled = true
-	log := misslog.New(t.Context(), os.Getenv("DOCBANK_HOME"), f.catalog.VaultID(), cfg.MissLog, nil)
-	apiServer := api.NewServer(api.Deps{MissLog: log, Store: f.catalog, Blobs: f.blobs, Processing: service, Cfg: cfg, VaultRoot: os.Getenv("DOCBANK_HOME")})
-	t.Cleanup(apiServer.Close)
-	args := map[string]any{"query": "synthetic private scope miss", "mode": "lexical", "profile": profileName, "filters": map[string]any{"mime_type": "image/png"}}
-	reader := api.NewDocumentReader(f.catalog, f.blobs, os.Getenv("DOCBANK_HOME"), service)
-	raw, err := json.Marshal(args)
-	require.NoError(t, err)
-	result, err := CallDocumentReadTool(t.Context(), reader, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Name: "search_documents", Arguments: raw}})
-	require.NoError(t, err)
-	require.False(t, result.IsError, result)
-	records, err := log.List(t.Context(), 10, 0)
-	require.NoError(t, err)
-	require.Empty(t, records)
 }

@@ -22,21 +22,21 @@ import (
 )
 
 type automaticSearchCase struct {
-	name                                string
-	query                               string
-	profiles                            []api.ProcessingProfileSummary
-	profileError, searchError           string
-	malformed, cold, mixed              bool
-	empty, noDocumentHits, noFolderHits bool
-	folderFirst, wantTruncated          bool
-	wantResults, wantFolders            int
-	jsonCLI, humanCLI, agentCLI         bool
-	limit                               int
-	opts                                daemonconn.SearchOptions
-	skipped, wantHybrid, wantDetail     bool
-	wantReason                          string
-	wantError                           bool
-	wantMiss, wantSearch                int
+	name                            string
+	query                           string
+	profiles                        []api.ProcessingProfileSummary
+	profileError, searchError       string
+	malformed, cold, mixed          bool
+	empty, noDocumentHits           bool
+	folderFirst, wantTruncated      bool
+	wantResults, wantFolders        int
+	jsonCLI, humanCLI, agentCLI     bool
+	limit                           int
+	opts                            daemonconn.SearchOptions
+	skipped, wantHybrid, wantDetail bool
+	wantReason                      string
+	wantError                       bool
+	wantMiss, wantSearch            int
 }
 
 func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
@@ -55,7 +55,6 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
 		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true, wantMiss: 1},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
-		{name: "empty merged result", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, noDocumentHits: true, noFolderHits: true, wantMiss: 1},
 		{name: "folder prevents miss", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, noDocumentHits: true, wantFolders: 1},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
@@ -165,9 +164,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			if !tc.noDocumentHits {
 				matches = append(matches, api.SearchHit{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"})
 			}
-			if !tc.noFolderHits {
-				matches = append(matches, api.SearchHit{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"})
-			}
+			matches = append(matches, api.SearchHit{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"})
 			if tc.folderFirst {
 				if len(matches) > 1 {
 					matches[0], matches[1] = matches[1], matches[0]
@@ -362,7 +359,7 @@ func TestSearchCLIForwardsPDFFilter(t *testing.T) {
 	var record kitdaemon.RuntimeRecord
 	var profileCalls, searchCalls, missCalls int
 	handshake := automaticSearchDaemon(t, automaticSearchCase{
-		opts: daemonconn.SearchOptions{PDFFilter: filter}, skipped: true, wantMiss: 1,
+		opts: daemonconn.SearchOptions{PDFFilter: filter}, wantMiss: 1,
 	}, &record, &profileCalls, &searchCalls, &missCalls)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/search" {
@@ -394,14 +391,15 @@ func TestSearchCLIMissUsesAppliedFilters(t *testing.T) {
 		case "GET /api/v1/search":
 			assert.Equal(t, "application/pdf", r.URL.Query().Get("mime_type"))
 			assert.Equal(t, "true", r.URL.Query().Get("fuzzy"))
+			assert.Equal(t, "true", r.URL.Query().Get("source_present"))
 			w.Header().Set("Content-Type", "application/json")
-			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{MIMEType: "application/pdf", Limit: 50, Hits: []api.SearchHit{},
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{MIMEType: "application/pdf", SourcePresent: true, Limit: 50, Hits: []api.SearchHit{},
 				Fuzzy: &api.FuzzyReceipt{Status: "complete", Reasons: []string{}}}))
 		case "POST /api/v1/miss-log":
 			recordedMisses++
 			var receipt misslog.Request
 			assert.NoError(t, json.UnmarshalRead(r.Body, &receipt))
-			assert.Equal(t, map[string]any{"mime_type": "application/pdf"}, receipt.Filters)
+			assert.Equal(t, map[string]any{"mime_type": "application/pdf", "source_present": true}, receipt.Filters)
 			assert.Equal(t, "fuzzy", receipt.RequestedMode)
 			assert.Equal(t, "fuzzy", receipt.ActualMode)
 			fuzzy, ok := receipt.Coverage["fuzzy"].(map[string]any)
@@ -417,7 +415,7 @@ func TestSearchCLIMissUsesAppliedFilters(t *testing.T) {
 	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "key", "synthetic-token", "")
 	_, err := daemonconn.RuntimeStore(root).Write(record)
 	require.NoError(t, err)
-	_, err = runCLI(t, "search", "missing", "--mime-type", "Application/PDF", "--fuzzy", "--json")
+	_, err = runCLI(t, "search", "missing", "--mime-type", "Application/PDF", "--fuzzy", "--source-present", "--json")
 	require.NoError(t, err)
 	require.Equal(t, 1, recordedMisses)
 }

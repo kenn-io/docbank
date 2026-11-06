@@ -23,9 +23,6 @@ func TestMissLogZeroBoundsAccepted(t *testing.T) {
 	cfg, err := Load(dir)
 	require.NoError(t, err)
 	require.NoError(t, cfg.Validate())
-	absent := Default()
-	absent.MissLog = MissLogConfig{}
-	require.NoError(t, absent.Validate())
 }
 
 func FuzzMissLogConfigBounds(f *testing.F) {

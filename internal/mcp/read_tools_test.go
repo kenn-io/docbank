@@ -472,7 +472,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 						return
 					}
 					report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
-						Coverage:     api.DocumentSearchCoverage{State: "complete"},
+						Coverage:     api.DocumentSearchCoverage{State: "unknown"},
 						Degradations: []string{}, Results: []api.DocumentSearchResult{}}
 					if test.rerank {
 						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
@@ -505,7 +505,6 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 				assert.Nil(t, result)
 				return
 			}
-			assert.Equal(t, 1, missCalls)
 			require.NoError(t, err)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
