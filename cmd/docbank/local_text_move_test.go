@@ -207,6 +207,8 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			before := search(service, name)
 			require.Equal(t, nodes[0].CurrentVersionID, before[0])
 			localDocuments.Store(0)
+			// A saved selection can outlive revoked consent. Keep startup backfill
+			// idle until Apply grants approval for the selected recipe again.
 			require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"local-text","server":"local"}`), 0600))
 			writeDaemonEmbeddingConfig(t, layout.Root, cfg)
 			t.Setenv("DOCBANK_HOME", layout.Root)

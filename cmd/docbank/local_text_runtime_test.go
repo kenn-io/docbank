@@ -90,10 +90,10 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
+	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: "archive", Server: "local"}))
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	require.Equal(t, "archive", choice.Profile)
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {

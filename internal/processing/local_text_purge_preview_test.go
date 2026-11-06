@@ -2,7 +2,6 @@ package processing
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,19 +31,8 @@ func TestLocalTextPurgePreviewTracksSelectedProfile(t *testing.T) {
 	_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
 	require.NoError(t, err)
 	current := source.profiles["pdf"]
-	portable := current.portable
-	portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
-	portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
 	var selected string
-	var moved *Service
-	setup := &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
-		candidate, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
-		if err == nil {
-			t.Cleanup(candidate.Stop)
-			moved = candidate
-		}
-		return candidate, err
-	}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { selected = name; return nil }}
+	setup := newLocalTextMoveSetup(t, source, &selected)
 	plan, err := setup.Plan(t.Context(), "local")
 	require.NoError(t, err)
 	require.NotEqual(t, current.record.Fingerprint, plan.ProfileFingerprint)
@@ -53,7 +41,8 @@ func TestLocalTextPurgePreviewTracksSelectedProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "pdf", selected)
 	require.Equal(t, 2, renderer.calls, "the moved profile has its own purge scope")
-	setup.Service = moved
+	setup.Service, err = setup.Candidate("local", "pdf")
+	require.NoError(t, err)
 	_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
 	require.NoError(t, err)
 	plan, err = setup.Plan(t.Context(), "local")

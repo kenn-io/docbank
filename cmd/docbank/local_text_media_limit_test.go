@@ -50,6 +50,8 @@ func TestLocalTextSetupPreservesAudioCeiling(t *testing.T) {
 	_, err = file.WriteString("\n[media]\nmax_source_bytes = 64\n")
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
+	// A saved selection survives consent revocation; Apply must grant approval
+	// again before it can process this recipe.
 	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "local-text.json"), []byte(`{"version":1,"profile":"asr","server":"local"}`), 0600))
 	t.Setenv("DOCBANK_HOME", layout.Root)
 	t.Setenv("DO_NOT_TRACK", "1")

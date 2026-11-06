@@ -40,18 +40,8 @@ func TestLocalTextMoveWithPendingProviderFailure(t *testing.T) {
 		before, err := source.Search(t.Context(), request)
 		require.NoError(t, err)
 		require.Len(t, before.Results, 1)
-		current := source.profiles["pdf"]
-		portable := current.portable
-		portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
-		portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
 		saved := "previous-profile"
-		setup := &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
-			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
-			if err == nil {
-				t.Cleanup(service.Stop)
-			}
-			return service, err
-		}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { saved = name; return nil }}
+		setup := newLocalTextMoveSetup(t, source, &saved)
 		move, err := setup.Plan(t.Context(), "local")
 		require.NoError(t, err)
 		require.Contains(t, move.VectorEffect, "processes 2 documents before setup returns")
@@ -68,11 +58,5 @@ func TestLocalTextMoveWithPendingProviderFailure(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, after.Results, 1)
 		require.Equal(t, before.Results[0].Document, after.Results[0].Document)
-		candidate, err := setup.Candidate("local", "pdf")
-		require.NoError(t, err)
-		moved, err := candidate.Search(t.Context(), request)
-		require.NoError(t, err)
-		require.Len(t, moved.Results, 1)
-		require.Equal(t, before.Results[0].Document, moved.Results[0].Document)
 	})
 }

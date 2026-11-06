@@ -192,6 +192,21 @@ type localTextGrantGate struct {
 
 func (gate *localTextGrantGate) MutateContext(context.Context, func() error) error { return gate.err }
 
+func newLocalTextMoveSetup(t *testing.T, source *Service, saved *string) *LocalTextSetup {
+	t.Helper()
+	current := source.profiles["pdf"]
+	portable := current.portable
+	portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
+	portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
+	return &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
+		service, err := NewService(t.Context(), ServiceConfig{Catalog: source.catalog, Blobs: source.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
+		if err == nil {
+			t.Cleanup(service.Stop)
+		}
+		return service, err
+	}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { *saved = name; return nil }}
+}
+
 func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvider, providers ...document.EmbeddingProvider) (publicationFixture, *LocalTextSetup) {
 	tb.Helper()
 	fixture := newPublicationFixture(tb)
