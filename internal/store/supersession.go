@@ -75,9 +75,15 @@ func (s *Store) changeSupersession(ctx context.Context, successorID, predecessor
 		return result, fmt.Errorf("self link: %w", ErrInvalidSupersession)
 	}
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		n, err := liveFileTx(ctx, tx, predecessorID)
+		n, err := nodeByIDTx(ctx, tx, predecessorID)
 		if err != nil {
 			return err
+		}
+		if n.IsDir() {
+			return ErrNotFile
+		}
+		if put && n.TrashedAt != nil {
+			return fmt.Errorf("node %d: %w", predecessorID, ErrNotFound)
 		}
 		if revision != UnconditionalRev && n.Revision != revision {
 			return ErrStaleRevision

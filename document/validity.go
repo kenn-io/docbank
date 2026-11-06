@@ -57,7 +57,9 @@ func EvaluateValidity(asOf string, own EffectiveWindow, successors []SuccessorSt
 	superseded, undated := false, false
 	for _, successor := range successors {
 		if successor.From == "" {
-			superseded, undated = true, true
+			if own.To == "" || own.To < asOf {
+				superseded, undated = true, true
+			}
 		} else if successor.From <= asOf {
 			superseded = true
 		}

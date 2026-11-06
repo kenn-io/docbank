@@ -18,6 +18,9 @@ func TestEvaluateValidity(t *testing.T) {
 		{"future before successor", "2024-01-01", EffectiveWindow{From: "2025-01-01"}, []SuccessorStart{{}}, ValidityNotYetEffective, false},
 		{"superseded before expiry", "2025-01-01", EffectiveWindow{To: "2024-12-31"}, []SuccessorStart{{From: "2025-01-01"}}, ValiditySuperseded, false},
 		{"undated", "2025-01-01", EffectiveWindow{}, []SuccessorStart{{From: "2026-01-01"}, {}}, ValiditySuperseded, true},
+		{"undated within own term", "2024-06-01", EffectiveWindow{To: "2025-02-28"}, []SuccessorStart{{}}, ValidityCurrent, false},
+		{"undated at own end", "2025-02-28", EffectiveWindow{To: "2025-02-28"}, []SuccessorStart{{}}, ValidityCurrent, false},
+		{"undated after own end", "2025-03-01", EffectiveWindow{To: "2025-02-28"}, []SuccessorStart{{}}, ValiditySuperseded, true},
 		{"expired", "2025-01-01", EffectiveWindow{To: "2024-12-31"}, nil, ValidityExpired, false},
 	}
 	for _, tt := range tests {
