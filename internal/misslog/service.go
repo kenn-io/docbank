@@ -65,6 +65,8 @@ const (
 	fileTimeLayout = "20060102T150405.000000000Z"
 )
 
+var errUnsupportedVersion = errors.New("unsupported miss log receipt version")
+
 // New loads the file index and prunes expired and excess receipts.
 func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, logger *slog.Logger) *Service {
 	defaults := config.Default().MissLog
@@ -198,6 +200,10 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Receipt, error
 		if s.files[i] < cutoff {
 			break
 		}
+		if offset > 0 {
+			offset--
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(s.dir, s.files[i]))
 		if errors.Is(err, fs.ErrNotExist) {
 			s.files = slices.Delete(s.files, i, i+1)
@@ -210,13 +216,8 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Receipt, error
 		if err := json.Unmarshal(data, &receipt); err != nil {
 			return nil, err
 		}
-		if receipt.Version != receiptVersion {
-			s.logger.Warn("miss_log_unsupported_version")
-			continue
-		}
-		if offset > 0 {
-			offset--
-			continue
+		if receipt.Version > receiptVersion {
+			return nil, errUnsupportedVersion
 		}
 		items = append(items, receipt)
 	}

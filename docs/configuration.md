@@ -1545,7 +1545,7 @@ Receipts preserve the query, time, vault, requested and actual modes, profile, s
 
 Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. List responses use `Cache-Control: no-store`. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Lists exclude records older than `retention_days`, including on idle daemons. Startup and writes prune records by age and count. Disabling recording stops new receipts; existing receipts remain subject to retention and record limits.
 
-A daemon ignores receipts written by a newer version and leaves them on disk until retention removes them.
+A daemon refuses to list receipts written by a newer version and leaves them on disk until retention removes them or the operator deletes them.
 
 The log is excluded from anonymous telemetry, logical backups, portable bundle
 metadata, imports, and federation. Backups carry no miss records, and an overwrite restore leaves the target's own records in place.

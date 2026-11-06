@@ -101,44 +101,18 @@ func TestMissLogMissingReceipt(t *testing.T) {
 	}
 }
 
-func TestMissLogSkipsUnsupportedReceiptVersions(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		root := t.TempDir()
-		cfg := config.Default().MissLog
-		cfg.Enabled = true
-		var logs bytes.Buffer
-		logger := slog.New(slog.NewTextHandler(&logs, nil))
-		svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
-		for _, query := range []string{"first", "second"} {
-			svc.Record(t.Context(), Request{Query: query})
-			time.Sleep(time.Second)
-		}
-		var paths []string
-		for id, data := range map[string]string{
-			"future":      `{"version":2,"query":"synthetic secret"}`,
-			"unversioned": `{"query":"synthetic secret"}`,
-		} {
-			path := filepath.Join(root, "miss-log", time.Now().UTC().Format(fileTimeLayout)+"-"+id+".json")
-			require.NoError(t, os.WriteFile(path, []byte(data), 0600))
-			paths = append(paths, path)
-		}
-		svc = New(t.Context(), root, "synthetic-vault", cfg, logger)
-		rows, err := svc.List(t.Context(), 2, 0)
-		require.NoError(t, err)
-		require.Len(t, rows, 2)
-		require.Equal(t, "second", rows[0].Query)
-		require.Equal(t, "first", rows[1].Query)
-		require.Equal(t, 2, bytes.Count(logs.Bytes(), []byte("level=WARN")))
-		require.NotContains(t, logs.String(), "synthetic secret")
-		for _, path := range paths {
-			require.FileExists(t, path)
-		}
-		rows, err = svc.List(t.Context(), 1, 1)
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		require.Equal(t, "first", rows[0].Query)
-		require.NoError(t, svc.Delete(t.Context(), "future"))
-	})
+func TestMissLogRefusesUnsupportedReceiptVersions(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "miss-log")
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	path := filepath.Join(dir, time.Now().UTC().Format(fileTimeLayout)+"-future.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"version":2,"query":"synthetic secret"}`), 0600))
+	svc := New(t.Context(), root, "synthetic-vault", config.Default().MissLog, nil)
+	_, err := svc.List(t.Context(), 10, 0)
+	require.ErrorIs(t, err, errUnsupportedVersion)
+	require.FileExists(t, path)
+	require.NoError(t, svc.Delete(t.Context(), "future"))
+	require.NoFileExists(t, path)
 }
 
 func TestRecordingPreservesAssetScope(t *testing.T) {
