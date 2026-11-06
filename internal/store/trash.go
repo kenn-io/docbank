@@ -167,6 +167,9 @@ func (s *Store) trashNodeTx(ctx context.Context, tx *sql.Tx, n Node, now string)
 	if err := recordVaultChangesTx(ctx, tx, "trashed", changeIDs...); err != nil {
 		return err
 	}
+	if err := recordPredecessorValidityChangesTx(ctx, tx, changeIDs); err != nil {
+		return err
+	}
 	trashedNodes[n.ID] = Node{ID: n.ID, Name: n.Name, ParentID: &s.rootID}
 	if err := s.refreshTrashedNodeWorkTx(ctx, tx, trashedNodes, n); err != nil {
 		return err
@@ -347,6 +350,9 @@ func (s *Store) restoreNodeTx(
 		return Node{}, err
 	}
 	if err := recordVaultChangesTx(ctx, tx, "restored", ids...); err != nil {
+		return Node{}, err
+	}
+	if err := recordPredecessorValidityChangesTx(ctx, tx, ids); err != nil {
 		return Node{}, err
 	}
 	return nodeByIDTx(ctx, tx, node.ID)

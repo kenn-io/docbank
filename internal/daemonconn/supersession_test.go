@@ -24,6 +24,7 @@ func TestSupersessionClientBindsMutationReceipts(t *testing.T) {
 		{"wrong node", 4, 8, true, `"8"`, true},
 		{"wrong revision", 3, 7, true, `"8"`, true},
 		{"wrong ETag", 3, 8, true, `"7"`, true},
+		{"missing ETag", 3, 8, true, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

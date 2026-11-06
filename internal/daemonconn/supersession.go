@@ -50,8 +50,11 @@ func checkedValidityReceipt(receipt *api.ValidityReceipt, response *http.Respons
 	if receipt.Changed {
 		wantRevision++
 	}
-	if receipt.Node.ID != nodeID || receipt.Node.Revision != wantRevision || response.Header.Get("ETag") != revisionIfMatch(wantRevision) {
+	if receipt.Node.ID != nodeID || receipt.Node.Revision != wantRevision {
 		return api.ValidityReceipt{}, &responseDecodeError{err: fmt.Errorf("document validity receipt does not bind node %d revision %d", nodeID, wantRevision)}
+	}
+	if err := validateRevisionETag(response.Header.Get("ETag"), wantRevision); err != nil {
+		return api.ValidityReceipt{}, &responseDecodeError{err: err}
 	}
 	return *receipt, nil
 }
