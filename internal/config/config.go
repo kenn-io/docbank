@@ -65,6 +65,7 @@ type ServerConfig struct {
 
 // WebConfig controls the built-in web UI.
 type WebConfig struct {
+	BasePath            string         `toml:"base_path"`
 	Enabled             bool           `toml:"enabled"` // default true
 	PublicOrigin        string         `toml:"public_origin"`
 	AllowedHosts        []string       `toml:"allowed_hosts"`
