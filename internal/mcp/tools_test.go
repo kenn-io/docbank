@@ -20,6 +20,97 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const (
+	defaultToolCatalogBudget  = 150_000
+	allWriteToolCatalogBudget = 235_000
+)
+
+func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsResult {
+	t.Helper()
+	ct, st := sdkmcp.NewInMemoryTransports()
+	ss, err := server.sdk.Connect(t.Context(), st, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ss.Close()) })
+	cs, err := sdkmcp.NewClient(testImplementation(), nil).Connect(t.Context(), ct, &sdkmcp.ClientSessionOptions{ProtocolVersion: ProtocolVersion})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, cs.Close()) })
+	result, err := cs.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	require.Empty(t, result.NextCursor, "catalog budget must cover every tool")
+	return result
+}
+
+func toolCatalogBudgetError(t *testing.T, result *sdkmcp.ListToolsResult, ceiling int) error {
+	t.Helper()
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	if len(data) <= ceiling {
+		return nil
+	}
+	var details strings.Builder
+	fmt.Fprintf(&details, "tool catalog: %d bytes exceeds %d-byte budget", len(data), ceiling)
+	for _, tool := range result.Tools {
+		data, err := json.Marshal(tool)
+		require.NoError(t, err)
+		fmt.Fprintf(&details, "\n%s: %d bytes", tool.Name, len(data))
+	}
+	return errors.New(details.String())
+}
+
+func TestToolCatalogBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options ServerOptions
+		ceiling int
+	}{
+		{name: "default", ceiling: defaultToolCatalogBudget},
+		{name: "all writes", ceiling: allWriteToolCatalogBudget, options: ServerOptions{
+			AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true,
+			AllowExportWrites: true, AllowReportWrites: true, AllowKataWrites: true,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := listCatalogThroughClient(t, NewServerWithOptions(tc.options))
+			require.NoError(t, toolCatalogBudgetError(t, result, tc.ceiling))
+			data, err := json.Marshal(result)
+			require.NoError(t, err)
+			t.Logf("%d tools, %d bytes, %d-byte budget", len(result.Tools), len(data), tc.ceiling)
+		})
+	}
+}
+
+func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
+	server := NewServerWithOptions(ServerOptions{})
+	baseline := listCatalogThroughClient(t, server)
+	// Replace a tool so the fixture needs no spare bytes in the production catalog.
+	fixture := &sdkmcp.Tool{Name: baseline.Tools[0].Name, InputSchema: map[string]any{"type": "object"}}
+	register := func() {
+		server.sdk.AddTool(fixture, func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+			return &sdkmcp.CallToolResult{}, nil
+		})
+	}
+	register()
+	data, err := json.Marshal(listCatalogThroughClient(t, server))
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(data), defaultToolCatalogBudget)
+	fixture.Description = strings.Repeat("x", defaultToolCatalogBudget-len(data)-len(`,"description":""`))
+	register()
+	result := listCatalogThroughClient(t, server)
+	data, err = json.Marshal(result)
+	require.NoError(t, err)
+	require.Len(t, data, defaultToolCatalogBudget)
+	require.NoError(t, toolCatalogBudgetError(t, result, defaultToolCatalogBudget))
+	fixture.Description += "x"
+	register()
+	result = listCatalogThroughClient(t, server)
+	data, err = json.Marshal(result)
+	require.NoError(t, err)
+	require.Len(t, data, defaultToolCatalogBudget+1)
+	err = toolCatalogBudgetError(t, result, defaultToolCatalogBudget)
+	require.ErrorContains(t, err, "150001 bytes exceeds 150000-byte budget")
+	require.ErrorContains(t, err, fixture.Name+": ")
+}
+
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
