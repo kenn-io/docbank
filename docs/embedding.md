@@ -73,13 +73,6 @@ Cursors belong to the reader's vault and process lifetime; restart listing
 after reopening the vault. Responses retain `cacheScope: private` and
 `ttlMs: 0`.
 
-### Search miss logging
-
-Embedded `SearchDocuments` and native MCP reads do not record misses. An
-embedded caller cannot tell whether an empty result came from a submitted
-search, a refresh, or another internal request. Daemon clients can record a
-submitted empty result through the opt-in [private search miss log](configuration.md#private-search-miss-log).
-
 ### Reuse other read definitions
 
 `ReadTool(name)` returns an independent copy of the selected native read-only

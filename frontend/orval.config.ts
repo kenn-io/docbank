@@ -5,30 +5,6 @@ export default defineConfig({
     input: {
       target: "../internal/api/openapi.yaml",
       filters: { mode: "exclude", tags: ["Photo events"], includeUnreferencedSchemas: true },
-      override: {
-        transformer: (spec) => {
-          for (const path of Object.values(spec.paths ?? {})) {
-            for (const method of ["post", "put", "patch"] as const) {
-              const body = path[method]?.requestBody;
-              if (!body || "$ref" in body) continue;
-              const multipart = body.content?.["multipart/form-data"];
-              if (!multipart?.schema || typeof multipart.schema !== "object") continue;
-              for (const [name, encoding] of Object.entries(multipart.encoding ?? {})) {
-                const field = multipart.schema.properties?.[name];
-                // Orval treats */* as text even when the part's schema requires bytes.
-                if (
-                  encoding.contentType === "*/*" &&
-                  typeof field === "object" &&
-                  field.contentMediaType === "application/octet-stream"
-                ) {
-                  encoding.contentType = "application/octet-stream";
-                }
-              }
-            }
-          }
-          return spec;
-        },
-      },
     },
     output: {
       target: "src/generated/docbank.ts",
