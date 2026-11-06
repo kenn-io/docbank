@@ -250,7 +250,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			executionValue.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
-		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos}
+		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly || options.Photos}
 		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -528,7 +528,11 @@ func materializeSnapshotRows(
 		return fmt.Errorf("closing query snapshot rows: %w", err)
 	}
 	if annotatePhotos {
-		if err := markSuggestionOnlyMatches(ctx, q, compiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
+		pageCompiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: compiled.photoHidden}).compile(ctx, compiled.Query, queryResolver{q: q})
+		if err != nil {
+			return err
+		}
+		if err := markSuggestionOnlyMatches(ctx, q, pageCompiled, generationID, coverage, compiled.photoHidden, photos, options.PhotoRanking.ActualMode == "hybrid"); err != nil {
 			return err
 		}
 		for i, photo := range photos {

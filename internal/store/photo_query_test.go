@@ -94,7 +94,7 @@ func TestPhotoBrowseMetadataMatchFollowsCurrentDisplayVersion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	first := browsePhotoNode(t, s, "first.jpg", browseHash("shared"), "image/jpeg")
-	browsePhotoNode(t, s, "second.jpg", first.BlobHash, "image/jpeg")
+	second := browsePhotoNode(t, s, "second.jpg", first.BlobHash, "image/jpeg")
 	browsePhotoMetadata(t, s, first, "shared-fields",
 		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")),
 		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens A")))
@@ -105,6 +105,11 @@ func TestPhotoBrowseMetadataMatchFollowsCurrentDisplayVersion(t *testing.T) {
 	browsePhotoMetadata(t, s, replaced, "new-fields",
 		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera B")),
 		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
+	for _, set := range []bool{false, true} {
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: set}).compile(t.Context(), snapshotTestQuery(t, `{"filters":{"cameras":["Camera A"]}}`), queryResolver{q: s.db})
+		require.NoError(t, err)
+		require.Equal(t, []int64{first.ID, second.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	}
 	for _, tc := range []struct {
 		raw         string
 		names       []string

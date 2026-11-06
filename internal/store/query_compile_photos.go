@@ -64,7 +64,7 @@ func photoXMPRequired(expression *query.Expression) bool {
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
-	if c.photoDisplayMetadata {
+	if c.photoDisplayMetadata && c.photoMetadataSet {
 		// Like xmp, match assets once, then expand them to their members.
 		return compiledQueryFragment{sql: `n.id IN (WITH m AS MATERIALIZED (
  SELECT asset.asset_id FROM photo_technical_metadata p

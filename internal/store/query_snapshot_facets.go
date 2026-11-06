@@ -615,7 +615,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
 	value := queryWithoutSnapshotFacet(compiled.Query, dimensions[0])
-	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q})
+	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q})
 	if err != nil {
 		return nil, err
 	}

@@ -70,6 +70,7 @@ func compileQuery(
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
 	photoDisplayMetadata bool
+	photoMetadataSet     bool
 	pdfOnly              bool
 	photoHidden          bool
 }
