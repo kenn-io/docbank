@@ -532,7 +532,16 @@ jobs:
         run: go vet -tags fts5 ./...
 
       - name: Test
-        run: bash scripts/test-go-ci.sh
+        run: |
+          # Keep native APFS sync behavior while avoiding disk-backed fixture flushes.
+          device=$(hdiutil attach -nomount ram://4194304)
+          device=${device//[[:space:]]/}
+          trap 'hdiutil detach "$device"' EXIT
+          volume="docbank-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          diskutil eraseVolume APFS "$volume" "$device"
+          TMPDIR=$(mktemp -d "/Volumes/$volume/tmp.XXXXXX")
+          export TMPDIR GOTMPDIR="$RUNNER_TEMP"
+          bash scripts/test-go-ci.sh
 
       - name: Upload Go test results
         if: always()
