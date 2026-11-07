@@ -87,6 +87,8 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
 	}
 	switch work.Binding.InputKind {
+	case document.EmbeddingInputFace:
+		return runtime.prepareFaces(ctx, work)
 	case document.EmbeddingInputImage:
 		blobs, ok := runtime.blobs.(*blob.Store)
 		if runtime.catalog == nil || !ok {
@@ -236,6 +238,9 @@ func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy 
 
 func (runtime *ProviderEmbeddingRuntime) ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
 	blobs, ok := runtime.blobs.(*blob.Store)
+	if binding.InputKind == document.EmbeddingInputFace {
+		return runtime.faceGeneration(ctx, profile, binding, versionID)
+	}
 	if !ok || runtime.catalog == nil || !runtime.provider.Descriptor().SupportsTextQuery {
 		return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, &store.ImagePreparationError{Err: ErrEmbeddingRuntimeUnavailable}
 	}

@@ -129,8 +129,8 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             PhotoFaceDecisionRequest
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
-		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" {
-			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
+		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" && in.Body.Action != "reject" {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, reject, or remove faces and clear whole-photo marks.")
 		}
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(ctx, func() error {

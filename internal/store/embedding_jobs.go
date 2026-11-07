@@ -510,6 +510,11 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 		return ErrEmbeddingJobFenced
 	}
 	current.Descriptor = work.Descriptor
+	if work.Binding.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingGenerationTx(ctx, tx, work.InputGeneration, work.Binding.Name); err != nil {
+			return err
+		}
+	}
 	if work.Binding.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingGenerationTx(ctx, tx, work.InputGeneration, work.Binding.Name); err != nil {
 			return err
@@ -784,6 +789,9 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 		}
 		return err
 	}
+	if binding.InputKind == document.EmbeddingInputFace {
+		return validateFaceEmbeddingGenerationTx(ctx, tx, generation, binding.Name)
+	}
 	if binding.InputKind == document.EmbeddingInputImage {
 		return validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name)
 	}
@@ -830,4 +838,17 @@ func (s *Store) requeueUnavailableEmbeddingJob(ctx context.Context, tx *sql.Tx, 
 	}
 	_, err := tx.ExecContext(ctx, query, now, now, jobID)
 	return err
+}
+
+// CompleteUnmatchedFaceWork retains a completed attempt without publishing empty vectors.
+func (s *Store) CompleteUnmatchedFaceWork(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork, receipt EmbeddingAttemptReceipt, at time.Time) error {
+	if work.Binding.InputKind != document.EmbeddingInputFace {
+		return ErrEmbeddingJobFenced
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at); err != nil {
+			return err
+		}
+		return finishEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, "completed", "", receipt, at, at)
+	})
 }

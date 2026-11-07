@@ -1,4 +1,10 @@
-import type { Person, PersonMergeReceipt, PersonSummary } from "./generated/docbank.js";
+import type {
+  FaceCandidate,
+  FaceSuggestionFace,
+  Person,
+  PersonMergeReceipt,
+  PersonSummary,
+} from "./generated/docbank.js";
 
 export const person = (id: string, overrides: Partial<PersonSummary> = {}): PersonSummary => ({
   person_id: id,
@@ -60,4 +66,37 @@ export const grace: PersonSummary = person("00000000-0000-4000-8000-000000000002
   display_name: "Grace",
   display_name_folded: "grace",
   photo_summary: { library_count: 2 },
+});
+export const candidateFace = (
+  id: string,
+  overrides: Partial<FaceSuggestionFace> = {},
+): FaceSuggestionFace => ({
+  face_id: id,
+  content_version_id: `version-${id}`,
+  box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+  revision: 3,
+  created_at: "2026-01-01T00:00:00Z",
+  dismissed: false,
+  photo_node_id: 1,
+ hidden:false,
+  preview: {
+    asset_id: `asset-${id}`,
+    content_version_id: `version-${id}`,
+    generation_id: `generation-${id}`,
+    rotation: 0,
+    box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+  },
+  photo_recorded_at: "2026-01-01T00:00:00Z",
+  ...overrides,
+});
+export const candidate = (
+  id: string,
+  faces: FaceSuggestionFace[],
+  overrides: Partial<FaceCandidate> = {},
+): FaceCandidate => ({
+  candidate_id: id,
+  display_name: "",
+  revision: 1,
+  faces,
+  ...overrides,
 });

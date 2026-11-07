@@ -370,6 +370,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}
 	processingProfiles[suppliedName] = suppliedProfile
+	faceProfile, err := localFaceProfile()
+	if err != nil {
+		return fmt.Errorf("configure local faces: %w", err)
+	}
+	if _, exists := processingProfiles[config.LocalFacesProfile]; exists {
+		return fmt.Errorf("profile %q is reserved", config.LocalFacesProfile)
+	}
+	processingProfiles[config.LocalFacesProfile] = faceProfile
 	captionName, captionProfile, err := processing.NewSuppliedCaptionProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied caption profile: %w", err)
@@ -456,6 +464,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
+	if err := jobSupervisor.StartWorker("process:face-suggestions", func(ctx context.Context) error { return processingService.FaceSuggestionBackfill(ctx, logger) }); err != nil {
+		return fmt.Errorf("starting face suggestions: %w", err)
+	}
 	if processingService.HasPhotoFaceDetectionProfiles() {
 		if err := jobSupervisor.StartWorker("process:photo-face-detection", func(ctx context.Context) error {
 			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
@@ -707,7 +718,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText, Faces: &processing.FaceSetup{Service: processingService, Startup: func(ctx context.Context) error { _, err := localFaceOrigin(ctx); return err }}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,

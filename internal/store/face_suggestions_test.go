@@ -1,0 +1,258 @@
+package store
+
+import (
+	"database/sql"
+	"slices"
+	"strings"
+	"testing"
+	"uuid"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+)
+
+func TestFaceDismissedRegroupKeepsDecisionIdentity(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	nodes := []Node{browsePhotoNode(t, s, "a.jpg", fakeHash("a1"), "image/jpeg"), browsePhotoNode(t, s, "b.jpg", fakeHash("b2"), "image/jpeg"), browsePhotoNode(t, s, "c.jpg", fakeHash("c3"), "image/jpeg")}
+	slices.SortFunc(nodes, func(a, b Node) int { return strings.Compare(a.CurrentVersionID, b.CurrentVersionID) })
+	var faces []FaceSuggestionFace
+	for i, id := range []string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"} {
+		face, _, err := s.CreatePhotoFace(ctx, nodes[i].CurrentVersionID, id, document.FaceBox{Width: .3, Height: .4}, "")
+		require.NoError(t, err)
+		faces = append(faces, FaceSuggestionFace{PhotoFace: face})
+	}
+	slices.Reverse(faces)
+	group, err := NewFaceCandidate(faces, "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	decideFaceForTest(t, s, nodes[2], faces[0].FaceID, "", "dismiss")
+	page, _, err := s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "reject", FaceOnly: true})
+	require.NoError(t, err)
+	pair, err := NewFaceCandidate(faces[1:], "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{pair}))
+	page, _, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, page)
+}
+
+func TestFaceConfirmedGroupReturnsAfterRetraction(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, first := faceForDecisionTest(t, s, "")
+	second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	page, _, err := s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "new_person", DisplayName: "Ada", FaceOnly: true})
+	require.NoError(t, err)
+	decideFaceForTest(t, s, node, first.FaceID, "", "retract")
+	decideFaceForTest(t, s, node, second.FaceID, "", "retract")
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	page, _, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
+	for _, mode := range []string{"new person", "existing", "dismiss"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			node, first := faceForDecisionTest(t, s, "")
+			second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+			require.NoError(t, err)
+			input, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+			require.NoError(t, err)
+			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{input}))
+			page, total, err := s.FaceCandidates(ctx, 24, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Len(t, page, 1)
+			require.Len(t, page[0].Faces, 2)
+			action := "new_person"
+			person := ""
+			name := "Ada"
+			if mode == "existing" {
+				p, err := s.CreatePerson(ctx, "Ada", "operator")
+				require.NoError(t, err)
+				person = p.PersonID
+				action = "link"
+				name = ""
+			}
+			if mode == "dismiss" {
+				action = "reject"
+				name = ""
+			}
+			_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: 99, Action: action, PersonID: person, DisplayName: name, FaceOnly: true})
+			require.ErrorIs(t, err, ErrStaleRevision)
+			decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: action, PersonID: person, DisplayName: name, FaceOnly: true})
+			require.NoError(t, err)
+			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			if mode == "dismiss" {
+				require.Empty(t, assertions)
+				for _, f := range faces {
+					require.False(t, f.Dismissed)
+				}
+			} else {
+				require.Len(t, assertions, 1)
+				require.Equal(t, decided.DecidedPersonID, assertions[0].PersonID)
+				for _, f := range faces {
+					require.Equal(t, assertions[0].AssertionID, f.AssertionID)
+				}
+			}
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+func TestFaceSuggestionRegroupPreservesRejectedEvidence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, first := faceForDecisionTest(t, s, "")
+	second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	page, _, err := s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	original := page[0]
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), nil))
+	page, _, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, page)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	page, _, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, original.CandidateID, page[0].CandidateID)
+	require.Greater(t, page[0].Revision, original.Revision)
+	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "reject", FaceOnly: true})
+	require.NoError(t, err)
+	retained, _, err := s.PersonCandidates(ctx, "rejected", 24, 0)
+	require.NoError(t, err)
+	require.Len(t, retained, 1)
+	require.Equal(t, retained[0].EvidenceSHA256, decided.EvidenceSHA256)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	page, _, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, page)
+}
+
+func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, first := faceForDecisionTest(t, s, "")
+	second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	page, _, err := s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	decision := CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, FaceOnly: true, Action: "new_person", DisplayName: "Ada", FaceIDs: []string{uuid.New().String()}}
+	_, err = s.DecidePersonCandidate(ctx, decision)
+	require.ErrorIs(t, err, ErrInvalidPerson)
+	decision.FaceIDs = []string{second.FaceID, second.FaceID}
+	_, err = s.DecidePersonCandidate(ctx, decision)
+	require.ErrorIs(t, err, ErrInvalidPerson)
+	decision.FaceIDs = []string{second.FaceID}
+	saved, err := s.DecidePersonCandidate(ctx, decision)
+	require.NoError(t, err)
+	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, assertions, 1)
+	for _, f := range faces {
+		if f.FaceID == first.FaceID {
+			require.Empty(t, f.AssertionID)
+			require.False(t, f.Dismissed)
+			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: f.FaceID, Revision: f.Revision, Action: "name", PersonID: saved.DecidedPersonID})
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, assertions[0].AssertionID, f.AssertionID)
+		}
+	}
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Old Name", "operator")
+	require.NoError(t, err)
+	hidden, _ := faceForDecisionTest(t, s, person.PersonID)
+	visible := browsePhotoNode(t, s, "library.jpg", fakeHash("f2"), "image/jpeg")
+	face, _, err := s.CreatePhotoFace(ctx, visible.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	candidate, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, person.PersonID, person.DisplayName)
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{candidate}))
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	rows, total, err := s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	require.Zero(t, total)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	rows, total, err = s.FaceCandidates(unlocked, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.EqualValues(t, 1, total)
+	renamed, err := s.UpdatePerson(unlocked, person.PersonID, person.Revision, "New Name")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{candidate}))
+	rows, _, err = s.FaceCandidates(unlocked, 24, 0)
+	require.NoError(t, err)
+	require.Equal(t, renamed.DisplayName, rows[0].DisplayName)
+	survivor, err := s.CreatePerson(unlocked, "Survivor", "operator")
+	require.NoError(t, err)
+	_, err = s.MergePersons(unlocked, survivor.PersonID, renamed.PersonID, uuid.New().String(), survivor.Revision, renamed.Revision)
+	require.NoError(t, err)
+	merged, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, survivor.PersonID, "Old Name")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{merged}))
+	rows, _, err = s.FaceCandidates(unlocked, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, survivor.PersonID, rows[0].SuggestedPersonID)
+	require.Equal(t, survivor.DisplayName, rows[0].DisplayName)
+
+}
+
+func TestFaceMatchingCatalogQueriesPostgres(t *testing.T) {
+	s := newPostgresQueryStore(t)
+	ctx := t.Context()
+	f := seedImageEmbeddingCatalog(t, s)
+	f.publish(t)
+	sets, err := s.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Empty(t, sets.Sets)
+	_, _, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.NoError(t, s.withReadTx(ctx, func(tx *sql.Tx) error {
+		return s.readFaceDecisionsTx(ctx, tx, []PhotoFace{{FaceID: uuid.New().String(), ContentVersionID: uuid.New().String()}})
+	}))
+}
+
+func faceMatchingSignature(t *testing.T, s *Store) string {
+	t.Helper()
+	snapshot, err := s.FaceMatchingInputs(t.Context())
+	require.NoError(t, err)
+	return snapshot.Signature
+}

@@ -299,9 +299,15 @@ func webSessionRequestAllowed(r *http.Request) bool {
 				return false
 			}
 			for key, entries := range values {
-				if key != "person_id" || len(entries) != 1 {
+				if (key != "person_id" && key != "face_id") || len(entries) != 1 {
 					return false
 				}
+			}
+			if values.Has("person_id") && values.Has("face_id") {
+				return false
+			}
+			if values.Has("face_id") && query.ValidateTextOperand("asset", values.Get("face_id")) != nil {
+				return false
 			}
 			if values.Has("person_id") && query.ValidateTextOperand("asset", values.Get("person_id")) != nil {
 				return false
@@ -730,6 +736,23 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 }
 
 func photoFaceBrowserRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/people/face-candidates" && r.Method == http.MethodGet {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if (key != "limit" && key != "offset") || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/people/face-candidates/"); ok {
+		parts := strings.Split(after, "/")
+		return r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "decision" && query.ValidateTextOperand("asset", parts[0]) == nil && r.URL.RawQuery == ""
+	}
+
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/people/"); ok {
 		parts := strings.Split(after, "/")
 		if r.Method != http.MethodGet || len(parts) != 2 || parts[1] != "face-previews" || query.ValidateTextOperand("asset", parts[0]) != nil {
@@ -762,7 +785,7 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first") || len(entries) != 1 {
+			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first" && key != "face_id") || len(entries) != 1 {
 				return false
 			}
 		}

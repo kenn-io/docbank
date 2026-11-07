@@ -814,7 +814,7 @@ func validateEmbeddingVectorSet(vectorSet EmbeddingVectorSetRecord, space Embedd
 			return err
 		}
 	}
-	if vectorSet.RowCount != len(vectorSet.rows) || vectorSet.RowCount != len(generation.Inputs) ||
+	if vectorSet.RowCount != len(vectorSet.rows) || (vectorSet.RowCount != len(generation.Inputs) && generation.ChunkPolicyFingerprint != FaceEmbeddingPolicyFingerprint()) ||
 		vectorSet.RowCount < 1 || vectorSet.RowCount > maxEmbeddingCatalogRows {
 		return errors.New("embedding vector-set row count does not match input generation")
 	}
@@ -855,7 +855,14 @@ func validateEmbeddingVectorSet(vectorSet EmbeddingVectorSetRecord, space Embedd
 		if row.RowID != row.InputID {
 			return errors.New("embedding vector row ID does not match canonical input key")
 		}
-		if row.InputID != generation.Inputs[index].ID || row.Checksum != generation.Inputs[index].RenderedChecksum {
+		expectedIndex := index
+		if generation.ChunkPolicyFingerprint == FaceEmbeddingPolicyFingerprint() {
+			expectedIndex = slices.IndexFunc(generation.Inputs, func(input EmbeddingInputReference) bool { return input.ID == row.InputID })
+			if expectedIndex < 0 || index > 0 && vectorSet.rows[index-1].InputID >= row.InputID {
+				return errors.New("face vector rows must follow input order")
+			}
+		}
+		if row.InputID != generation.Inputs[expectedIndex].ID || row.Checksum != generation.Inputs[expectedIndex].RenderedChecksum {
 			return errors.New("embedding vector rows do not match ordered generation inputs and checksums")
 		}
 		seenRows[row.RowID], seenInputs[row.InputID] = struct{}{}, struct{}{}
@@ -982,6 +989,11 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 	if record.InputKind == document.EmbeddingInputRenditionChunk && record.InputGeneration.AttachmentID == "" {
 		return errors.New("chunk embedding set requires rendition attachment authority")
 	}
+	if record.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingGenerationTx(ctx, tx, record.InputGeneration, record.BindingID); err != nil {
+			return err
+		}
+	}
 	if record.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingPreviewTx(ctx, tx, record.InputGeneration); err != nil {
 			return err
@@ -1051,6 +1063,11 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 		descriptor.DocumentFormatter != binding.DocumentFormatter || descriptor.QueryFormatter != binding.QueryFormatter ||
 		descriptor.CompatibilityID != binding.CompatibilityID || descriptor.ModelInput != binding.ModelInput || !slices.Contains(descriptor.InputKinds, binding.InputKind) {
 		return errors.New("embedding descriptor differs from binding")
+	}
+	if record.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingGeneration(record.InputGeneration, binding.Name); err != nil {
+			return err
+		}
 	}
 	if record.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingGeneration(record.InputGeneration, binding.Name); err != nil {
@@ -1360,6 +1377,14 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 	if live != 1 {
 		return false, nil
 	}
+	if set.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingGenerationTx(ctx, tx, set.InputGeneration, set.BindingID); err != nil {
+			if errors.Is(err, ErrEmbeddingJobFenced) || errors.Is(err, ErrNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
 	if set.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingGenerationTx(ctx, tx, set.InputGeneration, set.BindingID); err != nil {
 			if errors.Is(err, ErrEmbeddingJobFenced) || errors.Is(err, ErrNotFound) {
@@ -1444,7 +1469,7 @@ func validateEmbeddingFailureRecord(record EmbeddingFailureRecord) error {
 
 func validateEmbeddingInputKind(kind EmbeddingInputKind) error {
 	switch kind {
-	case document.EmbeddingInputRenditionChunk, document.EmbeddingInputOriginalFile, document.EmbeddingInputImage:
+	case document.EmbeddingInputRenditionChunk, document.EmbeddingInputOriginalFile, document.EmbeddingInputImage, document.EmbeddingInputFace:
 		return nil
 	default:
 		return fmt.Errorf("embedding input kind %q is unsupported", kind)

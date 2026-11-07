@@ -217,11 +217,11 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		AssetID string `path:"asset_id" format:"uuid"`
 		Body    PreparePhotoPreviewRequest
 	}) (*struct{ Body PhotoPreviewSlot }, error) {
-		if in.Body.Size == "grid" && in.Body.PersonID == "" {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", "Grid previews require person_id.")
+		if in.Body.Size == "grid" && in.Body.PersonID == "" && in.Body.FaceID == "" {
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", "Grid previews require person_id or face_id.")
 		}
-		if in.Body.Size != "grid" && in.Body.PersonID != "" {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", "person_id is only valid for grid previews.")
+		if in.Body.PersonID != "" && in.Body.FaceID != "" || in.Body.Size != "grid" && (in.Body.PersonID != "" || in.Body.FaceID != "") {
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", "Use one source grant, for grid previews only.")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -240,7 +240,11 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			if len(page.Items) != 1 {
 				return store.ErrNotFound
 			}
-			if in.Body.PersonID != "" {
+			if in.Body.FaceID != "" {
+				if err := d.Store.FacePhotoPreviewSource(ctx, in.AssetID, in.Body.ContentVersionID, in.Body.FaceID); err != nil {
+					return err
+				}
+			} else if in.Body.PersonID != "" {
 				if err := d.Store.PersonPhotoPreviewSource(ctx, in.AssetID, in.Body.ContentVersionID, in.Body.PersonID); err != nil {
 					return err
 				}
@@ -251,7 +255,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			if err != nil {
 				return err
 			}
-			view, err = d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, view.Generation.GenerationID, in.Body.PersonID)
+			view, err = d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, view.Generation.GenerationID, in.Body.PersonID, in.Body.FaceID)
 			return err
 		})
 		if err != nil {
@@ -272,6 +276,8 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		slot := photoPreviewSlot(in.AssetID, string(view.Generation.Preview.State), &view.Generation)
 		if slot.URL != "" && in.Body.PersonID != "" {
 			slot.URL += "?person_id=" + in.Body.PersonID
+		} else if in.Body.FaceID != "" && slot.URL != "" {
+			slot.URL += "?face_id=" + in.Body.FaceID
 		}
 		return &struct{ Body PhotoPreviewSlot }{Body: slot}, nil
 	})
@@ -299,8 +305,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		GenerationID string `path:"generation_id"`
 		IfNoneMatch  string `header:"If-None-Match"`
 		PersonID     string `query:"person_id" format:"uuid"`
+		FaceID       string `query:"face_id" format:"uuid"`
 	}) (*huma.StreamResponse, error) {
-		view, err := d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, in.GenerationID, in.PersonID)
+		view, err := d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, in.GenerationID, in.PersonID, in.FaceID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -314,7 +321,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		setCacheHeaders := func(hctx huma.Context) {
 			hctx.SetHeader("ETag", strconv.Quote(in.GenerationID))
 			hctx.SetHeader("Cache-Control", "private, no-cache")
-			if view.Hidden || in.PersonID != "" {
+			if view.Hidden || in.PersonID != "" || in.FaceID != "" {
 				hctx.SetHeader("Cache-Control", "no-store")
 			}
 			hctx.SetHeader("Vary", "X-Api-Key, Authorization, Cookie, "+WebSessionHeader)
