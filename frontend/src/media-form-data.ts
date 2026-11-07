@@ -5,7 +5,7 @@ import { randomUUID } from "./crypto.js";
 // FormData cannot set a JSON part's content type without adding a filename.
 export function mediaFormData(input: {
   metadata: MediaArtifactMetadata | MediaSuppliedMetadata;
-  file: Blob;
+  file: Blob | string;
 }): Blob {
   const boundary = `docbank-${randomUUID()}`;
   const filename = input.metadata.filename
