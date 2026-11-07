@@ -22,7 +22,7 @@ func localFacesCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := embedlocal.DefaultDir()
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve local face model directory: %w", err)
 			}
 			return setupLocalFaces(cmd.Context(), cmd.OutOrStdout(), dir, embedlocal.Endpoint, embedlocal.Install)
 		},
@@ -42,7 +42,10 @@ func setupLocalFaces(ctx context.Context, out io.Writer, dir string,
 		installed, err := install(ctx, embedlocal.InstallOptions{DataDir: dir, Model: embedlocal.FaceModel,
 			Confirm: func(_ context.Context, size int64) (bool, error) {
 				_, err := fmt.Fprintf(out, "Downloading local face model: %d bytes\n", size)
-				return err == nil, err
+				if err != nil {
+					return false, fmt.Errorf("report local face download: %w", err)
+				}
+				return true, nil
 			},
 		})
 		if err != nil {
@@ -54,5 +57,8 @@ func setupLocalFaces(ctx context.Context, out io.Writer, dir string,
 		}
 	}
 	_, err = fmt.Fprintln(out, "Local face model ready. Face comparisons still require explicit consent and review.")
-	return err
+	if err != nil {
+		return fmt.Errorf("report local face model ready: %w", err)
+	}
+	return nil
 }

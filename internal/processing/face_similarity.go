@@ -53,11 +53,15 @@ func LocalFaceClient(ctx context.Context) (*embedclient.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFaceModelUnavailable, err)
 	}
-	return embedclient.New(embedclient.Options{
+	client, err := embedclient.New(embedclient.Options{
 		Model:      embedconfig.Model{Name: embedclient.FaceModel, Dimensions: 512, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone},
 		Deployment: embedconfig.Deployment{BaseURL: origin},
 		Transport:  embedconfig.Transport{Timeout: 2 * time.Minute},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("configure local face client: %w", err)
+	}
+	return client, nil
 }
 
 type similarityFace struct {
@@ -164,7 +168,7 @@ func CompareFaces(ctx context.Context, catalog *store.Store, blobs *blob.Store, 
 		box := source.face.Box
 		response, err := client.EmbedFaces(ctx, source.pixels, []embedclient.FaceBox{{X: box.X, Y: box.Y, Width: box.Width, Height: box.Height}})
 		if err != nil {
-			return result, err
+			return result, fmt.Errorf("compare local face: %w", err)
 		}
 		vector := response.Data[0].Embedding // Kit validates count, indices, model and normalized vectors.
 		if i == 0 {

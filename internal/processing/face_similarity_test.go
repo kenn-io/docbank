@@ -18,6 +18,7 @@ import (
 )
 
 func TestFaceSimilarityRanksReviewedReferencesWithoutNaming(t *testing.T) {
+	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	person, err := f.catalog.CreatePerson(ctx, "Synthetic Person", "operator")
@@ -73,6 +74,7 @@ func TestFaceSimilarityRanksReviewedReferencesWithoutNaming(t *testing.T) {
 }
 
 func TestFaceSimilarityRefusesUnreviewedOrHiddenEvidence(t *testing.T) {
+	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	target, _, err := f.catalog.CreatePhotoFace(ctx, f.node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
@@ -81,18 +83,19 @@ func TestFaceSimilarityRefusesUnreviewedOrHiddenEvidence(t *testing.T) {
 	require.NoError(t, err)
 	loader := func(context.Context) (*embedclient.Client, error) {
 		assert.Fail(t, "ineligible evidence must fail before local model discovery")
-		return nil, nil
+		return nil, store.ErrInvalidPhotoFace
 	}
 	_, err = CompareFaces(ctx, f.catalog, f.blobs, loader, FaceReference{f.node.CurrentVersionID, target.FaceID}, []FaceReference{{f.node.CurrentVersionID, ref.FaceID}})
-	assert.ErrorIs(t, err, store.ErrInvalidPhotoFace)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoFace)
 	require.NoError(t, f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = f.catalog.SetPhotoAssetHidden(ctx, f.asset.ID, f.asset.Revision, true)
 	require.NoError(t, err)
 	_, err = CompareFaces(ctx, f.catalog, f.blobs, loader, FaceReference{f.node.CurrentVersionID, target.FaceID}, []FaceReference{{f.node.CurrentVersionID, ref.FaceID}})
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestFaceSimilarityNullInvalidAndConcurrentEvidence(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"null target", "invalid vector", "person changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t)
@@ -125,9 +128,9 @@ func TestFaceSimilarityNullInvalidAndConcurrentEvidence(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, "unavailable", result.State)
 			case "invalid vector":
-				assert.Error(t, err)
+				require.Error(t, err)
 			case "person changed":
-				assert.ErrorIs(t, err, store.ErrStaleRevision)
+				require.ErrorIs(t, err, store.ErrStaleRevision)
 			}
 			assert.Empty(t, result.Suggestions)
 		})
@@ -135,6 +138,7 @@ func TestFaceSimilarityNullInvalidAndConcurrentEvidence(t *testing.T) {
 }
 
 func TestFaceSimilarityDoesNotTreatARetiredNamedTargetAsUnknown(t *testing.T) {
+	t.Parallel()
 	f := newPhotoDescriptionFixture(t)
 	ctx := t.Context()
 	former, err := f.catalog.CreatePerson(ctx, "Synthetic Retired", "operator")
@@ -156,7 +160,7 @@ func TestFaceSimilarityDoesNotTreatARetiredNamedTargetAsUnknown(t *testing.T) {
 	})
 	_, err = CompareFaces(ctx, f.catalog, f.blobs, func(context.Context) (*embedclient.Client, error) { return client, nil },
 		FaceReference{f.node.CurrentVersionID, target.FaceID}, []FaceReference{{f.node.CurrentVersionID, ref.FaceID}})
-	assert.ErrorIs(t, err, store.ErrNotFound, "a retired named target must not become an unknown face")
+	require.ErrorIs(t, err, store.ErrNotFound, "a retired named target must not become an unknown face")
 }
 
 func syntheticFaceClient(t *testing.T, vector func(embedclient.FaceBox) []float32) *embedclient.Client {
