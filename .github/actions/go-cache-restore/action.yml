@@ -57,7 +57,7 @@ runs:
           echo "GO_CACHE_GROUP_PREFIX=go-${GROUP}-"
           echo "GO_CACHE_PATHS<<EOF"
           go env GOCACHE
-          go env GOMODCACHE
+          echo "$(go env GOMODCACHE)/cache/download"
           if [ -n "$EXTRA_PATH" ]; then echo "$EXTRA_PATH"; fi
           echo "EOF"
         } >> "$GITHUB_ENV"
@@ -125,3 +125,9 @@ runs:
           fi
         done <<< "$paths"
         touch "$RUNNER_TEMP/go-cache-use"
+
+    - name: Rehydrate module sources
+      shell: bash
+      run: |
+        # workflowretry: allow Measure one native rehydration attempt in this candidate.
+        go mod download
