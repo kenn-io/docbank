@@ -539,3 +539,216 @@ func TestPublicationReplacementNeverRetires(t *testing.T) {
 		})
 	}
 }
+
+func replacePublicationHead(t *testing.T, c *daemonconn.Connection, s *store.Store, nodeID int64, content string) api.ContentReplacementReceipt {
+	t.Helper()
+	node, err := s.NodeByID(t.Context(), nodeID)
+	require.NoError(t, err)
+	hash := sha256.Sum256([]byte(content))
+	receipt, err := c.ReplaceContent(t.Context(), node.ID, node.Revision, "text/markdown", hex.EncodeToString(hash[:]), int64(len(content)), strings.NewReader(content))
+	require.NoError(t, err)
+	return receipt
+}
+func grantPublicationRecovery(t *testing.T, c *daemonconn.Connection, s *store.Store, source store.NotePublicationSource, head string) {
+	t.Helper()
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	_, err = c.AcceptLocalPublishedNote(t.Context(), api.NotePublicationAcceptLocalRequest{Name: "research", SourceRef: source.Identity.SourceRef, DatabaseEpoch: status.DatabaseEpoch, ExpectedHeadVersionID: head, ExpectedSourceRevision: source.Identity.SourceRevision, OperationID: uuid.NewV4().String()})
+	require.NoError(t, err)
+}
+func TestPublicationAcceptLocalEqualDigestForcesVerifiedUpload(t *testing.T) {
+	t.Parallel()
+	var uploads atomic.Int64
+	c, s := newPublicationTestDaemon(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if strings.HasSuffix(r.URL.Path, "/uploads") {
+			uploads.Add(1)
+		}
+		next.ServeHTTP(w, r)
+	})
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	original := publicationSources(t, s)["a.md"]
+	manual := replacePublicationHead(t, c, s, original.Identity.NodeID, "# Manual archive revision\n")
+	grantPublicationRecovery(t, c, s, original, manual.Version.ID)
+	before := uploads.Load()
+	report, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	require.Equal(t, before+1, uploads.Load())
+	require.Equal(t, 1, report.Updated)
+	current := publicationSources(t, s)["a.md"]
+	require.Equal(t, original.Identity.Hash, current.Identity.Hash)
+	require.NotEqual(t, original.Identity.ContentVersionID, current.Identity.ContentVersionID)
+	require.NotEqual(t, manual.Version.ID, current.Identity.ContentVersionID)
+	require.Nil(t, current.Recovery)
+	require.Empty(t, current.Conflict)
+	versions, total, err := s.ContentVersions(t.Context(), original.Identity.NodeID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	ids := []string{}
+	for _, v := range versions {
+		ids = append(ids, v.ID)
+	}
+	require.Contains(t, ids, original.Identity.ContentVersionID)
+	require.Contains(t, ids, manual.Version.ID)
+	require.Contains(t, ids, current.Identity.ContentVersionID)
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.Zero(t, status.RecoveryPending)
+}
+func TestPublicationAcceptLocalHeadChangedRefuses(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	source := publicationSources(t, s)["a.md"]
+	manual := replacePublicationHead(t, c, s, source.Identity.NodeID, "manual B")
+	grantPublicationRecovery(t, c, s, source, manual.Version.ID)
+	latest := replacePublicationHead(t, c, s, source.Identity.NodeID, "manual C")
+	_, err = Run(t.Context(), c, opts)
+	require.Error(t, err)
+	node, err := s.NodeByID(t.Context(), source.Identity.NodeID)
+	require.NoError(t, err)
+	require.Equal(t, latest.Version.ID, node.CurrentVersionID)
+	_, total, err := s.ContentVersions(t.Context(), node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Conflicts)
+	require.Zero(t, status.RecoveryPending)
+}
+func TestPublicationUnchangedDivergenceNeverAcknowledgesAsSuccess(t *testing.T) {
+	t.Parallel()
+	var armed atomic.Bool
+	var seen, complete atomic.Int64
+	c, s := newPublicationTestDaemon(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if armed.Load() {
+			if strings.HasSuffix(r.URL.Path, "/seen") {
+				seen.Add(1)
+			}
+			if strings.HasSuffix(r.URL.Path, "/complete") {
+				complete.Add(1)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	source := publicationSources(t, s)["a.md"]
+	manual := replacePublicationHead(t, c, s, source.Identity.NodeID, "manual edit")
+	armed.Store(true)
+	_, err = Run(t.Context(), c, opts)
+	require.Error(t, err)
+	require.Zero(t, seen.Load())
+	require.Zero(t, complete.Load())
+	node, err := s.NodeByID(t.Context(), source.Identity.NodeID)
+	require.NoError(t, err)
+	require.Equal(t, manual.Version.ID, node.CurrentVersionID)
+}
+func TestPublicationPrunedSourceNeverRemintsKey(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	source := publicationSources(t, s)["a.md"]
+	manual := replacePublicationHead(t, c, s, source.Identity.NodeID, "manual edit")
+	node, err := s.NodeByID(t.Context(), source.Identity.NodeID)
+	require.NoError(t, err)
+	result, err := s.PruneContentVersions(t.Context(), node.ID, node.Revision, store.VersionPruneSelector{VersionIDs: []string{source.Identity.ContentVersionID}}, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.DeletedVersions)
+	_, err = Run(t.Context(), c, opts)
+	require.Error(t, err)
+	current := publicationSources(t, s)["a.md"]
+	require.Equal(t, source.Identity.NodeID, current.Identity.NodeID)
+	require.Equal(t, "unavailable", current.Availability)
+	node, err = s.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, manual.Version.ID, node.CurrentVersionID)
+	_, total, err := s.ContentVersions(t.Context(), node.ID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+}
+func TestPublicationArchiveMoveKeepsSourceIdentity(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	source := publicationSources(t, s)["a.md"]
+	node, err := s.NodeByID(t.Context(), source.Identity.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.MoveToPath(t.Context(), node.ID, node.Revision, "/moved.md")
+	require.NoError(t, err)
+	_, err = Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	current := publicationSources(t, s)["a.md"]
+	require.Equal(t, source.Identity.NodeID, current.Identity.NodeID)
+	require.Equal(t, source.Identity.ContentVersionID, current.Identity.ContentVersionID)
+	moved, err := s.NodeByPath(t.Context(), "/moved.md")
+	require.NoError(t, err)
+	require.Equal(t, node.ID, moved.ID)
+}
+func TestPublicationConflictContinuesHealthySiblings(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	source := publicationSources(t, s)["a.md"]
+	replacePublicationHead(t, c, s, source.Identity.NodeID, "manual edit")
+	writePublicationFile(t, root, "z.md")
+	report, err := Run(t.Context(), c, opts)
+	require.ErrorIs(t, err, ErrFilesFailed)
+	require.Equal(t, 1, report.Added)
+	require.Equal(t, 1, report.Failed)
+	current := publicationSources(t, s)
+	require.Contains(t, current, "z.md")
+	require.Equal(t, "diverged", current["a.md"].Conflict)
+}
+func TestPublicationArchivalManualHeadStillReplaces(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "a.md")
+	opts := publicationOptions(root)
+	opts.Publication = false
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	cursors, err := c.PushCursors(t.Context(), "research")
+	require.NoError(t, err)
+	source := cursors["a.md"]
+	manual := replacePublicationHead(t, c, s, source.NodeID, "manual edit")
+	unchanged, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	require.Equal(t, 1, unchanged.Skipped)
+	node, err := s.NodeByID(t.Context(), source.NodeID)
+	require.NoError(t, err)
+	require.Equal(t, manual.Version.ID, node.CurrentVersionID)
+	changed := []byte("changed local note")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), changed, 0600))
+	report, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Updated)
+	after, err := c.PushCursors(t.Context(), "research")
+	require.NoError(t, err)
+	hash := sha256.Sum256(changed)
+	require.Equal(t, hex.EncodeToString(hash[:]), after["a.md"].Hash)
+	require.Equal(t, source.NodeID, after["a.md"].NodeID)
+}

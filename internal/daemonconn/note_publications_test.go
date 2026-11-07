@@ -135,3 +135,40 @@ func TestNotePublicationInterruptedReceiptStaysRetryable(t *testing.T) {
 	require.ErrorIs(t, err, daemonconn.ErrPushResponseInterrupted)
 	require.False(t, daemonconn.IsResponseDecodeError(err))
 }
+
+func TestNotePublicationCursorRejectsUnboundRecovery(t *testing.T) {
+	t.Parallel()
+	scan := api.NotePublicationScan{ScanID: uuid.NewV4().String(), DatabaseEpoch: uuid.NewV4().String(), PolicyFingerprint: strings.Repeat("a", 64), Epoch: 1, NamespaceRevision: 1}
+	id := api.PublishedNoteIdentity{VaultID: uuid.NewV4().String(), Publication: "research", SourceRef: "a.md", NodeID: 1, ContentVersionID: uuid.NewV4().String(), Hash: strings.Repeat("a", 64), Size: 5, SourceRevision: 1, NamespaceRevision: 1}
+	head := uuid.NewV4().String()
+	for _, kind := range []string{"head", "source", "revision", "unmarked divergence", "unavailable grant", "missing head"} {
+		t.Run(kind, func(t *testing.T) {
+			source := api.NotePublicationSource{Identity: id, Presence: "present", Availability: "retained", Conflict: "diverged", ArchiveHead: &api.NoteArchiveHead{NodeID: 1, ContentVersionID: head, Hash: strings.Repeat("b", 64), Size: 6}, Recovery: &api.NotePublicationRecoveryGrant{SourceRef: "a.md", ExpectedHeadVersionID: head, SourceRevision: 1}}
+			switch kind {
+			case "head":
+				source.Recovery.ExpectedHeadVersionID = id.ContentVersionID
+			case "source":
+				source.Recovery.SourceRef = "other.md"
+			case "revision":
+				source.Recovery.SourceRevision++
+			case "unmarked divergence":
+				source.Conflict = ""
+				source.Recovery = nil
+			case "unavailable grant":
+				source.Availability = "unavailable"
+			case "missing head":
+				source.ArchiveHead = nil
+				source.Recovery = nil
+				source.Conflict = ""
+			}
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				b, _ := json.Marshal(api.NotePublicationSourcesPage{Scan: scan, Items: []api.NotePublicationSource{source}})
+				_, _ = w.Write(b)
+			}))
+			defer ts.Close()
+			_, err := daemonconn.New(ts.URL, serverKey).NotePublicationSources(t.Context(), api.NotePublicationSourcesRequest{Name: "research", ScanID: scan.ScanID, Limit: 1000})
+			require.True(t, daemonconn.IsResponseDecodeError(err))
+		})
+	}
+}

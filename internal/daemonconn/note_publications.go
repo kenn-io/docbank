@@ -59,6 +59,21 @@ func validNoteSource(v api.NotePublicationSource, name string) bool {
 	if h := v.ArchiveHead; h != nil && (h.NodeID != v.Identity.NodeID || store.ValidatePushRunID(h.ContentVersionID) != nil || !validSHA256Hex(h.Hash) || h.Size < 0) {
 		return false
 	}
+	if v.Availability == "unavailable" {
+		if v.Conflict != "unavailable" || v.Recovery != nil {
+			return false
+		}
+	} else {
+		if v.ArchiveHead == nil || v.Conflict == "unavailable" {
+			return false
+		}
+		if v.Conflict == "" && (v.ArchiveHead.ContentVersionID != v.Identity.ContentVersionID || v.ArchiveHead.Hash != v.Identity.Hash || v.ArchiveHead.Size != v.Identity.Size) {
+			return false
+		}
+		if v.Conflict == "diverged" && v.ArchiveHead.ContentVersionID == v.Identity.ContentVersionID {
+			return false
+		}
+	}
 	if g := v.Recovery; g != nil && (v.Conflict != "diverged" || v.ArchiveHead == nil || g.SourceRef != v.Identity.SourceRef || g.SourceRevision != v.Identity.SourceRevision || g.ExpectedHeadVersionID != v.ArchiveHead.ContentVersionID) {
 		return false
 	}
