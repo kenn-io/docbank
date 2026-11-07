@@ -14,12 +14,18 @@ import (
 // supply nodes n and its retained current content_versions cv. This predicate
 // belongs before ranking, limits and aggregates, never on a returned page.
 func publishedNoteEligibilitySQL(selector *PublishedNoteSelector) (string, []any) {
+	return publishedNoteEligibilitySQLParameter(selector, "?")
+}
+
+// parameter is a caller-owned placeholder, never user input. Numbered callers
+// share the eligibility relation without relying on SQLite's anonymous binds.
+func publishedNoteEligibilitySQLParameter(selector *PublishedNoteSelector, parameter string) (string, []any) {
 	if selector == nil {
 		return "", nil
 	}
 	name, args := "", []any(nil)
 	if selector.Publication != "" {
-		name = " AND np.name=?"
+		name = " AND np.name=" + parameter
 		args = append(args, selector.Publication)
 	}
 	return `EXISTS(SELECT 1 FROM published_note_sources pns
@@ -71,7 +77,7 @@ func publishedNotesRevisionTx(ctx context.Context, q metadataQuerier, selector *
 	_, _ = fmt.Fprintf(digest, "%q\n", epoch)
 	where, args := "", []any(nil)
 	if selector.Publication != "" {
-		where = " AND name=?"
+		where = " AND name=$1"
 		args = append(args, selector.Publication)
 	}
 	rows, err := q.QueryContext(ctx, `SELECT name,namespace_revision FROM note_publications WHERE active=1`+where+` ORDER BY name`, args...)

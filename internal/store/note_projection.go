@@ -86,26 +86,26 @@ func (s *Store) RecordNoteParse(ctx context.Context, record NoteParseRecord) err
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var hash string
 		var size int64
-		if err := tx.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions WHERE version_id=?`, record.ContentVersionID).Scan(&hash, &size); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions WHERE version_id=$1`, record.ContentVersionID).Scan(&hash, &size); err != nil {
 			return err
 		}
 		if hash != record.Hash || size != record.Size {
 			return ErrInvalidNoteProjection
 		}
 		generation := publicationRequestDigest(struct{ Hash, Recipe string }{record.Hash, record.Recipe})
-		_, err := tx.ExecContext(ctx, `INSERT INTO note_parse_generations(generation_id,blob_hash,source_size,recipe,state,reason,checksum,artifact) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(blob_hash,recipe) DO NOTHING`, generation, record.Hash, record.Size, record.Recipe, record.State, record.Reason, record.Checksum, record.Artifact)
+		_, err := tx.ExecContext(ctx, `INSERT INTO note_parse_generations(generation_id,blob_hash,source_size,recipe,state,reason,checksum,artifact) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(blob_hash,recipe) DO NOTHING`, generation, record.Hash, record.Size, record.Recipe, record.State, record.Reason, record.Checksum, record.Artifact)
 		if err != nil {
 			return err
 		}
 		var storedState, reason, checksum string
 		var storedSize int64
-		if err := tx.QueryRowContext(ctx, `SELECT source_size,state,reason,checksum FROM note_parse_generations WHERE generation_id=?`, generation).Scan(&storedSize, &storedState, &reason, &checksum); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT source_size,state,reason,checksum FROM note_parse_generations WHERE generation_id=$1`, generation).Scan(&storedSize, &storedState, &reason, &checksum); err != nil {
 			return err
 		}
 		if storedSize != record.Size || storedState != record.State || reason != record.Reason || checksum != record.Checksum {
 			return ErrInvalidNoteProjection
 		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO note_parse_bindings(content_version_id,recipe,generation_id) VALUES(?,?,?) ON CONFLICT(content_version_id,recipe) DO NOTHING`, record.ContentVersionID, record.Recipe, generation)
+		result, err := tx.ExecContext(ctx, `INSERT INTO note_parse_bindings(content_version_id,recipe,generation_id) VALUES($1,$2,$3) ON CONFLICT(content_version_id,recipe) DO NOTHING`, record.ContentVersionID, record.Recipe, generation)
 		if err != nil {
 			return err
 		}
@@ -113,7 +113,7 @@ func (s *Store) RecordNoteParse(ctx context.Context, record NoteParseRecord) err
 		if err != nil || changed == 0 {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE note_publications SET namespace_revision=namespace_revision+1 WHERE name IN (SELECT publication_name FROM published_note_sources WHERE content_version_id=?)`, record.ContentVersionID)
+		_, err = tx.ExecContext(ctx, `UPDATE note_publications SET namespace_revision=namespace_revision+1 WHERE name IN (SELECT publication_name FROM published_note_sources WHERE content_version_id=$1)`, record.ContentVersionID)
 		return err
 	})
 }
@@ -140,7 +140,7 @@ func noteParseForVersionTx(ctx context.Context, q metadataQuerier, version, reci
 	err := q.QueryRowContext(ctx, `SELECT p.blob_hash,p.source_size,p.state,p.reason,p.checksum,COALESCE(length(p.artifact),0)
  FROM note_parse_bindings b JOIN note_parse_generations p ON p.generation_id=b.generation_id
  JOIN content_versions cv ON cv.version_id=b.content_version_id AND cv.blob_hash=p.blob_hash AND cv.size=p.source_size
- WHERE b.content_version_id=? AND b.recipe=? AND p.recipe=b.recipe`, version, recipe).Scan(&record.Hash, &record.Size, &record.State, &record.Reason, &record.Checksum, &artifactSize)
+ WHERE b.content_version_id=$1 AND b.recipe=$2 AND p.recipe=b.recipe`, version, recipe).Scan(&record.Hash, &record.Size, &record.State, &record.Reason, &record.Checksum, &artifactSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		return NoteParseRecord{}, false, nil
 	}
@@ -151,7 +151,7 @@ func noteParseForVersionTx(ctx context.Context, q metadataQuerier, version, reci
 		return NoteParseRecord{}, false, ErrInvalidNoteProjection
 	}
 	if artifactSize > 0 {
-		if err := q.QueryRowContext(ctx, `SELECT p.artifact FROM note_parse_bindings b JOIN note_parse_generations p ON p.generation_id=b.generation_id WHERE b.content_version_id=? AND b.recipe=?`, version, recipe).Scan(&record.Artifact); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT p.artifact FROM note_parse_bindings b JOIN note_parse_generations p ON p.generation_id=b.generation_id WHERE b.content_version_id=$1 AND b.recipe=$2`, version, recipe).Scan(&record.Artifact); err != nil {
 			return NoteParseRecord{}, false, err
 		}
 	}
@@ -169,7 +169,7 @@ func (s *Store) NoteIndexTargets(ctx context.Context, after string, limit int) (
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT p.name,r.database_epoch,p.namespace_revision FROM note_publications p CROSS JOIN note_publication_state r
  LEFT JOIN note_index_heads h ON h.publication_name=p.name LEFT JOIN note_index_generations g ON g.generation_id=h.generation_id
- WHERE p.active=1 AND p.name>? AND (g.generation_id IS NULL OR g.completed<>1 OR g.database_epoch<>r.database_epoch OR g.namespace_revision<>p.namespace_revision OR g.parser_recipe<>? OR g.resolver_recipe<>?) ORDER BY p.name LIMIT ?`, after, notemarkdown.Recipe, notemarkdown.ResolverRecipe, limit)
+ WHERE p.active=1 AND p.name>$1 AND (g.generation_id IS NULL OR g.completed<>1 OR g.database_epoch<>r.database_epoch OR g.namespace_revision<>p.namespace_revision OR g.parser_recipe<>$2 OR g.resolver_recipe<>$3) ORDER BY p.name LIMIT $4`, after, notemarkdown.Recipe, notemarkdown.ResolverRecipe, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -192,10 +192,10 @@ func (s *Store) EligibleNoteSources(ctx context.Context, publication, after stri
 	if limit < 1 || limit > 1000 {
 		return nil, ErrInvalidNoteProjection
 	}
-	predicate, args := publishedNoteEligibilitySQL(&PublishedNoteSelector{Publication: publication})
+	predicate, args := publishedNoteEligibilitySQLParameter(&PublishedNoteSelector{Publication: publication}, "$3")
 	args = append([]any{publication, after}, args...)
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT p.source_ref,n.id,cv.version_id,cv.blob_hash,cv.size,p.source_revision,np.namespace_revision FROM published_note_sources p JOIN note_publications np ON np.name=p.publication_name JOIN nodes n ON n.id=p.node_id JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE p.publication_name=? AND p.source_ref>? AND `+predicate+` ORDER BY p.source_ref LIMIT ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.source_ref,n.id,cv.version_id,cv.blob_hash,cv.size,p.source_revision,np.namespace_revision FROM published_note_sources p JOIN note_publications np ON np.name=p.publication_name JOIN nodes n ON n.id=p.node_id JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE p.publication_name=$1 AND p.source_ref>$2 AND `+predicate+` ORDER BY p.source_ref LIMIT $4`, args...)
 	if err != nil {
 		return nil, err
 	}

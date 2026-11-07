@@ -110,7 +110,7 @@ func (s *Store) NotePublicationStatus(ctx context.Context, name string) (NotePub
 func notePublicationStatusTx(ctx context.Context, q metadataQuerier, name string) (NotePublicationStatus, error) {
 	status := NotePublicationStatus{Name: name, Incomplete: true}
 	err := q.QueryRowContext(ctx, `SELECT p.namespace_revision,p.last_complete_at,p.last_accepted_at,r.database_epoch
-		FROM note_publications p CROSS JOIN note_publication_state r WHERE p.name=? AND r.singleton=1`, name).
+		FROM note_publications p CROSS JOIN note_publication_state r WHERE p.name=$1 AND r.singleton=1`, name).
 		Scan(&status.NamespaceRevision, &status.LastCompleteAt, &status.LastAcceptedAt, &status.DatabaseEpoch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return status, ErrNotFound
@@ -139,7 +139,7 @@ func notePublicationStatusTx(ctx context.Context, q metadataQuerier, name string
 		COALESCE(SUM(CASE WHEN n.id IS NOT NULL AND n.current_version_id<>s.content_version_id THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN s.availability='unavailable' OR v.version_id IS NULL OR n.id IS NULL THEN 1 ELSE 0 END),0)
 		FROM published_note_sources s LEFT JOIN nodes n ON n.id=s.node_id
-		LEFT JOIN content_versions v ON v.version_id=s.content_version_id WHERE s.publication_name=?`, name).
+		LEFT JOIN content_versions v ON v.version_id=s.content_version_id WHERE s.publication_name=$1`, name).
 		Scan(&status.Present, &status.Absent, &status.Unknown, &status.Conflicts, &status.Unavailable)
 	if err == nil {
 		err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM note_publication_recoveries g
@@ -156,9 +156,9 @@ func initializeNotePublicationState(ctx context.Context, tx *sql.Tx, replace boo
 	if err != nil {
 		return err
 	}
-	query := `INSERT INTO note_publication_state(singleton,database_epoch) VALUES(1,?) ON CONFLICT(singleton) DO NOTHING`
+	query := `INSERT INTO note_publication_state(singleton,database_epoch) VALUES(1,$1) ON CONFLICT(singleton) DO NOTHING`
 	if replace {
-		query = `UPDATE note_publication_state SET database_epoch=? WHERE singleton=1`
+		query = `UPDATE note_publication_state SET database_epoch=$1 WHERE singleton=1`
 	}
 	_, err = tx.ExecContext(ctx, query, epoch)
 	return err
