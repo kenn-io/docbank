@@ -1525,44 +1525,7 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	if err != nil {
 		return Coverage{}, err
 	}
-	toClass := func(item store.ProcessingClassCoverage) CoverageClass {
-		return CoverageClass{Name: item.Name, Required: item.Required, State: item.State,
-			Complete: item.Complete, Unavailable: item.Unavailable, Stale: item.Stale,
-			Ineligible: item.Ineligible, Rebuilding: item.Rebuilding,
-			PreviousServing: item.PreviousGenerationServing, Total: item.Total}
-	}
-	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
-		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
-	// A description profile attaches no rendition, so there is none to cover.
-	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
-		report.Renditions = toClass(snapshot.Renditions)
-		report.Renditions.Name, report.Renditions.Required = "rendition", true
-		if report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total {
-			report.State = "partial"
-		} else if report.Renditions.Rebuilding > 0 {
-			report.State = "rebuilding"
-		}
-	}
-	required, requiredIncomplete, requiredRebuilding := false, false, false
-	optionalRebuilding, optionalIncomplete := false, false
-	for _, coverage := range snapshot.Embeddings {
-		item := toClass(coverage)
-		report.Embeddings = append(report.Embeddings, item)
-		if item.Required {
-			required = true
-			requiredIncomplete = requiredIncomplete || item.Complete+item.Rebuilding != item.Total
-			requiredRebuilding = requiredRebuilding || item.Rebuilding > 0
-		} else {
-			optionalIncomplete = optionalIncomplete || item.Complete+item.Rebuilding != item.Total
-			optionalRebuilding = optionalRebuilding || item.Rebuilding > 0
-		}
-	}
-	if report.State == "partial" || requiredIncomplete || (!required && optionalIncomplete) {
-		report.State = "partial"
-	} else if requiredRebuilding || (!required && optionalRebuilding) {
-		report.State = "rebuilding"
-	}
-	return report, nil
+	return service.coverageReport(profile, snapshot), nil
 }
 
 // ResolveSourceFence captures exact current/live search authority without
