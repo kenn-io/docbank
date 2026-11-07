@@ -161,7 +161,8 @@ export class People {
   // A failure keeps the current cards and throws so the photo event pass
   // retries. Suggestions refresh alongside.
   async refresh() {
-    await Promise.all([this.refreshCards(), this.suggestions.refresh()]);
+    if (this.suggestions.started) void this.suggestions.load();
+    await this.refreshCards();
   }
   async refreshCards() {
     if (this.disposed || this.loading || this.access?.lockError) return;
@@ -503,7 +504,7 @@ export class Suggestions {
       !request.signal.aborted
     );
   }
-  async load(more = false, propagate = false) {
+  async load(more = false) {
     if (this.disposed || this.people.access?.lockError) return;
     this.started = true;
     this.controller?.abort();
@@ -514,22 +515,25 @@ export class Suggestions {
       : Math.max(this.items.length, peoplePageSize);
     this.loading = true;
     this.error = "";
-    const rows: FaceCandidate[] = more ? [...this.items] : [];
+    let rows: FaceCandidate[] = more ? [...this.items] : [];
+    let offset = rows.length;
     try {
       let total = 0;
       do {
-        const page = await this.read(rows.length, request.signal);
+        const page = await this.read(offset, request.signal);
         if (!this.current(request, epoch)) return;
-        rows.push(...page.items);
+        offset += page.items.length;
+        rows = [
+          ...new Map([...rows, ...page.items].map((item) => [item.candidate_id, item])).values(),
+        ];
         total = page.total;
         if (!page.items.length) break;
-      } while (rows.length < Math.min(wanted, total));
+      } while (offset < Math.min(wanted, total));
       this.items = rows;
       this.total = total;
     } catch (cause) {
       if (this.current(request, epoch)) {
         this.error = this.people.failure(cause);
-        if (propagate) throw cause;
       }
     } finally {
       if (this.current(request, epoch)) this.loading = false;
@@ -537,9 +541,6 @@ export class Suggestions {
   }
   retry() {
     return this.load();
-  }
-  refresh() {
-    return this.started ? this.load(false, true) : Promise.resolve();
   }
   open(candidate: FaceCandidate) {
     if (this.busy || this.disposed) return;

@@ -619,7 +619,7 @@ it("keeps the open review's candidate and revision during refresh", async () => 
   await people.suggestions.load();
   people.suggestions.open(isAda);
   list.mockResolvedValue({ items: [{ ...isAda, revision: 9, faces: [f2] }], total: 1 });
-  await people.suggestions.refresh();
+  await people.suggestions.load();
   expect(people.suggestions.review?.candidate).toEqual(isAda);
   await people.suggestions.decide({ action: "reject" });
   expect(decide).toHaveBeenCalledWith(
@@ -729,8 +729,8 @@ it("refreshes suggestions with the cards and reports a failure", async () => {
   await vi.waitFor(() => expect(people.suggestions.items).toEqual([isAda]));
   await people.refresh();
   expect(people.suggestions.items).toEqual([unnamed]);
-  await expect(people.refresh()).rejects.toThrow("Unavailable");
-  expect(people.suggestions.error).toBe("Unavailable");
+  await expect(people.refresh()).resolves.toBeUndefined();
+  await vi.waitFor(() => expect(people.suggestions.error).toBe("Unavailable"));
   expect(people.suggestions.items).toEqual([unnamed]);
   expect(list).toHaveBeenCalledTimes(3);
   people.dispose();
@@ -762,7 +762,7 @@ it("omits an unnamed face from confirmation without removing it from its photo",
   people.suggestions.open(unnamed);
   expect(await people.suggestions.removeFace(f1)).toBe(true);
   expect(faceDecision).not.toHaveBeenCalled();
-  await people.suggestions.refresh();
+  await people.suggestions.load();
   expect(reviewFaces(people.suggestions.review!).map((face) => face.face_id)).toEqual([f2.face_id]);
   await people.suggestions.decide({ action: "new_person", display_name: "Morgan" });
   expect(decide).toHaveBeenCalledWith(
@@ -798,8 +798,8 @@ it.each(["conceal", "dispose"] as const)(
         }),
     );
     const names = people.suggestions.searchNames("Ada");
-    const old = people.suggestions.refresh();
-    const recent = people.suggestions.refresh();
+    const old = people.suggestions.load();
+    const recent = people.suggestions.load();
     if (action === "conceal") people.conceal();
     else people.dispose();
     pending[0]!.resolve({ items: [isAda], total: 1 });
@@ -813,3 +813,63 @@ it.each(["conceal", "dispose"] as const)(
     people.dispose();
   },
 );
+
+it("releases live refresh when face suggestions stall and can retry", async () => {
+  vi.mocked(api.listFaceCandidates).mockRestore();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const fetcher = vi.fn(
+    (_url: string, options: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(options.signal!.reason), {
+          once: true,
+        });
+      }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const people = new People("session", vi.fn());
+  people.suggestions.started = true;
+  people.suggestions.items = [isAda];
+  let refreshed = false;
+  const pending = people.refresh().then(() => {
+    refreshed = true;
+  });
+  try {
+    await vi.waitFor(() => expect(refreshed).toBe(true));
+    expect(people.suggestions.loading).toBe(true);
+    expect(people.suggestions.items).toEqual([isAda]);
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ items: [unnamed], total: 1 })));
+    await people.refresh();
+    await vi.waitFor(() => expect(people.suggestions.items).toEqual([unnamed]));
+    expect(people.suggestions.error).toBe("");
+  } finally {
+    people.dispose();
+    await pending;
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps suggestion cards unique when a reopened group shifts the next offset page", async () => {
+  const first = Array.from({ length: peoplePageSize }, (_, index) => ({
+    ...isAda,
+    candidate_id: `candidate-${index}`,
+  }));
+  const following = Array.from({ length: 9 }, (_, index) => ({
+    ...isAda,
+    candidate_id: `later-${index}`,
+  }));
+  const list = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: first, total: 34 })
+    .mockResolvedValueOnce({ items: [first.at(-1)!, ...following.slice(0, 5)], total: 34 })
+    .mockResolvedValueOnce({ items: following.slice(5), total: 34 });
+  const people = new People("session", vi.fn());
+  try {
+    await people.suggestions.load();
+    await people.suggestions.load(true);
+    expect(people.suggestions.items).toHaveLength(33);
+    expect(new Set(people.suggestions.items.map((item) => item.candidate_id)).size).toBe(33);
+    expect(list.mock.calls.map(([params]) => params!.offset)).toEqual([0, 24, 30]);
+  } finally {
+    people.dispose();
+  }
+});
