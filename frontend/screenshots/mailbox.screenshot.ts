@@ -111,7 +111,7 @@ test.describe("mailbox import screenshot", () => {
 
   test("verified Takeout with distinct repeated occurrences", async ({ page }) => {
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.locator(".browser-toolbar").getByRole("button", { name: "Add", exact: true }).click();
     await page.getByRole("menuitem", { name: "Import mailbox", exact: true }).click();
     await page.getByLabel("Choose MBOX or Takeout ZIP", { exact: true }).setInputFiles(zipPath);
     await page.getByRole("button", { name: "Upload and preview", exact: true }).click();
