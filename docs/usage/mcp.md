@@ -356,7 +356,6 @@ validates the request without issuing an unscoped search. It echoes an
 explicitly supplied `as_of`; if `as_of` was omitted, the output omits that field
 because no search report supplied the daemon's default date.
 
-
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
 reranking consent grant. `search_documents` reports `openWorldHint: true`
