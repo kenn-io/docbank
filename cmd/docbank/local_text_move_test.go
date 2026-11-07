@@ -127,7 +127,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			}
 			ollama := httptest.NewServer(handler(nil))
 			defer ollama.Close()
-			local := httptest.NewServer(handler(&localDocuments))
+			local := httptest.NewServer(withTextModelInventory(t, handler(&localDocuments)))
 			defer local.Close()
 			dir, err := embedlocal.DefaultDir()
 			require.NoError(t, err)

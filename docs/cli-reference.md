@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-02
+last_edited: 2026-11-07
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -247,6 +247,7 @@ docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
 docbank photos assets promote <path-or-id> [--revision REV] [--kind KIND] [--role ROLE]
 docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos faces list <content-version-id>
+docbank photos faces setup-local
 docbank photos faces create <content-version-id> [--box X,Y,WIDTH,HEIGHT] [--person ID] [--face-id UUID]
 docbank photos faces name|reject <content-version-id> --face ID --person ID --revision REV
 docbank photos faces retract|dismiss <content-version-id> --face ID --revision REV

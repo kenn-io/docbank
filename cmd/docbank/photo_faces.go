@@ -79,6 +79,7 @@ func photoFacesCommand() *cobra.Command {
 	create.Flags().StringVar(&faceID, "face-id", "", "face UUID for retrying creation")
 	faces.AddCommand(create)
 	addPhotoFaceDecisionCommands(faces)
+	faces.AddCommand(localFacesCommand())
 	return faces
 }
 

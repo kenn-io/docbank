@@ -92,6 +92,7 @@ type Deps struct {
 	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
 	Exports           *exporter.Worker
 	TelemetryCapture  telemetry.CaptureEndpoint // nil leaves POST /api/daemon/telemetry/events unregistered
+	FaceClient        processing.FaceClientFunc // nil discovers an already running local face model
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -257,6 +258,7 @@ func NewServer(d Deps) *Server {
 	registerChanges(photoEventsContext, mux, humaAPI, d)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPhotoFaceRoutes(humaAPI, d, g)
+	registerFaceSimilarityRoutes(humaAPI, d)
 	registerPhotoFaceDecisionRoutes(humaAPI, d, g)
 	registerPhotoRejectRoutes(humaAPI, d, g)
 	registerPhotoAuthoredRoutes(humaAPI, d, g)
@@ -266,6 +268,7 @@ func NewServer(d Deps) *Server {
 	registerPhotoQueryRoutes(humaAPI, d, cursorService, g, snapshots)
 	registerPhotoTimelineRoute(humaAPI, s.snapshots)
 	registerPeopleRoutes(humaAPI, d, g)
+	registerPersonExternalRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)
 	registerPhotoCheckoutRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
