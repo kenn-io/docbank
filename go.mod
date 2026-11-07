@@ -37,8 +37,8 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
-	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kata v0.20.0
+	github.com/yuin/goldmark v1.8.6
+	go.kenn.io/kata v0.22.0
 	go.kenn.io/kit v0.48.4
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
