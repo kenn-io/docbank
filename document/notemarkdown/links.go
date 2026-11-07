@@ -23,6 +23,10 @@ type linkScanner struct {
 }
 
 func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budget) ([]Link, error) {
+	src, blocks, offsets, err := prepareLinkSource(ctx, src, blocks, b)
+	if err != nil {
+		return nil, err
+	}
 	s := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}}
 	// Definitions are resolved before uses; retain byte spans, not copies of
 	// destinations. Unused definitions never become graph occurrences.
@@ -74,6 +78,13 @@ func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budg
 				return nil, err
 			}
 		}
+	}
+	for i := range s.links {
+		if err := b.step(ctx, 1); err != nil {
+			return nil, err
+		}
+		s.links[i].Span = originalLinkSpan(s.links[i].Span, offsets)
+		s.links[i].DestinationSpan = originalLinkSpan(s.links[i].DestinationSpan, offsets)
 	}
 	sort.SliceStable(s.links, func(i, j int) bool { return s.links[i].Span.Start < s.links[j].Span.Start })
 	return s.links, nil

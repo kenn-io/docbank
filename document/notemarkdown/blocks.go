@@ -11,6 +11,7 @@ type sourceBlock struct {
 	depth, level              int
 	root                      bool
 	paragraph, paragraphStart bool
+	continuation              bool
 }
 
 // Containers own fenced/raw blocks. Dropping an enclosing quote/list ends
@@ -278,11 +279,14 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		block := sourceBlock{span: Span{line.Start, next}, content: Span{line.Start + content, line.End}, depth: depth, root: root, paragraph: true, paragraphStart: !paragraph}
 		if paragraph && len(blocks) > 0 {
 			previous := &blocks[len(blocks)-1]
-			if previous.level == 0 && previous.root == root && previous.depth == depth && previous.span.End == line.Start && prefixEnd == 0 {
-				previous.span.End = next
-				previous.content.End = line.End
-				pos = next
-				continue
+			if previous.level == 0 && previous.root == root && previous.depth == depth && previous.span.End == line.Start {
+				if prefixEnd == 0 {
+					previous.span.End = next
+					previous.content.End = line.End
+					pos = next
+					continue
+				}
+				block.continuation = true
 			}
 		}
 		blocks = append(blocks, block)

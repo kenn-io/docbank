@@ -44,7 +44,10 @@ Links include CommonMark inline/reference links and images, URI/email autolinks,
 `[[target]]`, `[[target#heading|label]]`, `[[#heading]]` and `![[target]]`.
 Keep every authored occurrence. Reference definitions alone, code, escaped
 openers and HTML syntax do not create edges. An embed only records authorship;
-it never fetches or transcludes bytes. CommonMark destinations decode punctuation
+it never fetches or transcludes bytes. Links and reference definitions may
+continue across lines in the same list or quote paragraph. Their spans retain
+the original container prefixes; prefixes do not become destination bytes.
+CommonMark destinations decode punctuation
 escapes and entities once. Autolink interiors are literal. Wiki targets keep
 entities literal and unescape only `\\`, `\]` and `\|`. URI percent decoding
 belongs to target planning, not parsing. Bare URLs and semantic similarity do not
