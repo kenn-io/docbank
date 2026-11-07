@@ -6,15 +6,13 @@ runs:
   using: composite
   steps:
     - name: Trim unused cache entries
-      if: >-
-        github.event_name == 'push' && github.ref == 'refs/heads/main'
-        && env.GO_CACHE_HIT != 'true'
+      if: env.GO_CACHE_TRIM_PATHS != ''
       shell: bash
       run: |
         while IFS= read -r path; do
           if [ -d "$path" ]; then
             du -sh "$path"
-            find "$path" -type f \( -name '*-a' -o -name '*-d' \) ! -newer "$RUNNER_TEMP/go-cache-use" -delete
+            find "$path" -mindepth 2 -maxdepth 2 \( -name '*-a' -o -name '*-d' \) ! -newer "$RUNNER_TEMP/go-cache-use" -exec rm -rf -- {} +
             du -sh "$path"
           fi
         done <<< "$GO_CACHE_TRIM_PATHS"
