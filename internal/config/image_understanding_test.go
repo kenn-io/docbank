@@ -16,7 +16,7 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	profile.Model = "synthetic-vision"
 	profile.MaxDocumentBytes = 16 << 20
 	profile.MaxResponseBytes = 1 << 20
-	profile.RequestedArtifacts = []string{string(document.EvidenceArtifactMarkdown)}
+	profile.RequestedArtifacts = []string{"provider_markdown"}
 	profile.DiscloseFilename = false
 	profile.Runtime.RequestTimeout = Duration(time.Minute)
 	descriptor, err := vision.Descriptor(vision.UnderstandingProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
@@ -25,6 +25,7 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	cfg.RenditionProfiles["primary"] = profile
 	require.NoError(t, cfg.Validate())
 	for _, change := range []func(*RenditionProfileConfig){
+		func(p *RenditionProfileConfig) { p.RequestedArtifacts = []string{"markdown"} },
 		func(p *RenditionProfileConfig) { p.DescriptorID = vision.ProviderID },
 		func(p *RenditionProfileConfig) {
 			p.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}

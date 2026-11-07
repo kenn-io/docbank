@@ -70,14 +70,12 @@ func TestUnderstandingDescriptorSupportsRenditionText(t *testing.T) {
 
 func FuzzUnderstandingOutput(f *testing.F) {
 	f.Add("a synthetic caption")
-	f.Add(string([]byte{0xff}))
 	f.Add("# heading\n[x](https://example.com)")
 	f.Fuzz(func(t *testing.T, text string) {
-		raw, err := json.Marshal(map[string]string{"visible_text": text, "literal_description": text, "possible_meaning": text, "uncertainty": text})
 		if !utf8.ValidString(text) {
-			require.Error(t, err)
-			return
+			t.Skip("JSON string input must be valid UTF-8")
 		}
+		raw, err := json.Marshal(map[string]string{"visible_text": text, "literal_description": text, "possible_meaning": text, "uncertainty": text})
 		require.NoError(t, err)
 		value, err := parseUnderstanding(raw)
 		if err != nil {
@@ -123,8 +121,10 @@ func TestUnderstandingOriginalImageProducesVersionedEvidence(t *testing.T) {
 	assert.Equal(t, p.descriptor.Fingerprint, result.Receipt.DescriptorFingerprint)
 	// Input bounds must be checked before any additional provider call.
 	meta.ByteLength = 16<<20 + 1
-	_, err = p.Render(t.Context(), &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, auth)
+	oversizedReader := &understandingCountingReader{reader: bytes.NewReader(data)}
+	_, err = p.Render(t.Context(), &testUpload{ReadCloser: io.NopCloser(oversizedReader), metadata: meta}, auth)
 	require.Error(t, err)
+	assert.Zero(t, oversizedReader.calls, "oversized input must be rejected before any upload read")
 	assert.Equal(t, int32(1), calls.Load())
 	meta.ByteLength = int64(len(data))
 	meta.MediaType = "image/gif"
@@ -139,4 +139,14 @@ func TestUnderstandingRejectsInvalidUTF8(t *testing.T) {
 	raw = append(raw, []byte(`","literal_description":"","possible_meaning":"","uncertainty":""}`)...)
 	_, err := parseUnderstanding(raw)
 	require.Error(t, err)
+}
+
+type understandingCountingReader struct {
+	reader io.Reader
+	calls  int
+}
+
+func (r *understandingCountingReader) Read(p []byte) (int, error) {
+	r.calls++
+	return r.reader.Read(p)
 }
