@@ -88,6 +88,39 @@ func TestDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonCandidateDecided)
 }
 
+func TestDocumentCandidateLinkHonorsVisiblePeopleScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, version := seedPeopleVersion(t, s)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	photo := browsePhotoNode(t, s, "hidden.jpg", fakeHash("a1"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:ada", "Ada", "", []PersonCandidateOccurrence{{
+		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "author-claim",
+	}}))
+	decision := CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "link", PersonID: person.PersonID}
+	_, err = s.DecidePersonCandidate(WithVisiblePeopleOnly(ctx), decision)
+	require.ErrorIs(t, err, ErrNotFound)
+	assertions, err := s.DocumentPersonAssertions(ctx, version)
+	require.NoError(t, err)
+	require.Empty(t, assertions)
+	linked, err := s.DecidePersonCandidate(ctx, decision)
+	require.NoError(t, err)
+	require.Equal(t, person.PersonID, linked.DecidedPersonID)
+	assertions, err = s.DocumentPersonAssertions(ctx, version)
+	require.NoError(t, err)
+	require.Len(t, assertions, 1)
+	require.Equal(t, person.PersonID, assertions[0].PersonID)
+}
+
 func TestDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
