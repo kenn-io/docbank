@@ -48,6 +48,8 @@ func executeReadTool(
 	var links []*sdkmcp.ResourceLink
 	var err error
 	switch name {
+	case answerCardsTool.name:
+		output, err = matchAnswerCards(ctx, lease, raw)
 	case originalContentTool.name:
 		output, err = readDocumentContent(ctx, lease, raw)
 	case textOutlineTool.name:

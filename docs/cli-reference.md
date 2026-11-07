@@ -2019,6 +2019,98 @@ docbank version
 Prints the build version and commit (`dev (unknown)` for untagged local
 builds; release builds inject both via `-ldflags`).
 
+## docbank cards check
+
+```text
+docbank cards check [--root /answer-cards] [--deep] [--run] [--json]
+```
+
+Reports answer cards in the selected folder and its descendants. Files with
+other media types or without the card marker are reported as `not_a_card`.
+Malformed cards are `invalid`. An approved card whose content has changed is
+`draft`; a card whose source is no longer current is `stale`. `--deep` also
+resolves each quotation and reports citation issues separately from the card
+state, including for drafts and latched stale cards. Read or
+transport failures stop the report. `--run` records newly observed stale states
+in the card, guarded by the revision read. Concurrent edits are reported as
+`stale_revision` and skipped. Cards with YAML aliases or merges cannot be rewritten safely; they are reported as `rewrite_unsupported` and skipped. Already stale cards are not rewritten.
+Discovery is limited to 2,000 files and 32 MiB of downloaded card candidates.
+Oversized text candidates are reported as invalid without reading their marker.
+
+A card is a UTF-8 Markdown or plain-text file of at most 64 KiB, with YAML
+frontmatter and an answer body. Set `docbank_answer_card: 1`, `question`, an
+optional `alternates` list, and a `citations` list. Each citation contains all
+fields of a [saved text citation](usage/mcp.md#saved-text-citations), plus
+`quote` containing the exact resolved text. Questions and alternates are 1–300
+characters and must contain at least one searchable, non-stopword word; a card can have up to 20 alternates, 1–16 citations, and an answer
+of 1–4,000 characters. Citations must belong to the current vault. The state
+may be `draft`, `approved`, or `stale`; omitted state means draft. Stale reasons
+are limited to 300 characters; an overlong reason makes the card invalid.
+
+Approval fields are a writer-trust convention: anyone who can edit a card can
+forge them. A report observes source state while it runs, not as an atomic
+snapshot; a source can change after the final read. Card text is indexed
+like ordinary documents and is not independent evidence for its own answer.
+
+
+## docbank cards approve
+
+```text
+docbank cards approve <path-or-id> [--root /answer-cards] [--rebind] [--yes]
+```
+
+Checks that each source is current and each quotation matches, then shows the
+question, answer, alternate phrasings, quotations, and source paths for approval.
+An empty `quote` is filled from the retained source text and shown before
+confirmation. The filled quote is saved with the approval; a nonempty quote
+that differs from the source is refused. Use `--yes` for scripted approval.
+The command checks the sources again after confirmation and writes the approval
+only if the card revision still matches.
+Source checks are not an atomic snapshot. A stale card stays stale until it is
+approved again after its citations are updated.
+
+Use `--rebind` after a source update or revert to find each saved `quote` in
+the source's current rendition. The command chooses the active rendition with
+the lowest profile fingerprint, then attachment ID and build ID. It scans the
+complete rendition in windows of up to 16,000 Unicode code points and requires
+exactly one occurrence, including overlapping occurrences and window boundaries.
+Each citation scan is limited to 1,048,576 code points and 4 MiB of UTF-8 text.
+The rendition identity and full checksum must remain consistent throughout the
+scan. An empty, missing or ambiguous quote, an unavailable rendition, or a scan
+over the limit requires manual citation editing. Rebound citations and quotations
+are shown for approval and saved together only after the ordinary source and
+card revision checks pass. A refusal leaves the card unchanged.
+
+
+## docbank cards match
+
+```text
+docbank cards match <question...> [--root /answer-cards] [--limit 3] [--json]
+```
+
+Finds approved answers whose question or alternate phrasing matches the query.
+The limit is 1–10. Matching uses Unicode-normalized token overlap, a fixed
+stopword list, and a minimum Dice score of 0.75. Numeric expressions must agree,
+including decimal and date order. Empty searchable token sets never match.
+Each phrasing is scored separately; the highest score wins. Ties use the number
+of phrasings above the threshold, then the card path.
+
+The command checks each candidate's current sources and resolves its exact
+quotations. It rechecks the card's current version and location before returning
+it. Changed, trashed, moved, or edited cards cannot supply an answer. Reads are
+sequential observations; a change after the final read remains possible.
+
+JSON returns `status` (`matched` or `no_match`), `matches`, `excluded` counts for
+stale, draft, invalid, and non-card files, and up to ten matching `stale_cards`
+with reasons. The `draft` count also includes matching candidates that disappear,
+move, become trashed, or change version during the final card check. Each match
+includes its card identity, question, matched phrasing,
+score, answer, and citations with quotes. Discovery scans at most 2,000 files
+and 32 MiB of text candidates. Results are limited to 512 KiB. Exceeding a bound
+fails with `card_limit`, without partial answers. Operational errors also fail
+the command. Matching never writes lifecycle fields.
+
+
 ## Environment variables
 
 `DOCBANK_HOME` selects the vault (see [Configuration](configuration.md)).
