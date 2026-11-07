@@ -45,4 +45,5 @@ func TestFaceEmbeddingCrowdFitsDescriptorBudget(t *testing.T) {
 	require.Len(t, sets.Sets, 1)
 	require.Equal(t, 128, sets.Sets[0].Set.VectorSet.RowCount)
 	require.Len(t, x.boxes, 128)
+	require.Equal(t, 16, x.calls, "128 faces must use sixteen eight-box inference requests")
 }
