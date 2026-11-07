@@ -23,7 +23,7 @@ var schemaSQL string
 
 // SchemaVersion identifies disposable development schemas. Increment it whenever
 // schema.sql changes. Retained deployments will start a numbered migration chain.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Config names an application's dedicated schema and its setup role. The
 // operator provisions roles and grants; this package never creates roles or

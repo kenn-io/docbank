@@ -459,7 +459,7 @@ GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
 GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at)
     ON documents.extracted_text TO docbank_runtime;
 GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
-    display_override_file_id, revision, updated_at)
+    display_override_file_id, representative_rank, revision, updated_at)
     ON documents.photo_assets TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
 GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity,
@@ -561,7 +561,8 @@ GRANT INSERT, DELETE ON documents.photo_hidden_failures TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(locked_until)
     ON documents.photo_hidden_lockout TO docbank_runtime;
 GRANT INSERT, UPDATE(preference, revision, updated_at, burst_gap_seconds,
-    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds)
+    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds,
+    representative_sequence)
     ON documents.photo_library_settings TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(state, focus, blur, brightness, color_red,
     color_green, color_blue, framing, aesthetics, face_reports_json, face_inputs)
@@ -1208,7 +1209,9 @@ people decisions, not producing them on PostgreSQL.
 
 Hidden-photo operations configure and change passcodes, unlock and lock local
 sessions, record failed attempts and lockouts, and reset or disable the feature.
-Tokens remain in the owning Store's memory and disappear on restart. Expiry,
+Tokens remain in the owning Store's memory and disappear on restart. Use one
+process per PostgreSQL vault schema: passcode changes and locks revoke sessions
+in that process only. Expiry,
 explicit lock, passcode change and reset end access. A wrong passcode commits
 its failure record even though the operation returns an error. Disable unhides
 every asset, writes its receipt, refreshes XMP export work and removes the
@@ -1232,8 +1235,35 @@ refresh affected displays and export work inside the write.
 The `photo-quality-hidden` contracts cover native publication, terminal and stale
 results, retained dismissal, lockout, expiry, revocation, settings, rollback and
 read snapshots. General photo browsing and quality filters, people curation,
-best-shot choices, portable restore and public PostgreSQL vault opening remain
-separate qualification boundaries.
+portable restore and public PostgreSQL vault opening remain separate
+qualification boundaries. Explicit-selection review uses the contract below.
+
+#### Photo review
+
+The shared Store groups an explicit selection by capture time, folder and camera
+identity, chooses keepers or representatives, accepts or dismisses best-shot
+suggestions, and undoes those choices on both backends. The selection defines
+membership; a new neighboring import is not added to an existing decision.
+Decisions recheck source metadata, every original file and the current settings
+inside writer admission. Independent companion-file flags stay intact.
+Hidden groups and their undo require a live session in the owning Store.
+
+Representative choices advance a transactional counter without changing file
+flags. Undo restores the prior choice only at the receipt's asset revision and
+never reuses an issued rank. Asset revisions refresh export work in the same
+transaction. Failed receipt writes roll back flags, ranks, the counter, export
+work and receipts, and send no change notification.
+
+Grouping and best-shot reads keep one snapshot. SQLite retains its forced join
+order; PostgreSQL uses ordinary joins. Review can read retained image index
+generations and hydrate only the indexed, still-eligible inputs. Damaged
+disposable index bytes fall back to capture-time grouping. The two index tables
+have read-only runtime access; this does not qualify PostgreSQL index building,
+publication, reader leases or collection.
+
+The `photo-review` suite covers native explicit selections and retained-index
+reads. Search-driven browsing, query/frozen-run selection, people curation,
+portable restore and public PostgreSQL vault opening remain separate.
 
 #### Photo albums
 
@@ -1663,11 +1693,10 @@ enrollment without leaving audit authority or queue changes. Changed previews
 are rejected for both initial and additional enrollment. A fresh PostgreSQL
 schema can enroll its root without a copied fixture.
 
-The supporting catalogs grant runtime read access only. Their presence does not
-qualify their write paths: validation, immutability and same-transaction catalog
-maintenance still belong to each operation's port. Public PostgreSQL opening,
-`ValidateMetadata` snapshot export, backup/restore, document and photo mutations,
-and search remain unavailable.
+Copying supporting catalogs qualifies their validation, not their producers.
+The [operation inventory](#backend-support-and-drift-checks) identifies native
+writes and their catalog-maintenance coverage. Public PostgreSQL opening,
+metadata import/export, backup/restore and search remain unqualified.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 
