@@ -1884,8 +1884,9 @@ Before each daily save, the owning job retains the build and analysis action
 records it used and their referenced outputs, including executable directories.
 Trimming reads Go's v1 action records and rejects unknown record formats.
 The job rebuilds the module cache from restored downloads through a local file
-proxy, keeping checksum-database records and the configured proxy fallback.
-An exact daily cache hit skips this preparation and trimming.
+proxy, dropping stale versions while retaining the current `go.mod` graph,
+modules and tools requested by the job, checksum-database records, and the configured proxy fallback.
+An exact daily cache hit skips this preparation and trimming. Trimming first appears at the next new daily key.
 
 Owner saves keep the `GOMODCACHE` archive path and remove expanded module
 sources with `go clean -modcache`, preserving the `cache` subtree.

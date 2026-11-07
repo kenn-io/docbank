@@ -82,7 +82,7 @@ runs:
       run: |
         modcache=$(go env GOMODCACHE | tr '\\' '/')
         if [ -d "$modcache" ]; then
-          # Replay restored downloads so only requested modules enter the next archive.
+          # Replay restored downloads to drop stale versions and retain modules and tools requested by this job.
           mv "$modcache" "${modcache}.restored"
           # Tool builds outside go.sum, such as custom-gcl, verify against these records.
           mkdir -p "$modcache/cache/download"
