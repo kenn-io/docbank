@@ -96,9 +96,12 @@ func TestFaceSimilarityRouteKeepsSlowInferenceAlive(t *testing.T) {
 				Data: []embedclient.FaceResult{{Index: 0, Embedding: vector}},
 			}))
 		}))
+		// The in-memory transport owns its listener; Kit still requires a
+		// loopback authority, as the daemon test server does.
+		modelHTTP := model.Client()
 		client, err := embedclient.New(embedclient.Options{
 			Model:      embedconfig.Model{Name: embedclient.FaceModel, Dimensions: 512, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone},
-			Deployment: embedconfig.Deployment{BaseURL: model.URL + "/v1"}, HTTP: model.Client(),
+			Deployment: embedconfig.Deployment{BaseURL: "http://127.0.0.1/v1"}, HTTP: modelHTTP,
 		})
 		require.NoError(t, err)
 		ts, catalog := newBubbleTestServer(t, func(d *api.Deps) {
