@@ -376,6 +376,7 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 	var source watchNotificationSource
 	degraded := false
 	blocked := false
+	var statusErr error
 	retryEnrollment := w.config.CaptureOnChange
 	reportFailure := func(err error) {
 		if !degraded {
@@ -383,6 +384,7 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			w.logger.Warn("watch notifications unavailable; polling continues", "watch", w.config.Name, "error", err)
 		}
 		degraded = true
+		statusErr = errors.Join(statusErr, w.folderScanner.notificationStatus(ctx, true))
 	}
 	disable := func(err error) {
 		if source != nil {
@@ -411,6 +413,9 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 		source, w.notifications = candidate, candidate
 	}
 	scan := func(hints watchScanHints) error {
+		if statusErr != nil {
+			return statusErr
+		}
 		if beforeScan != nil {
 			beforeScan()
 		}
@@ -419,6 +424,9 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			failure := w.notificationErr
 			w.notificationErr = nil
 			disable(failure)
+		}
+		if statusErr != nil {
+			return errors.Join(err, statusErr)
 		}
 		if errors.Is(err, errWatchBlocked) || (err == nil && !complete) {
 			if err == nil {
@@ -447,6 +455,9 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			jobs.ReportError(ctx, nil)
 			w.logger.Info("watch notifications restored", "watch", w.config.Name)
 			degraded = false
+			if err := w.folderScanner.notificationStatus(ctx, false); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -510,6 +521,9 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 		case err := <-failures:
 			// Not a scan, so the next park keeps the work already recorded.
 			disable(err)
+			if statusErr != nil {
+				return statusErr
+			}
 		}
 	}
 }
@@ -1527,7 +1541,8 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 		observation.processed = false
 	}
 	// A matching native change time vouches for the bytes between periodic scans.
-	if observation.digest != "" && (hints.matches(rel) || fingerprintChanged || (hints.Reconcile && fingerprint.change == 0)) {
+	fullVerification := w.folderScanner.fullVerification()
+	if fullVerification || (observation.digest != "" && (hints.matches(rel) || fingerprintChanged || (hints.Reconcile && fingerprint.change == 0))) {
 		var digest string
 		digest, err = source.digest(ctx, fingerprint)
 		if err == nil && digest != observation.digest {
@@ -1549,7 +1564,7 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 			w.folderScanner.failScan(rel)
 			return observeErr
 		}
-		if observation.processed && !force {
+		if observation.processed && !force && !fullVerification {
 			return nil
 		}
 		if !stable {

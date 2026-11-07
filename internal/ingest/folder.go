@@ -128,9 +128,23 @@ type FolderScanResult struct {
 	Observed, Failed, Unsettled int64
 }
 
+// FolderScanStatus reports verification scheduling separately from inventory
+// completion. A long pass may remain overdue while it reads stable sources.
+type FolderScanStatus struct {
+	Scan                              FolderScan
+	LastVerifiedAt, VerificationDueAt time.Time
+	VerificationLag                   time.Duration
+	Degraded                          bool
+}
+
 // FolderScanner shares watched-inbox traversal, exclusions, mount
 // boundaries and stability observations without opening a local vault.
 type FolderScanner struct {
+	// VerifyInterval schedules full-byte passes; zero preserves detector-only behavior.
+	VerifyInterval time.Duration
+	// ScanStatus runs serially and reports polling fallback. During a scan, it
+	// runs before completion; successful timestamps appear on its next event.
+	ScanStatus func(context.Context, FolderScanStatus) error
 	// BeforeScan runs before detector shortcuts or file callbacks.
 	BeforeScan func(context.Context, FolderScan) error
 	// ObservePresent may force processing, but cannot bypass stability checks.
@@ -146,11 +160,13 @@ type FolderScanner struct {
 	SourceChanged func(context.Context, string) error
 	// Excluded observes paths skipped by policy, symlinks or filesystem boundaries.
 	// Returning an error aborts the pass.
-	Excluded func(context.Context, string) error
-	watcher  *Watcher
-	scans    uint64
-	once     bool
-	evidence *folderScanEvidence
+	Excluded                          func(context.Context, string) error
+	watcher                           *Watcher
+	scans                             uint64
+	once                              bool
+	evidence                          *folderScanEvidence
+	lastVerifiedAt, verificationDueAt time.Time
+	degraded                          bool
 }
 
 // Evidence is separate from rejection reporting: a repeated, suppressed error
@@ -163,21 +179,62 @@ type folderScanEvidence struct {
 }
 
 func (s *FolderScanner) beginScan(ctx context.Context) error {
+	if s.VerifyInterval < 0 {
+		return errors.New("folder verification interval must not be negative")
+	}
 	s.scans++
-	if s.BeforeScan == nil && s.ObservePresent == nil && s.AfterScan == nil {
+	if s.BeforeScan == nil && s.ObservePresent == nil && s.AfterScan == nil && s.ScanStatus == nil && s.VerifyInterval == 0 {
 		return nil
 	}
+	full := false
+	if s.VerifyInterval > 0 {
+		if s.verificationDueAt.IsZero() {
+			s.verificationDueAt = s.watcher.now()
+		}
+		full = !s.watcher.now().Before(s.verificationDueAt)
+	}
 	s.evidence = &folderScanEvidence{
-		result: FolderScanResult{Scan: FolderScan{Number: s.scans}, Complete: true},
+		result: FolderScanResult{Scan: FolderScan{Number: s.scans, FullVerification: full}, Complete: true},
 		failed: make(map[string]struct{}),
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if s.BeforeScan != nil {
-		return s.BeforeScan(ctx, s.evidence.result.Scan)
+		if err := s.BeforeScan(ctx, s.evidence.result.Scan); err != nil {
+			return err
+		}
 	}
-	return nil
+	return s.reportScanStatus(ctx)
+}
+
+func (s *FolderScanner) fullVerification() bool {
+	return s != nil && s.evidence != nil && s.evidence.result.Scan.FullVerification
+}
+
+func (s *FolderScanner) reportScanStatus(ctx context.Context) error {
+	if s == nil || s.ScanStatus == nil {
+		return nil
+	}
+	status := FolderScanStatus{
+		Scan: FolderScan{Number: s.scans}, LastVerifiedAt: s.lastVerifiedAt,
+		VerificationDueAt: s.verificationDueAt, Degraded: s.degraded,
+	}
+	if s.evidence != nil {
+		status.Scan = s.evidence.result.Scan
+	}
+	if !status.VerificationDueAt.IsZero() && s.watcher.now().After(status.VerificationDueAt) {
+		status.VerificationLag = s.watcher.now().Sub(status.VerificationDueAt)
+	}
+	return errors.Join(s.ScanStatus(ctx, status), ctx.Err())
+}
+
+func (s *FolderScanner) notificationStatus(ctx context.Context, degraded bool) error {
+	if s == nil {
+		return nil
+	}
+	s.degraded = degraded
+	return s.reportScanStatus(ctx)
 }
 
 func (s *FolderScanner) failScan(ref string) {
@@ -219,12 +276,17 @@ func (s *FolderScanner) finishScan(ctx context.Context, root *watchRoot, scanErr
 	}
 	defer func() { s.evidence = nil }()
 	err := errors.Join(ctx.Err(), root.verify())
+	err = errors.Join(err, s.reportScanStatus(ctx))
 	if scanErr != nil || err != nil {
 		s.failScan("")
 	}
 	result := s.evidence.result // All one-shot workers have joined.
 	if s.AfterScan != nil {
-		err = errors.Join(err, s.AfterScan(ctx, result))
+		err = errors.Join(err, s.AfterScan(ctx, result), ctx.Err())
+	}
+	if result.Complete && err == nil && result.Scan.FullVerification {
+		s.lastVerifiedAt = s.watcher.now()
+		s.verificationDueAt = s.lastVerifiedAt.Add(s.VerifyInterval)
 	}
 	return result.Complete && err == nil, err
 }
@@ -465,6 +527,9 @@ func checkFolderSource(expected watchFingerprint, open localFileOpener) error {
 
 // Run scans immediately and polls until cancellation or a terminal error.
 func (s *FolderScanner) Run(ctx context.Context) error {
+	if s.VerifyInterval < 0 {
+		return errors.New("folder verification interval must not be negative")
+	}
 	root, err := s.openRoot()
 	if err != nil {
 		return err

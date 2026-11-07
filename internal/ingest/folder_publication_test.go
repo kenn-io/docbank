@@ -30,6 +30,7 @@ func publicationScanner(t *testing.T, process func(context.Context, FolderFile) 
 	require.NoError(t, err)
 	now := time.Unix(1_800_000_000, 0)
 	scanner.watcher.now = func() time.Time { return now }
+	scanner.watcher.rejected = make(map[string]struct{})
 	return scanner, &now
 }
 
