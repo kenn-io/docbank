@@ -5,6 +5,7 @@ import App from "./App.svelte";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import { clearToasts } from "./toast.svelte.js";
+import { VerifiedUploadChannel } from "./upload.js";
 
 afterEach(() => {
   cleanup();
@@ -2336,6 +2337,7 @@ it("retries failed folder metadata when reselecting it", async () => {
 
 it("offers the existing Add menu from an empty vault root", async () => {
   prepareKeyboardApp();
+  vi.spyOn(VerifiedUploadChannel.prototype, "connect").mockResolvedValue();
   installKeyboardBackend("success", true);
   render(App);
 
@@ -2348,6 +2350,11 @@ it("offers the existing Add menu from an empty vault root", async () => {
   expect(menu.getByRole("menuitem", { name: "Upload folder" })).toBeTruthy();
   expect(menu.getByRole("menuitem", { name: "Import mailbox" })).toBeTruthy();
   expect(menu.getByRole("menuitem", { name: "Import load files" })).toBeTruthy();
+  const files = menu.getByRole("menuitem", { name: "Upload files" });
+  await waitFor(() => expect(files.getAttribute("aria-disabled")).not.toBe("true"));
+  await fireEvent.click(files);
+  expect(await screen.findByRole("dialog", { name: "Upload documents" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Upload to /" })).toBeTruthy();
 });
 
 it("loads and edits tag bindings in an empty vault", async () => {

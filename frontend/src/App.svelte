@@ -53,6 +53,7 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
+    type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -1374,7 +1375,7 @@
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
   const showingResults = $derived(activeQuery !== "" || tagBrowse);
-  const emptyRoot = $derived(!showingResults && directory?.path === "/" && rows.length === 0);
+  const emptyRoot = $derived(!showingResults && directory?.path === "/");
   const columns = $derived(
     snapshotActive
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
@@ -3785,8 +3786,9 @@
   />
 {/snippet}
 
-{#snippet addMenu()}
+{#snippet addMenu(align: MenuAlign = "start")}
   <DocumentAddMenu
+    {align}
     disabledReason={!directory || loading
       ? "Waiting for the folder to load"
       : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
@@ -4731,7 +4733,7 @@
                     <RefreshCwIcon size="14" aria-hidden="true" />
                   </IconAction>
                   {#if !showingResults}
-                    {@render addMenu()}
+                    {@render addMenu("end")}
                   {/if}
                 </div>
               </div>
