@@ -22022,7 +22022,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }), params.name);
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
