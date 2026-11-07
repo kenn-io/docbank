@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/embedlocal"
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/telemetry/posthog"
@@ -718,7 +719,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, Faces: &processing.FaceSetup{Service: processingService, Startup: func(ctx context.Context) error { _, err := localFaceOrigin(ctx); return err }}, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText, Faces: &processing.FaceSetup{Service: processingService, Startup: func(ctx context.Context) error { _, err := localEmbeddingOrigin(ctx, embedlocal.FaceModel); return err }}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,

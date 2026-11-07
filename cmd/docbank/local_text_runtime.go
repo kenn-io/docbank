@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/embedlocal"
 )
 
 func readLocalText(root string) (config.LocalTextConfig, error) {
@@ -99,7 +100,7 @@ func localTextStartup(ctx context.Context, managed bool, _ string) error {
 	if !managed {
 		return nil
 	}
-	_, err := localEmbeddingOrigin(ctx)
+	_, err := localEmbeddingOrigin(ctx, embedlocal.TextModel)
 	if err != nil {
 		return fmt.Errorf("embeddings server is not ready; run docbank processing local to install and start it: %w", err)
 	}

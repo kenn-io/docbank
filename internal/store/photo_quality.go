@@ -195,7 +195,7 @@ func decodePhotoQualityRow(
 // photoFaceInputsSQL identifies the current face inputs to a disposable quality
 // cache. Its encoding is backend-local; quality rows never enter metadata transfer.
 func (s *Store) photoFaceInputsSQL(version string) string {
-	selection := ` FROM photo_faces WHERE content_version_id=` + version + ` AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE e.face_id=photo_faces.face_id AND ` + rejectedFaceMatchPredicate + ` AND COALESCE(c.suggested_person_id,'')='')`
+	selection := ` FROM photo_faces WHERE content_version_id=` + version + ` AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE e.face_id=photo_faces.face_id AND ` + rejectedFaceMatchPredicate + ` AND c.occurrence_count=1 AND COALESCE(c.suggested_person_id,'')='')`
 	if s.postgresSchema != "" {
 		return `(SELECT COALESCE(string_agg(json_build_array(face_id,x,y,width,height,facing,eyes_open,smile)::text,',' ORDER BY face_id),'')` + selection + `)`
 	}

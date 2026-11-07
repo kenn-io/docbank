@@ -303,7 +303,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 	api.OpenAPI().AddOperation(&huma.Operation{OperationID: "downloadBatesExportContent", Method: http.MethodGet,
 		Path: "/api/v1/bates/exports/{id}/content", Summary: "Download hash-checked Bates export bytes",
 		Parameters: []*huma.Param{{Name: "id", In: openAPIPathLocation, Required: true,
-			Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}},
+			Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}},
 		Responses: map[string]*huma.Response{"200": {Description: "Exact retained Bates PDF",
 			Content: map[string]*huma.MediaType{"application/pdf": {}}}}})
 }

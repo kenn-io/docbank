@@ -44,7 +44,7 @@ func emailNavigationBrowserReadAllowed(r *http.Request) bool {
 			if err != nil || n < 1 {
 				return false
 			}
-			if key == packageLimitParameter {
+			if key == "limit" {
 				q.Limit = n
 			} else {
 				q.AfterOrder = n

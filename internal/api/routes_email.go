@@ -195,7 +195,7 @@ func registerEmailOpenAPI(api huma.API) {
 	for _, role := range artifactRoles {
 		artifactRoleEnum = append(artifactRoleEnum, string(role))
 	}
-	versionParam := &huma.Param{Name: "version_id", In: "path", Required: true, Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}
+	versionParam := &huma.Param{Name: "version_id", In: "path", Required: true, Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
 	generationParam := &huma.Param{Name: "generation_id", In: "path", Required: true, Schema: &huma.Schema{Type: openAPIStringType, Pattern: "^[0-9a-f]{64}$"}}
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "getEmailMetadata", Method: http.MethodGet,

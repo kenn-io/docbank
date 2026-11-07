@@ -54,10 +54,14 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 		missingBytes int64
 		installed    bool
 		output       string
+		model        string
 	}{
-		{"ready", true, 0, false, ""},
-		{"installed_offline", false, 0, true, ""},
-		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n"},
+		{"ready", true, 0, false, "", embedlocal.TextModel},
+		{"installed_offline", false, 0, true, "", embedlocal.TextModel},
+		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", embedlocal.TextModel},
+		{"faces_ready", true, 0, false, "", embedlocal.FaceModel},
+		{"faces_installed_offline", false, 0, true, "", embedlocal.FaceModel},
+		{"faces_missing", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
@@ -67,14 +71,16 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 			output := new(bytes.Buffer)
 			cmd.SetOut(output)
 			installed := false
-			err := installLocalTextWithRuntime(cmd, true, func(_ context.Context, opts embedlocal.Options) (string, error) {
+			err := installLocalTextWithRuntime(cmd, true, tc.model, func(_ context.Context, opts embedlocal.Options) (string, error) {
 				require.True(t, opts.SkipOllama)
+				require.Equal(t, tc.model, opts.Model)
 				if tc.ready {
 					return "http://127.0.0.1:11434/v1", nil
 				}
 				return "", embedlocal.ErrNotFound
 			}, func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
 				installed = true
+				require.Equal(t, tc.model, opts.Model)
 				if tc.missingBytes > 0 {
 					approved, err := opts.Confirm(ctx, tc.missingBytes)
 					require.NoError(t, err)
@@ -357,33 +363,54 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
 }
 
-func TestLocalTextEnablesWithoutInput(t *testing.T) {
+func TestLocalProcessingEnablesWithoutInput(t *testing.T) {
 	bin := buildDocbank(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("DO_NOT_TRACK", "1")
-	root := t.TempDir()
-	t.Setenv("DOCBANK_HOME", root)
-	ping := localTextDiscoveryHandler()
-	server := httptest.NewServer(ping)
-	defer server.Close()
-	dir, err := embedlocal.DefaultDir()
-	require.NoError(t, err)
-	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
-	require.NoError(t, err)
-	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	defer cancel()
-	defer func() { _, _ = daemonconn.Stop(context.Background(), root) }()
-	command := exec.CommandContext(ctx, bin, "processing", "local", "--server", "local")
-	// No stdin: the command must finish without asking a question.
-	command.Stdin = nil
-	data, err := command.CombinedOutput()
-	require.NoError(t, err, string(data))
-	require.Contains(t, string(data), "Text indexing enabled for this vault and new imports.")
-	choice, err := readLocalText(root)
-	require.NoError(t, err)
-	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	for _, tc := range []struct {
+		name, model string
+		args        []string
+		output      string
+	}{
+		{"text", embedlocal.TextModel, []string{"processing", "local", "--server", "local"}, "Text indexing enabled for this vault and new imports."},
+		{"faces", embedlocal.FaceModel, []string{"processing", "faces"}, "Face suggestions enabled."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("DO_NOT_TRACK", "1")
+			root := t.TempDir()
+			t.Setenv("DOCBANK_HOME", root)
+			ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/models" {
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": []string{tc.model}}))
+					return
+				}
+				ping.ServeHTTP(w, r)
+			})
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			dir, err := embedlocal.DefaultDir()
+			require.NoError(t, err)
+			endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+			require.NoError(t, err)
+			_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			defer func() { _, _ = daemonconn.Stop(context.Background(), root) }()
+			command := exec.CommandContext(ctx, bin, tc.args...)
+			// No stdin: the command must finish without asking a question.
+			command.Stdin = nil
+			data, err := command.CombinedOutput()
+			require.NoError(t, err, string(data))
+			require.Contains(t, string(data), tc.output)
+			if tc.model == embedlocal.TextModel {
+				choice, err := readLocalText(root)
+				require.NoError(t, err)
+				require.Equal(t, config.LocalTextProfile, choice.Profile)
+			}
+		})
+	}
 }
 
 func TestLocalTextCandidateRejections(t *testing.T) {
@@ -409,4 +436,10 @@ func TestLocalPlanPrintsScope(t *testing.T) {
 		}
 	}
 	require.Equal(t, "Selected synthetic documents", scope)
+}
+
+func TestFaceStartupDoesNotDownload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, err := localEmbeddingOrigin(t.Context(), embedlocal.FaceModel)
+	require.ErrorContains(t, err, "provide Confirm")
 }

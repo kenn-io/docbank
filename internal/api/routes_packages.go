@@ -93,9 +93,9 @@ func registerPackageOpenAPI(api huma.API) {
 		"application/problem+json": {Schema: registry.Schema(reflect.TypeFor[Error](), true, "")},
 	}}
 	preflightID := &huma.Param{Name: "preflight_id", In: openAPIPathLocation, Required: true,
-		Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}
+		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
 	operationID := &huma.Param{Name: "operation_id", In: openAPIPathLocation, Required: true,
-		Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}
+		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
 	importJob := &huma.Response{Description: "Durable package import job", Content: map[string]*huma.MediaType{
 		jsonMediaType: {Schema: registry.Schema(reflect.TypeFor[PackageImportJob](), true, "")},
 	}}

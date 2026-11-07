@@ -93,17 +93,17 @@ func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 // Running the command is the approval, so Kit's pre-download callback only
 // reports the download size.
 func installLocalText(cmd *cobra.Command, managed bool) error {
-	return installLocalTextWithRuntime(cmd, managed, embedlocal.Endpoint, embedlocal.Install)
+	return installLocalTextWithRuntime(cmd, managed, embedlocal.TextModel, embedlocal.Endpoint, embedlocal.Install)
 }
 
-func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
+func installLocalTextWithRuntime(cmd *cobra.Command, managed bool, model string,
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
 	if !managed {
 		return nil
 	}
-	_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true})
+	_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true, Model: model})
 	if err == nil {
 		return nil
 	}
@@ -120,6 +120,6 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
 		}
 		return true, nil
 	}
-	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: report})
+	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Model: model, Confirm: report})
 	return err
 }

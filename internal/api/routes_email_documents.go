@@ -118,13 +118,13 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			}
 			switch key {
 			case "parent_version_id", "child_version_id", "after_operation_id":
-			case packageLimitParameter, "after_order":
+			case "limit", "after_order":
 				n, err := strconv.Atoi(vals[0])
 				if err != nil {
 					writeError(w, NewError(422, "validation", "invalid relation page number"))
 					return
 				}
-				if key == packageLimitParameter {
+				if key == "limit" {
 					q.Limit = n
 				} else {
 					q.AfterOrder = n

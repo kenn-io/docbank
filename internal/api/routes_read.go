@@ -77,7 +77,7 @@ func contentResponses() map[string]*huma.Response {
 			Description: "Document bytes with expected version and blob identity plus a computed digest trailer",
 			Headers: map[string]*huma.Param{
 				ContentVersionHeader: {Description: "Stable content-version UUID",
-					Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}},
+					Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}},
 				BlobHashHeader: {Description: "Catalog SHA-256 identity (lowercase hex)",
 					Schema: &huma.Schema{Type: openAPIStringType, Pattern: "^[0-9a-f]{64}$"}},
 				BlobSizeHeader: {Description: "Catalog raw byte length",

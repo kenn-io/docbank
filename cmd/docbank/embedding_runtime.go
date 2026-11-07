@@ -125,7 +125,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 			classify = classifyBridgeEmbeddingError
 		case openAIEmbeddingAdapter:
 			if config.ManagedEmbedding(configured) {
-				profile, profileErr := config.ManagedEmbeddingProfile(configured, localEmbeddingOrigin)
+				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.TextModel) })
 				if profileErr != nil {
 					return bundle, profileErr
 				}
@@ -427,8 +427,8 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 	return processing.EmbeddingProviderPermanent, 0
 }
 
-func localEmbeddingOrigin(ctx context.Context) (string, error) {
-	opts := embedlocal.Options{SkipOllama: true}
+func localEmbeddingOrigin(ctx context.Context, model string) (string, error) {
+	opts := embedlocal.Options{SkipOllama: true, Model: model}
 	origin, err := embedlocal.Endpoint(ctx, opts)
 	if err == nil {
 		return strings.TrimSuffix(origin, "/v1"), nil
@@ -441,7 +441,7 @@ func localEmbeddingOrigin(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("find local embeddings directory: %w", err)
 	}
 	// No Confirm: Kit may reuse installed files, but cannot download here.
-	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir})
+	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Model: model})
 	if err != nil {
 		return "", fmt.Errorf("reuse local embeddings installation: %w", err)
 	}

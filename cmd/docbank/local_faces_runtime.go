@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/localface"
@@ -11,17 +10,12 @@ import (
 	"go.kenn.io/kit/embedlocal"
 )
 
-func localFaceOrigin(ctx context.Context) (string, error) {
-	opts := embedlocal.Options{SkipOllama: true, Model: embedlocal.FaceModel}
-	origin, err := embedlocal.Endpoint(ctx, opts)
-	return strings.TrimSuffix(origin, "/v1"), err
-}
 func localFaceProfile() (processing.ProfileConfig, error) {
 	profile, descriptor, err := config.LocalFaces()
 	if err != nil {
 		return processing.ProfileConfig{}, err
 	}
-	provider, err := localface.New(descriptor, localFaceOrigin)
+	provider, err := localface.New(descriptor, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.FaceModel) })
 	if err != nil {
 		return processing.ProfileConfig{}, err
 	}
