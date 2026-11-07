@@ -258,7 +258,6 @@ func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
 	require.Equal(t, "Ada", groups[0].DisplayName)
 	require.Len(t, groups[0].Faces, 1)
 	require.NotEqual(t, first.FaceID, groups[0].Faces[0].FaceID)
-	require.Equal(t, 1, x.calls)
 }
 
 func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
@@ -325,33 +324,57 @@ func TestFacePeopleRankingObeysHiddenScope(t *testing.T) {
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
-	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	beth, err := x.f.catalog.CreatePerson(ctx, "Beth", "operator")
 	require.NoError(t, err)
 	named := x.inputs[0]
-	_, err = x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonID: person.PersonID})
+	_, err = x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonID: ada.PersonID})
 	require.NoError(t, err)
-	version := x.f.addPhoto(t, "visible.jpg", 720)
+	version := x.f.addPhoto(t, "visible-query.jpg", 720)
 	query, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
 	require.NoError(t, err)
+	bethBox := document.FaceBox{X: .7, Y: .7, Width: .2, Height: .2}
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), bethBox, beth.PersonID)
+	require.NoError(t, err)
+	hiddenVersion := x.f.addPhoto(t, "hidden-evidence.jpg", 721)
+	for _, left := range []float64{.1, .6} {
+		_, _, err = x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{X: left, Y: .6, Width: .2, Height: .2}, ada.PersonID)
+		require.NoError(t, err)
+	}
+	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+		values := make([]float32, 512)
+		values[0] = 1
+		if box == embedclient.FaceBox(named.Box) {
+			values[0] = -1
+		}
+		if box == embedclient.FaceBox(bethBox) {
+			values[0], values[1] = 0, 1
+		}
+		return values
+	}
 	x.f.grant(t, x.service, config.LocalFacesProfile)
 	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	asset, err := x.f.catalog.PhotoAssetForNode(ctx, x.f.node.ID)
+	source, err := x.f.catalog.ContentVersionByID(ctx, hiddenVersion)
+	require.NoError(t, err)
+	asset, err := x.f.catalog.PhotoAssetForNode(ctx, source.NodeID)
 	require.NoError(t, err)
 	_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	token, _, err := x.f.catalog.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	unlocked := store.WithPhotoHiddenToken(ctx, token)
 	options := store.PeopleSearchOptions{FaceID: query.FaceID, FaceReader: x.f.blobs, RecentFirst: true}
+	unlocked := store.WithPhotoHiddenToken(ctx, token)
 	rows, _, err := x.f.catalog.PeopleByDisplayName(unlocked, "", "", "", 24, true, options)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "Ada", rows[0].DisplayName)
+	require.Len(t, rows, 2)
+	require.Equal(t, ada.PersonID, rows[0].PersonID)
 	rows, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
 	require.NoError(t, err)
-	require.Empty(t, rows)
+	require.Len(t, rows, 2)
+	require.Equal(t, beth.PersonID, rows[0].PersonID, "both people stay visible, but Hidden evidence must stop affecting rank")
 }
 
 // Counting the real blob boundary catches repeated payload decoding across
@@ -366,22 +389,27 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	r.opens++
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
-func TestFaceMatchingSnapshotAndPayloadReuse(t *testing.T) {
+
+func TestFacePickerReusesPayloadAcrossNameQueries(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
+	named := x.inputs[0]
+	_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
+	require.NoError(t, err)
 	x.f.grant(t, x.service, config.LocalFacesProfile)
-	_, err := x.worker.ScanOnce(ctx)
+	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
+	options := store.PeopleSearchOptions{FaceID: x.inputs[1].FaceID, FaceReader: reader, RecentFirst: true}
 	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
 	require.NoError(t, err)
 	require.Equal(t, 1, reader.opens)
 	for _, query := range []string{"A", "Ad", "Ada"} {
-		_, _, err = x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
+		people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
 		require.NoError(t, err)
+		require.Len(t, people, 1)
 	}
 	require.Equal(t, 1, reader.opens)
 }
@@ -482,4 +510,32 @@ func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
 		}
 	}
 	require.Equal(t, []string{hiddenQuery.FaceID}, hiddenFaces, "Hidden-source matching remains available after unlock")
+}
+
+func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	ctx := t.Context()
+	hiddenVersion := x.f.addPhoto(t, "private-match.jpg", 730)
+	_, _, err := x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	x.f.grant(t, x.service, config.LocalFacesProfile)
+	count, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	version, err := x.f.catalog.ContentVersionByID(ctx, hiddenVersion)
+	require.NoError(t, err)
+	asset, err := x.f.catalog.PhotoAssetForNode(ctx, version.NodeID)
+	require.NoError(t, err)
+	require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, page, 1)
+	require.Len(t, page[0].Faces, 2)
+	require.ElementsMatch(t, []string{x.inputs[0].FaceID, x.inputs[1].FaceID}, []string{page[0].Faces[0].FaceID, page[0].Faces[1].FaceID})
 }

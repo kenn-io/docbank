@@ -104,7 +104,7 @@ nextFace:
 				i := p.group
 				p.group++
 				g := p.groups[i]
-				if g.person == "" && g.space == v.Space && vectorindex.Euclidean(v.Values, g.leader) <= FaceMatchDistance {
+				if g.person == "" && g.space == v.Space && g.faces[0].Hidden == v.Face.Hidden && vectorindex.Euclidean(v.Values, g.leader) <= FaceMatchDistance {
 					p.groups[i].faces = append(p.groups[i].faces, v.Face)
 					p.face++
 					p.centroid, p.group, p.closest, p.distance = 0, 0, -1, FaceMatchDistance

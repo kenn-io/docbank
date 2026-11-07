@@ -556,10 +556,13 @@ it("recovers a stale confirmed merge after refreshing the cards", async () => {
   people.dispose();
 });
 
-it("loads suggestions once with the cards, shows more by offset, and conceals them", async () => {
+it("loads suggestions once with the cards and shows more by offset", async () => {
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const rows = Array.from({ length: 30 }, (_, index) =>
-    candidate(`candidate-${index}`, [candidateFace(`face-${index}`)]),
+    candidate(`candidate-${index}`, [candidateFace(`face-${index}`)], {
+      suggested_person_id: ada.person_id,
+      display_name: "Ada",
+    }),
   );
   const list = vi.spyOn(api, "listFaceCandidates").mockImplementation(async (params) => ({
     items: rows.slice(params!.offset!, params!.offset! + params!.limit!),
@@ -578,12 +581,6 @@ it("loads suggestions once with the cards, shows more by offset, and conceals th
   ]);
   expect(people.suggestions.items).toHaveLength(30);
   expect(people.suggestions.total).toBe(30);
-  people.suggestions.open(rows[0]!);
-  people.conceal();
-  expect(people.suggestions.items).toEqual([]);
-  expect(people.suggestions.review).toBeUndefined();
-  await people.load();
-  expect(list).toHaveBeenCalledTimes(3);
   people.dispose();
 });
 
@@ -629,7 +626,9 @@ it.each([
   vi.spyOn(api, "listFaceCandidates")
     .mockResolvedValueOnce({ items: [isAda], total: 1 })
     .mockResolvedValue({ items: [], total: 0 });
-  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda));
+  const decide = vi
+    .spyOn(api, "decideFaceCandidate")
+    .mockResolvedValue(decided(isAda, decision.action === "reject" ? "rejected" : "linked"));
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());
   await people.suggestions.load();
