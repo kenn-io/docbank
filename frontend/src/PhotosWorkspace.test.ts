@@ -3381,6 +3381,68 @@ it("shows a loading pill while a page loads and Load more when it settles", asyn
   await cache.dispose();
 });
 
+it("keeps Load more and counts on screen through unchanged live refreshes", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  const facet = {
+    dimension: "camera",
+    available: true,
+    reason: "",
+    total: 60,
+    values: [{ key: "Canon", label: "Canon EOS R6", count: 60, selected: false }],
+  };
+  const rows: ((response: Response) => void)[] = [];
+  const counts: ((response: Response) => void)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    (url: string, init: RequestInit) =>
+      photoMetadataResponse(url, init) ??
+      new Promise<Response>((resolve) =>
+        (JSON.parse(String(init.body)).page_size === 1 ? counts : rows).push(resolve),
+      ),
+  );
+  const page = () =>
+    Response.json({
+      items: Array.from({ length: 60 }, (_, index) => photo(index + 1)),
+      total: 100,
+      next_cursor: "next",
+    });
+  const photos = new Photos("scoped", vi.fn());
+  photos.filtersOpen = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await waitFor(() => expect(rows).toHaveLength(1));
+  expect(screen.getByText("Loading photos…")).toBeTruthy();
+  rows[0]!(page());
+  await waitFor(() => expect(counts).toHaveLength(1));
+  expect(await screen.findByText("Loading counts…")).toBeTruthy();
+  counts[0]!(Response.json({ facets: [facet] }));
+  const camera = { name: "Canon EOS R6, 60 photos" };
+  await screen.findByRole("button", camera);
+  await screen.findByRole("button", { name: "Load more" });
+  const steady = () => {
+    expect(screen.queryByText("Loading photos…")).toBeNull();
+    expect(screen.queryByText("Loading counts…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+    expect(screen.getByRole("button", camera)).toBeTruthy();
+  };
+  for (let pass = 1; pass <= 3; pass++) {
+    const refreshing = photos.refresh(undefined, true);
+    await waitFor(() => expect(rows).toHaveLength(pass + 1));
+    await tick();
+    steady();
+    rows[pass]!(page());
+    await waitFor(() => expect(counts).toHaveLength(pass + 1));
+    await tick();
+    steady();
+    counts[pass]!(Response.json({ facets: [facet] }));
+    await act(() => refreshing);
+    steady();
+  }
+  photos.dispose();
+  await cache.dispose();
+});
+
 it("explains paused grouping inside the selected photo's details", async () => {
   localStorage.setItem("docbank.photoMetadata", "open");
   const photos = new Photos("scoped", vi.fn());

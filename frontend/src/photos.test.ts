@@ -2712,6 +2712,49 @@ it.each([
   },
 );
 
+it("keeps counts through a live refresh until fresh ones replace them", async () => {
+  const counts: ((value: Response) => void)[] = [];
+  const rows: ((value: Response) => void)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    (_url: string, init: RequestInit) =>
+      new Promise<Response>((resolve) =>
+        (JSON.parse(init.body as string).page_size === 1 ? counts : rows).push(resolve),
+      ),
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.filtersOpen = true;
+  const loading = photos.loadMore();
+  await vi.waitFor(() => expect(rows).toHaveLength(1));
+  rows[0]!(response([photo(1)], "next"));
+  await loading;
+  await vi.waitFor(() => expect(counts).toHaveLength(1));
+  counts[0]!(Response.json({ facets: [facet] }));
+  await vi.waitFor(() => expect(photos.facets).toEqual([facet]));
+
+  let refreshing = photos.refresh(undefined, true);
+  await vi.waitFor(() => expect(rows).toHaveLength(2));
+  expect(photos.facets).toEqual([facet]);
+  rows[1]!(response([photo(1)], "next"));
+  await vi.waitFor(() => expect(counts).toHaveLength(2));
+  expect(photos.facetsLoading).toBe(true);
+  expect(photos.facets).toEqual([facet]);
+  counts[1]!(Response.json({ facets: [facet] }));
+  await refreshing;
+  expect(photos.facets).toEqual([facet]);
+
+  refreshing = photos.refresh(undefined, true);
+  await vi.waitFor(() => expect(rows).toHaveLength(3));
+  rows[2]!(response([photo(2), photo(1)], "next"));
+  await vi.waitFor(() => expect(counts).toHaveLength(3));
+  expect(photos.facets).toEqual([facet]);
+  counts[2]!(Response.json({ facets: [{ ...facet, total: 4, missing: 4 }] }));
+  await refreshing;
+  expect(photos.facets).toEqual([{ ...facet, total: 4, missing: 4 }]);
+  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-2", "photo-1"]);
+  photos.dispose();
+});
+
 it.each([
   ["library", false],
   ["library", true],

@@ -1455,7 +1455,7 @@ export class Photos {
       this.fallbackReason = staged.fallbackReason;
       this.truncated = staged.truncated;
       this.coverageIncomplete = staged.coverageIncomplete;
-      this.facets = [];
+      if (!live) this.facets = [];
       if (staged.snapshotID) this.timeline = undefined;
       this.facetsError = "";
       this.cursor = cursor;

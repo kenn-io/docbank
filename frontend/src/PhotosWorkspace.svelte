@@ -1466,7 +1466,10 @@
           <div class="photo-browser">
             {#if searchable && photos.filtersOpen}
               <div id={filtersID} class="photo-facets">
-                {#if photos.facetsLoading}<div class="photo-loading" role="status">
+                {#if photos.facetsLoading && !photos.facets.length}<div
+                    class="photo-loading"
+                    role="status"
+                  >
                     <Spinner size={14} />Loading counts…
                   </div>{/if}
                 {#if photos.facetsError}<div class="photo-error" role="alert">
@@ -1601,12 +1604,12 @@
                 {/if}
               {/if}
               <div role="status">
-                {#if !mapMode && photos.loading}<div class="photo-pill kit-popover-card">
+                {#if !mapMode && photos.blocking}<div class="photo-pill kit-popover-card">
                     <Spinner size={14} />Loading photos…
                   </div>{/if}
               </div>
               {#if !mapMode && photos.cursor && !photos.error}<div class="photo-loading">
-                  {#if !photos.loading}<Button
+                  {#if !photos.blocking}<Button
                       size="sm"
                       onclick={() => void photos.loadMore(preserve)}>Load more</Button
                     >{/if}
