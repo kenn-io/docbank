@@ -823,11 +823,20 @@ The Go library and MCP version lists send fences.
 
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
-and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
+and accepts 1–100. `binding_id` selects the embedding binding. When the profile has
+embeddings, an unknown binding returns `404 not_found`. Profiles without embeddings
+ignore it for lexical and auto search. Omitting it uses
 the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The explicit CLI processing form requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
+
+Semantic search requires a binding whose provider supports text queries; otherwise
+it returns `422 semantic_unavailable` after validating the source and binding.
+Hybrid search on a profile without embeddings returns that same error. An index
+without an active generation returns `409 index_unavailable`, so clients can try
+another binding while preserving `404 not_found` for invalid selections. Daemon
+protocol revision 123 requires these distinct errors for MCP profile selection.
 
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
@@ -902,13 +911,15 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
+| 409 | `index_unavailable` | The selected vector index has no active generation |
 | 409 | `stale_index` | The vector index source changed and the index is stale |
 | 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
+| 422 | `semantic_unavailable` | The profile has no query-capable binding for semantic search, or no embeddings for hybrid search |
 | 422 | `rendition_failed` | Required rendition work failed |
 | 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why. A locked PDF that no configured password opens instead creates a job that ends `failed` with `failure_code=pdf_password_required` |
-| 404 | `not_found` | Requested node, version, job, or active rendition is absent |
+| 404 | `not_found` | Requested node, version, binding, job, or active rendition is absent |
 | 503 | `processing_unavailable` | The processing service is not configured |
 | 500 | `processing_failed` | An otherwise unclassified processing failure |
 
