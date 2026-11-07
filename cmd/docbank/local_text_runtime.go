@@ -102,10 +102,7 @@ func localTextStartup(ctx context.Context, managed bool, _ string) error {
 	if !managed {
 		return nil
 	}
-	if err := installLocalTextRuntime(ctx, managed, func(context.Context, int64) (bool, error) { return true, nil }, embedlocal.Endpoint, embedlocal.Install); err != nil {
-		return err
-	}
-	_, err := localEmbeddingOrigin(ctx)
+	_, err := localEmbeddingOrigin(ctx, func(context.Context, int64) (bool, error) { return true, nil })
 	return err
 }
 

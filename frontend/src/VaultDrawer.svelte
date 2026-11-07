@@ -71,7 +71,7 @@
       if (!signal.aborted) meaning = next;
     } catch (cause) {
       if (signal.aborted) return;
-      if (!authFailed(cause)) readError = message(cause);
+      if (!authFailed(cause)) readError = cause instanceof Error ? cause.message : String(cause);
     }
   }
 
@@ -92,7 +92,7 @@
         setup = undefined;
         return;
       }
-      error = message(cause);
+      error = cause instanceof Error ? cause.message : String(cause);
     }
     setup = { session: current, pending: false, error };
   }
@@ -102,10 +102,6 @@
     onauthfailure(cause);
     onclose();
     return true;
-  }
-
-  function message(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
   }
 
   function rowState(
@@ -154,7 +150,7 @@
       {#if readError}
         <p class="error" role="alert">{readError}</p>
         <Button size="sm" onclick={() => void reads++}>Try again</Button>
-      {:else if current?.error}
+      {:else if current?.error && meaning && !meaning.active && !meaning.restart_required}
         <p class="error" role="alert">{current.error}</p>
       {:else if meaning?.restart_required}
         <p>Run <code>docbank daemon restart</code> to finish.</p>

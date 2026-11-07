@@ -241,6 +241,31 @@ it("shows a setup failure that happened while the drawer was closed until the ne
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+it.each([
+  ["On", { ...off, active: true, provider: "local", download_bytes: 0 }],
+  ["Restart required", { ...off, download_bytes: 0, restart_required: true }],
+])("drops a setup failure once status reads %s", async (text, fixed) => {
+  let status = off;
+  mockSearchSetup(
+    () => status,
+    () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ detail: "Download failed" }), {
+          status: 502,
+        }),
+      ),
+  );
+  const first = openSearchTab();
+  await fireEvent.click(await screen.findByRole("button", { name: "Turn on" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Download failed");
+  first.unmount();
+
+  status = fixed;
+  openSearchTab(first.session);
+  expect(await screen.findByText(text)).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("retries a failed status read", async () => {
   let reads = 0;
   mockSearchSetup(

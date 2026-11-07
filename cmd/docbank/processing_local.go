@@ -100,24 +100,16 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
-	report := func(_ context.Context, bytes int64) (bool, error) {
+	confirm := func(_ context.Context, bytes int64) (bool, error) {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Downloading local embeddings: %d bytes\n", bytes); err != nil {
 			return false, fmt.Errorf("write download size: %w", err)
 		}
 		return true, nil
 	}
-	return installLocalTextRuntime(cmd.Context(), managed, report, endpoint, install)
-}
-
-func installLocalTextRuntime(ctx context.Context, managed bool,
-	confirm func(context.Context, int64) (bool, error),
-	endpoint func(context.Context, embedlocal.Options) (string, error),
-	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
-) error {
 	if !managed {
 		return nil
 	}
-	if _, err := endpoint(ctx, embedlocal.Options{SkipOllama: true}); err == nil {
+	if _, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true}); err == nil {
 		return nil
 	} else if !errors.Is(err, embedlocal.ErrNotFound) {
 		return fmt.Errorf("discover embeddings server: %w", err)
@@ -126,6 +118,6 @@ func installLocalTextRuntime(ctx context.Context, managed bool,
 	if err != nil {
 		return fmt.Errorf("find embeddings directory: %w", err)
 	}
-	_, err = install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: confirm})
+	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: confirm})
 	return err
 }

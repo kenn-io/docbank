@@ -471,20 +471,40 @@ func TestLocalTextStatusProvider(t *testing.T) {
 	}
 }
 
+func TestLocalTextStartupReusesReadyServer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var inventoryReads atomic.Int64
+	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+	inventory := withTextModelInventory(t, ping)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			inventoryReads.Add(1)
+		}
+		inventory.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	require.NoError(t, localTextStartup(t.Context(), true, "local"))
+	require.Equal(t, int64(1), inventoryReads.Load(), "setup checks a ready server once")
+}
+
 func TestLocalTextStartupFailureLeavesSelectionUnsaved(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	t.Setenv("DO_NOT_TRACK", "1")
-	var inventoryReads atomic.Int64
 	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	inventory := withTextModelInventory(t, ping)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/models" && inventoryReads.Add(1) > 1 {
+		if r.URL.Path == "/v1/models" {
 			http.Error(w, "synthetic model startup failure", http.StatusServiceUnavailable)
 			return
 		}
-		inventory.ServeHTTP(w, r)
+		ping.ServeHTTP(w, r)
 	}))
 	defer server.Close()
 	dir, err := embedlocal.DefaultDir()

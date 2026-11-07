@@ -125,7 +125,9 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 			classify = classifyBridgeEmbeddingError
 		case openAIEmbeddingAdapter:
 			if config.ManagedEmbedding(configured) {
-				profile, profileErr := config.ManagedEmbeddingProfile(configured, localEmbeddingOrigin)
+				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) {
+					return localEmbeddingOrigin(ctx, nil)
+				})
 				if profileErr != nil {
 					return bundle, profileErr
 				}
@@ -427,7 +429,7 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 	return processing.EmbeddingProviderPermanent, 0
 }
 
-func localEmbeddingOrigin(ctx context.Context) (string, error) {
+func localEmbeddingOrigin(ctx context.Context, confirm func(context.Context, int64) (bool, error)) (string, error) {
 	opts := embedlocal.Options{SkipOllama: true}
 	origin, err := embedlocal.Endpoint(ctx, opts)
 	if err == nil {
@@ -440,8 +442,8 @@ func localEmbeddingOrigin(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("find local embeddings directory: %w", err)
 	}
-	// No Confirm: Kit may reuse installed files, but cannot download here.
-	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir})
+	// A nil Confirm allows installed-file reuse without approving a download.
+	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: confirm})
 	if err != nil {
 		return "", fmt.Errorf("reuse local embeddings installation: %w", err)
 	}

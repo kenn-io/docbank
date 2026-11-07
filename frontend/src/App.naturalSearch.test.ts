@@ -835,6 +835,37 @@ it("reruns the accepted query when profiles arrive after legacy results", async 
   expect(harness.postBodies[0]?.mode).toBe("hybrid");
 });
 
+it.each([
+  ["after", false],
+  ["before", true],
+])(
+  "shows the off hint when profile discovery finds none %s names-and-text results land",
+  async (_, legacyPending) => {
+    const file = node(2, "late.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [],
+      profilesPending: true,
+      legacyPending,
+      files: [file],
+      baseReport: report("lexical", []),
+      tagSearch: { hits: [{ node: file, path: file.path, match: "content" }], limit: 1000 },
+    });
+    render(App);
+    await submitSearch("late");
+    if (!legacyPending) {
+      await screen.findByText("/late.txt");
+      expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
+    }
+    harness.resolveProfiles(json([]));
+    if (legacyPending)
+      harness.resolveLegacy(
+        json({ hits: [{ node: file, path: file.path, match: "content" }], limit: 1000 }),
+      );
+    expect(await screen.findByText(/Search by meaning is off/)).toBeTruthy();
+    expect(screen.getByText("/late.txt")).toBeTruthy();
+  },
+);
+
 it("restarts search settings with the accepted query instead of the draft", async () => {
   const file = node(2, "accepted.txt", baseVersion);
   const harness = installHarness({

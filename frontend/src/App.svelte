@@ -2144,7 +2144,7 @@
           refreshing,
           session,
           controller.signal,
-          !profile && naturalProfilesLoaded ? searchByMeaningOff : "",
+          profile ? "" : searchByMeaningOff,
         );
         accepted = !!outcome;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -4745,9 +4745,12 @@
                 <div class="banner error" role="alert">{error}</div>
               {/if}
               {#if naturalSearchNote === searchByMeaningOff}
-                <div class="banner search-note" role="status" aria-live="polite">
-                  <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
-                </div>
+                <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
+                {#if naturalProfilesLoaded && !naturalProfile}
+                  <div class="banner search-note" role="status" aria-live="polite">
+                    <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
+                  </div>
+                {/if}
               {:else if naturalSearchNote}
                 <div class="banner search-note" role="status" aria-live="polite">
                   {naturalSearchNote}
