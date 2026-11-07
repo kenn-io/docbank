@@ -19,9 +19,12 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		failures, versions                 bool
 		want                               []string
 		wantProfile, actual, guidance      string
-		failure                            string
+		failure, firstFailure              string
 	}{
 		{name: "automatic retries", mode: "hybrid", versions: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid"}, wantProfile: "z-local-text", actual: "hybrid"},
+		{name: "semantic retries", mode: "semantic", want: []string{"z-local-text:first:semantic", "z-local-text:second:semantic"}, wantProfile: "z-local-text", actual: "semantic"},
+		{name: "semantic consent before index failure", mode: "semantic", failures: true, firstFailure: "processing_consent_required", want: []string{"z-local-text:first:semantic", "z-local-text:second:semantic"}, code: "consent_required", guidance: "consent"},
+		{name: "semantic index before consent failure", mode: "semantic", failure: "processing_consent_required", firstFailure: "stale_index", want: []string{"z-local-text:first:semantic", "z-local-text:second:semantic"}, code: "semantic_unavailable", guidance: "stale_index"},
 		{name: "exhausted auto uses default", mode: "auto", failures: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid", "a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "processing_failed"},
 		{name: "hybrid captions", mode: "hybrid", profile: "a-captions", want: []string{"a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "z-local-text"},
 		{name: "explicit auto captions", mode: "auto", profile: "a-captions", want: []string{"a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical"},
@@ -74,6 +77,9 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 						}
 						if tc.failure != "" {
 							code = tc.failure
+						}
+						if request.BindingID == "first" && tc.firstFailure != "" {
+							code = tc.firstFailure
 						}
 						w.WriteHeader(status)
 						_, _ = fmt.Fprintf(w, `{"status":%d,"code":%q}`, status, code)

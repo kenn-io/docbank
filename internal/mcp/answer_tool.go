@@ -365,7 +365,7 @@ type profileSearchAttempt[T any] struct {
 // tryProfileSearch shares candidate order while callers decide retry and fallback policy.
 func tryProfileSearch[T any](ctx context.Context, profiles []api.ProcessingProfileSummary, selected api.ProcessingProfileSummary, candidates []daemonconn.SearchCandidate, retry func(string) bool, run func(string, string) (T, error)) (profileSearchAttempt[T], error) {
 	attempt := profileSearchAttempt[T]{profile: selected}
-	var err error
+	var err, firstErr error
 	for _, candidate := range candidates {
 		attempt.value, err = run(candidate.Profile, candidate.Binding)
 		if err == nil {
@@ -386,8 +386,8 @@ func tryProfileSearch[T any](ctx context.Context, profiles []api.ProcessingProfi
 			return attempt, err
 		}
 		if attempt.failure == "" {
-			attempt.failure = facts.Code
+			attempt.failure, firstErr = facts.Code, err
 		}
 	}
-	return attempt, err
+	return attempt, firstErr
 }
