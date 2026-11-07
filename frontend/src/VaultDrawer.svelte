@@ -115,7 +115,8 @@
       {#if searchByMeaning.readError}
         <p class="error" role="alert">{searchByMeaning.readError}</p>
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
-      {:else if meaning?.restart_required}
+      {/if}
+      {#if meaning?.restart_required}
         <p>Run <code>docbank daemon restart</code> to finish.</p>
       {/if}
     </section>

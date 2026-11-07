@@ -1172,6 +1172,13 @@ async function closeSystem(): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: "Close System" }));
 }
 
+async function openSearchByMeaningTab(): Promise<HTMLElement> {
+  await fireEvent.click(screen.getByRole("button", { name: "System" }));
+  const drawer = await screen.findByRole("dialog", { name: "System" });
+  await fireEvent.click(within(drawer).getByRole("tab", { name: "Search by meaning" }));
+  return screen.findByRole("dialog", { name: "System" });
+}
+
 async function turnOnAndClose(): Promise<void> {
   render(App);
   await submitSearch("notes");
@@ -1181,7 +1188,7 @@ async function turnOnAndClose(): Promise<void> {
   await closeSystem();
 }
 
-it("keeps setup running across drawer visits and the off hint until restart", async () => {
+it("keeps setup running across drawer visits and drops the off hint once saved", async () => {
   let status: unknown = localOff;
   let applied: (response: Response) => void = () => {};
   const harness = searchWithMeaningOff({
@@ -1199,13 +1206,16 @@ it("keeps setup running across drawer visits and the off hint until restart", as
   status = localSaved;
   applied(json(localPlan));
   await submitSearch("notes again");
-  drawer = await openSearchByMeaning();
+  drawer = await openSearchByMeaningTab();
   expect(await within(drawer).findByText("Restart required")).toBeTruthy();
   expect(within(drawer).getByText(/to finish\./).textContent).toBe(
     "Run docbank daemon restart to finish.",
   );
   expect(within(drawer).queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(harness.localSetups).toHaveLength(1);
+  await closeSystem();
+  expect(harness.legacyCalls()).toBe(2);
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
 });
 
 it.each([
@@ -1256,6 +1266,36 @@ it("keeps the last status and a failed setup while the re-read fails", async () 
   ).toEqual(["Download failed", "Daemon busy"]);
   expect(within(drawer).getByText("Downloads 290 MB once, shared by all Kenn apps")).toBeTruthy();
   expect(within(drawer).getByRole("button", { name: "Turn on" })).toBeTruthy();
+});
+
+it.each([
+  ["succeeds", localSaved],
+  ["fails", new Response(JSON.stringify({ detail: "Daemon busy" }), { status: 503 })],
+])("keeps the restart step after setup when the first re-read %s", async (_, first) => {
+  let status: unknown = localOff;
+  searchWithMeaningOff({
+    status: () => status,
+    apply: () => {
+      status = first;
+      return Promise.resolve(json(localPlan));
+    },
+  });
+  render(App);
+  await submitSearch("notes");
+  let drawer = await openSearchByMeaning();
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+  expect(await within(drawer).findByText("Restart required")).toBeTruthy();
+  await closeSystem();
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
+
+  status = new Response(JSON.stringify({ detail: "Daemon busy" }), { status: 503 });
+  drawer = await openSearchByMeaningTab();
+  expect((await within(drawer).findByRole("alert")).textContent).toBe("Daemon busy");
+  expect(within(drawer).getByText("Restart required")).toBeTruthy();
+  expect(within(drawer).getByText(/to finish\./).textContent).toBe(
+    "Run docbank daemon restart to finish.",
+  );
+  expect(within(drawer).getByRole("button", { name: "Try again" })).toBeTruthy();
 });
 
 it.each(["reading status", "turning on"])(

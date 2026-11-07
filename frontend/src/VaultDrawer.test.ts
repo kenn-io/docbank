@@ -164,6 +164,16 @@ it("keeps a failed setup visible beside a failed status read", () => {
   expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
 });
 
+it("keeps the restart step beside a failed status read", () => {
+  openSearchTab({
+    status: { ...off, download_bytes: 0, restart_required: true },
+    readError: "Daemon busy",
+  });
+  expect(screen.getByRole("alert").textContent).toBe("Daemon busy");
+  expect(screen.getByText(/daemon restart/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+});
+
 it("reads status on entering the tab and stops when leaving it", async () => {
   mockSystemRequests();
   const props = openSearchTab({});

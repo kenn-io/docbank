@@ -2013,8 +2013,8 @@
     if (session !== webSession) return;
     localText.pending = false;
     localText.error = error;
-    // A failure keeps the last status on screen until the re-read replaces it.
-    if (!error) localText.status = undefined;
+    // Saving always leaves a restart pending, so a failed re-read still shows the restart step.
+    if (!error && localText.status) localText.status.restart_required = true;
     readLocalTextStatus();
   }
 
@@ -4798,7 +4798,7 @@
               {/if}
               {#if naturalSearchNote === searchByMeaningOff}
                 <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
-                {#if naturalProfilesLoaded && !naturalProfile}
+                {#if naturalProfilesLoaded && !naturalProfile && !localText.status?.restart_required}
                   <div class="banner search-note" role="status" aria-live="polite">
                     <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
                   </div>
