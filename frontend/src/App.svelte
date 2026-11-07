@@ -53,6 +53,7 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
+    type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -3785,8 +3786,13 @@
   />
 {/snippet}
 
-{#snippet addMenu()}
+{#snippet emptyAddMenu()}
+  {@render addMenu("start")}
+{/snippet}
+
+{#snippet addMenu(align: MenuAlign)}
   <DocumentAddMenu
+    {align}
     disabledReason={!directory || loading
       ? "Waiting for the folder to load"
       : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
@@ -4731,7 +4737,7 @@
                     <RefreshCwIcon size="14" aria-hidden="true" />
                   </IconAction>
                   {#if !showingResults}
-                    {@render addMenu()}
+                    {@render addMenu("end")}
                   {/if}
                 </div>
               </div>
@@ -4783,7 +4789,7 @@
                     : emptyRoot
                       ? "Add files or a folder to start your vault."
                       : undefined}
-                  children={emptyRoot ? addMenu : undefined}
+                  children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}
