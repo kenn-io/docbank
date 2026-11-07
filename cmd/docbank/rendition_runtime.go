@@ -104,7 +104,7 @@ func configureRenditionProviders(cfg config.Config) (
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
-		case vision.AdapterContract:
+		case vision.AdapterContract, vision.UnderstandingAdapterContract:
 			provider, disclosures[name], err = configureVision(cfg, name, registered)
 		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
 			provider, disclosures[name], err = configureExternalRendition(cfg, name, registered)
@@ -374,9 +374,9 @@ func configureVision(cfg config.Config, name string, registered map[string]regis
 	storedRuntime := *configured.Runtime
 	storedRuntime.CapabilityManifest = ""
 	storedRuntime.ProviderEgressConfig = config.ProviderEgressConfig{}
-	inputs := renditionProviderInputs{runtime: storedRuntime, egress: egress, adapterContract: vision.AdapterContract,
+	inputs := renditionProviderInputs{runtime: storedRuntime, egress: egress, adapterContract: configured.AdapterContract,
 		maxResponseBytes: configured.MaxResponseBytes, credentialEnvironment: credential.EnvironmentVariable}
-	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: vision.AdapterContract, UltimateProcessor: descriptor.ID, Endpoint: profile.Origin, Deployment: configured.DeploymentFingerprint, Model: profile.Model}
+	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract, UltimateProcessor: descriptor.ID, Endpoint: profile.Origin, Deployment: configured.DeploymentFingerprint, Model: profile.Model}
 	if existing, ok := registered[descriptor.Fingerprint]; ok {
 		if !reflect.DeepEqual(existing.inputs, inputs) {
 			return nil, disclosure, errors.New("conflicts with another profile's provider for the same descriptor")

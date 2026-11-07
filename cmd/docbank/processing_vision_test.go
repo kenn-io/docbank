@@ -15,7 +15,7 @@ func TestProcessingVisionFingerprints(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "absent")
 	t.Setenv("DOCBANK_HOME", home)
 	deployment := strings.Repeat("a", 64)
-	for _, task := range []string{vision.ProviderID, document.FaceDetectionProviderID} {
+	for _, task := range []string{vision.ProviderID, document.FaceDetectionProviderID, vision.UnderstandingProviderID} {
 		output, err := runCLI(t, "processing", "vision-fingerprints", "--task", task, "--model", "synthetic-vision", "--trust-boundary", "hosted_provider", "--endpoint", "https://vision.example.com", "--deployment-fingerprint", deployment)
 		require.NoError(t, err)
 		var fingerprints struct {

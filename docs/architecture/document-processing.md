@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-11-07
 title: Document processing
 description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
@@ -487,3 +487,11 @@ The existing quality backfill measures faces from the verified, oriented grid JP
 Library page reads and bounded active-stack preparation compute KEEP/CUT offers without writing. Cull grouping leaves offer evaluation to active-stack preparation. Confirmed frames leave planning before ranking; an owner-confirmed pick settles the stack. Pending offers and face reports regenerate locally.
 
 The existing stack decision route checks membership and every source file, recomputes offers, and compares their asset/flag pairs with those displayed. Accept writes the offered flags; Dismiss confirms each file's current flag. Both use the ordinary authored writer, revisions, receipt, Undo, backup, and audited writes. Keep current preserves dismissed frames like other independent owner choices. Existing 500-frame, 2,000-file, and Hidden-access limits apply.
+
+## Image interpretation renditions
+
+`document/vision` also implements the opt-in `docbank-compatible-image-understanding/v1` adapter and `compatible-vision.understand-v1` descriptor. This task accepts original JPEG, PNG and WebP images up to 16 MiB through ordinary source inspection, consent, egress fencing and rendition jobs. It shares the compatible chat transport with photo suggestions but uses its own prompt, descriptor, disclosure fingerprint and Markdown artifact contract. Existing photo-description and face-detection identities remain unchanged.
+
+The provider requires bounded string fields for visible text, literal description, possible meaning and uncertainty. Missing, null, oversized or malformed fields fail the result. Provider text is escaped before insertion into fixed Markdown sections. Each section is a separate evidence unit with its semantic layer in `heading_path` and the machine-generated caveat repeated in its text, so chunking retains the distinction. The prompt requests transcription without interpretation, grounds tentative meme meaning in visible evidence, and prohibits identifying people or inferring beliefs, endorsement or intent. This is model guidance, not a guarantee about model accuracy. No conversation context is disclosed.
+
+Evidence explicitly records degraded provenance because generated explanations have no verified source text coordinates. The source hash, prompt/model policy, request identity, receipt and artifact checksum follow the existing rendition publication contract. Normalized evidence and sanitized Markdown feed ordinary lexical segments and optional `rendition_chunk` embedding bindings. Search and evidence windows keep the exact content-version and build identities. No suggestion catalog, authored photo metadata, separate vector store or face identity mechanism participates.
