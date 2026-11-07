@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -124,23 +125,6 @@ func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 			require.Equal(t, 1, x.calls)
 		})
 	}
-}
-func TestFaceEmbeddingAddedBoxFencesVectors(t *testing.T) {
-	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	ctx := t.Context()
-	x.f.grant(t, x.service, config.LocalFacesProfile)
-	_, err := x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Len(t, sets.Sets, 1)
-	// Adding a face makes the previous vectors ineligible for matching.
-	_, _, err = x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .4, Y: .5, Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	sets, err = x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Empty(t, sets.Sets)
 }
 
 func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
@@ -330,64 +314,65 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 
-func TestFacePickerReadsPayloadForEachNameQuery(t *testing.T) {
-	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	x.matchAll = true
-	ctx := t.Context()
-	named := x.inputs[0]
-	_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
-	require.NoError(t, err)
-	x.f.grant(t, x.service, config.LocalFacesProfile)
-	_, err = x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-	options := store.PeopleSearchOptions{FaceID: x.inputs[1].FaceID, FaceReader: reader, RecentFirst: true}
-	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
-	require.NoError(t, err)
-	require.Equal(t, 1, reader.opens)
-	for _, query := range []string{"A", "Ad", "Ada"} {
-		people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
-		require.NoError(t, err)
-		require.Len(t, people, 1)
-	}
-	require.Equal(t, 4, reader.opens)
-}
-
 func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	x.matchAll = true
-	ctx := t.Context()
-	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	named := x.f.addPhoto(t, "named.jpg", 701)
-	_, _, err = x.f.catalog.CreatePhotoFace(ctx, named, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, person.PersonID)
-	require.NoError(t, err)
-	unrelated := x.f.addPhoto(t, "unnamed.jpg", 702)
-	_, _, err = x.f.catalog.CreatePhotoFace(ctx, unrelated, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	x.f.grant(t, x.service, config.LocalFacesProfile)
-	count, err := x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 3, count)
-	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
-	people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
-	require.NoError(t, err)
-	require.Len(t, people, 1)
-	require.Equal(t, person.PersonID, people[0].PersonID)
-	require.Equal(t, 2, reader.opens, "the unrelated unnamed photo cannot affect person ranking")
-	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
-	require.NoError(t, err)
-	require.Equal(t, 5, reader.opens, "grouping reads all three payloads")
-	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
-	require.NoError(t, err)
-	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
-	require.NoError(t, err)
-	require.Equal(t, 10, reader.opens, "each operation reads only its own payloads")
+	for _, separate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("separate photos=%t", separate), func(t *testing.T) {
+			t.Parallel()
+			x := newFaceEmbeddingFixture(t, false)
+			x.matchAll = true
+			ctx := t.Context()
+			face, personID, expectedReads := x.inputs[1], "", 1
+			if separate {
+				person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+				require.NoError(t, err)
+				personID = person.PersonID
+				named := x.f.addPhoto(t, "named.jpg", 701)
+				_, _, err = x.f.catalog.CreatePhotoFace(ctx, named, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, personID)
+				require.NoError(t, err)
+				unrelated := x.f.addPhoto(t, "unnamed.jpg", 702)
+				_, _, err = x.f.catalog.CreatePhotoFace(ctx, unrelated, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+				require.NoError(t, err)
+				face, expectedReads = x.inputs[0], 2
+			} else {
+				named := x.inputs[0]
+				_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
+				require.NoError(t, err)
+			}
+			x.f.grant(t, x.service, config.LocalFacesProfile)
+			count, err := x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			if separate {
+				require.Equal(t, 3, count)
+			}
+			reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
+			options := store.PeopleSearchOptions{FaceID: face.FaceID, FaceReader: reader, RecentFirst: true}
+			people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+			require.NoError(t, err)
+			require.Len(t, people, 1)
+			require.Equal(t, expectedReads, reader.opens)
+			if !separate {
+				for _, query := range []string{"A", "Ad", "Ada"} {
+					people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
+					require.NoError(t, err)
+					require.Len(t, people, 1)
+				}
+				require.Equal(t, 4, reader.opens)
+				return
+			}
+			require.Equal(t, personID, people[0].PersonID)
+			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+			require.NoError(t, err)
+			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
+			require.NoError(t, err)
+			require.Equal(t, 5, reader.opens, "grouping reads all three payloads")
+			_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+			require.NoError(t, err)
+			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
+			require.NoError(t, err)
+			require.Equal(t, 10, reader.opens, "each operation reads only its own payloads")
+		})
+	}
 }
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
@@ -500,6 +485,9 @@ func TestFaceCoverageReportsRunningAndCompletedVectors(t *testing.T) {
 	assert.Equal(t, 1, complete.Embeddings[0].Complete, "the current face vectors have published")
 	_, _, err = x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .2, Width: .1, Height: .1}, "")
 	require.NoError(t, err)
+	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Empty(t, sets.Sets)
 	stale, err := x.service.Coverage(ctx, config.LocalFacesProfile, fence)
 	require.NoError(t, err)
 	assert.Zero(t, stale.Embeddings[0].Complete, "a changed face generation must stop counting as complete")

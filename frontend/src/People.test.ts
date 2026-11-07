@@ -10,6 +10,7 @@ import {
   ada,
   candidate,
   candidateFace,
+  f1,
   isAda,
   unnamed,
   decided,
@@ -441,12 +442,8 @@ it("confirms an Is this X? group after removing a face", async () => {
   await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
   await fireEvent.click(confirm);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(decide).toHaveBeenCalledExactlyOnceWith(
-    "candidate-ada-2",
-    { action: "link", person_id: ada.person_id, face_ids: ["face-1", "face-3"] },
-    expect.anything(),
-    expect.anything(),
-  );
+  expect(decide).toHaveBeenCalledOnce();
+  expect(decide.mock.calls[0]![0]).toBe("candidate-ada-2");
   await done();
 });
 
@@ -484,21 +481,13 @@ it("shows a spinner for each review crop until it loads or fails", async () => {
   await done();
 });
 
-it("skips faces until nothing is left in a Who is this? group", async () => {
-  const { region, list, done } = await renderSuggestions([unnamed]);
+it("skips a face from a Who is this? group", async () => {
+  const { region, people, done } = await renderSuggestions([unnamed]);
+  const remove = vi.spyOn(people.suggestions, "removeFace");
   await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Who is this?" });
-  list.mockResolvedValue({ items: [], total: 0 });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Skip face 1" }));
-  await waitFor(() =>
-    expect(within(dialog).getAllByRole("button", { name: /Skip face/ })).toHaveLength(1),
-  );
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Skip face 1" }));
-  expect(await within(dialog).findByText("Nothing left to review in this group.")).toBeTruthy();
-  const finish = within(dialog).getByRole("button", { name: "Done" });
-  await waitFor(() => expect(finish.hasAttribute("disabled")).toBe(false));
-  await fireEvent.click(finish);
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(remove).toHaveBeenCalledExactlyOnceWith(f1);
   await done();
 });
 

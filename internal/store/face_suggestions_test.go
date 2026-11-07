@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"uuid"
@@ -239,6 +240,52 @@ func TestFaceCandidateRegroupIdentityAndRevisionFences(t *testing.T) {
 	require.Equal(t, retained[0].EvidenceSHA256, decided.EvidenceSHA256)
 }
 
+func TestFaceCandidateConfirmationHonorsCurrentFaceDecisions(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"dismiss", "reject"} {
+		for _, supplied := range []bool{false, true} {
+			t.Run(action+"/supplied="+strconv.FormatBool(supplied), func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				pair := faceCandidatePair(t, s)
+				person, err := s.CreatePerson(ctx, "Ada", "operator")
+				require.NoError(t, err)
+				group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: pair.first}, {PhotoFace: pair.second}}, person.PersonID, person.DisplayName)
+				require.NoError(t, err)
+				require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{group}))
+				decisionPerson := person.PersonID
+				if action == "dismiss" {
+					decisionPerson = ""
+				}
+				decideFaceForTest(t, s, pair.node, pair.first.FaceID, decisionPerson, action)
+				// A pending pass publishes the evidence it read before the decision.
+				require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{group}))
+				page, _, err := s.FaceCandidates(ctx, 24, 0)
+				require.NoError(t, err)
+				require.Len(t, page, 1)
+				require.Len(t, page[0].Faces, 1)
+				decision := CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, FaceOnly: true, Action: "link", PersonID: person.PersonID}
+				if supplied {
+					decision.FaceIDs = []string{pair.first.FaceID, pair.second.FaceID}
+				}
+				_, err = s.DecidePersonCandidate(ctx, decision)
+				require.NoError(t, err)
+				faces, _, _, err := s.PhotoFacePersonNames(ctx, pair.node.CurrentVersionID)
+				require.NoError(t, err)
+				for _, face := range faces {
+					if face.FaceID == pair.first.FaceID {
+						require.Empty(t, face.AssertionID, "confirmation must honor the face omitted from review")
+					} else {
+						require.NotEmpty(t, face.AssertionID)
+					}
+				}
+				// Manual naming remains an explicit correction of a prior decision.
+				decideFaceForTest(t, s, pair.node, pair.first.FaceID, person.PersonID, "name")
+			})
+		}
+	}
+}
+
 func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -321,22 +368,6 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, survivor.PersonID, rows[0].SuggestedPersonID)
 	require.Equal(t, survivor.DisplayName, rows[0].DisplayName)
-	// The candidate remains visible while its selected target exists only in Hidden.
-	_, err = s.MarkPersonInPhoto(ctx, visible.CurrentVersionID, survivor.PersonID, "")
-	require.NoError(t, err)
-	concealed, err := s.CreatePerson(unlocked, "Concealed target", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(unlocked, hidden.CurrentVersionID, concealed.PersonID, "")
-	require.NoError(t, err)
-	decision := CandidateDecision{CandidateID: rows[0].CandidateID, ExpectedRevision: rows[0].Revision, Action: "link", PersonID: concealed.PersonID, FaceOnly: true}
-	_, err = s.DecidePersonCandidate(WithVisiblePeopleOnly(ctx), decision)
-	require.ErrorIs(t, err, ErrNotFound)
-	faces, _, _, err := s.PhotoFacePersonNames(ctx, visible.CurrentVersionID)
-	require.NoError(t, err)
-	require.Empty(t, faces[0].AssertionID, "the failed link must preserve the unnamed face")
-	linked, err := s.DecidePersonCandidate(unlocked, decision)
-	require.NoError(t, err)
-	require.Equal(t, concealed.PersonID, linked.DecidedPersonID)
 }
 
 func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {

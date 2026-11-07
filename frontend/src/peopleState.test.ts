@@ -596,22 +596,6 @@ it("counts faces and photos and titles both questions", () => {
   expect(suggestionCounts([f1, pairedMember])).toBe("2 faces · 1 photo");
 });
 
-it("closes a review after a persisted face rejection", async () => {
-  const list = vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [isAda], total: 1 });
-  const decide = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  const people = new People("session", vi.fn());
-  await people.suggestions.load();
-  people.suggestions.open(isAda);
-  await people.suggestions.removeFace(f2);
-  expect(decide.mock.calls[0]![1]).toMatchObject({
-    action: "reject",
-    face_id: f2.face_id,
-    person_id: ada.person_id,
-  });
-  expect(people.suggestions.review).toBeUndefined();
-  expect(list).toHaveBeenCalledTimes(2);
-  people.dispose();
-});
 it("keeps the open review's candidate and revision during refresh", async () => {
   const list = vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [isAda], total: 1 });
   const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda, "rejected"));
@@ -729,8 +713,8 @@ it("refreshes suggestions with the cards and reports a failure", async () => {
   await vi.waitFor(() => expect(people.suggestions.items).toEqual([isAda]));
   await people.refresh();
   expect(people.suggestions.items).toEqual([unnamed]);
-  await expect(people.refresh()).resolves.toBeUndefined();
-  await vi.waitFor(() => expect(people.suggestions.error).toBe("Unavailable"));
+  await expect(people.refresh()).rejects.toThrow("Unavailable");
+  expect(people.suggestions.error).toBe("Unavailable");
   expect(people.suggestions.items).toEqual([unnamed]);
   expect(list).toHaveBeenCalledTimes(3);
   people.dispose();
@@ -746,33 +730,67 @@ it("continues a split namesake group and retries the same page", async () => {
   const people = new People("session", vi.fn());
   people.suggestions.open(unnamed);
   await people.suggestions.searchNames("Ada");
+  expect(people.suggestions.names.people).toEqual([ada]);
+  expect(people.suggestions.names.incompleteName).toBe("ada");
   await people.suggestions.searchNames("Ada", true);
+  expect(people.suggestions.names.people).toEqual([ada]);
   await people.suggestions.searchNames("Ada", true);
+  expect(people.suggestions.names.people).toEqual([ada, other]);
+  expect(people.suggestions.names.incompleteName).toBe("");
   expect(read.mock.calls.slice(1).map((call) => call[0]?.cursor)).toEqual(["next", "next"]);
   people.dispose();
 });
 
-it("omits an unnamed face from confirmation without removing it from its photo", async () => {
-  vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [unnamed], total: 1 });
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
-  const faceDecision = vi.spyOn(api, "decidePhotoFace");
-  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
-  const people = new People("session", vi.fn());
-  await people.suggestions.load();
-  people.suggestions.open(unnamed);
-  expect(await people.suggestions.removeFace(f1)).toBe(true);
-  expect(faceDecision).not.toHaveBeenCalled();
-  await people.suggestions.load();
-  expect(reviewFaces(people.suggestions.review!).map((face) => face.face_id)).toEqual([f2.face_id]);
-  await people.suggestions.decide({ action: "new_person", display_name: "Morgan" });
-  expect(decide).toHaveBeenCalledWith(
-    unnamed.candidate_id,
-    { action: "new_person", display_name: "Morgan", face_ids: [f2.face_id] },
-    expect.anything(),
-    expect.anything(),
-  );
-  people.dispose();
-});
+it.each(["named", "unnamed subset", "unnamed all"])(
+  "removes a face from review: %s",
+  async (mode) => {
+    const named = mode === "named";
+    const row = named ? isAda : unnamed;
+    const list = vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [row], total: 1 });
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+    const faceDecision = vi
+      .spyOn(api, "decidePhotoFace")
+      .mockResolvedValue({ receipt_id: "receipt" });
+    const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
+    const people = new People("session", vi.fn());
+    try {
+      await people.suggestions.load();
+      people.suggestions.open(row);
+      expect(await people.suggestions.removeFace(named ? f2 : f1)).toBe(true);
+      if (named) {
+        expect(faceDecision.mock.calls[0]![1]).toMatchObject({
+          action: "reject",
+          face_id: f2.face_id,
+          person_id: ada.person_id,
+        });
+        expect(people.suggestions.review).toBeUndefined();
+        expect(list).toHaveBeenCalledTimes(2);
+        return;
+      }
+      expect(faceDecision).not.toHaveBeenCalled();
+      await people.suggestions.load();
+      expect(reviewFaces(people.suggestions.review!).map((face) => face.face_id)).toEqual([
+        f2.face_id,
+      ]);
+      if (mode === "unnamed all") {
+        await people.suggestions.removeFace(f2);
+        expect(people.suggestions.review?.candidate).toBeUndefined();
+        expect(reviewFaces(people.suggestions.review!)).toEqual([]);
+        expect(faceDecision).not.toHaveBeenCalled();
+        return;
+      }
+      await people.suggestions.decide({ action: "new_person", display_name: "Morgan" });
+      expect(decide).toHaveBeenCalledWith(
+        unnamed.candidate_id,
+        { action: "new_person", display_name: "Morgan", face_ids: [f2.face_id] },
+        expect.anything(),
+        expect.anything(),
+      );
+    } finally {
+      people.dispose();
+    }
+  },
+);
 
 it.each(["conceal", "dispose"] as const)(
   "keeps overlapping suggestion responses hidden after %s",
@@ -814,9 +832,29 @@ it.each(["conceal", "dispose"] as const)(
   },
 );
 
-it("releases live refresh when face suggestions stall and can retry", async () => {
-  vi.mocked(api.listFaceCandidates).mockRestore();
+it("retains a photo change for retry when its suggestion refresh fails", async () => {
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  vi.spyOn(api, "listFaceCandidates")
+    .mockRejectedValueOnce(new APIError("Unavailable", 503, "unavailable"))
+    .mockResolvedValueOnce({ items: [unnamed], total: 1 });
+  const people = new People("session", vi.fn());
+  people.suggestions.started = true;
+  people.suggestions.items = [isAda];
+  try {
+    await expect(people.refresh()).rejects.toThrow("Unavailable");
+    expect(people.suggestions.items).toEqual([isAda]);
+    await people.refresh();
+    expect(people.suggestions.items).toEqual([unnamed]);
+    expect(people.suggestions.error).toBe("");
+  } finally {
+    people.dispose();
+  }
+});
+
+it("retries a photo change when face suggestions stall past the bound", async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.listFaceCandidates).mockRestore();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada, grace] });
   const fetcher = vi.fn(
     (_url: string, options: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {
@@ -828,23 +866,52 @@ it("releases live refresh when face suggestions stall and can retry", async () =
   vi.stubGlobal("fetch", fetcher);
   const people = new People("session", vi.fn());
   people.suggestions.started = true;
+  people.items = [grace];
   people.suggestions.items = [isAda];
-  let refreshed = false;
-  const pending = people.refresh().then(() => {
-    refreshed = true;
+  let failure: unknown;
+  const pending = people.refresh().catch((cause: unknown) => {
+    failure = cause;
   });
   try {
-    await vi.waitFor(() => expect(refreshed).toBe(true));
+    await vi.advanceTimersByTimeAsync(64_999);
+    expect(failure).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(failure).toBeInstanceOf(Error);
+    expect(people.items).toEqual([ada, grace]);
     expect(people.suggestions.loading).toBe(true);
     expect(people.suggestions.items).toEqual([isAda]);
     fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ items: [unnamed], total: 1 })));
     await people.refresh();
-    await vi.waitFor(() => expect(people.suggestions.items).toEqual([unnamed]));
+    expect(people.suggestions.items).toEqual([unnamed]);
     expect(people.suggestions.error).toBe("");
   } finally {
     people.dispose();
     await pending;
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
+});
+
+it("waits for a slow face suggestion read that succeeds", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  vi.spyOn(api, "listFaceCandidates").mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        setTimeout(resolve, 5_000, { items: [unnamed], total: 1 });
+      }),
+  );
+  const people = new People("session", vi.fn());
+  people.suggestions.started = true;
+  people.suggestions.items = [isAda];
+  try {
+    const refresh = people.refresh();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(refresh).resolves.toBeUndefined();
+    expect(people.suggestions.items).toEqual([unnamed]);
+  } finally {
+    people.dispose();
+    vi.useRealTimers();
   }
 });
 
@@ -869,6 +936,28 @@ it("keeps suggestion cards unique when a reopened group shifts the next offset p
     expect(people.suggestions.items).toHaveLength(33);
     expect(new Set(people.suggestions.items.map((item) => item.candidate_id)).size).toBe(33);
     expect(list.mock.calls.map(([params]) => params!.offset)).toEqual([0, 24, 30]);
+  } finally {
+    people.dispose();
+  }
+});
+
+it("retries a photo change when the candidate failure arrives after cards", async () => {
+  let fail!: (cause: unknown) => void;
+  const cards = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  vi.spyOn(api, "listFaceCandidates").mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  const people = new People("session", vi.fn());
+  people.suggestions.started = true;
+  people.suggestions.items = [isAda];
+  try {
+    const refresh = people.refresh();
+    await vi.waitFor(() => expect(cards).toHaveBeenCalled());
+    fail(new APIError("Unavailable", 503, "unavailable"));
+    await expect(refresh).rejects.toThrow("Unavailable");
   } finally {
     people.dispose();
   }

@@ -348,11 +348,11 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				} else if err != nil {
 					return err
 				}
-				var assigned bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id AND a.action='assert' WHERE f.face_id=? AND f.content_version_id=?)`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&assigned); err != nil {
+				var excluded bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id AND a.action='assert' WHERE f.face_id=? AND f.content_version_id=?) OR `+faceSuggestionDecided("?", "?", "?"), occurrence.EvidenceID, occurrence.ContentVersionID, occurrence.EvidenceID, occurrence.ContentVersionID, candidate.SuggestedPersonID).Scan(&excluded); err != nil {
 					return err
 				}
-				if assigned && decision.FaceOnly && decision.Action != faceDecisionReject {
+				if excluded && decision.FaceOnly && decision.Action != faceDecisionReject {
 					continue
 				}
 				check := s.facePhotoQuery

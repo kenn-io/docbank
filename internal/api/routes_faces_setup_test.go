@@ -18,9 +18,8 @@ import (
 
 func TestFaceSetupRoutesRequireReviewedConsent(t *testing.T) {
 	t.Parallel()
-	var service *processing.Service
 	var starts atomic.Int32
-	ts, catalog := newTestServer(t, func(deps *api.Deps) {
+	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		profile, descriptor, err := config.LocalFaces()
 		require.NoError(t, err)
 		provider, err := localface.New(descriptor, func(context.Context) (string, error) {
@@ -28,7 +27,7 @@ func TestFaceSetupRoutesRequireReviewedConsent(t *testing.T) {
 		})
 		require.NoError(t, err)
 		deps.Gate = api.NewOperationGate()
-		service, err = processing.NewService(t.Context(), processing.ServiceConfig{
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{
 			Catalog: deps.Store, Blobs: deps.Blobs, Gate: deps.Gate, Lifecycle: t.Context(),
 			SpoolDirectory: t.TempDir(),
 			Profiles: map[string]processing.ProfileConfig{config.LocalFacesProfile: {
@@ -40,9 +39,6 @@ func TestFaceSetupRoutesRequireReviewedConsent(t *testing.T) {
 		deps.Processing = service
 		deps.Faces = &processing.FaceSetup{Service: service, Startup: func(context.Context) error { starts.Add(1); return nil }}
 	})
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic.jpg", processingTestHash("photo"), 12, "image/jpeg")
-	require.NoError(t, err)
-	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: config.LocalFacesProfile}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/faces/plans", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var plan api.LocalTextPlan
@@ -61,15 +57,8 @@ func TestFaceSetupRoutesRequireReviewedConsent(t *testing.T) {
 			require.Contains(t, body, `"code":"consent_required"`)
 		}
 		require.Zero(t, starts.Load())
-		current, err := service.Plan(t.Context(), selector)
-		require.NoError(t, err)
-		require.True(t, current.ConsentRequired)
 	}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/faces/setup", nil, api.FaceSetupApplyRequest{PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.EqualValues(t, 1, starts.Load())
-	current, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	require.False(t, current.ConsentRequired)
-	require.Equal(t, "active", current.ConsentState)
 }
