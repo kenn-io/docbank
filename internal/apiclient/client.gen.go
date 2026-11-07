@@ -2816,12 +2816,13 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"cursor":         {Style: "form", Explode: &[]bool{false}[0]},
-		"direction":      {Style: "form", Explode: &[]bool{false}[0]},
-		"page_size":      {Style: "form", Explode: &[]bool{false}[0]},
-		"path_prefix":    {Style: "form", Explode: &[]bool{false}[0]},
-		"sort":           {Style: "form", Explode: &[]bool{false}[0]},
-		"source_present": {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":          {Style: "form", Explode: &[]bool{false}[0]},
+		"direction":       {Style: "form", Explode: &[]bool{false}[0]},
+		"page_size":       {Style: "form", Explode: &[]bool{false}[0]},
+		"path_prefix":     {Style: "form", Explode: &[]bool{false}[0]},
+		"published_notes": {Style: "deepObject", Explode: &[]bool{false}[0]},
+		"sort":            {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/documents",
@@ -13871,6 +13872,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
 		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
+		"published_notes": {Style: "deepObject", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
@@ -14429,6 +14431,7 @@ func (c *Client) SearchTextCoverage(ctx context.Context, options *SearchTextCove
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
 		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
+		"published_notes": {Style: "deepObject", Explode: &[]bool{false}[0]},
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
 		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
@@ -28868,12 +28871,13 @@ type GetDocumentProcessingCoverageQuery struct {
 }
 
 type ListDocumentsQuery struct {
-	PathPrefix    *string                      `json:"path_prefix,omitempty"`
-	Sort          *ListDocumentsQuerySort      `json:"sort,omitempty"`
-	Direction     *ListDocumentsQueryDirection `json:"direction,omitempty"`
-	PageSize      *int64                       `json:"page_size,omitempty"`
-	Cursor        *string                      `json:"cursor,omitempty"`
-	SourcePresent *bool                        `json:"source_present,omitempty"`
+	PublishedNotes *PublishedNoteSelector       `json:"published_notes,omitempty"`
+	PathPrefix     *string                      `json:"path_prefix,omitempty"`
+	Sort           *ListDocumentsQuerySort      `json:"sort,omitempty"`
+	Direction      *ListDocumentsQueryDirection `json:"direction,omitempty"`
+	PageSize       *int64                       `json:"page_size,omitempty"`
+	Cursor         *string                      `json:"cursor,omitempty"`
+	SourcePresent  *bool                        `json:"source_present,omitempty"`
 }
 
 type ListDuplicateContentQuery struct {
@@ -29127,16 +29131,17 @@ type ListSavedQueriesQuery struct {
 }
 
 type SearchQuery struct {
-	Q              *string `json:"q,omitempty"`
-	Fuzzy          *bool   `json:"fuzzy,omitempty"`
-	SourcePresent  *bool   `json:"source_present,omitempty"`
-	PdfFilter      *string `json:"pdf_filter,omitempty"`
-	Limit          *int64  `json:"limit,omitempty"`
-	TagID          *string `json:"tag_id,omitempty"`
-	MimeType       *string `json:"mime_type,omitempty"`
-	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
-	ModifiedSince  *string `json:"modified_since,omitempty"`
-	ModifiedBefore *string `json:"modified_before,omitempty"`
+	Q              *string                `json:"q,omitempty"`
+	Fuzzy          *bool                  `json:"fuzzy,omitempty"`
+	SourcePresent  *bool                  `json:"source_present,omitempty"`
+	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitempty"`
+	PdfFilter      *string                `json:"pdf_filter,omitempty"`
+	Limit          *int64                 `json:"limit,omitempty"`
+	TagID          *string                `json:"tag_id,omitempty"`
+	MimeType       *string                `json:"mime_type,omitempty"`
+	UnderNodeID    *int64                 `json:"under_node_id,omitempty"`
+	ModifiedSince  *string                `json:"modified_since,omitempty"`
+	ModifiedBefore *string                `json:"modified_before,omitempty"`
 }
 
 type ListTermReportHistoryQuery struct {
@@ -29145,13 +29150,14 @@ type ListTermReportHistoryQuery struct {
 }
 
 type SearchTextCoverageQuery struct {
-	PdfFilter      *string `json:"pdf_filter,omitempty"`
-	SourcePresent  *bool   `json:"source_present,omitempty"`
-	TagID          *string `json:"tag_id,omitempty"`
-	MimeType       *string `json:"mime_type,omitempty"`
-	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
-	ModifiedSince  *string `json:"modified_since,omitempty"`
-	ModifiedBefore *string `json:"modified_before,omitempty"`
+	PdfFilter      *string                `json:"pdf_filter,omitempty"`
+	SourcePresent  *bool                  `json:"source_present,omitempty"`
+	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitempty"`
+	TagID          *string                `json:"tag_id,omitempty"`
+	MimeType       *string                `json:"mime_type,omitempty"`
+	UnderNodeID    *int64                 `json:"under_node_id,omitempty"`
+	ModifiedSince  *string                `json:"modified_since,omitempty"`
+	ModifiedBefore *string                `json:"modified_before,omitempty"`
 }
 
 type StorageStatusQuery struct {
@@ -32053,6 +32059,8 @@ type PruneBackupRepositoryRequest struct {
 type PublicationSelection = bundle.PublicationSelection
 
 type PublishedNoteIdentity = api.PublishedNoteIdentity
+
+type PublishedNoteSelector = api.PublishedNoteSelector
 
 type PushSourceCursor = api.PushSourceCursor
 

@@ -4323,6 +4323,8 @@ components:
           type: string
         previous_cursor:
           type: string
+        published_notes:
+          $ref: "#/components/schemas/PublishedNoteSelector"
         sort:
           enum:
             - path
@@ -4576,6 +4578,8 @@ components:
           minLength: 2
           pattern: ^/
           type: string
+        published_note:
+          $ref: "#/components/schemas/PublishedNoteIdentity"
         rank:
           format: int64
           minimum: 1
@@ -4878,6 +4882,8 @@ components:
         modified_since:
           format: date-time
           type: string
+        published_notes:
+          $ref: "#/components/schemas/PublishedNoteSelector"
         source_present:
           type: boolean
         tag_id:
@@ -4966,6 +4972,8 @@ components:
           type: integer
         path:
           type: string
+        published_note:
+          $ref: "#/components/schemas/PublishedNoteIdentity"
         size:
           format: int64
           minimum: 0
@@ -17507,6 +17515,17 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PublishedNoteSelector:
+      additionalProperties: false
+      properties:
+        publication:
+          maxLength: 64
+          type: string
+      type: object
+      x-go-type: api.PublishedNoteSelector
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PushSourceCursor:
       additionalProperties: false
       properties:
@@ -19823,6 +19842,8 @@ components:
           $ref: "#/components/schemas/Node"
         path:
           type: string
+        published_note:
+          $ref: "#/components/schemas/PublishedNoteIdentity"
       required:
         - node
         - path
@@ -19859,6 +19880,8 @@ components:
           type: string
         pdf_filter:
           type: string
+        published_notes:
+          $ref: "#/components/schemas/PublishedNoteSelector"
         source_present:
           type: boolean
         tag_id:
@@ -24409,6 +24432,12 @@ paths:
     get:
       operationId: listDocuments
       parameters:
+        - explode: false
+          in: query
+          name: published_notes
+          schema:
+            $ref: "#/components/schemas/PublishedNoteSelector"
+          style: deepObject
         - explode: false
           in: query
           name: path_prefix
@@ -32286,6 +32315,12 @@ paths:
             type: boolean
         - explode: false
           in: query
+          name: published_notes
+          schema:
+            $ref: "#/components/schemas/PublishedNoteSelector"
+          style: deepObject
+        - explode: false
+          in: query
           name: pdf_filter
           schema:
             maxLength: 16384
@@ -32640,6 +32675,12 @@ paths:
           name: source_present
           schema:
             type: boolean
+        - explode: false
+          in: query
+          name: published_notes
+          schema:
+            $ref: "#/components/schemas/PublishedNoteSelector"
+          style: deepObject
         - explode: false
           in: query
           name: tag_id

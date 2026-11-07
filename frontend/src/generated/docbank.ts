@@ -2200,6 +2200,24 @@ export interface DocumentRenditionIdentity {
   profile_fingerprint: string;
 }
 
+export interface PublishedNoteIdentity {
+  content_version_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  hash: string;
+  /** @minimum 1 */
+  namespace_revision: number;
+  /** @minimum 1 */
+  node_id: number;
+  publication: string;
+  /** @minimum 0 */
+  size: number;
+  /** @maxLength 4096 */
+  source_ref: string;
+  /** @minimum 1 */
+  source_revision: number;
+  vault_id: string;
+}
+
 export interface DocumentSummary {
   active_renditions: DocumentRenditionIdentity[];
   content_version_id: string;
@@ -2210,8 +2228,14 @@ export interface DocumentSummary {
   /** @minimum 1 */
   node_id: number;
   path: string;
+  published_note?: PublishedNoteIdentity;
   /** @minimum 0 */
   size: number;
+}
+
+export interface PublishedNoteSelector {
+  /** @maxLength 64 */
+  publication?: string;
 }
 
 export interface DocumentPage {
@@ -2228,6 +2252,7 @@ export interface DocumentPage {
   page_size: number;
   path_prefix: string;
   previous_cursor?: string;
+  published_notes?: PublishedNoteSelector;
   sort: DocumentPageSort;
   source_present?: boolean;
 }
@@ -2265,6 +2290,7 @@ export interface DocumentSearchResult {
      * @pattern ^/
      */
   path: string;
+  published_note?: PublishedNoteIdentity;
   /** @minimum 1 */
   rank: number;
   score: number;
@@ -2318,6 +2344,7 @@ export interface DocumentSourceFenceFilters {
   mime_type?: string;
   modified_before?: string;
   modified_since?: string;
+  published_notes?: PublishedNoteSelector;
   source_present?: boolean;
   tag_id?: string;
   /** @minimum 1 */
@@ -4402,24 +4429,6 @@ export interface NotePublicationScan {
   namespace_revision: number;
   policy_fingerprint: string;
   scan_id: string;
-}
-
-export interface PublishedNoteIdentity {
-  content_version_id: string;
-  /** @pattern ^[0-9a-f]{64}$ */
-  hash: string;
-  /** @minimum 1 */
-  namespace_revision: number;
-  /** @minimum 1 */
-  node_id: number;
-  publication: string;
-  /** @minimum 0 */
-  size: number;
-  /** @maxLength 4096 */
-  source_ref: string;
-  /** @minimum 1 */
-  source_revision: number;
-  vault_id: string;
 }
 
 export interface NotePublicationAck {
@@ -8430,6 +8439,7 @@ export interface SearchHit {
   match: SearchHitMatch;
   node: Node;
   path: string;
+  published_note?: PublishedNoteIdentity;
 }
 
 export interface SearchReport {
@@ -8442,6 +8452,7 @@ export interface SearchReport {
   modified_before?: string;
   modified_since?: string;
   pdf_filter?: string;
+  published_notes?: PublishedNoteSelector;
   source_present?: boolean;
   tag_id?: string;
   truncated: boolean;
@@ -9596,6 +9607,7 @@ content_version_id: string[];
 };
 
 export type ListDocumentsParams = {
+published_notes?: PublishedNoteSelector;
 path_prefix?: string;
 sort?: ListDocumentsSort;
 direction?: ListDocumentsDirection;
@@ -10420,6 +10432,7 @@ export type SearchParams = {
 q?: string;
 fuzzy?: boolean;
 source_present?: boolean;
+published_notes?: PublishedNoteSelector;
 /**
  * @maxLength 16384
  */
@@ -10470,6 +10483,7 @@ export type SearchTextCoverageParams = {
  */
 pdf_filter?: string;
 source_present?: boolean;
+published_notes?: PublishedNoteSelector;
 /**
  * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
  */
@@ -12590,15 +12604,26 @@ return sessionJSON<DerivativePurgePlan>(getPlanDerivativePurgeUrl(),
 
 export const getListDocumentsUrl = (params?: ListDocumentsParams,) => {
   const normalizedParams = new URLSearchParams();
+  const deepObjectEntries: string[] = [];
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const deepObjectParameters = ["published_notes"];
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
+      Object.entries(value).forEach(([subKey, subValue]) => {
+        if (subValue !== undefined) {
+          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
+        }
+      });
+      return;
+    }
 
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : String(value))
     }
   });
 
-  const stringifiedParams = normalizedParams.toString();
+  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
 
   return stringifiedParams.length > 0 ? `/api/v1/documents?${stringifiedParams}` : `/api/v1/documents`
 }
@@ -20720,15 +20745,26 @@ return sessionJSON<SavedQueryRunResult>(getRunSavedQueryUrl(savedQueryId),
 
 export const getSearchUrl = (params?: SearchParams,) => {
   const normalizedParams = new URLSearchParams();
+  const deepObjectEntries: string[] = [];
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const deepObjectParameters = ["published_notes"];
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
+      Object.entries(value).forEach(([subKey, subValue]) => {
+        if (subValue !== undefined) {
+          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
+        }
+      });
+      return;
+    }
 
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : String(value))
     }
   });
 
-  const stringifiedParams = normalizedParams.toString();
+  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
 
   return stringifiedParams.length > 0 ? `/api/v1/search?${stringifiedParams}` : `/api/v1/search`
 }
@@ -21110,15 +21146,26 @@ return sessionJSON<DocumentSimilarReport>(getFindSimilarDocumentsUrl(),
 
 export const getSearchTextCoverageUrl = (params?: SearchTextCoverageParams,) => {
   const normalizedParams = new URLSearchParams();
+  const deepObjectEntries: string[] = [];
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const deepObjectParameters = ["published_notes"];
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
+      Object.entries(value).forEach(([subKey, subValue]) => {
+        if (subValue !== undefined) {
+          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
+        }
+      });
+      return;
+    }
 
     if (value !== undefined) {
       normalizedParams.append(key, value === null ? 'null' : String(value))
     }
   });
 
-  const stringifiedParams = normalizedParams.toString();
+  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
 
   return stringifiedParams.length > 0 ? `/api/v1/search/text-coverage?${stringifiedParams}` : `/api/v1/search/text-coverage`
 }
