@@ -126,6 +126,7 @@ func (s *Store) publishedNoteIdentitiesTx(ctx context.Context, q metadataQuerier
 	type binding struct {
 		NodeID  int64  `json:"node_id"`
 		Version string `json:"version"`
+		Ordinal int    `json:"ordinal"`
 	}
 	payload := make([]binding, len(identities))
 	for i, id := range identities {
@@ -135,15 +136,16 @@ func (s *Store) publishedNoteIdentitiesTx(ctx context.Context, q metadataQuerier
 		if err := validateUUIDv4(id.ContentVersionID); err != nil {
 			return nil, err
 		}
-		payload[i] = binding{id.NodeID, id.ContentVersionID}
+		payload[i] = binding{id.NodeID, id.ContentVersionID, i}
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	predicate, args := publishedNoteEligibilitySQL(selector)
+	predicate, args := publishedNoteEligibilitySQLParameter(selector, "$2")
 	args = append([]any{string(encoded)}, args...)
-	rows, err := q.QueryContext(ctx, `WITH requested AS (SELECT json_extract(value,'$.node_id') node_id,json_extract(value,'$.version') version_id,CAST(key AS INTEGER) ordinal FROM json_each(?))
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	rows, err := q.QueryContext(ctx, `WITH requested AS (SELECT `+d.number("value", "node_id")+` node_id,`+d.text("value", "version")+` version_id,`+d.number("value", "ordinal")+` ordinal FROM `+d.arrayValues("$1")+`)
  SELECT p.publication_name,p.source_ref,n.id,cv.version_id,cv.blob_hash,cv.size,p.source_revision,np.namespace_revision
  FROM requested r CROSS JOIN `+nodeFrom+`
  JOIN published_note_sources p ON p.node_id=n.id JOIN note_publications np ON np.name=p.publication_name
