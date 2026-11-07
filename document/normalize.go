@@ -12,9 +12,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/v2"
+	"github.com/yuin/goldmark/v2/extension"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
 	"golang.org/x/net/html"
 )
 
