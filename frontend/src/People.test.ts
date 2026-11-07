@@ -14,7 +14,6 @@ import {
   f2,
   isAda,
   unnamed,
-  decided,
   grace,
   personMergeReceipt,
   personResponse,
@@ -437,13 +436,15 @@ it.each([
 });
 
 it("reports a stale rejection from the review sheet", async () => {
-  const { region, done } = await renderSuggestions([isAda]);
-  vi.spyOn(api, "decideFaceCandidate").mockRejectedValueOnce(
-    new APIError("Suggestion changed", 412, "stale_revision"),
-  );
+  const { region, people, done } = await renderSuggestions([isAda]);
+  const decide = vi.spyOn(people.suggestions, "decide").mockResolvedValue(false);
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada" }));
+  expect(decide).toHaveBeenCalledExactlyOnceWith({ action: "reject" });
+  await act(() => {
+    people.suggestions.writeError = "Suggestion changed";
+  });
   expect((await screen.findByRole("alert")).textContent).toBe("Suggestion changed");
   await done();
 });
@@ -470,65 +471,66 @@ it("shows a spinner for each review crop until it loads or fails", async () => {
   await done();
 });
 
-it.each(["existing", "new", "dismiss"])(
+it.each(["existing", "new", "dismiss", "namesake"])(
   "names or dismisses a Who is this? group: %s",
   async (choice) => {
-    const { region, done } = await renderSuggestions([unnamed]);
-    const decide = vi
-      .spyOn(api, "decideFaceCandidate")
-      .mockResolvedValue(decided(unnamed, choice === "dismiss" ? "rejected" : "linked"));
+    const { region, people, done } = await renderSuggestions([unnamed]);
+    const decide = vi.spyOn(people.suggestions, "decide").mockResolvedValue(true);
+    const alex = ["11", "12"].map((id) => ({
+      ...grace,
+      person_id: `00000000-0000-4000-8000-0000000000${id}`,
+      display_name: "Alex",
+      display_name_folded: "alex",
+    }));
     await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
     const dialog = screen.getByRole("dialog", { name: "Who is this?" });
-    const confirm = within(dialog).getByRole("button", { name: "Confirm" });
+    let confirm = within(dialog).getByRole("button", { name: "Confirm" });
     expect(confirm.hasAttribute("disabled")).toBe(true);
     if (choice === "dismiss") {
       await fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss" }));
     } else {
-      const search = vi.mocked(api.listPeople);
+      if (choice === "new") vi.mocked(api.listPeople).mockResolvedValue({ items: [] });
+      if (choice === "namesake")
+        vi.mocked(api.listPeople).mockResolvedValue({ items: [ada, ...alex] });
       await fireEvent.click(within(dialog).getByRole("button", { name: "Name this person" }));
       await fireEvent.input(screen.getByRole("combobox"), {
-        target: { value: choice === "new" ? "Ana" : "Ad" },
+        target: { value: choice === "new" ? "Ana" : choice === "namesake" ? "A" : "Ad" },
       });
-      if (choice === "new") search.mockResolvedValue({ items: [] });
       await fireEvent.mouseDown(
-        await screen.findByRole("option", { name: choice === "new" ? 'New person "Ana"' : "Ada" }),
+        await screen.findByRole("option", {
+          name:
+            choice === "new"
+              ? 'New person "Ana"'
+              : choice === "namesake"
+                ? "Alex · 2 people"
+                : "Ada",
+        }),
       );
+      if (choice === "namesake") {
+        const chooser = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
+        await fireEvent.click(chooser.getByRole("radio", { name: new RegExp(alex[1]!.person_id) }));
+        await fireEvent.click(chooser.getByRole("button", { name: "Choose" }));
+        confirm = within(await screen.findByRole("dialog", { name: "Who is this?" })).getByRole(
+          "button",
+          { name: "Confirm" },
+        );
+      }
       await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
       await fireEvent.click(confirm);
     }
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(decide).toHaveBeenCalledOnce();
-    if (choice === "dismiss") expect(decide.mock.calls[0]![1]).toMatchObject({ action: "reject" });
-    if (choice === "new") expect(decide.mock.calls[0]![1]).toMatchObject({ display_name: "Ana" });
-    if (choice === "existing")
-      expect(decide.mock.calls[0]![1]).toMatchObject({ person_id: ada.person_id });
+    expect(decide).toHaveBeenCalledExactlyOnceWith(
+      choice === "dismiss"
+        ? { action: "reject" }
+        : choice === "new"
+          ? { action: "new_person", display_name: "Ana" }
+          : {
+              action: "link",
+              person_id: choice === "namesake" ? alex[1]!.person_id : ada.person_id,
+            },
+    );
     await done();
   },
 );
-
-it("sends the person chosen from namesakes to confirmation", async () => {
-  const { region, done } = await renderSuggestions([unnamed]);
-  const alex = ["11", "12"].map((id) => ({
-    ...grace,
-    person_id: `00000000-0000-4000-8000-0000000000${id}`,
-    display_name: "Alex",
-    display_name_folded: "alex",
-  }));
-  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
-  vi.mocked(api.listPeople).mockResolvedValue({ items: [ada, ...alex] });
-  await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
-  await fireEvent.click(screen.getByRole("button", { name: "Name this person" }));
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "A" } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 2 people" }));
-  const chooser = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
-  await fireEvent.click(chooser.getByRole("radio", { name: new RegExp(alex[1]!.person_id) }));
-  await fireEvent.click(chooser.getByRole("button", { name: "Choose" }));
-  const review = within(await screen.findByRole("dialog", { name: "Who is this?" }));
-  await fireEvent.click(review.getByRole("button", { name: "Confirm" }));
-  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
-  expect(decide.mock.calls[0]![1]).toMatchObject({ person_id: alex[1]!.person_id });
-  await done();
-});
 
 it("closes the review sheet when the Hidden scope changes", async () => {
   const access = unlockedAccess();

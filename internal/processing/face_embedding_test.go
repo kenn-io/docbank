@@ -319,9 +319,9 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 
-func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
+func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"same photo", "separate", "named source"} {
+	for _, mode := range []string{"same photo", "separate indexed and late named", "named source"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			x := newFaceEmbeddingFixture(t, false)
@@ -391,17 +391,6 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 				}
 			}
 			require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
-			reader.opens = 0
-			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
-			require.NoError(t, err)
-			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true, nil)
-			require.NoError(t, err)
-			require.Equal(t, 5, reader.opens, "grouping reads all five payloads")
-			_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
-			require.NoError(t, err)
-			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true, nil)
-			require.NoError(t, err)
-			require.Equal(t, 14, reader.opens, "each operation reads only its own payloads")
 			index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
 				Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
 				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,

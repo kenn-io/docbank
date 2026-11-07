@@ -204,15 +204,19 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	require.Zero(t, total)
 	_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: "dismiss"})
 	require.NoError(t, err)
-	for range 3 {
+	for attempt := 0; attempt < 32 && service.faceSuggestionsSignature == ""; attempt++ {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
+	require.NotEmpty(t, service.faceSuggestionsSignature)
 	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 498, total, "current reads must hide the dismissed pair before catch-up")
-	for range 4 {
+	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	for attempt := 0; attempt < 32 && service.faceSuggestionsSignature != snapshot.Signature; attempt++ {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
+	require.Equal(t, snapshot.Signature, service.faceSuggestionsSignature)
 	retired, _, err := x.f.catalog.PersonCandidates(ctx, "superseded", 24, 0)
 	require.NoError(t, err)
 	require.Len(t, retired, 1, "catch-up must supersede the snapshot's dismissed pair")
