@@ -204,6 +204,12 @@ func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
 	rows, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
+	matchedOptions := options
+	matchedOptions.FaceID = x.inputs[0].FaceID
+	matched, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, matchedOptions)
+	require.NoError(t, err)
+	require.Len(t, matched, 1)
+	matchedOptions.AfterRecent = matched[0].RecentRank
 	require.NoError(t, x.f.blobs.Remove(sets.Sets[0].Set.VectorSet.PayloadBlobHash))
 	var metadata bytes.Buffer
 	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &metadata))
@@ -215,6 +221,8 @@ func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "Ada", rows[0].DisplayName)
+	_, _, err = cold.PeopleByDisplayName(ctx, "", matched[0].DisplayNameFolded, matched[0].PersonID, 24, false, matchedOptions)
+	require.ErrorIs(t, err, store.ErrStaleRevision, "a matched face cannot continue ranking without its source payload")
 }
 
 func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
@@ -303,20 +311,6 @@ func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
 	require.Len(t, next, 2)
 	require.Equal(t, "ALEX", next[0].DisplayName)
 	require.Equal(t, "Ada", next[1].DisplayName)
-	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Len(t, sets.Sets, 1)
-	require.NoError(t, x.f.blobs.Remove(sets.Sets[0].Set.VectorSet.PayloadBlobHash))
-	// A cold catalog cannot continue ranking after its source payload disappears;
-	// an already decoded immutable payload can still serve a warm request.
-	var metadata bytes.Buffer
-	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &metadata))
-	cold, err := store.Open(ctx, filepath.Join(t.TempDir(), "cold.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, cold.Close()) })
-	require.NoError(t, cold.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
-	_, _, err = cold.PeopleByDisplayName(ctx, "", page[1].DisplayNameFolded, page[1].PersonID, 2, false, options)
-	require.ErrorIs(t, err, store.ErrStaleRevision)
 }
 
 func TestFacePeopleRankingObeysHiddenScope(t *testing.T) {
@@ -442,7 +436,7 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 	require.NoError(t, err)
 	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
 	require.NoError(t, err)
-	require.Equal(t, 3, reader.opens, "grouping still loads every photo")
+	require.Equal(t, 3, reader.opens, "grouping adds the unrelated photo's uncached payload")
 	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
 	require.NoError(t, err)
 	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)

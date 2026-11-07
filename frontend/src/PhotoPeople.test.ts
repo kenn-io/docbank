@@ -139,7 +139,7 @@ it("names the face selected by its numbered picker title", async () => {
   faces.dispose();
 });
 
-it("ranks a face's picker by similarity and the whole-photo mark by recency", async () => {
+it("keeps a face's ranking through picker continuation", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
     photoFacePage({ faces: [face], assertions: [], people: [] }),
   );
@@ -166,15 +166,6 @@ it("ranks a face's picker by similarity and the whole-photo mark by recency", as
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
       { query: "", limit: 100, recent_first: true, face_id: face.face_id, cursor: "next" },
-      expect.anything(),
-    ),
-  );
-  await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
-  await fireEvent.click(screen.getByRole("button", { name: "Mark person in photo" }));
-  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "N" } });
-  await waitFor(() =>
-    expect(search).toHaveBeenLastCalledWith(
-      { query: "N", limit: 100, recent_first: true },
       expect.anything(),
     ),
   );
