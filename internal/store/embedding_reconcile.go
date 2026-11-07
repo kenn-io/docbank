@@ -147,10 +147,8 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				profiles[generation.ProcessingProfileFingerprint] = cached
 			}
 			profile, portable, fingerprints := cached.record, cached.portable, cached.fingerprints
-			// Image generations carry the image producer policy; original-file generations never do.
-			imageGeneration := generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint()
 			for _, binding := range portable.Embeddings {
-				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") || (binding.InputKind == document.EmbeddingInputOriginalFile && imageGeneration) {
+				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
 					continue
 				}
 				selected := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
@@ -176,15 +174,8 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
-				if binding.InputKind == document.EmbeddingInputFace {
-					if err := validateFaceEmbeddingGenerationTx(ctx, tx, generation, binding.Name); err != nil {
-						continue
-					}
-				}
-				if binding.InputKind == document.EmbeddingInputImage {
-					if err := validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name); err != nil {
-						continue
-					}
+				if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, generation); err != nil {
+					continue
 				}
 				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
 				if err != nil {

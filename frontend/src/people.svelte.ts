@@ -52,14 +52,6 @@ async function readReceipt(
 }
 
 export const peoplePageSize = 24;
-// suggestionWait bounds how long a photo change waits on face suggestions. It
-// outlasts the server's 60-second request timeout, so a slow read still lands
-// and only a connection the server never answers stalls the pass.
-const suggestionWait = 65_000;
-const stalled = () =>
-  new Promise<never>((_, fail) =>
-    setTimeout(fail, suggestionWait, new Error("Face suggestions did not load in time")),
-  );
 export type PeopleMerge = {
   pair: readonly [PersonSummary, PersonSummary];
   keep?: string;
@@ -167,10 +159,10 @@ export class People {
   // as another tab's rename or merge. It keeps the search, at least as many
   // cards as were loaded, and the selection, with fresh names and revisions.
   // A failure keeps the current cards and throws so the photo event pass
-  // retries. Suggestions refresh alongside and fail the pass the same way.
+  // retries. Suggestions refresh alongside.
   async refresh() {
-    const suggestions = this.suggestions.started ? this.suggestions.refresh() : undefined;
-    await Promise.all([this.refreshCards(), suggestions]);
+    if (this.suggestions.started) void this.suggestions.load();
+    await this.refreshCards();
   }
   async refreshCards() {
     if (this.disposed || this.loading || this.access?.lockError) return;
@@ -549,14 +541,6 @@ export class Suggestions {
   }
   retry() {
     return this.load();
-  }
-  // refresh reloads for a photo change and throws when that read fails or
-  // outlasts suggestionWait, so the pass retries instead of waiting on it.
-  refresh() {
-    const load = this.load().then(() => {
-      if (this.error) throw new Error(this.error);
-    });
-    return Promise.race([load, stalled()]);
   }
   open(candidate: FaceCandidate) {
     if (this.busy || this.disposed) return;
