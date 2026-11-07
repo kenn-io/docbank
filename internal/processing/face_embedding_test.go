@@ -524,6 +524,7 @@ func TestFacePlanDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	require.Zero(t, x.calls)
 	_, err = setup.Apply(t.Context(), "stale")
 	require.ErrorIs(t, err, ErrPlanChanged)
+	x.worker.reconcileAt = time.Time{}
 	n, err = x.worker.ScanOnce(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, n)
