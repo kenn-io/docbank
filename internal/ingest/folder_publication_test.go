@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
@@ -291,4 +294,90 @@ func TestFolderPublicationFailureCountsOnlySources(t *testing.T) {
 			}
 		})
 	}
+}
+
+// This is the ingest side of the compositional publisher qualification: a real
+// collector overflow must provide complete source evidence to lifecycle hooks.
+// The production publisher's real-daemon burst/restart test owns membership.
+func TestPublicationNotificationOverflowStillConverges(t *testing.T) {
+	processed := map[string]string{}
+	scanner, _ := publicationScanner(t, func(ctx context.Context, file FolderFile) error {
+		digest, err := file.Digest(ctx)
+		processed[file.Ref] = digest
+		return err
+	})
+	scanner.watcher.immediate = true
+	scanner.VerifyInterval = time.Minute
+	rootPath := scanner.watcher.config.Source
+	write := func(ref, body string) {
+		name := filepath.Join(rootPath, filepath.FromSlash(ref))
+		require.NoError(t, os.MkdirAll(filepath.Dir(name), 0700))
+		require.NoError(t, os.WriteFile(name, []byte(body), 0600))
+	}
+	write("keep/quiet.md", "quiet")
+	write("nested/edited.md", "first")
+	write("removed.md", "retained history elsewhere")
+	root := publicationRoot(t, scanner)
+	backend := newFakeWatchBackend()
+	notifications := newWatchNotificationsWithBackend(root.path, backend)
+	defer func() {
+		require.NoError(t, notifications.Close())
+		select {
+		case <-backend.closed:
+		default:
+			t.Fatal("notification handle remained open")
+		}
+	}()
+	scanner.watcher.notifications = notifications
+	var observed []string
+	var results []FolderScanResult
+	scanner.BeforeScan = func(context.Context, FolderScan) error { observed = nil; return nil }
+	scanner.ObservePresent = func(_ context.Context, v FolderPresence) (bool, error) {
+		observed = append(observed, v.Ref)
+		return false, nil
+	}
+	scanner.AfterScan = func(_ context.Context, result FolderScanResult) error { results = append(results, result); return nil }
+	complete, err := scanner.watcher.scanWithHints(t.Context(), root, watchScanHints{})
+	require.NoError(t, err)
+	require.True(t, complete)
+	quietDigest := processed["keep/quiet.md"]
+	write("nested/edited.md", "changed without a delivered hint")
+	write("other/new.md", "new without a delivered hint")
+	require.NoError(t, os.Remove(filepath.Join(rootPath, "removed.md")))
+	awaitWake := func() {
+		select {
+		case <-notifications.Wake():
+		case <-time.After(3 * time.Second):
+			t.Fatal("notification collector did not wake")
+		}
+	}
+	backend.events <- fsnotify.Event{Name: filepath.Join(root.path, "keep", "quiet.md"), Op: fsnotify.Write}
+	awaitWake()
+	backend.errs <- fsnotify.ErrEventOverflow
+	awaitWake()
+	hints := notifications.Drain()
+	require.True(t, hints.Reconcile)
+	require.Empty(t, hints.Dirty)
+	complete, err = scanner.watcher.scanWithHints(t.Context(), root, hints)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.ElementsMatch(t, []string{"keep/quiet.md", "nested/edited.md", "other/new.md"}, observed)
+	require.Equal(t, quietDigest, processed["keep/quiet.md"])
+	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("new without a delivered hint"))), processed["other/new.md"])
+	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("changed without a delivered hint"))), processed["nested/edited.md"])
+	require.Len(t, results, 2)
+	require.True(t, results[1].Complete)
+	require.EqualValues(t, 3, results[1].Observed)
+	require.Zero(t, results[1].Failed)
+	// Overflow must not kill the collector. A later ordinary hint still drives a
+	// complete inventory, including every quiet source required by publication.
+	write("after.md", "after overflow")
+	backend.events <- fsnotify.Event{Name: filepath.Join(root.path, "after.md"), Op: fsnotify.Create}
+	awaitWake()
+	later := notifications.Drain()
+	require.True(t, later.matches("after.md"))
+	complete, err = scanner.watcher.scanWithHints(t.Context(), root, later)
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.ElementsMatch(t, []string{"after.md", "keep/quiet.md", "nested/edited.md", "other/new.md"}, observed)
 }

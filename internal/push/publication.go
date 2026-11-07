@@ -386,6 +386,11 @@ func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.Fold
 		return p.statusErr
 	}
 	p.progress.Failed = max(p.progress.Failed, result.Failed)
+	// Verified positive observations remain valid even when another source
+	// prevents this inventory from authorizing absence.
+	if err := p.flushSeen(ctx); err != nil {
+		return err
+	}
 	if !result.Complete || p.failed {
 		if err := p.emit(ctx, "incomplete"); err != nil {
 			return err
@@ -394,9 +399,6 @@ func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.Fold
 			return nil
 		}
 		return errPublicationIncomplete
-	}
-	if err := p.flushSeen(ctx); err != nil {
-		return err
 	}
 	if err := p.emit(ctx, "completing"); err != nil {
 		return err
