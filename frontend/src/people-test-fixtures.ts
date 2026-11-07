@@ -95,7 +95,7 @@ export const candidate = (
   overrides: Partial<FaceCandidate> = {},
 ): FaceCandidate => ({
   candidate_id: id,
-  display_name: "",
+  display_name: "Unnamed person",
   revision: 1,
   faces,
   ...overrides,

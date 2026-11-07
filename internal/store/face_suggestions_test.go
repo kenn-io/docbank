@@ -413,19 +413,15 @@ func TestUnnamedFaceCandidateRequiresTwoReviewableFaces(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
 			ctx := t.Context()
-			node, first := faceForDecisionTest(t, s, "")
-			second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
-			require.NoError(t, err)
-			group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
-			require.NoError(t, err)
-			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+			pair := faceCandidatePair(t, s)
+			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{pair.group}))
 			personID := ""
 			if action == "name" {
 				person, err := s.CreatePerson(ctx, "Synthetic person", "operator")
 				require.NoError(t, err)
 				personID = person.PersonID
 			}
-			decideFaceForTest(t, s, node, first.FaceID, personID, action)
+			decideFaceForTest(t, s, pair.node, pair.first.FaceID, personID, action)
 			page, total, err := s.FaceCandidates(ctx, 1, 0)
 			require.NoError(t, err)
 			require.Empty(t, page)
