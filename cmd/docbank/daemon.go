@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -403,11 +404,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
+	var restartPending atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
 		Save: func(name, mode string) error {
-			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
+			if err := saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode}); err != nil {
+				return err
+			}
+			restartPending.Store(true)
+			return nil
 		},
 	}
 	localText.Candidate = func(mode, name string) (*processing.Service, error) {
@@ -713,7 +719,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, LocalText: localText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
-			return localTextStatus(ctx, layout.Root, choice, localTextConfig, processingService)
+			return localTextStatus(ctx, localTextConfig, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,

@@ -3963,7 +3963,6 @@ export interface LocalTextStatus {
   readonly $schema?: string;
   active: boolean;
   download_bytes: number;
-  installing: boolean;
   provider: LocalTextStatusProvider;
   restart_required: boolean;
 }

@@ -95,7 +95,6 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 func TestLocalTextStatusDuringSetup(t *testing.T) {
 	t.Parallel()
 	started, release := make(chan struct{}), make(chan struct{})
-	var installing atomic.Bool
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		renderer, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 		require.NoError(t, err)
@@ -103,7 +102,6 @@ func TestLocalTextStatusDuringSetup(t *testing.T) {
 		configure(deps)
 		deps.LocalText = &processing.LocalTextSetup{Service: deps.Processing,
 			Startup: func(ctx context.Context, _ bool, _ string) error {
-				installing.Store(true)
 				close(started)
 				select {
 				case <-release:
@@ -120,7 +118,7 @@ func TestLocalTextStatusDuringSetup(t *testing.T) {
 			},
 		}
 		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) {
-			return api.LocalTextStatus{Installing: installing.Load()}, nil
+			return api.LocalTextStatus{DownloadBytes: 295000000}, nil
 		}
 	})
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
@@ -155,5 +153,5 @@ func TestLocalTextStatusDuringSetup(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var status api.LocalTextStatus
 	require.NoError(t, json.Unmarshal([]byte(body), &status))
-	require.True(t, status.Installing)
+	require.Equal(t, int64(295000000), status.DownloadBytes)
 }

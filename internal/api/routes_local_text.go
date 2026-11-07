@@ -12,7 +12,6 @@ type LocalTextStatus struct {
 	Active          bool   `json:"active"`
 	Provider        string `json:"provider" enum:",local,ollama,configured"`
 	DownloadBytes   int64  `json:"download_bytes"`
-	Installing      bool   `json:"installing"`
 	RestartRequired bool   `json:"restart_required"`
 }
 

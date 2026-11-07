@@ -99,7 +99,14 @@ func localTextCandidate(cfg config.Config, mode, name string) (config.Config, er
 }
 
 func localTextStartup(ctx context.Context, managed bool, _ string) error {
-	return installLocalTextRuntime(ctx, managed, func(context.Context, int64) (bool, error) { return true, nil }, embedlocal.Endpoint, embedlocal.Install)
+	if !managed {
+		return nil
+	}
+	if err := installLocalTextRuntime(ctx, managed, func(context.Context, int64) (bool, error) { return true, nil }, embedlocal.Endpoint, embedlocal.Install); err != nil {
+		return err
+	}
+	_, err := localEmbeddingOrigin(ctx)
+	return err
 }
 
 func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.ProfileConfig, candidate config.Config, name string, selected processing.ProfileConfig) (config.Config, error) {
@@ -127,12 +134,8 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	return cfg, nil
 }
 
-func localTextStatus(ctx context.Context, root string, active config.LocalTextConfig, cfg config.Config, service *processing.Service) (api.LocalTextStatus, error) {
-	saved, err := readLocalText(root)
-	if err != nil {
-		return api.LocalTextStatus{}, err
-	}
-	status := api.LocalTextStatus{RestartRequired: saved.Profile != "" && saved != active}
+func localTextStatus(ctx context.Context, cfg config.Config, service *processing.Service, restartPending bool) (api.LocalTextStatus, error) {
+	status := api.LocalTextStatus{RestartRequired: restartPending}
 	for _, profile := range service.Profiles() {
 		if len(profile.QueryEmbeddingBindings) == 0 {
 			continue
@@ -155,6 +158,6 @@ func localTextStatus(ctx context.Context, root string, active config.LocalTextCo
 	if err != nil {
 		return status, fmt.Errorf("inspect local embeddings: %w", err)
 	}
-	status.DownloadBytes, status.Installing = files.DownloadBytes, files.Installing
+	status.DownloadBytes = files.DownloadBytes
 	return status, nil
 }

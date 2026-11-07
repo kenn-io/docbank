@@ -8654,8 +8654,6 @@ components:
         download_bytes:
           format: int64
           type: integer
-        installing:
-          type: boolean
         provider:
           enum:
             - ""
@@ -8669,7 +8667,6 @@ components:
         - active
         - provider
         - download_bytes
-        - installing
         - restart_required
       type: object
       x-go-type: api.LocalTextStatus

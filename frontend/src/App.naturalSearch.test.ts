@@ -278,7 +278,6 @@ function installHarness(options: HarnessOptions) {
         active: false,
         provider: "",
         download_bytes: 290_000_000,
-        installing: false,
         restart_required: false,
       });
     if (url.startsWith("/api/v1/audit/status?")) return json({ enabled: false, scopes: [] });
