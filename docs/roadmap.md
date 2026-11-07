@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-28
+last_edited: 2026-11-07
 title: Roadmap
 description: What Docbank does today, what it does not do yet, and what is planned.
 ---
@@ -27,7 +27,7 @@ review, and the next scope decisions.
 | Organize documents | Stable IDs, folders, tags, and atomic batch moves. The web app groups and colors tags | [Organizing](usage/organizing.md) |
 | Find documents | Ranked name and text search, filtering without a query, and saved queries and highlight sets in the web app and API | [Searching](usage/searching.md) |
 | Review and export | Frozen queries, verified ZIP bundles, dated search reports, load-file packages, and Bates-stamped selected pages | [Web application](usage/web.md) and [export bundles](usage/export-bundles.md) |
-| Redact and number one PDF | Review explicit masks, render and verify a redacted PDF, and retain a numbered delivery for recovery through the CLI and HTTP API | [Native PDF review and delivery](usage/document-processing.md#review-and-render-a-native-pdf) |
+| Redact and number one PDF | Review explicit masks, render and verify a redacted PDF, and retain a numbered delivery for recovery through the browser, CLI and HTTP API | [Native PDF review and delivery](usage/document-processing.md#review-and-render-a-native-pdf) |
 | Read email and recordings | Mailbox import, navigation between messages and their attachments, stored email PDFs, imported recordings, and timed transcripts | [Web application](usage/web.md#read-archived-email) and [processing](usage/document-processing.md) |
 | Organize photos | RAW/JPEG/XMP grouping, a web grid grouped by month or capture session, albums in the web app, CLI, or HTTP API, and metadata and album filters | [Photo assets](usage/photos.md) |
 | Keep earlier content | Immutable versions, revision checks, reversion, and history pruning on request | [Editing and versions](architecture/editing-and-versions.md) |

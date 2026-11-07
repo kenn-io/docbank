@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
+  import RedactionNumbering from "./RedactionNumbering.svelte";
+  import type { NumberingInputs } from "./redactionNumbering.js";
   import OriginalPreview from "./OriginalPreview.svelte";
   import type { PDFReviewBridge, ReaderReviewStatus, TextSelectionStatus } from "./pdfReview.js";
   import { checkMaskBudget, maskBoxes } from "./pdfTextSelection.js";
@@ -40,7 +42,11 @@
     onauthfailure,
     active = false,
     onworkspaceclose,
+    onpublished = () => {},
+    onproductions,
   }: {
+    onpublished?: () => void;
+    onproductions?: () => void;
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
@@ -58,6 +64,8 @@
   let textSelection = $state<TextSelectionStatus>({ busy: false, error: "" });
   let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
+  let numberingInputs = $state<NumberingInputs>();
+  let numberingLocked = $state(false);
   let preview = $state<RedactionPreview>();
   let expansion = $state<RedactionMask>();
   let error = $state("");
@@ -204,13 +212,14 @@
     void showPage();
   }
   function changed() {
+    if (!numberingLocked) numberingInputs = undefined;
     review = undefined;
     expansion = undefined;
     error = "";
     notice = "";
   }
   function addMask(selector: PDFRedactionSelector) {
-    if (busy || preview || !preparation) return;
+    if (busy || numberingLocked || preview || !preparation) return;
     const addition = { id: "00000000-0000-4000-8000-000000000001", selector };
     try {
       checkMaskBudget([...masks, addition]);
@@ -226,7 +235,7 @@
   }
   function addSelectedText() {
     const candidate = bridge?.selectedText();
-    if (!candidate || !preparation || busy || preview) return;
+    if (!candidate || !preparation || busy || numberingLocked || preview) return;
     try {
       // Admit with UUID-sized placeholders before allocating the mask IDs.
       const additions: RedactionMask[] = candidate.spans.map((span) => ({
@@ -263,7 +272,15 @@
     title = node.name;
   }
   async function renderPreview() {
-    if (!preparation || !masks.length || busy || dragging || phase === "release-failed") return;
+    if (
+      !preparation ||
+      !masks.length ||
+      busy ||
+      numberingLocked ||
+      dragging ||
+      phase === "release-failed"
+    )
+      return;
     controller.abort();
     controller = new AbortController();
     const signal = controller.signal,
@@ -287,6 +304,11 @@
       creationAttempted = true;
       const result = await createRedactionPreview(session, prep, selectedMasks, resolved, signal);
       if (signal.aborted || disposed) return;
+      numberingInputs = structuredClone({
+        preparation: $state.snapshot(prep),
+        masks: selectedMasks,
+        review: resolved,
+      });
       preview = result;
       phase = "ready";
       tab = "redacted";
@@ -375,8 +397,9 @@
     }
   }
   function savePrivate(kind: "preparation" | "masks" | "review") {
-    if (!review || !preparation) return;
-    const value = kind === "preparation" ? preparation : kind === "masks" ? masks : review;
+    const saved = review && preparation ? { preparation, masks, review } : numberingInputs;
+    if (!saved) return;
+    const value = saved[kind];
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(value)], { type: "application/json" }),
     );
@@ -399,6 +422,8 @@
     textSelection = { busy: false, error: "" };
     selectionAnnouncement = "";
     preparation = undefined;
+    numberingInputs = undefined;
+    numberingLocked = false;
     review = undefined;
     preview = undefined;
     expansion = undefined;
@@ -472,9 +497,9 @@
             boxes,
             gaps: preparation?.map.gaps ?? [],
             proposed: expansionBoxes,
-            drawing: drawing && !busy && !preview && !dialog,
+            drawing: drawing && !busy && !numberingLocked && !preview && !dialog,
             visible: tab === "original",
-            editable: phase === "editing" && !dialog && !preview && !busy,
+            editable: phase === "editing" && !dialog && !preview && !busy && !numberingLocked,
             oncommit: addBox,
             ondrag: (value) => untrack(() => (dragging = value)),
             ondrawing: (value) => untrack(() => (drawing = value)),
@@ -582,7 +607,7 @@
                       ].join(", ")}{/if}</span
                   ><Button
                     size="sm"
-                    disabled={busy || !!preview}
+                    disabled={busy || numberingLocked || !!preview}
                     onclick={() => {
                       changed();
                       masks = masks.filter((m) => !(group?.ids ?? [mask.id]).includes(m.id));
@@ -626,7 +651,7 @@
               </section>{/if}
           </aside>
         </div>
-        {#if review}<details>
+        {#if review || numberingInputs}<details>
             <summary>Private review files</summary>
             <p>
               Keep these for offline verification. Preparation contains unredacted evidence; do not
@@ -640,6 +665,15 @@
                 >{/each}
             </div>
           </details>{/if}
+        {#if numberingInputs}{#key numberingInputs.review.sha256}<RedactionNumbering
+              {session}
+              inputs={numberingInputs}
+              {title}
+              bind:locked={numberingLocked}
+              {onauthfailure}
+              {onpublished}
+              {onproductions}
+            />{/key}{/if}
         {#if preview}<p class="notice">
             Preview expires {new Date(preview.expires_at).toLocaleTimeString()}. It is removed on
             tab close, reload or daemon restart.
@@ -674,8 +708,9 @@
           <Button disabled={phase === "releasing"} onclick={() => void releaseUnreceivedPreview()}
             >Release preview</Button
           >
-        {:else if preview}<Button disabled={downloading} onclick={() => void back()}
-            >Back to masks</Button
+        {:else if preview}<Button
+            disabled={downloading || numberingLocked}
+            onclick={() => void back()}>Back to masks</Button
           ><Button
             tone="info"
             surface="solid"
@@ -683,7 +718,7 @@
             onclick={() => (dialog = "download")}>Confirm and download ZIP</Button
           >
         {:else if preparation}<Toggle
-            disabled={busy || !imageReady || masks.length >= 256}
+            disabled={busy || numberingLocked || !imageReady || masks.length >= 256}
             label="Draw rectangle"
             bind:checked={drawing}
             onchange={() => {
@@ -692,6 +727,7 @@
             }}
           /><Button
             disabled={busy ||
+              numberingLocked ||
               drawing ||
               !imageReady ||
               !textSelection.candidate ||
@@ -699,12 +735,16 @@
             onclick={addSelectedText}
             >{textSelection.busy ? "Matching text…" : "Mask selected text"}</Button
           >{#each [page] as pageNumber (pageNumber)}<Button
-              disabled={busy || !imageReady || masks.length >= 256}
+              disabled={busy || numberingLocked || !imageReady || masks.length >= 256}
               onclick={() => maskPage(pageNumber)}>Mask whole page {pageNumber}</Button
             >{/each}<Button
             tone="info"
             surface="solid"
-            disabled={busy || dragging || textSelection.busy || masks.length === 0}
+            disabled={busy ||
+              numberingLocked ||
+              dragging ||
+              textSelection.busy ||
+              masks.length === 0}
             onclick={() => void renderPreview()}>Preview redaction</Button
           >{/if}
       </div>
@@ -713,6 +753,10 @@
 </div>
 {#if dialog === "discard"}<Modal title="Discard redaction?" onclose={() => (dialog = undefined)}
     ><p>The masks and temporary preview will be removed. The original is unchanged.</p>
+    {#if numberingLocked}<p>
+        Any reserved numbers and retained original remain. Keep the private review files to finish
+        publication through the CLI.
+      </p>{/if}
     {#snippet footer()}<Button onclick={() => (dialog = undefined)}>Keep reviewing</Button><Button
         tone="danger"
         onclick={close}>Discard and close</Button

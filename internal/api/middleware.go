@@ -71,7 +71,7 @@ func timeoutExempt(method, path string) bool {
 		return true
 	}
 	switch path {
-	case "/api/v1/redaction/render":
+	case "/api/v1/redaction/render", redactionPublicationsPath:
 		return method == http.MethodPost
 	case "/api/v1/push/uploads":
 		return method == http.MethodPost
@@ -356,6 +356,12 @@ func isLoopbackContext(ctx context.Context) bool {
 
 func timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == redactionPublicationsPath {
+			ctx, cancel := redactionPublicationContext(w, r)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if timeoutExemptRequest(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -363,7 +369,7 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 		ctx := r.Context()
 		if r.Method == http.MethodPost {
 			switch r.URL.Path {
-			case processingPlansPath, kataCitePath, kataContextPath, "/api/v1/redaction/prepare", "/api/v1/redaction/resolve":
+			case processingPlansPath, kataCitePath, kataContextPath, "/api/v1/redaction/prepare", "/api/v1/redaction/resolve", "/api/v1/redaction/reservations":
 				ctx = context.WithValue(ctx, responseControllerContextKey{}, http.NewResponseController(w))
 			}
 			if r.URL.Path == processingPlansPath {

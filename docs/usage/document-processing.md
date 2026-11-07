@@ -230,8 +230,8 @@ A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions use resolve and the
-temporary-preview routes described below; direct render and reservations remain
-API-key-only. No MCP tool is exposed.
+temporary-preview and numbered-publication routes described below. The direct ZIP
+render remains API-key-only. No MCP redaction tool is exposed.
 
 ### Review a PDF in the browser
 
@@ -282,7 +282,7 @@ It uses rectangle capacity and keeps whitespace between the selected glyphs.
 
 **Back to reading** discards masks and preview after confirmation, then restores
 the reading position. The original stays loaded. Original print and export are
-disabled during review; delivery goes through the confirmed ZIP download.
+disabled during review. Download the reviewed ZIP, or keep a numbered PDF in Productions.
 
 The original is unchanged. A changed source version before preview requires
 reopening the intended PDF; tags, names and moves preserve masks. Once ready,
@@ -310,6 +310,34 @@ contains unredacted evidence. Keep all three separate from the delivery ZIP.
 Use them with [`redaction verify`](#check-and-retain-a-saved-archive).
 
 ### Deliver one reviewed PDF with Bates numbers
+
+In the browser, start from a ready redaction preview and choose **Number and keep
+PDF**. Select a namespace, or create one with a prefix, suffix and digit count.
+The first-number field starts at that namespace's next sequence. You can change
+it or choose **Refresh next number** before confirming. This is a suggestion:
+other reservations can advance the cursor, and label formats can collide.
+A conflict requires another explicit choice and confirmation.
+
+Check the displayed range, opt in to keeping the unredacted original indefinitely,
+and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
+a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
+points. The server verifies the content and footer before publication.
+**Download numbered PDF** downloads the retained PDF, and **Open Productions**
+opens its recovery view. Downloads check the retained file identity; masks and
+approved text are not rechecked. The plain preview and ZIP remain available
+until their usual expiry or discard. Download that ZIP before expiry if you need
+its sanitized-text sidecar; this action produces no numbered ZIP.
+
+A failed or canceled request cannot release reserved numbers. **Retry reservation**
+replays the same frozen range when its reply was uncertain. **Retry publication**
+uses the existing allocation, even if the live source was trashed and purged.
+A lost successful reply returns the first retained PDF without another render.
+Preview expiry does not erase an in-progress numbering request or its private
+review files. Closing the tab loses that draft. Save all three private files before
+reserving: finishing an unpublished range after a reload requires them through the
+CLI. Completed PDFs can be recovered by number without those files.
+
+The same workflow is available through the CLI:
 
 Reserve a range only when you intend to keep the original indefinitely. This
 creates a real collection snapshot that retains the unredacted original through
@@ -387,11 +415,14 @@ must match, and pixels outside the box must be white. Render-time verification
 still compares the complete raster exactly. Full verification still does not prove unmasked pixels match the source
 or authenticate the producer.
 
-Agents can reserve and render through the CLI or API-key-only
-`POST /api/v1/redaction/reservations` and `/api/v1/redaction/render` routes.
+Agents can reserve and render through the CLI or API-key authentication.
+Browser sessions and API-key callers can reserve through
+`POST /api/v1/redaction/reservations` and publish a retained PDF through
+`POST /api/v1/redaction/publications`. The ZIP-streaming `/api/v1/redaction/render`
+route remains API-key-only.
 The existing MCP `export_bates_file` tool supports the reduced recovery check
 and reports its scope. It does not accept review files or reserve numbered
-redactions. No browser control is included. Load-file exports accept ordinary
+redactions. Load-file exports accept ordinary
 stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
 
 ### Package completed numbered PDFs for a recipient
