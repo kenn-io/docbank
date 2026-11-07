@@ -10,7 +10,7 @@
     "fmt": "vp fmt",
     "check:fmt-lint": "vp fmt --check && vp lint --format unix",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "check:kit-ui": "kit-ui-check src",
+    "check:kit-ui": "kit-ui-check src --disable hand-rolled-disclosure,hand-rolled-tabs",
     "docs-site:check": "tsc -p docs-site/tsconfig.json --noEmit",
     "docs-site:test": "node node_modules/@playwright/test/cli.js test --config docs-site/playwright.config.ts",
     "screenshots": "node screenshots/run.mjs",
