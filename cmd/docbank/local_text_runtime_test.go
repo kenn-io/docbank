@@ -36,6 +36,16 @@ import (
 	"go.kenn.io/kit/embedlocal"
 )
 
+func localTextDiscoveryHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/ping", kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version}))
+	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":["nomic-embed-text"]}`))
+	})
+	return mux
+}
+
 func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -139,8 +149,8 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			releaseRequest := sync.OnceFunc(func() { close(release) })
 			var once sync.Once
 			var calls atomic.Int64
-			ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-			server := httptest.NewServer(withTextModelInventory(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ping := localTextDiscoveryHandler()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/embeddings" {
 					ping.ServeHTTP(w, r)
 					return
@@ -166,7 +176,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": data}))
-			})))
+			}))
 			defer server.Close()
 			defer releaseRequest()
 			dir, err := embedlocal.DefaultDir()
@@ -295,8 +305,8 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
 	}))
 	defer attacker.Close()
-	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	owner := httptest.NewServer(withTextModelInventory(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ping := localTextDiscoveryHandler()
+	owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/embeddings" {
 			ping.ServeHTTP(w, r)
 			return
@@ -308,7 +318,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 		ownerText = append(ownerText, request.Input...)
 		w.Header().Set("Content-Type", "application/json")
 		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
-	})))
+	}))
 	defer owner.Close()
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)
@@ -353,8 +363,8 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
-	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	server := httptest.NewServer(withTextModelInventory(t, ping))
+	ping := localTextDiscoveryHandler()
+	server := httptest.NewServer(ping)
 	defer server.Close()
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)

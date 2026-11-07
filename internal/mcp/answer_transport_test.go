@@ -24,12 +24,15 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-type questionOutageProvider struct{ descriptor document.EmbeddingDescriptor }
+type questionOutageProvider struct {
+	descriptor document.EmbeddingDescriptor
+	failQuery  bool
+}
 
 func (p questionOutageProvider) Descriptor() document.EmbeddingDescriptor { return p.descriptor }
 
-func (questionOutageProvider) Embed(_ context.Context, inputs []document.EmbeddingInput, _ document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
-	if inputs[0].Role == document.EmbeddingRoleQuery {
+func (p questionOutageProvider) Embed(_ context.Context, inputs []document.EmbeddingInput, _ document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
+	if p.failQuery && inputs[0].Role == document.EmbeddingRoleQuery {
 		return document.EmbeddingResult{}, errors.New("query provider returned 503")
 	}
 	vectors := make([]document.EmbeddingVector, len(inputs))
@@ -52,35 +55,8 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 		BlobHash: written.Hash, Extractor: "plain-text", ExtractorVersion: 1,
 		Status: store.ExtractionOK, Text: "The observatory opens at noon.",
 	}))
-	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
-	require.NoError(t, err)
-	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{
-		ID: "synthetic.embedding-v1", ContractVersion: document.EmbeddingProviderContractVersion,
-		PolicyFingerprint: strings.Repeat("a", 64), TrustBoundary: document.EmbeddingTrustLocalProcess,
-		Model: "synthetic-model", ModelRevision: "v1", Dimension: 2,
-		Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
-		ScalarEncoding: "float32", DocumentFormatter: "synthetic/document-v1", QueryFormatter: "synthetic/query-v1",
-		InputKinds:      []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile},
-		CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract,
-		SupportedRequestModes: []document.ModelInputMode{contract.Document.Mode},
-	})
-	require.NoError(t, err)
-	name, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
-	require.NoError(t, err)
-	profile.Profile.Rendition = nil
-	profile.RenditionProvider = nil
-	profile.Profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-	profile.Profile.Embeddings = []document.EmbeddingBindingV1{{
-		Name: "query", Activation: document.EmbeddingOptional, AuthorizationFingerprint: strings.Repeat("b", 64),
-		CredentialBinding: "credential:synthetic", DisclosureFingerprint: strings.Repeat("c", 64),
-		Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
-		Dimensions: descriptor.Dimension, CompatibilityID: descriptor.CompatibilityID,
-		DocumentFormatter: descriptor.DocumentFormatter, QueryFormatter: descriptor.QueryFormatter,
-		InputKind: document.EmbeddingInputOriginalFile, Model: descriptor.Model, ModelInput: descriptor.ModelInput,
-		Metric: descriptor.Metric, Normalization: descriptor.Normalization, ScalarEncoding: descriptor.ScalarEncoding,
-		TrustBoundary: string(descriptor.TrustBoundary), MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
-	}}
-	profile.EmbeddingProviders = map[string]document.EmbeddingProvider{"query": questionOutageProvider{descriptor}}
+	profile := newSearchTestEmbeddingProfile(t, f, document.EmbeddingInputOriginalFile, true)
+	name := "local-text"
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
 		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{name: profile}})
 	require.NoError(t, err)
@@ -257,7 +233,7 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				require.Equal(t, tc.code, objectField(t, result, "structuredContent")["code"])
 			}
 			wantCalls := 1
-			if tc.local {
+			if tc.local || tc.profile == "missing" {
 				wantCalls = 0
 			}
 			if strings.HasPrefix(tc.name, "lexical retry") {
@@ -276,14 +252,14 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 		wantAttempts                          []string
 		wantProfile, wantBinding, wantFailure string
 	}{
-		{name: "retry bindings in name order", failures: map[string]string{"a": "not_found", "c": "stale_index"},
+		{name: "retry bindings in name order", failures: map[string]string{"a": "index_unavailable", "c": "stale_index"},
 			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid"}, wantProfile: "z", wantBinding: "b"},
 		{name: "provider outage tries healthy next binding", failures: map[string]string{"a": "processing_failed"},
 			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid"}, wantProfile: "a", wantBinding: "c"},
-		{name: "exhaustion falls back lexically", exhaust: true, failures: map[string]string{"a": "not_found", "c": "stale_index", "b": "stale_index"},
-			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid", "a::lexical"}, wantProfile: "a", wantFailure: "not_found"},
-		{name: "reranking fallback uses compatible profile", rerank: true, exhaust: true, failures: map[string]string{"b": "not_found"},
-			wantAttempts: []string{"z:b:hybrid", "z::lexical"}, wantProfile: "z", wantFailure: "not_found"},
+		{name: "exhaustion falls back lexically", exhaust: true, failures: map[string]string{"a": "index_unavailable", "c": "stale_index", "b": "stale_index"},
+			wantAttempts: []string{"a:a:hybrid", "a:c:hybrid", "z:b:hybrid", "a::lexical"}, wantProfile: "a", wantFailure: "index_unavailable"},
+		{name: "reranking fallback uses compatible profile", rerank: true, exhaust: true, failures: map[string]string{"b": "index_unavailable"},
+			wantAttempts: []string{"z:b:hybrid", "z::lexical"}, wantProfile: "z", wantFailure: "index_unavailable"},
 		{name: "reranking without bindings searches lexically", rerank: true, noBindings: true,
 			wantAttempts: []string{"z::lexical"}, wantProfile: "z"},
 		{name: "explicit profile uses first binding", profile: "a",
@@ -323,9 +299,6 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 					}
 					if code := tc.failures[request.BindingID]; code != "" {
 						status := http.StatusConflict
-						if code == "not_found" {
-							status = http.StatusNotFound
-						}
 						if code == "processing_failed" {
 							status = http.StatusInternalServerError
 						}
@@ -441,4 +414,38 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 		})
 		require.Equal(t, "processing_profile_unavailable", unknown["code"])
 	}
+}
+
+func newSearchTestEmbeddingProfile(t *testing.T, f *nativeExportFixture, kind document.EmbeddingInputKind, failQuery bool) processing.ProfileConfig {
+	t.Helper()
+	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
+	require.NoError(t, err)
+	descriptor, err := document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{
+		ID: fmt.Sprintf("synthetic.%s-%t-v1", kind, failQuery), ContractVersion: document.EmbeddingProviderContractVersion,
+		PolicyFingerprint: strings.Repeat("a", 64), TrustBoundary: document.EmbeddingTrustLocalProcess,
+		Model: "synthetic-model", ModelRevision: "v1", Dimension: 2,
+		Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone,
+		ScalarEncoding: "float32", DocumentFormatter: "synthetic/document-v1", QueryFormatter: "synthetic/query-v1",
+		InputKinds:      []document.EmbeddingInputKind{kind},
+		CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract,
+		SupportedRequestModes: []document.ModelInputMode{contract.Document.Mode},
+	})
+	require.NoError(t, err)
+	_, profile, err := processing.NewSuppliedMediaProfile(f.catalog, f.blobs, "test:operator")
+	require.NoError(t, err)
+	profile.Profile.Rendition = nil
+	profile.RenditionProvider = nil
+	profile.Profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.Profile.Embeddings = []document.EmbeddingBindingV1{{
+		Name: "query", Activation: document.EmbeddingOptional, AuthorizationFingerprint: strings.Repeat("b", 64),
+		CredentialBinding: "credential:synthetic", DisclosureFingerprint: strings.Repeat("c", 64),
+		Descriptor: document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint},
+		Dimensions: descriptor.Dimension, CompatibilityID: descriptor.CompatibilityID,
+		DocumentFormatter: descriptor.DocumentFormatter, QueryFormatter: descriptor.QueryFormatter,
+		InputKind: kind, Model: descriptor.Model, ModelInput: descriptor.ModelInput,
+		Metric: descriptor.Metric, Normalization: descriptor.Normalization, ScalarEncoding: descriptor.ScalarEncoding,
+		TrustBoundary: string(descriptor.TrustBoundary), MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxResponseBytes: 1 << 20,
+	}}
+	profile.EmbeddingProviders = map[string]document.EmbeddingProvider{"query": questionOutageProvider{descriptor: descriptor, failQuery: failQuery}}
+	return profile
 }

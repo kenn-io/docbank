@@ -238,6 +238,13 @@ fields are rejected. Every successful tool result contains both structured
 content and its JSON text representation. The complete result, including
 resource links, is capped at 1 MiB.
 
+Tests enforce a 150,000-byte default catalog budget and a 235,000-byte budget
+with all six write flags enabled, set from baseline measurements of 135,667 and
+213,288 bytes, respectively.
+They measure compact JSON of the complete client-decoded `tools/list` result
+with HTML escaping disabled to match the SDK, including output schemas,
+metadata, and cache fields; a larger catalog requires a reviewed budget edit.
+
 | Tool | Contract and important bounds |
 | --- | --- |
 | `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
@@ -249,8 +256,8 @@ resource links, is capped at 1 MiB.
 | `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
-| `find_conflicts` | Uses the query, profile, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
+| `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `find_conflicts` | Requires a processing profile and uses the query, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -336,8 +343,11 @@ searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
 hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
-skipped-reason codes of at most 64 characters each.
+skipped reasons of at most 2,048 characters each. The `skipped_reasons` array may contain both failure codes and setup guidance.
 
+With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. It may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable. With an explicit profile, `auto`, including an omitted mode, uses lexical search without semantic setup guidance. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
+
+An unknown profile returns `processing_profile_unavailable` with the available names. When no query binding was attempted, `hybrid` and profile-free `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. An unknown binding returns `not_found`. Selecting an image binding with `hybrid` returns keyword results and names a usable text-query binding when the profile has one. With `semantic`, the same selection returns `semantic_unavailable` and names that text-query binding. When all query candidates fail, lexical fallback reports the first failure code and adds guidance for consent or index setup. `semantic` preserves `consent_required` when consent is missing, expired, or revoked. Other `semantic` failures return `semantic_unavailable` with the failure cause or setup guidance.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
@@ -398,10 +408,10 @@ secrets, daemon keys, or unrequested document text.
 
 ### Find differing figures
 
-Call `find_conflicts` with search terms and a source selector. For example:
+Call `find_conflicts` with search terms, an explicit profile, and a source selector. Profile discovery is available only in `search_documents`. For example:
 
 ```json
-{"name":"find_conflicts","arguments":{"query":"cooling period","profile":"default","filters":{}}}
+{"name":"find_conflicts","arguments":{"query":"cooling period","profile":"supplied-captions","filters":{}}}
 ```
 
 If matching sentences say "The cooling period is 7 days." and "The cooling

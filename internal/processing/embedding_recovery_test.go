@@ -486,7 +486,7 @@ func TestSearchAllLiveEmptyScope(t *testing.T) {
 			}
 			report, err := service.Search(t.Context(), SearchRequest{Profile: "current", Query: "synthetic", Mode: "hybrid", AllLive: filters})
 			if name == "populated without index" {
-				require.ErrorIs(t, err, store.ErrNotFound)
+				require.ErrorIs(t, err, store.ErrVectorIndexUnavailable)
 				return
 			}
 			require.NoError(t, err)
