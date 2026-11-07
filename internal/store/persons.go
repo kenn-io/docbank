@@ -496,13 +496,14 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 			continue
 		}
 		people = append(people, person)
-		slices.SortFunc(people, comparePeopleRecent)
-		if len(people) > limit {
-			people = people[:limit]
-		}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
+	}
+	// The walk already orders ranks. Finish the boundary's ties before paging.
+	slices.SortFunc(people, comparePeopleRecent)
+	if len(people) > limit {
+		people = people[:limit]
 	}
 	if len(people) > 0 {
 		ids := make([]string, len(people))
