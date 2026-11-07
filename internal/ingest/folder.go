@@ -245,6 +245,9 @@ func (s *FolderScanner) failScan(ref string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.result.Complete = false
+	if ref == "" {
+		return // Scan-level errors are not additional failed sources.
+	}
 	if _, exists := e.failed[ref]; !exists {
 		e.failed[ref] = struct{}{}
 		e.result.Failed++

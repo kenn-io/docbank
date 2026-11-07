@@ -186,7 +186,11 @@ func TestFolderPublicationIncompleteEvidence(t *testing.T) {
 			}
 			require.Len(t, results, 1)
 			assert.False(t, results[0].Complete, "continued/skipped failures are not absence evidence")
-			assert.Positive(t, results[0].Failed)
+			if mode == "root replaced" {
+				assert.EqualValues(t, 1, results[0].Failed, "replacement interrupts one file observation; final root verification adds no source failure")
+			} else {
+				assert.Positive(t, results[0].Failed)
+			}
 		})
 	}
 }
@@ -246,4 +250,45 @@ func TestFolderPublicationRootChangeAfterCompletionKeepsReceipt(t *testing.T) {
 	}
 	require.NoError(t, scanner.ScanOnce(t.Context(), 1))
 	require.True(t, completed)
+}
+
+func TestFolderPublicationFailureCountsOnlySources(t *testing.T) {
+	for _, mode := range []string{"file", "status", "root"} {
+		t.Run(mode, func(t *testing.T) {
+			failure := errors.New("synthetic terminal failure")
+			scanner, _ := publicationScanner(t, func(context.Context, FolderFile) error { return failure })
+			if mode == "root" {
+				failure = ErrSourceChanged
+				root := scanner.watcher.config.Source
+				moved := root + "-moved"
+				t.Cleanup(func() { _ = os.RemoveAll(moved) })
+				scanner.BeforeScan = func(context.Context, FolderScan) error {
+					if err := os.Rename(root, moved); err != nil {
+						t.Skipf("opened root rename unavailable: %v", err)
+					}
+					return os.Mkdir(root, 0o700)
+				}
+			} else if mode == "file" {
+				require.NoError(t, os.WriteFile(filepath.Join(scanner.watcher.config.Source, "a.md"), []byte("note"), 0o600))
+			} else {
+				calls := 0
+				scanner.ScanStatus = func(context.Context, FolderScanStatus) error {
+					calls++
+					if calls == 2 {
+						return failure
+					}
+					return nil
+				}
+			}
+			var result FolderScanResult
+			scanner.AfterScan = func(_ context.Context, r FolderScanResult) error { result = r; return nil }
+			require.ErrorIs(t, scanner.ScanOnce(t.Context(), 1), failure)
+			require.False(t, result.Complete)
+			if mode == "file" {
+				require.EqualValues(t, 1, result.Failed, "one failed file must not be counted again as a scan error")
+			} else {
+				require.Zero(t, result.Failed, "a scan-only failure has no failed source")
+			}
+		})
+	}
 }
