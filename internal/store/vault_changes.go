@@ -34,6 +34,12 @@ func recordVaultChangesTx(ctx context.Context, tx *sql.Tx, kind string, nodeIDs 
 	if len(nodeIDs) == 0 {
 		return nil
 	}
+	switch kind {
+	case "version_added", "moved", "trashed", "restored", "removed":
+		if err := invalidateNotePublicationsTx(ctx, tx, nodeIDs); err != nil {
+			return err
+		}
+	}
 	var high int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM vault_changes`).Scan(&high); err != nil {
 		return fmt.Errorf("allocating vault changes: %w", err)

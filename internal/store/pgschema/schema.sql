@@ -954,6 +954,21 @@ CREATE TABLE {{schema}}.note_publication_operations (
     receipt_json TEXT COLLATE "C" NOT NULL
 );
 
+CREATE TABLE {{schema}}.note_publication_recoveries (
+    publication_name TEXT COLLATE "C" NOT NULL,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    head_version_id TEXT COLLATE "C" NOT NULL,
+    source_revision BIGINT NOT NULL,
+    PRIMARY KEY(publication_name,source_ref),
+    FOREIGN KEY(publication_name,source_ref) REFERENCES {{schema}}.published_note_sources(publication_name,source_ref)
+);
+CREATE TABLE {{schema}}.note_publication_recovery_operations (
+    operation_id TEXT COLLATE "C" PRIMARY KEY,
+    request_sha256 TEXT COLLATE "C" NOT NULL,
+    grant_json TEXT COLLATE "C" NOT NULL
+);
+
+
 CREATE TABLE {{schema}}.push_sources (
     push_name          TEXT COLLATE "C" NOT NULL,
     source_ref         TEXT COLLATE "C" NOT NULL,

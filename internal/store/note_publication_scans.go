@@ -124,7 +124,7 @@ func (s *Store) BeginNotePublicationScan(ctx context.Context, request NotePublic
 			return err
 		}
 		var reserved int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM note_publication_operations WHERE operation_id=$1`, request.OperationID).Scan(&reserved); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM note_publication_operations WHERE operation_id=$1)+(SELECT COUNT(*) FROM note_publication_recovery_operations WHERE operation_id=$1)`, request.OperationID).Scan(&reserved); err != nil {
 			return err
 		}
 		if reserved != 0 {
@@ -161,19 +161,20 @@ func (s *Store) BeginNotePublicationScan(ctx context.Context, request NotePublic
 }
 
 const publishedNoteSourceColumns = `s.publication_name,s.source_ref,s.node_id,s.content_version_id,s.blob_hash,s.size,s.source_revision,
-	p.namespace_revision,s.presence,s.availability,n.id,n.current_version_id,cv.blob_hash,cv.size,n.trashed_at,v.version_id`
+	p.namespace_revision,s.presence,s.availability,n.id,n.current_version_id,cv.blob_hash,cv.size,n.trashed_at,v.version_id,g.head_version_id,g.source_revision`
 const publishedNoteSourceFrom = `published_note_sources s JOIN note_publications p ON p.name=s.publication_name
 	LEFT JOIN nodes n ON n.id=s.node_id LEFT JOIN content_versions cv ON cv.version_id=n.current_version_id
-	LEFT JOIN content_versions v ON v.version_id=s.content_version_id`
+	LEFT JOIN content_versions v ON v.version_id=s.content_version_id
+ LEFT JOIN note_publication_recoveries g ON g.publication_name=s.publication_name AND g.source_ref=s.source_ref`
 
 func scanPublishedNote(row scanner, vaultID string) (NotePublicationSource, error) {
 	var source NotePublicationSource
-	var nodeID, size sql.NullInt64
-	var version, hash, trashed, retained sql.NullString
+	var nodeID, size, grantRevision sql.NullInt64
+	var version, hash, trashed, retained, grantHead sql.NullString
 	id := &source.Identity
 	id.VaultID = vaultID
 	err := row.Scan(&id.Publication, &id.SourceRef, &id.NodeID, &id.ContentVersionID, &id.Hash, &id.Size, &id.SourceRevision,
-		&id.NamespaceRevision, &source.Presence, &source.Availability, &nodeID, &version, &hash, &size, &trashed, &retained)
+		&id.NamespaceRevision, &source.Presence, &source.Availability, &nodeID, &version, &hash, &size, &trashed, &retained, &grantHead, &grantRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return source, ErrNotFound
 	}
@@ -190,6 +191,9 @@ func scanPublishedNote(row scanner, vaultID string) (NotePublicationSource, erro
 		source.Conflict = "trashed"
 	} else if version.String != id.ContentVersionID {
 		source.Conflict = "diverged"
+	}
+	if grantHead.Valid && grantHead.String == version.String && grantRevision.Int64 == id.SourceRevision && source.Conflict == "diverged" {
+		source.Recovery = &NotePublicationRecoveryGrant{SourceRef: id.SourceRef, ExpectedHeadVersionID: grantHead.String, SourceRevision: grantRevision.Int64}
 	}
 	return source, nil
 }
@@ -296,7 +300,7 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 			return ErrPublicationScanSealed
 		}
 		var reserved int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM note_publication_scans WHERE begin_operation_id=$1`, request.OperationID).Scan(&reserved); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM note_publication_scans WHERE begin_operation_id=$1)+(SELECT COUNT(*) FROM note_publication_recovery_operations WHERE operation_id=$1)`, request.OperationID).Scan(&reserved); err != nil {
 			return err
 		}
 		if reserved != 0 {
@@ -317,7 +321,7 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 			if previous.Availability == "unavailable" {
 				return ErrNoteSourceUnavailable
 			}
-			if previous.Conflict != "" {
+			if previous.Conflict != "" && previous.Recovery == nil {
 				return ErrPublishedSourceDiverged
 			}
 		} else {
@@ -336,7 +340,7 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 			return err
 		}
 		node, outcome, err := s.acceptPushTx(ctx, tx, PushSource{Name: request.Name, Ref: request.SourceRef, ModifiedAt: request.ModifiedAt},
-			PushContent{RunID: scan.ScanID, ParentPath: request.ParentPath, Name: request.FileName, Hash: request.Hash, Size: request.Size, MIMEType: "text/markdown"}, segments, false, physical...)
+			PushContent{RunID: scan.ScanID, ParentPath: request.ParentPath, Name: request.FileName, Hash: request.Hash, Size: request.Size, MIMEType: "text/markdown"}, segments, exists && previous.Recovery != nil, physical...)
 		if err != nil {
 			return err
 		}

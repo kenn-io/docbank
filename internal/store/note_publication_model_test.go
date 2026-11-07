@@ -4,6 +4,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,6 +105,120 @@ func TestNotePublicationModel(t *testing.T) {
 					ht.Fatalf("step %d: source mismatch: %+v %v", step, page, err)
 				}
 				binding = page.Items[0].Identity
+			}
+		}
+	}, hegel.WithDatabase(t.TempDir()), hegel.WithTestCases(1000))
+}
+
+// The oracle tracks archive liveness, accepted identity and explicit permission,
+// rather than deriving eligibility from the implementation's conflict fields.
+func TestPublishedSourceLifecycleModel(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		commands := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 6)))
+		s := newTestStore(ht)
+		defer func() {
+			if err := s.Close(); err != nil {
+				ht.Fatal(err)
+			}
+			if err := os.RemoveAll(filepath.Dir(s.path)); err != nil {
+				ht.Fatal(err)
+			}
+		}()
+		scan := beginNoteScan(ht, s)
+		a := acceptNote(ht, s, noteUpload(ht, scan, "note.md", fakeHash("ab"), 0))
+		accepted, head, revision := a.Source.Identity.ContentVersionID, a.Source.Identity.ContentVersionID, int64(1)
+		trashed, available, granted := false, true, false
+		for step, command := range commands {
+			if step == 32 {
+				break
+			} // Bound executed I/O, not drawn histories.
+			node, err := s.NodeByID(ht.Context(), a.Source.Identity.NodeID)
+			if err != nil {
+				ht.Fatal(err)
+			}
+			switch command {
+			case 0:
+				if trashed {
+					break
+				}
+				_, version, err := s.ReplaceContent(ht.Context(), node.ID, node.Revision, fakeHash("bc"), 4, "text/markdown")
+				if err != nil {
+					ht.Fatal(err)
+				}
+				head, granted = version.ID, false
+			case 1:
+				if trashed {
+					break
+				}
+				if _, _, err := s.Trash(ht.Context(), node.ID, node.Revision); err != nil {
+					ht.Fatal(err)
+				}
+				trashed, granted = true, false
+			case 2:
+				if !trashed {
+					break
+				}
+				if _, _, err := s.Restore(ht.Context(), node.ID, node.Revision); err != nil {
+					ht.Fatal(err)
+				}
+				trashed = false
+			case 3:
+				if trashed || !available || head == accepted {
+					break
+				}
+				_, err := s.AcceptLocalPublishedNote(ht.Context(), NotePublicationAcceptLocalRequest{Name: "notebook", DatabaseEpoch: scan.DatabaseEpoch, SourceRef: "note.md", ExpectedHeadVersionID: head, ExpectedSourceRevision: revision, OperationID: noteOperationID(ht)})
+				if err != nil {
+					ht.Fatal(err)
+				}
+				granted = true
+			case 4:
+				receipt, err := s.AcceptPublishedNote(ht.Context(), noteUpload(ht, scan, "note.md", fakeHash("ab"), revision))
+				if !available {
+					if !errors.Is(err, ErrNoteSourceUnavailable) {
+						ht.Fatalf("want unavailable, got %v", err)
+					}
+				} else if trashed || (head != accepted && !granted) {
+					if !errors.Is(err, ErrPublishedSourceDiverged) {
+						ht.Fatalf("want diverged, got %v", err)
+					}
+				} else {
+					if err != nil {
+						ht.Fatal(err)
+					}
+					if granted {
+						revision++
+					}
+					accepted, head, granted = receipt.Source.Identity.ContentVersionID, receipt.Source.Identity.ContentVersionID, false
+				}
+			case 5:
+				if trashed {
+					break
+				}
+				if _, err := s.PruneContentVersions(ht.Context(), node.ID, node.Revision, VersionPruneSelector{KeepNewest: 1}, true); err != nil {
+					ht.Fatal(err)
+				}
+				if head != accepted {
+					available, granted = false, false
+				}
+			case 6:
+				if trashed {
+					break
+				}
+				if _, _, err := s.Move(ht.Context(), node.ID, s.RootID(), fmt.Sprintf("moved-%d.md", step), node.Revision); err != nil {
+					ht.Fatal(err)
+				}
+			}
+			source := publishedSource(ht, s, scan)
+			wantConflict := ""
+			if !available {
+				wantConflict = "unavailable"
+			} else if trashed {
+				wantConflict = "trashed"
+			} else if head != accepted {
+				wantConflict = "diverged"
+			}
+			if source.Identity.ContentVersionID != accepted || source.Identity.SourceRevision != revision || source.Identity.SourceRef != "note.md" || source.Conflict != wantConflict || (source.Recovery != nil) != granted {
+				ht.Fatalf("step%d command%d expected accepted=%s rev=%d conflict=%s grant=%v; got %+v", step, command, accepted, revision, wantConflict, granted, source)
 			}
 		}
 	}, hegel.WithDatabase(t.TempDir()), hegel.WithTestCases(1000))

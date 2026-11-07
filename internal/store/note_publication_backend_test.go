@@ -38,3 +38,36 @@ func checkNotePublicationScanBackend(t *testing.T, s *Store) {
 	require.EqualValues(t, 1, status.Absent)
 	require.EqualValues(t, 0, status.Present)
 }
+
+func checkNotePublicationLifecycleSQLite(t *testing.T) {
+	t.Parallel()
+	checkNotePublicationLifecycleBackend(t, newTestStore(t))
+}
+
+func checkNotePublicationLifecyclePostgres(t *testing.T) {
+	t.Parallel()
+	checkNotePublicationLifecycleBackend(t, newPostgresQueryStore(t))
+}
+
+func checkNotePublicationLifecycleBackend(t *testing.T, s *Store) {
+	t.Helper()
+	scan := beginNoteScan(t, s)
+	a := acceptNote(t, s, noteUpload(t, scan, "note.md", fakeHash("ab"), 0))
+	node, err := s.NodeByID(t.Context(), a.Source.Identity.NodeID)
+	require.NoError(t, err)
+	node, b, err := s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("bc"), 4, "text/markdown")
+	require.NoError(t, err)
+	require.Equal(t, "diverged", publishedSource(t, s, scan).Conflict)
+	_, err = s.AcceptLocalPublishedNote(t.Context(), NotePublicationAcceptLocalRequest{Name: "notebook", DatabaseEpoch: scan.DatabaseEpoch, SourceRef: "note.md", ExpectedHeadVersionID: b.ID, ExpectedSourceRevision: a.Source.Identity.SourceRevision, OperationID: noteOperationID(t)})
+	require.NoError(t, err)
+	recovered := acceptNote(t, s, noteUpload(t, scan, "note.md", fakeHash("ab"), a.Source.Identity.SourceRevision))
+	require.NotEqual(t, a.Source.Identity.ContentVersionID, recovered.Source.Identity.ContentVersionID)
+	require.Nil(t, recovered.Source.Recovery)
+	node, err = s.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("cd"), 4, "text/markdown")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(t.Context(), node.ID, node.Revision, VersionPruneSelector{KeepNewest: 1}, true)
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", publishedSource(t, s, scan).Availability)
+}

@@ -50,11 +50,11 @@ type NotePublicationSource struct {
 }
 
 type NotePublicationStatus struct {
-	Name, DatabaseEpoch, LastCompleteAt, LastAcceptedAt string
-	NamespaceRevision                                   int64
-	ActiveScan                                          *NotePublicationScan
-	Incomplete                                          bool
-	Present, Absent, Unknown, Conflicts, Unavailable    int64
+	Name, DatabaseEpoch, LastCompleteAt, LastAcceptedAt               string
+	NamespaceRevision                                                 int64
+	ActiveScan                                                        *NotePublicationScan
+	Incomplete                                                        bool
+	Present, Absent, Unknown, Conflicts, Unavailable, RecoveryPending int64
 }
 
 // ValidatePublishedNoteSource validates the portable observation, independently
@@ -141,6 +141,13 @@ func notePublicationStatusTx(ctx context.Context, q metadataQuerier, name string
 		FROM published_note_sources s LEFT JOIN nodes n ON n.id=s.node_id
 		LEFT JOIN content_versions v ON v.version_id=s.content_version_id WHERE s.publication_name=?`, name).
 		Scan(&status.Present, &status.Absent, &status.Unknown, &status.Conflicts, &status.Unavailable)
+	if err == nil {
+		err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM note_publication_recoveries g
+        JOIN published_note_sources s ON s.publication_name=g.publication_name AND s.source_ref=g.source_ref
+        JOIN nodes n ON n.id=s.node_id
+        WHERE g.publication_name=$1 AND g.head_version_id=n.current_version_id AND g.source_revision=s.source_revision
+        AND s.availability='retained' AND n.trashed_at IS NULL`, name).Scan(&status.RecoveryPending)
+	}
 	return status, err
 }
 

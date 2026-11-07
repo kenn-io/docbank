@@ -90,7 +90,10 @@ func validateNotePublicationMetadata(ctx context.Context, q metadataQuerier) err
 		LEFT JOIN note_publications p ON p.name=s.publication_name
 		LEFT JOIN content_versions v ON v.version_id=s.content_version_id
 		LEFT JOIN nodes n ON n.id=s.node_id
-		WHERE p.name IS NULL OR (s.availability='retained' AND
+		WHERE p.name IS NULL
+        OR EXISTS(SELECT 1 FROM push_sources ps WHERE ps.push_name=s.publication_name AND ps.source_ref=s.source_ref AND ps.node_id<>s.node_id)
+        OR EXISTS(SELECT 1 FROM push_sources ps WHERE ps.node_id=s.node_id AND (ps.push_name<>s.publication_name OR ps.source_ref<>s.source_ref))
+        OR (s.availability='retained' AND
 		(n.id IS NULL OR v.version_id IS NULL OR v.node_id<>s.node_id OR v.blob_hash<>s.blob_hash OR v.size<>s.size))`).Scan(&invalid)
 	if err != nil {
 		return err

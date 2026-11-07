@@ -55,6 +55,20 @@ CREATE TABLE IF NOT EXISTS note_publication_operations (
     receipt_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS note_publication_recoveries (
+    publication_name TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    head_version_id TEXT NOT NULL,
+    source_revision BIGINT NOT NULL,
+    PRIMARY KEY(publication_name,source_ref),
+    FOREIGN KEY(publication_name,source_ref) REFERENCES published_note_sources(publication_name,source_ref)
+);
+CREATE TABLE IF NOT EXISTS note_publication_recovery_operations (
+    operation_id TEXT PRIMARY KEY,
+    request_sha256 TEXT NOT NULL,
+    grant_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS export_sources (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

@@ -11,6 +11,9 @@ import (
 // Released SQLite triggers own these epochs; PostgreSQL advances them in the
 // same writer transaction before assertions and event heads disappear.
 func (s *Store) beforeContentVersionDeletionTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
+	if err := invalidatePrunedNoteVersionsTx(ctx, tx, versionIDs); err != nil {
+		return err
+	}
 	if s.postgresSchema == "" || len(versionIDs) == 0 {
 		return nil
 	}
