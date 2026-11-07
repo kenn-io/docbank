@@ -283,7 +283,7 @@ func openPersonCandidateCount(ctx context.Context, q metadataQuerier) (int64, bo
 
 func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDecision) (PersonMatchCandidate, error) {
 	if validateUUIDv4(decision.CandidateID) != nil || decision.ExpectedRevision < 1 ||
-		!slices.Contains([]string{"link", "reject", "new_person"}, decision.Action) ||
+		!slices.Contains([]string{"link", faceDecisionReject, "new_person"}, decision.Action) ||
 		(decision.Action == "link") != (decision.PersonID != "") ||
 		(decision.PersonID != "" && validateUUIDv4(decision.PersonID) != nil) {
 		return PersonMatchCandidate{}, ErrInvalidPerson
@@ -295,7 +295,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		return PersonMatchCandidate{}, ErrInvalidPerson
 	}
 	selected := make(map[string]bool, len(decision.FaceIDs))
-	if decision.FaceIDs != nil && (!decision.FaceOnly || decision.Action == "reject" || len(decision.FaceIDs) == 0 || len(decision.FaceIDs) > 48) {
+	if decision.FaceIDs != nil && (!decision.FaceOnly || decision.Action == faceDecisionReject || len(decision.FaceIDs) == 0 || len(decision.FaceIDs) > 48) {
 		return PersonMatchCandidate{}, ErrInvalidPerson
 	}
 	for _, id := range decision.FaceIDs {
@@ -320,7 +320,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			return ErrStaleRevision
 		}
 		var occurrences []PersonCandidateOccurrence
-		if candidate.Reason == personCandidateReasonFaceMatch || decision.Action != "reject" {
+		if candidate.Reason == personCandidateReasonFaceMatch || decision.Action != faceDecisionReject {
 			occurrences, err = decodeStoredCandidateEvidence(candidate.Evidence)
 			if err != nil {
 				return err
@@ -352,13 +352,13 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id AND a.action='assert' WHERE f.face_id=? AND f.content_version_id=?)`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&assigned); err != nil {
 					return err
 				}
-				if assigned && decision.FaceOnly && decision.Action != "reject" {
+				if assigned && decision.FaceOnly && decision.Action != faceDecisionReject {
 					continue
 				}
 				activeOccurrences = append(activeOccurrences, occurrence)
 			}
 			occurrences = activeOccurrences
-			if len(occurrences) == 0 && decision.Action != "reject" {
+			if len(occurrences) == 0 && decision.Action != faceDecisionReject {
 				return ErrNotFound
 			}
 			for _, o := range occurrences {
@@ -372,7 +372,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				if e := requireFaceOccurrenceTx(ctx, tx, o); e != nil {
 					return e
 				}
-				if decision.Action == "reject" && candidate.SuggestedPersonID != "" {
+				if decision.Action == faceDecisionReject && candidate.SuggestedPersonID != "" {
 					var assigned bool
 					if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE f.face_id=? AND f.content_version_id=? AND a.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?))`, o.EvidenceID, o.ContentVersionID, candidate.SuggestedPersonID, candidate.SuggestedPersonID).Scan(&assigned); err != nil {
 						return err

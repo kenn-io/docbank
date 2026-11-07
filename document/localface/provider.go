@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -42,7 +43,7 @@ func (p *Provider) Embed(ctx context.Context, inputs []document.EmbeddingInput, 
 	}
 	client, err := embedclient.New(embedclient.Options{Model: embedconfig.Model{Name: embedclient.FaceModel, Dimensions: 512, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone}, Deployment: embedconfig.Deployment{BaseURL: strings.TrimRight(origin, "/") + "/v1"}})
 	if err != nil {
-		return document.EmbeddingResult{}, err
+		return document.EmbeddingResult{}, fmt.Errorf("create local face client: %w", err)
 	}
 	var preview []byte
 	boxes := make([]embedclient.FaceBox, len(inputs))
@@ -64,7 +65,7 @@ func (p *Provider) Embed(ctx context.Context, inputs []document.EmbeddingInput, 
 	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(inputs))}
 	batch, err := client.EmbedFaces(ctx, preview, boxes)
 	if err != nil {
-		return document.EmbeddingResult{}, err
+		return document.EmbeddingResult{}, fmt.Errorf("embed local faces: %w", err)
 	}
 	for i, item := range batch.Data {
 		result.Vectors[i] = document.EmbeddingVector{Key: inputs[i].Key, Values: item.Embedding}

@@ -13,6 +13,7 @@ import (
 
 type FaceSuggestionFace struct {
 	PhotoFace
+
 	PersonID        string             `json:"person_id,omitzero"`
 	PersonName      string             `json:"person_name,omitzero"`
 	PhotoNodeID     int64              `json:"photo_node_id"`
@@ -35,16 +36,16 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx) ([]FaceS
 	if err != nil {
 		return nil, err
 	}
+	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	var faces []PhotoFace
 	for rows.Next() {
 		face, err := scanPhotoFace(rows)
 		if err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		faces = append(faces, face)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	if err := s.readFaceDecisionsQuery(ctx, tx, faces, ""); err != nil {
@@ -55,15 +56,15 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx) ([]FaceS
 	if err != nil {
 		return nil, err
 	}
+	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	for rows.Next() {
 		var face FaceSuggestionFace
 		if err := rows.Scan(&face.FaceID, &face.PhotoNodeID, &face.PhotoRecordedAt, &face.PersonID, &face.PersonName, &face.Hidden); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		metadata[face.FaceID] = face
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	byVersion := map[string][]FaceSuggestionFace{}
@@ -174,7 +175,7 @@ func (s *Store) FaceCandidates(ctx context.Context, limit, offset int) ([]FaceCa
 			return hiddenErr
 		}
 		hideLocked := hiddenErr != nil
-		visible += ` AND (suggested_person_id IS NULL OR EXISTS(SELECT 1 FROM persons WHERE persons.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=person_match_candidates.suggested_person_id),person_match_candidates.suggested_person_id) AND persons.state<>'retired' AND ` + personVisibleSQL("persons.person_id", [3]string{"$1", "$2", "$3"}) + `))`
+		visible += ` AND (suggested_person_id IS NULL OR EXISTS(SELECT 1 FROM persons WHERE persons.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=person_match_candidates.suggested_person_id),person_match_candidates.suggested_person_id) AND persons.state<>'retired' AND ` + personVisibleSQL([3]string{"$1", "$2", "$3"}) + `))`
 		locked := 0
 		if hideLocked {
 			locked = 1

@@ -104,7 +104,7 @@ func registerMailboxOpenAPI(api huma.API) {
 			if r.id == "mailboxOccurrences" {
 				kind, format = mailboxIntegerType, "int64"
 			}
-			op.Parameters = append(op.Parameters, &huma.Param{Name: "after", In: openAPIQueryLocation, Schema: &huma.Schema{Type: kind, Format: format}}, &huma.Param{Name: "limit", In: openAPIQueryLocation, Description: "Page size, 1 through 100", Schema: &huma.Schema{Type: mailboxIntegerType}})
+			op.Parameters = append(op.Parameters, &huma.Param{Name: "after", In: openAPIQueryLocation, Schema: &huma.Schema{Type: kind, Format: format}}, &huma.Param{Name: packageLimitParameter, In: openAPIQueryLocation, Description: "Page size, 1 through 100", Schema: &huma.Schema{Type: mailboxIntegerType}})
 		}
 		api.OpenAPI().AddOperation(op)
 	}

@@ -15,6 +15,7 @@ import (
 )
 
 func TestReviewPairedFaceSources(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
 	f := x.f

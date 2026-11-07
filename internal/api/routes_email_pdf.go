@@ -94,7 +94,7 @@ func registerEmailPDFRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		_, _ = w.Write(b) // Independently parsed PDF bytes, served as an attachment with application/pdf and nosniff.
 	})
 	registry := api.OpenAPI().Components.Schemas
-	versionParam := &huma.Param{Name: "version_id", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
+	versionParam := &huma.Param{Name: "version_id", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}
 	profileParam := &huma.Param{Name: "profile", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType}}
 	jobParam := &huma.Param{Name: "job_id", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType}}
 	api.OpenAPI().AddOperation(&huma.Operation{OperationID: "renderEmailPDF", Method: "POST", Path: "/api/v1/email-pdfs", Summary: "Render one exact email version as a retained verified PDF", RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{emailDocumentJSONMediaType: {Schema: registry.Schema(reflect.TypeFor[document.EmailPDFRequest](), true, "")}}}, Responses: map[string]*huma.Response{"200": {Description: "Existing rendition job and exact retained receipt", Content: map[string]*huma.MediaType{emailDocumentJSONMediaType: {Schema: registry.Schema(reflect.TypeFor[document.EmailPDFJob](), true, "")}}}}})

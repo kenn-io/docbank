@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,7 @@ import (
 )
 
 func TestFaceSuggestionsMatchClusterAndMask(t *testing.T) {
+	t.Parallel()
 	face := func(id string, values []float32) faceVector {
 		return faceVector{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: id, ContentVersionID: "00000000-0000-4000-8000-000000000010"}}, Space: "model", Values: values}
 	}
@@ -36,6 +38,7 @@ func TestFaceSuggestionsMatchClusterAndMask(t *testing.T) {
 }
 
 func TestFaceSuggestionEvidenceSplitRetainsLastPair(t *testing.T) {
+	t.Parallel()
 	var vectors []faceVector
 	for i := range 49 {
 		vectors = append(vectors, faceVector{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), ContentVersionID: "00000000-0000-4000-8000-000000000100"}}, Space: "model", Values: []float32{1, 0}})
@@ -47,6 +50,7 @@ func TestFaceSuggestionEvidenceSplitRetainsLastPair(t *testing.T) {
 	require.EqualValues(t, 2, suggestions[1].OccurrenceCount)
 }
 func TestFaceSuggestionCentroidAndActiveAssignment(t *testing.T) {
+	t.Parallel()
 	id := "00000000-0000-4000-8000-000000000010"
 	vectors := []faceVector{
 		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000001", ContentVersionID: id, AssertionID: "named"}, PersonID: id, PersonName: "Ada"}, Space: "model", Values: []float32{.6, .8}},
@@ -68,8 +72,8 @@ func TestFaceSuggestionCentroidAndActiveAssignment(t *testing.T) {
 // faces, rather than hiding the scaling cost behind duplicate vectors.
 func BenchmarkFaceSuggestionsDistinct(b *testing.B) {
 	for _, count := range []int{2000, 8000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
-			random := rand.New(rand.NewPCG(1, 2))
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			random := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: deterministic synthetic face vectors.
 			vectors := make([]faceVector, count)
 			for i := range vectors {
 				values := make([]float32, 512)

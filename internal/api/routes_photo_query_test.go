@@ -797,7 +797,7 @@ func TestSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 			response, body = get(t, ts, sourcePath, headers)
 			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-			asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
 			require.NoError(t, err)
 			_, _, err = s.Trash(ctx, source.ID, source.Revision)
 			require.NoError(t, err)
@@ -805,7 +805,6 @@ func TestSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 			response, body = get(t, ts, sourcePath, headers)
 			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-
 		})
 	}
 }

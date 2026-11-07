@@ -14,6 +14,7 @@ import (
 )
 
 func TestFaceDismissedRegroupKeepsDecisionIdentity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	nodes := []Node{browsePhotoNode(t, s, "a.jpg", fakeHash("a1"), "image/jpeg"), browsePhotoNode(t, s, "b.jpg", fakeHash("b2"), "image/jpeg"), browsePhotoNode(t, s, "c.jpg", fakeHash("c3"), "image/jpeg")}
@@ -43,6 +44,7 @@ func TestFaceDismissedRegroupKeepsDecisionIdentity(t *testing.T) {
 }
 
 func TestFaceConfirmedGroupReturnsAfterRetraction(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, first := faceForDecisionTest(t, s, "")
@@ -66,6 +68,7 @@ func TestFaceConfirmedGroupReturnsAfterRetraction(t *testing.T) {
 }
 
 func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"new person", "existing", "dismiss"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
@@ -118,6 +121,7 @@ func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
 	}
 }
 func TestFaceSuggestionRegroupPreservesRejectedEvidence(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, first := faceForDecisionTest(t, s, "")
@@ -161,6 +165,7 @@ func TestFaceSuggestionRegroupPreservesRejectedEvidence(t *testing.T) {
 }
 
 func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, first := faceForDecisionTest(t, s, "")
@@ -197,6 +202,7 @@ func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
 }
 
 func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Old Name", "operator")
@@ -242,7 +248,6 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, survivor.PersonID, rows[0].SuggestedPersonID)
 	require.Equal(t, survivor.DisplayName, rows[0].DisplayName)
-
 }
 
 func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {

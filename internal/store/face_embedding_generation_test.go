@@ -8,6 +8,7 @@ import (
 )
 
 func TestFaceEmbeddingIdentityLiteral(t *testing.T) {
+	t.Parallel()
 	face := PhotoFace{FaceID: "00000000-0000-4000-8000-000000000001", Box: document.FaceBox{X: .125, Y: .25, Width: .5, Height: .375}}
 	checksum := FaceEmbeddingChecksum(fakeHash("a1"), face)
 	require.Equal(t, "9a45296aeab1e7db9b7af51435d3a1b019bfcfae747c8ac0d29369038a56e5fd", checksum)
@@ -24,6 +25,7 @@ func TestFaceEmbeddingIdentityLiteral(t *testing.T) {
 }
 
 func TestFaceVectorSubsetMembership(t *testing.T) {
+	t.Parallel()
 	first := "00000000-0000-4000-8000-000000000001"
 	second := "00000000-0000-4000-8000-000000000002"
 	generation := EmbeddingInputGenerationRecord{ChunkPolicyFingerprint: FaceEmbeddingPolicyFingerprint(), Inputs: []EmbeddingInputReference{{ID: first, RenderedChecksum: fakeHash("a1")}, {ID: second, RenderedChecksum: fakeHash("a1")}}}
