@@ -107,7 +107,8 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool, model string,
 	if err == nil {
 		return nil
 	}
-	if !errors.Is(err, embedlocal.ErrNotFound) {
+	var restart *embedlocal.RestartRequiredError
+	if !errors.Is(err, embedlocal.ErrNotFound) && !errors.As(err, &restart) {
 		return fmt.Errorf("discover embeddings server: %w", err)
 	}
 	dir, err := embedlocal.DefaultDir()
@@ -121,5 +122,8 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool, model string,
 		return true, nil
 	}
 	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Model: model, Confirm: report})
+	if err == nil && restart != nil {
+		return restart
+	}
 	return err
 }

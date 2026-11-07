@@ -49,19 +49,21 @@ func localTextDiscoveryHandler(model string) http.Handler {
 func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name         string
-		ready        bool
-		missingBytes int64
-		installed    bool
-		output       string
-		model        string
+		name           string
+		ready          bool
+		missingBytes   int64
+		installed      bool
+		output         string
+		model          string
+		discoveryError error
 	}{
-		{"ready", true, 0, false, "", embedlocal.TextModel},
-		{"installed_offline", false, 0, true, "", embedlocal.TextModel},
-		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", embedlocal.TextModel},
-		{"faces_ready", true, 0, false, "", embedlocal.FaceModel},
-		{"faces_installed_offline", false, 0, true, "", embedlocal.FaceModel},
-		{"faces_missing", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel},
+		{"ready", true, 0, false, "", embedlocal.TextModel, nil},
+		{"installed_offline", false, 0, true, "", embedlocal.TextModel, nil},
+		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", embedlocal.TextModel, nil},
+		{"faces_old_text_server", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel, &embedlocal.RestartRequiredError{PID: 12345}},
+		{"faces_ready", true, 0, false, "", embedlocal.FaceModel, nil},
+		{"faces_installed_offline", false, 0, true, "", embedlocal.FaceModel, nil},
+		{"faces_missing", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
@@ -74,6 +76,9 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 			err := installLocalTextWithRuntime(cmd, true, tc.model, func(_ context.Context, opts embedlocal.Options) (string, error) {
 				require.True(t, opts.SkipOllama)
 				require.Equal(t, tc.model, opts.Model)
+				if tc.discoveryError != nil {
+					return "", tc.discoveryError
+				}
 				if tc.ready {
 					return "http://127.0.0.1:11434/v1", nil
 				}
@@ -88,7 +93,11 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 				}
 				return embedlocal.Installation{Executable: "synthetic-kennembed", DataDir: t.TempDir()}, nil
 			})
-			require.NoError(t, err)
+			if tc.discoveryError != nil {
+				require.ErrorIs(t, err, tc.discoveryError)
+			} else {
+				require.NoError(t, err)
+			}
 			require.Equal(t, tc.installed, installed)
 			require.Equal(t, tc.output, output.String())
 		})
