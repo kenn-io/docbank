@@ -299,17 +299,11 @@ func webSessionRequestAllowed(r *http.Request) bool {
 				return false
 			}
 			for key, entries := range values {
-				if (key != "person_id" && key != "face_id") || len(entries) != 1 {
+				if (key != "person_id" && key != "face_id") || len(entries) != 1 || query.ValidateTextOperand("asset", entries[0]) != nil {
 					return false
 				}
 			}
 			if values.Has("person_id") && values.Has("face_id") {
-				return false
-			}
-			if values.Has("face_id") && query.ValidateTextOperand("asset", values.Get("face_id")) != nil {
-				return false
-			}
-			if values.Has("person_id") && query.ValidateTextOperand("asset", values.Get("person_id")) != nil {
 				return false
 			}
 			return r.Method == http.MethodGet && validPhotoPreviewPath(parts[0], parts[2])

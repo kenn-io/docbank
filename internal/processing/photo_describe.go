@@ -35,24 +35,20 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 	return document.RenditionInputOriginalFile
 }
 
-// photoDiscoveryScopes are the consent disclosures for inputs that queue every
-// eligible photo in the vault, not just the planned one. Each text extends the
-// one it broadens, so the greatest applicable text is the broadest. Face
-// embedding reads Hidden photos too.
-var photoDiscoveryScopes = map[string]string{
-	string(document.RenditionInputDerivedUpload): "Granting consent automatically queues eligible photos throughout this vault.",
-	string(document.EmbeddingInputImage):         "Granting consent automatically queues eligible photos throughout this vault.",
-	string(document.EmbeddingInputFace):          "Granting consent automatically queues eligible photos throughout this vault. Faces in Hidden photos are included.",
-}
-
-// photoDiscoveryScope discloses the broadest vault-wide queueing a photo
-// description, image embedding, or face embedding profile's consent grants.
+// photoDiscoveryScope discloses vault-wide photo processing and Hidden face inputs.
 func photoDiscoveryScope(profile configuredProfile) string {
-	scope := photoDiscoveryScopes[string(profileRenditionInput(profile))]
-	for _, binding := range profile.portable.Embeddings {
-		scope = max(scope, photoDiscoveryScopes[string(binding.InputKind)])
+	if slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+		return binding.InputKind == document.EmbeddingInputFace
+	}) {
+		return "Granting consent automatically queues eligible photos throughout this vault. Faces in Hidden photos are included."
 	}
-	return scope
+	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+		return binding.InputKind == document.EmbeddingInputImage
+	})
+	if images || profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		return "Granting consent automatically queues eligible photos throughout this vault."
+	}
+	return ""
 }
 
 func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {
