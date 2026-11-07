@@ -97,6 +97,11 @@ func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, n)
 			require.Equal(t, 1, x.calls)
+			coverage, err := x.service.Coverage(ctx, config.LocalFacesProfile, SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}})
+			require.NoError(t, err)
+			require.Len(t, coverage.Embeddings, 1)
+			require.Equal(t, 1, coverage.Embeddings[0].Complete, "aligned and all-unmatched attempts both finish processing")
+			require.Zero(t, coverage.Embeddings[0].Unavailable)
 			expected := make([]embedclient.FaceBox, len(x.inputs))
 			for i, f := range x.inputs {
 				expected[i] = embedclient.FaceBox(f.Box)

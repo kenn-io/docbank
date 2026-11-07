@@ -213,9 +213,9 @@ func processingFaceCoverageTx(ctx context.Context, tx *sql.Tx, profile, binding,
 		AND es.input_kind=h.input_kind AND es.vector_space_id=h.vector_space_id AND es.profile_fingerprint=h.profile_fingerprint
 		WHERE h.profile_fingerprint=$1 AND h.binding_id=$2 AND h.vector_space_id=$3 AND h.input_kind='face'
 		AND h.content_version_id IN (SELECT value FROM `+d.arrayValues("$4")+`)
-		UNION ALL SELECT generation_id, 2 FROM embedding_jobs
+		UNION ALL SELECT generation_id, CASE WHEN state='completed' THEN 1 ELSE 2 END FROM embedding_jobs
 		WHERE profile_fingerprint=$1 AND binding_id=$2 AND vector_space_id=$3 AND input_kind='face'
-		AND state IN ('queued','running','retry_wait')
+		AND state IN ('queued','running','retry_wait','completed')
 		AND content_version_id IN (SELECT value FROM `+d.arrayValues("$4")+`)`, profile, binding, space, versions)
 	if err != nil {
 		return err
