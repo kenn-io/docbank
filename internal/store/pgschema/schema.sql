@@ -901,6 +901,35 @@ CREATE TABLE {{schema}}.watch_source_absences (
         ON UPDATE CASCADE ON DELETE CASCADE
 );
 
+CREATE TABLE {{schema}}.note_publications (
+    name TEXT COLLATE "C" PRIMARY KEY,
+    destination TEXT COLLATE "C" NOT NULL,
+    policy_fingerprint TEXT COLLATE "C" NOT NULL,
+    namespace_revision BIGINT NOT NULL,
+    active BIGINT NOT NULL,
+    last_complete_at TEXT COLLATE "C" NOT NULL,
+    last_accepted_at TEXT COLLATE "C" NOT NULL
+);
+-- These identifiers intentionally have no FK into retained archive authority.
+CREATE TABLE {{schema}}.published_note_sources (
+    publication_name TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_publications(name),
+    source_ref TEXT COLLATE "C" NOT NULL,
+    node_id BIGINT NOT NULL UNIQUE,
+    content_version_id TEXT COLLATE "C" NOT NULL,
+    blob_hash TEXT COLLATE "C" NOT NULL,
+    size BIGINT NOT NULL,
+    source_revision BIGINT NOT NULL,
+    presence TEXT COLLATE "C" NOT NULL,
+    availability TEXT COLLATE "C" NOT NULL,
+    accepted_at TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY(publication_name,source_ref)
+);
+CREATE INDEX published_note_sources_version ON {{schema}}.published_note_sources(content_version_id);
+CREATE TABLE {{schema}}.note_publication_state (
+    singleton BIGINT PRIMARY KEY,
+    database_epoch TEXT COLLATE "C" NOT NULL
+);
+
 CREATE TABLE {{schema}}.push_sources (
     push_name          TEXT COLLATE "C" NOT NULL,
     source_ref         TEXT COLLATE "C" NOT NULL,

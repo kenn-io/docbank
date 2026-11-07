@@ -526,6 +526,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
 	}
+	if layout.schemaVersion >= notePublicationsStorageSchemaVersion {
+		if err := exportMetadataTables(ctx, tx, write, notePublicationMetadataTables); err != nil {
+			return err
+		}
+	}
 	if layout.hasPersons() {
 		if err := exportMetadataTables(ctx, tx, write, personMetadataTablesForSchema(layout.schemaVersion)); err != nil {
 			return err
@@ -1010,6 +1015,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 			return fmt.Errorf("restoring vault identity: %w", err)
 		}
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
+			return err
+		}
+		if err := initializeNotePublicationState(ctx, tx, true); err != nil {
 			return err
 		}
 		if err := rebuildImportedTextExtractionStateTx(ctx, tx); err != nil {
@@ -1593,6 +1601,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.hasPushSources() {
 		if err := validatePushSourceRelations(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= notePublicationsStorageSchemaVersion {
+		if err := validateNotePublicationMetadata(ctx, tx); err != nil {
 			return err
 		}
 	}

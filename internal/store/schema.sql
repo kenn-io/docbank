@@ -1,5 +1,36 @@
 -- docbank core schema. Idempotent: applied on every Open.
 
+-- Published source authority outlives archive retention. Deliberately avoid
+-- node/version/blob foreign keys: unavailable observations are tombstones.
+CREATE TABLE IF NOT EXISTS note_publications (
+    name TEXT PRIMARY KEY,
+    destination TEXT NOT NULL,
+    policy_fingerprint TEXT NOT NULL,
+    namespace_revision INTEGER NOT NULL,
+    active INTEGER NOT NULL,
+    last_complete_at TEXT NOT NULL,
+    last_accepted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS published_note_sources (
+    publication_name TEXT NOT NULL REFERENCES note_publications(name),
+    source_ref TEXT NOT NULL,
+    node_id INTEGER NOT NULL UNIQUE,
+    content_version_id TEXT NOT NULL,
+    blob_hash TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    source_revision INTEGER NOT NULL,
+    presence TEXT NOT NULL,
+    availability TEXT NOT NULL,
+    accepted_at TEXT NOT NULL,
+    PRIMARY KEY(publication_name,source_ref)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS published_note_sources_version ON published_note_sources(content_version_id);
+-- Operational and omitted from metadata JSONL, including backups.
+CREATE TABLE IF NOT EXISTS note_publication_state (
+    singleton INTEGER PRIMARY KEY,
+    database_epoch TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS export_sources (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

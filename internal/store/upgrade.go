@@ -134,6 +134,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV41SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 48, release: "v0.17.0", backupSuffix: ".schema-v48.bak",
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.17.0", schemaV48Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 48)
+		},
+		restoreSourceState:         restoreV48SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
@@ -143,6 +154,7 @@ var (
 
 // currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
+	"note_publications", "published_note_sources", "note_publication_state",
 	"blobs", "blob_packs", "vault_metadata",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",
@@ -803,6 +815,20 @@ func restoreV41SourceState(ctx context.Context, source metadataQuerier, target *
 	})
 }
 
+// A layout cutover preserves local watch evidence and the live change feed.
+// Backup restore intentionally omits them, but an upgrade must not make a
+// known-absent source present or silently drop a current feed cursor.
+func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	if err := restoreV41SourceState(ctx, source, target); err != nil {
+		return err
+	}
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return replaceImportedTables(ctx, source, tx, []string{
+			"watch_source_absences", "vault_change_head", "vault_changes", "photo_description_explicit_waiters",
+		})
+	})
+}
+
 // restoreRebuildReceipts copies document event and people rebuild receipts
 // with the epochs their progress counts against. Metadata import leaves both
 // out and starts the epochs over, so an upgrade would otherwise lose replay by
@@ -931,7 +957,12 @@ func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, t
 	if filter != "" {
 		query += ` WHERE ` + filter
 	}
-	rows, err := source.QueryContext(ctx, query+` ORDER BY rowid`)
+	order := "rowid"
+	if table == "watch_source_absences" {
+		// This released table is WITHOUT ROWID; its portable key is the order.
+		order = "watch_name,source_ref"
+	}
+	rows, err := source.QueryContext(ctx, query+` ORDER BY `+order)
 	if err != nil {
 		return fmt.Errorf("reading released %s: %w", table, err)
 	}

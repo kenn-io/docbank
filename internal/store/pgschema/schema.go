@@ -23,7 +23,7 @@ var schemaSQL string
 
 // SchemaVersion identifies disposable development schemas. Increment it whenever
 // schema.sql changes. Retained deployments will start a numbered migration chain.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Config names an application's dedicated schema and its setup role. The
 // operator provisions roles and grants; this package never creates roles or
@@ -96,6 +96,9 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_change_head(singleton,epoch) VALUES(1,$1)`, uuid.New().String()); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres change feed: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.note_publication_state(singleton,database_epoch) VALUES(1,$1)`, uuid.New().String()); err != nil {
+			return uuid.Nil(), fmt.Errorf("initialize postgres note publication state: %w", err)
 		}
 		// Shared queries compare timestamps as text, using fixed-width UTC values.
 		now := time.Now().UTC().Format(schemaformat.TimestampLayout)
