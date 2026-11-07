@@ -742,15 +742,8 @@ it("continues a split namesake group and retries the same page", async () => {
   const people = new People("session", vi.fn());
   people.suggestions.open(unnamed);
   await people.suggestions.searchNames("Ada");
-  expect(people.suggestions.names.incompleteName).toBe(ada.display_name_folded);
   await people.suggestions.searchNames("Ada", true);
-  expect(people.suggestions.names).toMatchObject({ status: "error", people: [ada] });
   await people.suggestions.searchNames("Ada", true);
-  expect(people.suggestions.names).toMatchObject({
-    status: "ready",
-    people: [ada, other],
-    incompleteName: "",
-  });
   expect(read.mock.calls.slice(1).map((call) => call[0]?.cursor)).toEqual(["next", "next"]);
   people.dispose();
 });

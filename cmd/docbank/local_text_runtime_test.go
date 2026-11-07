@@ -36,12 +36,12 @@ import (
 	"go.kenn.io/kit/embedlocal"
 )
 
-func localTextDiscoveryHandler() http.Handler {
+func localTextDiscoveryHandler(model string) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/ping", kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version}))
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":["nomic-embed-text"]}`))
+		_ = json.MarshalWrite(w, map[string]any{"models": []string{model}})
 	})
 	return mux
 }
@@ -155,7 +155,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			releaseRequest := sync.OnceFunc(func() { close(release) })
 			var once sync.Once
 			var calls atomic.Int64
-			ping := localTextDiscoveryHandler()
+			ping := localTextDiscoveryHandler(embedlocal.TextModel)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/embeddings" {
 					ping.ServeHTTP(w, r)
@@ -311,7 +311,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
 	}))
 	defer attacker.Close()
-	ping := localTextDiscoveryHandler()
+	ping := localTextDiscoveryHandler(embedlocal.TextModel)
 	owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/embeddings" {
 			ping.ServeHTTP(w, r)
@@ -378,16 +378,7 @@ func TestLocalProcessingEnablesWithoutInput(t *testing.T) {
 			t.Setenv("DO_NOT_TRACK", "1")
 			root := t.TempDir()
 			t.Setenv("DOCBANK_HOME", root)
-			ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v1/models" {
-					w.Header().Set("Content-Type", "application/json")
-					assert.NoError(t, json.MarshalWrite(w, map[string]any{"models": []string{tc.model}}))
-					return
-				}
-				ping.ServeHTTP(w, r)
-			})
-			server := httptest.NewServer(handler)
+			server := httptest.NewServer(localTextDiscoveryHandler(tc.model))
 			defer server.Close()
 			dir, err := embedlocal.DefaultDir()
 			require.NoError(t, err)
@@ -438,8 +429,17 @@ func TestLocalPlanPrintsScope(t *testing.T) {
 	require.Equal(t, "Selected synthetic documents", scope)
 }
 
-func TestFaceStartupDoesNotDownload(t *testing.T) {
+func TestFaceStartupReusesSelectedModel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	_, err := localEmbeddingOrigin(t.Context(), embedlocal.FaceModel)
-	require.ErrorContains(t, err, "provide Confirm")
+	server := httptest.NewServer(localTextDiscoveryHandler(embedlocal.FaceModel))
+	defer server.Close()
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	origin, err := localEmbeddingOrigin(t.Context(), embedlocal.FaceModel)
+	require.NoError(t, err)
+	require.Equal(t, server.URL, origin)
 }
