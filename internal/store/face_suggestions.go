@@ -26,13 +26,19 @@ type FaceSuggestionSet struct {
 	Faces []FaceSuggestionFace
 }
 
-func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx) ([]FaceSuggestionSet, error) {
+func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID string) ([]FaceSuggestionSet, error) {
 	var result []FaceSuggestionSet
-	ids, err := stringColumnTx(ctx, tx, "face vector heads", `SELECT h.embedding_set_id FROM embedding_heads h JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id WHERE h.input_kind='face' ORDER BY h.embedding_set_id`)
+	versions := `SELECT h.content_version_id FROM embedding_heads h WHERE h.input_kind='face'`
+	var args []any
+	if faceID != "" {
+		versions += ` AND (h.content_version_id=(SELECT content_version_id FROM photo_faces WHERE face_id=$1) OR EXISTS(SELECT 1 FROM photo_faces named JOIN person_document_assertions pa ON pa.assertion_id=named.assertion_id AND pa.action='assert' JOIN persons p ON p.person_id=pa.person_id AND p.state<>'retired' WHERE named.content_version_id=h.content_version_id))`
+		args = []any{faceID}
+	}
+	ids, err := stringColumnTx(ctx, tx, "face vector heads", `SELECT h.embedding_set_id FROM embedding_heads h JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id WHERE h.input_kind='face' AND h.content_version_id IN (`+versions+`) ORDER BY h.embedding_set_id`, args...)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id IN (SELECT content_version_id FROM embedding_heads WHERE input_kind='face') ORDER BY face_id`)
+	rows, err := tx.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id IN (`+versions+`) ORDER BY face_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -48,11 +54,11 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx) ([]FaceS
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.readFaceDecisionsQuery(ctx, tx, faces, ""); err != nil {
+	if err := s.readFaceDecisionsQuery(ctx, tx, faces, ` AND f.content_version_id IN (`+versions+`)`, args...); err != nil {
 		return nil, err
 	}
 	metadata := map[string]FaceSuggestionFace{}
-	rows, err = tx.QueryContext(ctx, `SELECT f.face_id,v.node_id,v.recorded_at,COALESCE(p.person_id,''),COALESCE(p.display_name,''),a.hidden_at IS NOT NULL FROM photo_faces f JOIN content_versions v ON v.version_id=f.content_version_id JOIN photo_files member ON member.node_id=v.node_id JOIN photo_assets a ON a.asset_id=member.asset_id LEFT JOIN person_document_assertions assertion ON assertion.assertion_id=f.assertion_id AND assertion.action='assert' LEFT JOIN persons p ON p.person_id=assertion.person_id AND p.state<>'retired' WHERE f.content_version_id IN (SELECT content_version_id FROM embedding_heads WHERE input_kind='face') ORDER BY f.face_id`)
+	rows, err = tx.QueryContext(ctx, `SELECT f.face_id,v.node_id,v.recorded_at,COALESCE(p.person_id,''),COALESCE(p.display_name,''),a.hidden_at IS NOT NULL FROM photo_faces f JOIN content_versions v ON v.version_id=f.content_version_id JOIN photo_files member ON member.node_id=v.node_id JOIN photo_assets a ON a.asset_id=member.asset_id LEFT JOIN person_document_assertions assertion ON assertion.assertion_id=f.assertion_id AND assertion.action='assert' LEFT JOIN persons p ON p.person_id=assertion.person_id AND p.state<>'retired' WHERE f.content_version_id IN (`+versions+`) ORDER BY f.face_id`, args...)
 	if err != nil {
 		return nil, err
 	}

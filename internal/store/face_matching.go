@@ -13,8 +13,9 @@ import (
 )
 
 type FaceMatchingSnapshot struct {
-	Signature string
-	Sets      []FaceSuggestionSet
+	Signature        string
+	Sets             []FaceSuggestionSet
+	ReferencedSetIDs []string
 }
 type FaceVector struct {
 	Face   FaceSuggestionFace
@@ -34,7 +35,7 @@ func (s *Store) FaceMatchingInputs(ctx context.Context) (FaceMatchingSnapshot, e
 	return result, err
 }
 func (s *Store) faceMatchingInputsTx(ctx context.Context, tx *sql.Tx) (FaceMatchingSnapshot, error) {
-	sets, err := s.faceSuggestionInputsTx(ctx, tx)
+	sets, err := s.faceSuggestionInputsTx(ctx, tx, "")
 	if err != nil {
 		return FaceMatchingSnapshot{}, err
 	}
@@ -49,7 +50,18 @@ func (s *Store) faceMatchingInputsTx(ctx context.Context, tx *sql.Tx) (FaceMatch
 	if err != nil {
 		return FaceMatchingSnapshot{}, err
 	}
-	return FaceMatchingSnapshot{LengthPrefixedSHA256(string(data)), sets}, nil
+	return FaceMatchingSnapshot{Signature: LengthPrefixedSHA256(string(data)), Sets: sets}, nil
+}
+
+// faceRankingInputsTx keeps the source and every named contribution in the
+// current read snapshot. Unnamed photos cannot change a person's centroid.
+func (s *Store) faceRankingInputsTx(ctx context.Context, tx *sql.Tx, faceID string) (FaceMatchingSnapshot, error) {
+	sets, err := s.faceSuggestionInputsTx(ctx, tx, faceID)
+	if err != nil {
+		return FaceMatchingSnapshot{}, err
+	}
+	references, err := stringColumnTx(ctx, tx, "face payload references", `SELECT embedding_set_id FROM embedding_heads WHERE input_kind='face'`)
+	return FaceMatchingSnapshot{Sets: sets, ReferencedSetIDs: references}, err
 }
 
 // FaceMatchingVectors keeps only currently referenced immutable payloads. Hidden
@@ -60,6 +72,10 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 	live := make(map[string]bool, len(snapshot.Sets))
 	for _, item := range snapshot.Sets {
 		live[item.Set.ID] = true
+	}
+	// A ranking projection must preserve payloads still referenced by grouping.
+	for _, id := range snapshot.ReferencedSetIDs {
+		live[id] = true
 	}
 	for id := range s.faceVectors {
 		if !live[id] {
