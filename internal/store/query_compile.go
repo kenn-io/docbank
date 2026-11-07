@@ -71,6 +71,7 @@ func compileQuery(
 type queryCompiler struct {
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
+	photoMetadataDensity func(string) (bool, error)
 	pdfOnly              bool
 	photoHidden          bool
 }
@@ -81,6 +82,11 @@ func (c queryCompiler) compile(
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
+	}
+	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
+		c.photoMetadataDensity = func(value string) (bool, error) {
+			return r.photoMetadataHeadsFirst(ctx, value)
+		}
 	}
 	predicate, err := c.compileResolvedQuery(resolved)
 	if err != nil {
@@ -353,6 +359,9 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
+			if probeErr, ok := errors.AsType[photoMetadataDensityError](err); ok {
+				return compiledQueryFragment{}, probeErr.error
+			}
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
 		}
 		return part, nil

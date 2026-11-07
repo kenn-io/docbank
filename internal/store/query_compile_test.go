@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -309,6 +310,43 @@ func TestCompileQueryRemapsNestedSavedExpressionErrorsButPreservesBackendErrors(
 	}))
 	require.ErrorIs(t, err, backendErr)
 	assert.NotErrorAs(t, err, &expressionErr)
+}
+
+func TestCompilePhotoMetadataProbeErrors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	expired, stop := context.WithDeadline(t.Context(), time.Time{})
+	defer stop()
+	for _, tc := range []struct {
+		ctx  context.Context
+		want error
+	}{{ctx, context.Canceled}, {expired, context.DeadlineExceeded}} {
+		for _, field := range []string{"camera", "lens", "location"} {
+			resolved, err := query.ResolveQuery(t.Context(), compilerQuery(t, field+`:example`), nil)
+			require.NoError(t, err)
+			compiler := queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoMetadataDensity: func(value string) (bool, error) {
+				return (queryResolver{q: s.db}).photoMetadataHeadsFirst(tc.ctx, value)
+			}}
+			_, err = compiler.compileResolvedQuery(resolved)
+			require.ErrorIs(t, err, tc.want, field)
+			var expressionErr *query.ExpressionError
+			require.NotErrorAs(t, err, &expressionErr, field)
+		}
+	}
+	tx, err := s.writeDB.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback()) }()
+	_, err = tx.ExecContext(t.Context(), `DROP TABLE photo_metadata_fts`)
+	require.NoError(t, err)
+	_, err = (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true}).compile(t.Context(), compilerQuery(t, `camera:example`), queryResolver{q: tx})
+	require.ErrorContains(t, err, "photo_metadata_fts")
+	var expressionErr *query.ExpressionError
+	require.NotErrorAs(t, err, &expressionErr)
+
+	_, err = (queryCompiler{}).compileScalarPredicate("camera", "", 0, 7)
+	require.ErrorAs(t, err, &expressionErr)
 }
 
 func TestCompiledQueryNeverInterpolatesBoundValuesAndEnforcesLimits(t *testing.T) {
