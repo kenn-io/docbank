@@ -248,7 +248,7 @@ resource links, is capped at 1 MiB.
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
+| `answer_question` | Searches for evidence with a question and optional caller key terms, returning passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `find_conflicts` | Uses the query, profile, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
@@ -343,10 +343,12 @@ Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
 reranking consent grant. `search_documents` reports `openWorldHint: true`
 because a reranked search can send the query and excerpts to a provider.
-The optional `reranking` receipt reports `applied`,
-`skipped`, or `degraded`, the candidate count, and any failure cause. When the
-receipt is `applied`, the first `candidate_count` hits include `rerank_relevance`
-equal to their `score`, including zero. Later hits omit `rerank_relevance`.
+The optional `reranking` receipt reports `applied`, `skipped`, or `degraded`,
+the candidate count, and any failure cause. An applied receipt includes
+`profile_id`, the identity of the reranker that produced the scores; skipped
+and degraded receipts omit it. When the receipt is `applied`, the first
+`candidate_count` hits include `rerank_relevance` equal to their `score`,
+including zero. Later hits omit `rerank_relevance`.
 Applied searches use different `score` scales, provider relevance for the first
 `candidate_count` hits and search scores for later hits, so clients must not
 sort the whole list by `score`.
@@ -449,9 +451,18 @@ winner.
 
 ### Answer questions
 
-`answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
-that a content excerpt matched; it does not verify that the excerpt answers the
-question. Open the source to verify any quotation: excerpts can include omission
+`answer_question` returns evidence without writing an answer. By default,
+content passages require every word of `question` to appear in one segment. You
+can supply one to eight unique, nonblank `terms`, each 1–64 characters with no surrounding whitespace, for
+additional lexical matches. Each term runs a separate search; all its words must
+appear in one passage. Term searches share the question's scope and selected
+profile, without reranking. A failed term search fails the call. Results alternate
+across terms and interleave with question results, question first. Different snippets
+from one document are kept; identical snippets and duplicate leads are removed.
+The combined list observes `limit`.
+The receipt includes `terms_sha256` when terms ran: SHA-256 of the UTF-8 compact JSON array of terms in order, such as `["lease","renewal"]`, with strings escaped only where JSON requires, no HTML or non-ASCII escaping, and no trailing newline. `ANSWERED`
+means that a content excerpt matched; it does not verify that the excerpt answers
+the question. Open the source to verify any quotation: excerpts can include omission
 markers and are not necessarily contiguous spans. Results without content text
 are leads, not passages. `NO_MATCH` means a completed search returned no
 candidates, not that the vault contains no answer. A validated empty scope is
@@ -474,7 +485,10 @@ The receipt supports audit, not exact reproduction. Search may send the question
 to a query embedding provider under the daemon's existing consent policy.
 Reranking is optional and can disclose excerpts under that policy.
 When present, `relevance` preserves the applied reranker's score on its own
-scale; it is not necessarily normalized to 0–1.
+scale; it is not necessarily normalized to 0–1. The applied reranking receipt
+names the profile in `receipt.reranking.reranker_id`; skipped, degraded, and
+unrequested reranking omit that identity. A degraded receipt includes its
+`cause` and adds `reranking_degraded` to `receipt.degradations`.
 
 Omit `profile` for automatic profile and binding retries, including when a vector
 index is stale or a query provider fails. If every binding fails, lexical search

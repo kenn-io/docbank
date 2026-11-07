@@ -56,6 +56,7 @@ const (
 // ProviderReceipt records a provider-stage outcome without retaining any query,
 // document, provider-response, or credential material.
 type ProviderReceipt struct {
+	ProfileID      string // Set only when a reranking profile produced applied scores.
 	Stage          ProviderStage
 	Outcome        ProviderOutcome
 	VariantCount   int
@@ -343,7 +344,7 @@ func (searcher *Searcher) rerank(ctx context.Context, query Query, report Report
 	}
 	report.Trace = append(report.Trace, TraceEvent{Code: TraceRerankedCandidates, Count: len(candidates)})
 	return report, &ProviderReceipt{Stage: ProviderStageReranking,
-		Outcome: ProviderOutcomeApplied, CandidateCount: len(candidates)}, DegradationNone, nil
+		Outcome: ProviderOutcomeApplied, ProfileID: config.Profile.ID, CandidateCount: len(candidates)}, DegradationNone, nil
 }
 
 func rerankingCandidates(results []Result, limit, maxExcerptBytes int) []RerankingCandidate {

@@ -135,7 +135,8 @@ Human output shows the reranking outcome and candidate count. `--json` includes
 a `reranking` receipt whether or not you pass `--explain`. In the receipt,
 `applied` means reranking succeeded, `skipped` means there were no candidates,
 and `degraded` means the search kept its original ordering after a reranking
-failure. The configured `degrade` failure policy returns that original
+failure. Applied receipts include the reranker's `profile_id`; skipped and
+degraded receipts omit it. The configured `degrade` failure policy returns that original
 ordering. `fail_closed` returns `reranking_failed` instead. See the
 [search response contract](../architecture/http-api.md#coverage-and-source-fenced-search)
 for receipt fields and degradation causes.

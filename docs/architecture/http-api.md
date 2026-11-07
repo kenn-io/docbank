@@ -869,7 +869,9 @@ The response includes `requested_mode`, `actual_mode`, `coverage`,
 `degradations`, `results`, `truncated`, and `trace` (`explain: true` populates
 the trace). An opted-in request also returns a `reranking` receipt with
 `applied`, `degraded`, or `skipped`, a bounded candidate count, and a cause for
-degradation. Each result retains its vault, node, and content-version identity
+degradation. Applied receipts also include `profile_id`, the identity of the
+reranker that produced the scores; skipped and degraded receipts omit it.
+Each result retains its vault, node, and content-version identity
 with bounded evidence references. The source fence applies before retrieval.
 Vector scoring uses only eligible rows from current, live attachments.
 Semantic and hybrid search revalidate the complete result set after query

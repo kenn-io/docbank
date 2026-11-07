@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,7 @@ type answerFakeClient struct {
 
 	results       []api.DocumentSearchResult
 	report        api.DocumentSearchReport
+	searchReport  func(api.DocumentSearchRequest) (api.DocumentSearchReport, error)
 	requests      []api.DocumentSearchRequest
 	profiles      []api.ProcessingProfileSummary
 	documents     []api.DocumentSummary
@@ -81,6 +83,13 @@ func (f *answerFakeClient) SearchDocuments(ctx context.Context, req api.Document
 	f.requests = append(f.requests, req)
 	report := f.report
 	report.Results = f.results
+	if f.searchReport != nil {
+		var err error
+		report, err = f.searchReport(req)
+		if err != nil {
+			return api.DocumentSearchReport{}, err
+		}
+	}
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		return api.DocumentSearchReport{}, err
@@ -228,22 +237,33 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 }
 
 func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
-	for _, tc := range []struct{ binding, rerank bool }{{true, false}, {false, false}, {true, true}} {
-		t.Run(fmt.Sprintf("binding=%t/rerank=%t", tc.binding, tc.rerank), func(t *testing.T) {
+	for _, tc := range []struct {
+		binding, rerank bool
+		terms           []string
+	}{{true, false, nil}, {false, false, nil}, {true, true, nil}, {true, false, []string{"first", "second"}}} {
+		t.Run(fmt.Sprintf("binding=%t/rerank=%t/terms=%d", tc.binding, tc.rerank, len(tc.terms)), func(t *testing.T) {
 			f := &answerFakeClient{empty: true}
 			if !tc.binding {
 				f.profiles = []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64)}}
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-			out, links, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
-			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
+			args := map[string]any{"question": "example", "rerank": tc.rerank}
+			if len(tc.terms) > 0 {
+				args["terms"] = tc.terms
+			}
+			raw, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, links, err := answerQuestion(t.Context(), session, raw)
+			if err != nil || f.validations != 1+len(tc.terms) || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Receipt.TermsSHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
 			if tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "skipped") {
 				t.Fatalf("receipt=%+v", out.Receipt.Reranking)
 			}
-			if !tc.rerank && out.Receipt.Reranking != nil {
-				t.Fatalf("unexpected reranking receipt: %+v", out.Receipt.Reranking)
+			if !tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "not_requested") {
+				t.Fatalf("receipt=%+v", out.Receipt.Reranking)
 			}
 			_, output := answerQuestionSchemas()
 			if _, err := boundedToolSuccess(mustResolveSchema(output), out, links); err != nil {
@@ -301,4 +321,121 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Reranker identity belongs to applied scores, not merely a configured provider.
+func TestAnswerQuestionRerankerIdentity(t *testing.T) {
+	for _, outcome := range []string{"applied", "skipped", "degraded", "not_requested"} {
+		t.Run(outcome, func(t *testing.T) {
+			checkAnswerRerankerIdentity(t, "synthetic-reranker/模型:v2", outcome)
+		})
+	}
+}
+
+func FuzzAnswerQuestionRerankerIdentity(f *testing.F) {
+	f.Add("synthetic-reranker", uint8(0))
+	f.Add("模型/ reranker:v2\n", uint8(0))
+	f.Add(strings.Repeat("r", 4097), uint8(0))
+	f.Add("", uint8(0))
+	f.Fuzz(func(t *testing.T, profileID string, choice uint8) {
+		// Bound materialized payloads; retain generated cases as valid wire text.
+		if len(profileID) > 16384 {
+			profileID = profileID[:16384]
+		}
+		profileID = strings.ToValidUTF8(profileID, "�")
+		outcomes := []string{"applied", "skipped", "degraded", "not_requested"}
+		outcome := outcomes[int(choice)%len(outcomes)]
+		if outcome == "applied" && profileID == "" {
+			profileID = "synthetic-reranker"
+		}
+		checkAnswerRerankerIdentity(t, profileID, outcome)
+	})
+}
+
+func checkAnswerRerankerIdentity(t *testing.T, profileID, outcome string) {
+	t.Helper()
+	f := rerankerIdentityClient(nil)
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	args := []byte(`{"question":"example","rerank":true}`)
+	switch outcome {
+	case "applied":
+		f.report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1, ProfileID: profileID}
+	case "skipped":
+		f.report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+		f.results = nil
+	case "degraded":
+		f.report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "degraded", Cause: "authorization_denied", CandidateCount: 1}
+		f.report.Degradations = []string{"reranking_degraded"}
+	case "not_requested":
+		args = []byte(`{"question":"example"}`)
+	default:
+		t.Fatalf("unknown reranking outcome %q", outcome)
+	}
+	out, _, err := answerQuestion(context.Background(), session, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := structuredMap(t, out)
+	reranking := schemaMap(t, schemaMap(t, output["receipt"])["reranking"])
+	id, present := reranking["reranker_id"]
+	if outcome == "applied" && profileID != "" {
+		if !present || id != profileID {
+			t.Fatalf("reranker identity = %v (present %v), want %q", id, present, profileID)
+		}
+	} else if present {
+		t.Fatalf("unexpected reranker identity for %s: %v", outcome, id)
+	}
+	cause, causePresent := reranking["cause"]
+	if outcome == "degraded" {
+		if !causePresent || cause != "authorization_denied" {
+			t.Fatalf("reranking cause = %v (present %v), want authorization_denied", cause, causePresent)
+		}
+	} else if causePresent {
+		t.Fatalf("unexpected reranking cause for %s: %v", outcome, cause)
+	}
+	_, outputSchema := answerQuestionSchemas()
+	receiptSchema := schemaMap(t, schemaMap(t, outputSchema["properties"])["receipt"])
+	rerankingSchema := schemaMap(t, receiptSchema["properties"])["reranking"]
+	assertSchemaAccepts(t, rerankingSchema, reranking)
+}
+
+func TestAnswerQuestionOversizedRerankerReceipt(t *testing.T) {
+	f := rerankerIdentityClient(&api.DocumentSearchRerankingReceipt{
+		Outcome: "applied", ProfileID: strings.Repeat("r", maxToolResponseBytes), CandidateCount: 1,
+	})
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	_, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","rerank":true}`))
+	if !errors.Is(err, errToolResultTooLarge) {
+		t.Fatalf("oversized identity error = %v", err)
+	}
+}
+
+func rerankerIdentityClient(receipt *api.DocumentSearchRerankingReceipt) *answerTermsClient {
+	f := &answerTermsClient{answerFakeClient: &answerFakeClient{
+		fenceVersions: []string{"00000000-0000-4000-8000-000000000002"},
+		documents: []api.DocumentSummary{{
+			NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002",
+			Path: "/example", Name: "example", MediaType: "text/plain", ActiveRenditions: []api.DocumentRenditionIdentity{},
+		}},
+		report: api.DocumentSearchReport{
+			Reranking: receipt,
+			Coverage:  api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1},
+		},
+		results: []api.DocumentSearchResult{{
+			NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", SemanticRank: 1,
+			Evidence: []api.DocumentEvidenceReference{{
+				Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64),
+				InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk",
+				BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64),
+			}},
+		}},
+	}}
+	f.summaries = f.answerFakeClient
+	f.searchReport = func(req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+		report := answerTermsSearchReport(req, f.results...)
+		report.Reranking = f.report.Reranking
+		report.Degradations = slices.Clone(f.report.Degradations)
+		return report, nil
+	}
+	return f
 }

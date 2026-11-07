@@ -395,6 +395,7 @@ type DocumentSearchCoverage struct {
 }
 
 type DocumentSearchRerankingReceipt struct {
+	ProfileID      string `json:"profile_id,omitzero"`
 	Outcome        string `json:"outcome"`
 	Cause          string `json:"cause,omitzero"`
 	CandidateCount int    `json:"candidate_count" minimum:"0" maximum:"1000"`
