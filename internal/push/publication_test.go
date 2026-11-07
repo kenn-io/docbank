@@ -2,6 +2,8 @@ package push
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"errors"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -20,6 +23,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
@@ -397,4 +401,344 @@ func TestPublicationStatusLostCompleteDoesNotInvokePostcommitGate(t *testing.T) 
 	require.Zero(t, retries)
 	require.NotNil(t, report.Publication)
 	require.False(t, report.Publication.Current.Incomplete)
+}
+
+func publicationSourcesAt(t *testing.T, s *store.Store, scanID string) map[string]store.NotePublicationSource {
+	t.Helper()
+	out := map[string]store.NotePublicationSource{}
+	after := ""
+	for {
+		page, err := s.NotePublicationSources(t.Context(), store.NotePublicationSourcesRequest{Name: "research", ScanID: scanID, After: after, Limit: 1000})
+		require.NoError(t, err)
+		for _, v := range page.Items {
+			out[v.Identity.SourceRef] = v
+		}
+		if page.Next == "" {
+			return out
+		}
+		after = page.Next
+	}
+}
+func TestPublicationAToBToAKeepsThreeVersions(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	opts := publicationOptions(root)
+	var ids []string
+	var node int64
+	for _, body := range []string{"# A\n", "# B\n", "# A\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), []byte(body), 0600))
+		report, err := Run(t.Context(), c, opts)
+		require.NoError(t, err)
+		source := publicationSourcesAt(t, s, report.Publication.Scan.ScanID)["a.md"]
+		if node == 0 {
+			node = source.Identity.NodeID
+		} else {
+			require.Equal(t, node, source.Identity.NodeID)
+		}
+		require.NotContains(t, ids, source.Identity.ContentVersionID)
+		ids = append(ids, source.Identity.ContentVersionID)
+	}
+	versions, total, err := s.ContentVersions(t.Context(), node, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	for _, version := range versions {
+		require.Contains(t, ids, version.ID)
+	}
+	require.Equal(t, versions[0].BlobHash, versions[2].BlobHash)
+	require.NotEqual(t, versions[0].BlobHash, versions[1].BlobHash)
+}
+func TestPublicationMoreThan4096NotesUsesBoundedPages(t *testing.T) {
+	t.Parallel()
+	var pages, batches, uploads int
+	seen := map[string]bool{}
+	c, s := newPublicationTestDaemon(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sources"):
+			pages++
+			require.Equal(t, "1000", r.URL.Query().Get("limit"))
+			require.Empty(t, r.URL.Query().Get("ids"))
+		case strings.HasSuffix(r.URL.Path, "/uploads"):
+			uploads++
+		case strings.HasSuffix(r.URL.Path, "/seen"):
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(body), 1<<20)
+			var request api.NotePublicationSeenRequest
+			require.NoError(t, json.Unmarshal(body, &request))
+			require.LessOrEqual(t, len(request.Bindings), 200)
+			batches++
+			for _, binding := range request.Bindings {
+				require.False(t, seen[binding.SourceRef])
+				seen[binding.SourceRef] = true
+			}
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+		case strings.HasSuffix(r.URL.Path, "/complete"):
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(body, &fields))
+			for field := range fields {
+				require.Contains(t, []string{"name", "scan_id", "policy_fingerprint", "inventory_complete"}, field)
+			}
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+		}
+		next.ServeHTTP(w, r)
+	})
+	root := t.TempDir()
+	opts := publicationOptions(root)
+	writePublicationFile(t, root, "note-0000.md")
+	first, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	original := publicationSourcesAt(t, s, first.Publication.Scan.ScanID)["note-0000.md"]
+	seed, err := s.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{Name: "research", Destination: "/notes", PolicyFingerprint: publicationTestPolicy, OperationID: publicationTestUUID()})
+	require.NoError(t, err)
+	// Seed the catalog using the first real upload's physically stored payload.
+	// The scale assertion exercises the production publisher's full cursor/seen
+	// traversal, rather than spending 4,097 network uploads to arrange its input.
+	for i := range 4097 {
+		ref := fmt.Sprintf("note-%04d.md", i)
+		writePublicationFile(t, root, ref)
+		revision := int64(0)
+		if i == 0 {
+			revision = original.Identity.SourceRevision
+		}
+		_, err := s.AcceptPublishedNote(t.Context(), store.NotePublicationUploadRequest{Name: "research", ScanID: seed.ScanID, SourceRef: ref, FileName: ref, ParentPath: "/notes", OperationID: publicationTestUUID(), Hash: original.Identity.Hash, Size: original.Identity.Size, ExpectedSourceRevision: revision})
+		require.NoError(t, err)
+	}
+	_, err = s.CompleteNotePublicationScan(t.Context(), store.NotePublicationCompleteRequest{Name: "research", ScanID: seed.ScanID, PolicyFingerprint: seed.PolicyFingerprint, InventoryComplete: true})
+	require.NoError(t, err)
+	pages, batches, uploads = 0, 0, 0
+	clear(seen)
+	report, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	require.Equal(t, 5, pages)
+	require.Equal(t, 21, batches)
+	require.Zero(t, uploads)
+	require.Len(t, seen, 4097)
+	require.Equal(t, 4097, report.Skipped)
+	require.EqualValues(t, 4097, report.Publication.Current.Present)
+	require.Zero(t, report.Added+report.Updated)
+	sources := publicationSourcesAt(t, s, report.Publication.Scan.ScanID)
+	nodes := map[int64]bool{}
+	for _, source := range sources {
+		require.False(t, nodes[source.Identity.NodeID])
+		nodes[source.Identity.NodeID] = true
+	}
+	require.Len(t, nodes, 4097)
+}
+func TestPublicationSeenBodyBound(t *testing.T) {
+	t.Parallel()
+	var sizes, counts []int
+	seen := map[string]bool{}
+	c, s := newPublicationTestDaemon(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if strings.HasSuffix(r.URL.Path, "/seen") {
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			sizes = append(sizes, len(body))
+			require.LessOrEqual(t, len(body), 1<<20)
+			var request api.NotePublicationSeenRequest
+			require.NoError(t, json.Unmarshal(body, &request))
+			counts = append(counts, len(request.Bindings))
+			require.LessOrEqual(t, len(request.Bindings), 200)
+			for _, id := range request.Bindings {
+				require.False(t, seen[id.SourceRef])
+				seen[id.SourceRef] = true
+			}
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+		}
+		next.ServeHTTP(w, r)
+	})
+	root := t.TempDir()
+	opts := publicationOptions(root)
+	writePublicationFile(t, root, "a.md")
+	initial, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	original := publicationSourcesAt(t, s, initial.Publication.Scan.ScanID)["a.md"]
+	scan, err := s.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{Name: "research", Destination: "/notes", PolicyFingerprint: publicationTestPolicy, OperationID: publicationTestUUID()})
+	require.NoError(t, err)
+	var bindings []api.PublishedNoteIdentity
+	// Canonical max-byte refs deliberately require six JSON bytes per control
+	// character. The wire contract permits them even when a native filesystem
+	// cannot create that name; no local source path is fabricated or opened.
+	for i := range 250 {
+		suffix := fmt.Sprintf("%03d.md", i)
+		ref := strings.Repeat("\x01", 4096-len(suffix)) + suffix
+		require.NoError(t, store.ValidatePushRef(ref))
+		receipt, err := s.AcceptPublishedNote(t.Context(), store.NotePublicationUploadRequest{Name: "research", ScanID: scan.ScanID, SourceRef: ref, FileName: ref, ParentPath: "/notes", OperationID: publicationTestUUID(), Hash: original.Identity.Hash, Size: original.Identity.Size})
+		require.NoError(t, err)
+		id := receipt.Source.Identity
+		bindings = append(bindings, api.PublishedNoteIdentity{VaultID: id.VaultID, Publication: id.Publication, SourceRef: id.SourceRef, NodeID: id.NodeID, ContentVersionID: id.ContentVersionID, Hash: id.Hash, Size: id.Size, SourceRevision: id.SourceRevision, NamespaceRevision: id.NamespaceRevision})
+	}
+	p := &publicationPublisher{connection: c, opts: opts, policy: scan.PolicyFingerprint, scan: api.NotePublicationScan{ScanID: scan.ScanID, DatabaseEpoch: scan.DatabaseEpoch, PolicyFingerprint: scan.PolicyFingerprint, Epoch: scan.Epoch, NamespaceRevision: scan.NamespaceRevision}}
+	require.NoError(t, p.refreshSources(t.Context()))
+	for _, id := range bindings {
+		require.NoError(t, p.queueSeen(t.Context(), id))
+		require.Less(t, len(p.seen), 200)
+	}
+	require.NoError(t, p.flushSeen(t.Context()))
+	require.Len(t, seen, 250)
+	require.Greater(t, len(sizes), 1)
+	for _, count := range counts {
+		require.Less(t, count, 200, "must split by encoded envelope before row cap")
+	}
+	require.Equal(t, 250, p.report.Skipped)
+}
+func TestPublicationNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{"begin", "sources", "upload", "seen", "complete", "status"} {
+		t.Run(route, func(t *testing.T) {
+			var requests, keys, bodies atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Header.Get("X-Api-Key") != "" {
+					keys.Add(1)
+				}
+				body, _ := io.ReadAll(r.Body)
+				bodies.Add(int64(len(body)))
+				require.Equal(t, daemonauth.KeyChallengePath, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"proof":"`+strings.Repeat("0", 64)+`"}`)
+			}))
+			defer server.Close()
+			c, err := daemonconn.NewPushConnection(server.URL, "synthetic-sensitive-key")
+			require.NoError(t, err)
+			scan, operation := publicationTestUUID(), publicationTestUUID()
+			id := api.PublishedNoteIdentity{Publication: "research", VaultID: publicationTestUUID(), SourceRef: "a.md", NodeID: 2, ContentVersionID: publicationTestUUID(), Hash: publicationTestPolicy, Size: 4, SourceRevision: 1, NamespaceRevision: 1}
+			switch route {
+			case "begin":
+				_, err = c.BeginNotePublicationScan(t.Context(), api.NotePublicationBeginRequest{Name: "research", Destination: "/notes", OperationID: operation, PolicyFingerprint: publicationTestPolicy})
+			case "sources":
+				_, err = c.NotePublicationSources(t.Context(), api.NotePublicationSourcesRequest{Name: "research", ScanID: scan, Limit: 1000})
+			case "upload":
+				_, err = c.UploadPublishedNote(t.Context(), api.NotePublicationUploadRequest{Name: "research", ScanID: scan, SourceRef: "a.md", FileName: "a.md", ParentPath: "/notes", Hash: publicationTestPolicy, Size: 4, OperationID: operation}, strings.NewReader("data"))
+			case "seen":
+				_, err = c.AcknowledgePublishedNotes(t.Context(), api.NotePublicationSeenRequest{Name: "research", ScanID: scan, Bindings: []api.PublishedNoteIdentity{id}})
+			case "complete":
+				_, err = c.CompleteNotePublicationScan(t.Context(), api.NotePublicationCompleteRequest{Name: "research", ScanID: scan, PolicyFingerprint: publicationTestPolicy, InventoryComplete: true})
+			case "status":
+				_, err = c.NotePublicationStatus(t.Context(), "research")
+			}
+			require.True(t, daemonconn.IsKeyProofError(err), "%v", err)
+			require.EqualValues(t, 1, requests.Load())
+			require.Zero(t, keys.Load())
+			require.Zero(t, bodies.Load())
+		})
+	}
+}
+func TestPublicationPolicyExclusionRetiresOnlyAfterComplete(t *testing.T) {
+	t.Parallel()
+	var fail atomic.Bool
+	c, s := newPublicationTestDaemon(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if fail.Load() && strings.HasSuffix(r.URL.Path, "/seen") {
+			publicationProblem(w, 503, "internal")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	root := t.TempDir()
+	opts := publicationOptions(root)
+	writePublicationFile(t, root, "a.md")
+	writePublicationFile(t, root, "b.md")
+	initial, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	original := publicationSourcesAt(t, s, initial.Publication.Scan.ScanID)["a.md"]
+	opts.Folder.Exclude = []string{"a.md"}
+	fail.Store(true)
+	_, err = Run(t.Context(), c, opts)
+	require.Error(t, err)
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.True(t, status.Incomplete)
+	require.EqualValues(t, 2, status.Present)
+	fail.Store(false)
+	report, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, report.Publication.Current.Present)
+	require.EqualValues(t, 1, report.Publication.Current.Absent)
+	source := publicationSourcesAt(t, s, report.Publication.Scan.ScanID)["a.md"]
+	require.Equal(t, "absent", source.Presence)
+	require.Equal(t, original.Identity.ContentVersionID, source.Identity.ContentVersionID)
+	_, total, err := s.ContentVersions(t.Context(), source.Identity.NodeID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+}
+func TestPublicationBurstRestartStillConverges(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	opts := publicationOptions(root)
+	for i := range 8 {
+		writePublicationFile(t, root, fmt.Sprintf("note-%02d.md", i))
+	}
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	current := map[string][]byte{}
+	for i := range 80 {
+		ref := fmt.Sprintf("note-%02d.md", i%16)
+		body := []byte(fmt.Sprintf("# burst %d\n", i))
+		require.NoError(t, os.WriteFile(filepath.Join(root, ref), body, 0600))
+		current[ref] = body
+	}
+	for i := range 4 {
+		ref := fmt.Sprintf("note-%02d.md", i)
+		require.NoError(t, os.Remove(filepath.Join(root, ref)))
+		delete(current, ref)
+	}
+	report, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	sources := publicationSourcesAt(t, s, report.Publication.Scan.ScanID)
+	require.EqualValues(t, len(current), report.Publication.Current.Present)
+	for ref, source := range sources {
+		body, present := current[ref]
+		if !present {
+			require.Equal(t, "absent", source.Presence)
+			continue
+		}
+		sum := sha256.Sum256(body)
+		require.Equal(t, "present", source.Presence)
+		require.Equal(t, hex.EncodeToString(sum[:]), source.Identity.Hash)
+	}
+}
+
+// Hegel seed2026110703 shrank to initial3 empty notes and commands
+// [0,56,89,64]: equal-byte edit, exclude a, manual edit b, unexclude a.
+// A sibling conflict blocks negative evidence, not a's verified reappearance.
+func TestPublicationQuietReappearanceSurvivesSiblingConflict(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	opts := publicationOptions(root)
+	for _, ref := range []string{"a.md", "b.md", "c.md"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, ref), nil, 0600))
+	}
+	first, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	original := publicationSourcesAt(t, s, first.Publication.Scan.ScanID)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), nil, 0600))
+	_, err = Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	opts.Folder.Exclude = []string{"a.md"}
+	excluded, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	absent := publicationSourcesAt(t, s, excluded.Publication.Scan.ScanID)["a.md"]
+	require.Equal(t, "absent", absent.Presence)
+	manual := replacePublicationHead(t, c, s, original["b.md"].Identity.NodeID, "# manual conflict\n")
+	_, err = Run(t.Context(), c, opts)
+	require.Error(t, err)
+	opts.Folder.Exclude = nil
+	_, err = Run(t.Context(), c, opts)
+	require.Error(t, err)
+	sources := publicationSources(t, s)
+	revived := sources["a.md"]
+	require.Equal(t, "present", revived.Presence)
+	require.Equal(t, absent.Identity.SourceRevision+1, revived.Identity.SourceRevision)
+	require.Equal(t, original["a.md"].Identity.ContentVersionID, revived.Identity.ContentVersionID)
+	require.Equal(t, manual.Version.ID, sources["b.md"].ArchiveHead.ContentVersionID)
+	_, total, err := s.ContentVersions(t.Context(), revived.Identity.NodeID, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.True(t, status.Incomplete)
 }
