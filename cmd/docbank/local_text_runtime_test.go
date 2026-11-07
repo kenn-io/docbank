@@ -139,7 +139,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			releaseRequest := sync.OnceFunc(func() { close(release) })
 			var once sync.Once
 			var calls atomic.Int64
-			ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+			ping := localTextModelDiscovery(kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version}))
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/embeddings" {
 					ping.ServeHTTP(w, r)
@@ -295,7 +295,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
 	}))
 	defer attacker.Close()
-	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+	ping := localTextModelDiscovery(kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version}))
 	owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/embeddings" {
 			ping.ServeHTTP(w, r)
@@ -353,7 +353,7 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
-	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
+	ping := localTextModelDiscovery(kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version}))
 	server := httptest.NewServer(ping)
 	defer server.Close()
 	dir, err := embedlocal.DefaultDir()
@@ -384,4 +384,17 @@ func TestLocalTextCandidateRejections(t *testing.T) {
 	cfg = localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "revision-header", "DOCBANK_TEST_REVISION_KEY")
 	_, err = localTextCandidate(cfg, "local", "archive")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
+}
+
+// localTextModelDiscovery gives synthetic local servers the model capability
+// endpoint used by Kit alongside their ping and embeddings routes.
+func localTextModelDiscovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"models":["nomic-embed-text"]}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

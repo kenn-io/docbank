@@ -37,6 +37,16 @@ Locked Hidden, excluded, or trashed conflicts return notices without face IDs. U
 
 Name pickers in the inspector list people by their newest active, visible photo assertion, then by name. Namesakes stay together and share their group's newest assertion time. Naming a person on a new photo moves the group up. Adding another face or a whole-photo mark for someone already named on that photo keeps the assertion's time. A merge preserves retained and moved assertion times.
 
+## Face suggestions
+
+Run `docbank processing faces` to turn on local face suggestions. The command shows the missing download size before installing the face model. Registration and ordinary daemon startup only reuse installed files. They don't approve downloads.
+
+The background job embeds detected faces and boxes you draw on current image and RAW files, including Hidden photos. A paired RAW keeps its own face crops when JPEG is the display. It leaves each face's box, measurements, and name intact. Faces the model can't align stay available for manual naming and don't appear in suggestions.
+
+In **Photos → People**, **Suggestions** shows likely matches and groups of similar unnamed faces. Open a card to review its crops. Use **Not X** to reject a face and close the sheet, or **Skip** to leave an unnamed face out of this review. Reopen a named group to confirm its remaining faces. For an unnamed group, choose an existing person or type a new name. **Dismiss** keeps that exact group rejected while its faces remain available for later matches; rejecting a named match keeps that face from being suggested for the same person again. Decisions survive backup and restore.
+
+The inspector's name picker puts similar people first when the selected face has a vector. Namesakes stay together. Faces without a vector keep the usual ordering. Suggestions, crops, and similarity ranking follow the current Hidden access scope.
+
 ## List and search
 
 `GET /api/v1/people?query=ada&limit=100` lists active people in folded

@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PeopleView from "./People.svelte";
 import { People } from "./people.svelte.js";
@@ -6,12 +6,23 @@ import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { ada, grace, personMergeReceipt, personResponse } from "./people-test-fixtures.js";
+import {
+  ada,
+  candidate,
+  candidateFace,
+  grace,
+  personMergeReceipt,
+  personResponse,
+} from "./people-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+// Cards load face suggestions too; most cases have none.
+beforeEach(() => {
+  vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [], total: 0 });
 });
 const unlockedAccess = () => {
   const access = new HiddenAccess("session", vi.fn());
@@ -309,4 +320,380 @@ it("opens unlocked Hidden counts in Hidden and conceals them on lock", async () 
   people.dispose();
   access.dispose();
   await cache.dispose();
+});
+
+const stubImages = () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "Image",
+    class {
+      src = "";
+      naturalWidth = 1000;
+      naturalHeight = 800;
+      decode() {
+        return Promise.resolve();
+      }
+    },
+  );
+  let next = 0;
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = vi.fn(() => `blob:face-${++next}`);
+      static revokeObjectURL = vi.fn();
+    },
+  );
+};
+const f1 = candidateFace("face-1", { photo_recorded_at: "2026-01-01T00:00:00Z" });
+const f2 = candidateFace("face-2", { photo_recorded_at: "2026-02-01T00:00:00Z" });
+const f3 = candidateFace("face-3", {
+  photo_node_id: 2,
+  photo_recorded_at: "2026-03-01T00:00:00Z",
+});
+const isAda = candidate("candidate-ada", [f1, f2, f3], {
+  display_name: "Ada",
+  suggested_person_id: ada.person_id,
+  revision: 2,
+});
+const unnamed = candidate("candidate-who", [f1, f2], { revision: 4 });
+const decided = (row: ReturnType<typeof candidate>) => ({
+  candidate_id: row.candidate_id,
+  revision: row.revision + 1,
+  state: "accepted",
+});
+async function renderSuggestions(rows: ReturnType<typeof candidate>[], access?: HiddenAccess) {
+  stubImages();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const list = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockResolvedValue({ items: rows, total: rows.length });
+  const people = new People("session", vi.fn(), access);
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  const get = vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await act(() => people.load());
+  const region = await screen.findByRole("region", { name: /Suggestions/ });
+  const done = async () => {
+    view.unmount();
+    people.dispose();
+    await cache.dispose();
+  };
+  return { people, list, get, region, done };
+}
+
+it("shows suggestion cards with unnamed crops and no row when there are none", async () => {
+  const { region, get, list, people, done } = await renderSuggestions([isAda, unnamed]);
+  const cards = within(region).getAllByRole("button");
+  expect(cards.map((card) => card.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+    "Is this Ada? 3 faces · 2 photos",
+    "Who is this? 2 faces · 1 photo",
+  ]);
+  // Each card crops its first face through the ordinary photo preview; the
+  // cards share face 1's crop.
+  await waitFor(() => expect(within(region).getAllByRole("img")).toHaveLength(2));
+  expect(get.mock.calls.map((call) => [call[0], call[1], call[4]])).toEqual([
+    ["asset-face-1", "generation-face-1", undefined],
+  ]);
+  list.mockResolvedValue({ items: [], total: 0 });
+  await act(() => people.suggestions.load());
+  expect(screen.queryByRole("region", { name: /Suggestions/ })).toBeNull();
+  await done();
+});
+
+it("retries failed suggestions and loads more by offset", async () => {
+  stubImages();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const rows = Array.from({ length: 30 }, (_, index) =>
+    candidate(`candidate-${index}`, [candidateFace(`face-${index}`)]),
+  );
+  const list = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockRejectedValueOnce(new APIError("Suggestions unavailable", 503, "unavailable"))
+    .mockImplementation(async (params) => ({
+      items: rows.slice(params!.offset!, params!.offset! + params!.limit!),
+      total: rows.length,
+    }));
+  const people = new People("session", vi.fn());
+  const cache = new PhotoPreviewCache("session", vi.fn());
+  vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
+  const view = render(PeopleView, { people, cache, onperson: vi.fn() });
+  await act(() => people.load());
+  const region = await screen.findByRole("region", { name: /Suggestions/ });
+  expect((await within(region).findByRole("alert")).textContent).toContain(
+    "Suggestions unavailable",
+  );
+  await fireEvent.click(within(region).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(within(region).getAllByText("Who is this?")).toHaveLength(24));
+  await fireEvent.click(within(region).getByRole("button", { name: "Show more" }));
+  await waitFor(() => expect(within(region).getAllByText("Who is this?")).toHaveLength(30));
+  expect(list.mock.calls.at(-1)![0]).toEqual({ limit: 24, offset: 24 });
+  expect(within(region).queryByRole("button", { name: "Show more" })).toBeNull();
+  view.unmount();
+  people.dispose();
+  await cache.dispose();
+});
+
+it("confirms and rejects an Is this X? group, removing a face first", async () => {
+  const { region, list, done } = await renderSuggestions([isAda]);
+  const faceDecision = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
+  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda));
+  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
+  const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
+  expect(within(dialog).getByText("3 faces · 2 photos")).toBeTruthy();
+  expect(within(dialog).getByText("Remove anyone who doesn't belong, then confirm.")).toBeTruthy();
+  await waitFor(() => expect(within(dialog).getAllByRole("img")).toHaveLength(3));
+  const regrouped = { ...isAda, candidate_id: "candidate-ada-2", faces: [f1, f3], revision: 1 };
+  list.mockResolvedValue({ items: [regrouped], total: 1 });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada: face 2" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
+  const reopened = screen.getByRole("dialog", { name: "Is this Ada?" });
+  expect(faceDecision.mock.calls[0]![1]).toMatchObject({
+    action: "reject",
+    face_id: "face-2",
+    person_id: ada.person_id,
+  });
+  list.mockResolvedValue({ items: [], total: 0 });
+  const confirm = within(reopened).getByRole("button", { name: "Confirm" });
+  await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(confirm);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(decide).toHaveBeenCalledExactlyOnceWith(
+    "candidate-ada-2",
+    { action: "link", person_id: ada.person_id, face_ids: ["face-1", "face-3"] },
+    { "If-Match": '"1"' },
+    expect.anything(),
+  );
+  await waitFor(() => expect(screen.queryByRole("region", { name: /Suggestions/ })).toBeNull());
+  await done();
+});
+
+it("rejects an Is this X? group and reports a stale decision in the sheet", async () => {
+  const { region, list, done } = await renderSuggestions([isAda]);
+  const decide = vi
+    .spyOn(api, "decideFaceCandidate")
+    .mockRejectedValueOnce(new APIError("Suggestion changed", 412, "stale_revision"))
+    .mockResolvedValue(decided(isAda));
+  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
+  const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
+  list.mockResolvedValue({ items: [{ ...isAda, revision: 7 }], total: 1 });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect((await screen.findByRole("alert")).textContent).toBe("Suggestion changed");
+  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
+  const reject = within(screen.getByRole("dialog", { name: "Is this Ada?" })).getByRole("button", {
+    name: "Not Ada",
+  });
+  await waitFor(() => expect(reject.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(reject);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(decide.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+    [{ action: "reject" }, { "If-Match": '"2"' }],
+    [{ action: "reject" }, { "If-Match": '"7"' }],
+  ]);
+  await done();
+});
+
+it("shows a spinner for each review crop until it loads or fails", async () => {
+  const { region, get, done } = await renderSuggestions([unnamed]);
+  const loads: { resolve: (blob: Blob) => void; reject: (cause: unknown) => void }[] = [];
+  get.mockImplementation(
+    () => new Promise<Blob>((resolve, reject) => loads.push({ resolve, reject })),
+  );
+  await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
+  const dialog = screen.getByRole("dialog", { name: "Who is this?" });
+  await waitFor(() => expect(loads).toHaveLength(2));
+  expect(within(dialog).getAllByRole("status", { name: "Loading face" })).toHaveLength(2);
+  expect(dialog.querySelector(".lucide-user")).toBeNull();
+  await act(() => loads[0]!.resolve(new Blob(["synthetic"])));
+  await waitFor(() => expect(within(dialog).getAllByRole("img")).toHaveLength(1));
+  expect(within(dialog).getAllByRole("status", { name: "Loading face" })).toHaveLength(1);
+  await act(() => loads[1]!.reject(new Error("Preview unavailable")));
+  await waitFor(() =>
+    expect(within(dialog).queryByRole("status", { name: "Loading face" })).toBeNull(),
+  );
+  expect(dialog.querySelectorAll(".lucide-user")).toHaveLength(1);
+  await done();
+});
+
+it("skips faces until nothing is left in a Who is this? group", async () => {
+  const { region, list, done } = await renderSuggestions([unnamed]);
+  const faceDecision = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
+  await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
+  const dialog = screen.getByRole("dialog", { name: "Who is this?" });
+  list.mockResolvedValue({ items: [], total: 0 });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Skip face 1" }));
+  await waitFor(() =>
+    expect(within(dialog).getAllByRole("button", { name: /Skip face/ })).toHaveLength(1),
+  );
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Skip face 1" }));
+  expect(await within(dialog).findByText("Nothing left to review in this group.")).toBeTruthy();
+  expect(faceDecision).not.toHaveBeenCalled();
+  const finish = within(dialog).getByRole("button", { name: "Done" });
+  await waitFor(() => expect(finish.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(finish);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await done();
+});
+
+it.each(["existing", "new", "dismiss"])(
+  "names or dismisses a Who is this? group: %s",
+  async (choice) => {
+    const { region, people, list, done } = await renderSuggestions([unnamed]);
+    const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
+    await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
+    const dialog = screen.getByRole("dialog", { name: "Who is this?" });
+    const confirm = within(dialog).getByRole("button", { name: "Confirm" });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    if (choice === "dismiss") {
+      await fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss" }));
+    } else {
+      const search = vi.mocked(api.listPeople);
+      await fireEvent.click(within(dialog).getByRole("button", { name: "Name this person" }));
+      await fireEvent.input(screen.getByRole("combobox"), {
+        target: { value: choice === "new" ? "Ana" : "Ad" },
+      });
+      await waitFor(() =>
+        expect(search).toHaveBeenLastCalledWith(
+          {
+            query: choice === "new" ? "Ana" : "Ad",
+            limit: 100,
+            recent_first: true,
+            face_id: "face-1",
+          },
+          expect.anything(),
+        ),
+      );
+      if (choice === "new") search.mockResolvedValue({ items: [] });
+      await fireEvent.mouseDown(
+        await screen.findByRole("option", { name: choice === "new" ? 'New person "Ana"' : "Ada" }),
+      );
+      await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
+      list.mockResolvedValue({
+        items: [{ ...unnamed, candidate_id: "candidate-rebuilt", revision: 5 }],
+        total: 1,
+      });
+      await act(() => people.suggestions.refresh());
+      expect(confirm.hasAttribute("disabled")).toBe(false);
+      await fireEvent.click(confirm);
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(decide).toHaveBeenCalledExactlyOnceWith(
+      "candidate-who",
+      choice === "existing"
+        ? { action: "link", person_id: ada.person_id, face_ids: ["face-1", "face-2"] }
+        : choice === "new"
+          ? { action: "new_person", display_name: "Ana", face_ids: ["face-1", "face-2"] }
+          : { action: "reject" },
+      { "If-Match": '"4"' },
+      expect.anything(),
+    );
+    await done();
+  },
+);
+
+it.each(["existing", "new"])(
+  "names a Who is this? group through the namesake chooser: %s",
+  async (choice) => {
+    const { region, done } = await renderSuggestions([unnamed]);
+    const alex = ["11", "12"].map((id) => ({
+      ...grace,
+      person_id: `00000000-0000-4000-8000-0000000000${id}`,
+      display_name: "Alex",
+      display_name_folded: "alex",
+    }));
+    vi.mocked(api.listPeople).mockResolvedValue({ items: alex });
+    const previews = vi
+      .spyOn(api, "listPersonFacePreviews")
+      .mockResolvedValue({ items: [f1.preview!] });
+    const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
+    await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Name this person" }));
+    await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+    await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 2 people" }));
+    const chooser = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
+    expect(screen.queryByRole("dialog", { name: "Who is this?" })).toBeNull();
+    await fireEvent.click(chooser.getAllByRole("button", { name: "Photos" })[1]!);
+    expect(await chooser.findByRole("img", { name: "Photos of Alex" })).toBeTruthy();
+    expect(previews).toHaveBeenCalledExactlyOnceWith(
+      alex[1]!.person_id,
+      { hidden: false },
+      expect.anything(),
+    );
+    await fireEvent.click(
+      chooser.getByRole("radio", {
+        name: choice === "new" ? "New person named Alex" : new RegExp(alex[1]!.person_id),
+      }),
+    );
+    await fireEvent.click(chooser.getByRole("button", { name: "Choose" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Who is this?" }));
+    const detail = new Date(grace.created_at).toLocaleDateString();
+    expect(
+      dialog.getByRole("button", {
+        name: `Name this person: ${choice === "new" ? 'New person "Alex"' : `Alex · ${detail} · ${alex[1]!.person_id}`}`,
+      }),
+    ).toBeTruthy();
+    await fireEvent.click(dialog.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(decide).toHaveBeenCalledExactlyOnceWith(
+      "candidate-who",
+      choice === "new"
+        ? { action: "new_person", display_name: "Alex", face_ids: ["face-1", "face-2"] }
+        : { action: "link", person_id: alex[1]!.person_id, face_ids: ["face-1", "face-2"] },
+      { "If-Match": '"4"' },
+      expect.anything(),
+    );
+    await done();
+  },
+);
+
+it("pages the Who is this? name picker and retries a failed page", async () => {
+  const { region, done } = await renderSuggestions([unnamed]);
+  const alex = ["11", "12"].map((id) => ({
+    ...grace,
+    person_id: `00000000-0000-4000-8000-0000000000${id}`,
+    display_name: "Alex",
+    display_name_folded: "alex",
+  }));
+  let failed = false;
+  const search = vi.mocked(api.listPeople).mockImplementation(async (query) => {
+    if (!query?.cursor)
+      return { items: [ada, alex[0]!], next_cursor: "page-2", same_name_continues: true };
+    if (!failed) throw ((failed = true), new APIError("People unavailable", 503, "unavailable"));
+    return { items: [ada, alex[1]!] };
+  });
+  await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Name this person" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "A" } });
+  // Alex continues on the next page, so it waits; no new person while more remain.
+  const more = await screen.findByRole("option", { name: "Load more" });
+  expect(screen.getByRole("option", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /Alex/ })).toBeNull();
+  expect(screen.queryByRole("option", { name: /New person/ })).toBeNull();
+  search.mockClear();
+  await fireEvent.mouseDown(more);
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Retry" }));
+  await screen.findByRole("option", { name: "Alex · 2 people" });
+  expect(screen.getAllByRole("option", { name: "Ada" })).toHaveLength(1);
+  expect(screen.queryByRole("option", { name: "Load more" })).toBeNull();
+  expect(screen.getByRole("option", { name: 'New person "A"' })).toBeTruthy();
+  expect(search.mock.calls.map(([query]) => query?.cursor)).toEqual(["page-2", "page-2"]);
+  await done();
+});
+
+it("closes the review sheet when the Hidden scope changes", async () => {
+  const access = unlockedAccess();
+  const { region, done } = await renderSuggestions([isAda], access);
+  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
+  expect(screen.getByRole("dialog", { name: "Is this Ada?" })).toBeTruthy();
+  await act(() => access.scope++);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await done();
+  access.dispose();
 });

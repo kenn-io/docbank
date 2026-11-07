@@ -36,6 +36,7 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
 			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
 				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.", Schema: &huma.Schema{Type: "boolean"}},
+				{Name: "face_id", In: openAPIQueryLocation, Description: "Rank people by similarity to this face", Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}},
 				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}}},
 			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",
@@ -76,7 +77,8 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", "photo_summary and recent_first must be booleans"))
 			return
 		}
-		binding := strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst)
+		faceID := r.URL.Query().Get("face_id")
+		binding := strconv.Quote(faceID) + "\x01" + strconv.Quote(query) + "\x01" + strconv.FormatBool(projection) + "\x01" + strconv.FormatBool(recentFirst)
 		var gridRecipe string
 		if projection {
 			fingerprints, err := document.CurrentPhotoQualityFingerprints()
@@ -91,8 +93,12 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			writeError(w, NewError(422, "cursor_expired", "invalid people cursor"))
 			return
 		}
-		people, scope, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
+		people, scope, err := d.Store.PeopleByDisplayName(r.Context(), query, afterName, afterID, limit+1, browserSessionRequest(r.Context()), store.PeopleSearchOptions{FaceID: faceID, FaceReader: d.Blobs, RecentFirst: recentFirst, AfterRecent: afterRecent, PhotoSummary: projection, GridRecipe: gridRecipe})
 		if err != nil {
+			if faceID != "" && errors.Is(err, store.ErrStaleRevision) {
+				writeError(w, NewError(422, "cursor_expired", "invalid people cursor"))
+				return
+			}
 			writePackageError(w, err)
 			return
 		}

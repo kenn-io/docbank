@@ -155,6 +155,9 @@ type Service struct {
 	visionNotReady      sync.Map
 	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
+
+	faceSuggestionsMu        sync.Mutex
+	faceSuggestionsSignature string
 }
 
 type mediaOriginObservation struct {
@@ -1774,7 +1777,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	for _, binding := range profile.portable.Embeddings {
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
-		case document.EmbeddingInputImage:
+		case document.EmbeddingInputImage, document.EmbeddingInputFace:
 			generation, _, err = profile.embeddingRuntimes[binding.Name].ImageGeneration(ctx, profile.record, binding, version.ID)
 			if errors.Is(err, ErrSourceIneligible) {
 				ineligibleErr = err
@@ -2705,7 +2708,7 @@ func embeddingRuntimeDisclosure(supplied RuntimeDisclosure, binding document.Emb
 	switch binding.InputKind {
 	case document.EmbeddingInputOriginalFile:
 		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"}
-	case document.EmbeddingInputImage:
+	case document.EmbeddingInputImage, document.EmbeddingInputFace:
 		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type"}
 	default:
 		value.MetadataClasses = []string{"chunk_key", "content_derived_heading_path"}

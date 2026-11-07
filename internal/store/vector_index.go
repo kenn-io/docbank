@@ -128,6 +128,16 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 			&generation.EvidenceFingerprint, &generation.ChunkPolicyFingerprint, &eligible); err != nil {
 			return VectorIndexSource{}, err
 		}
+		if kind == document.EmbeddingInputFace {
+			set, err := loadEmbeddingSetTx(ctx, tx, member.EmbeddingSetID)
+			if err != nil {
+				return VectorIndexSource{}, err
+			}
+			eligible, err = embeddingSetEligibleTx(ctx, tx, set)
+			if err != nil {
+				return VectorIndexSource{}, err
+			}
+		}
 		if kind == document.EmbeddingInputImage {
 			if err := validateImageEmbeddingGeneration(generation, binding); err != nil {
 				return VectorIndexSource{}, err

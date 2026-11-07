@@ -175,6 +175,11 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
+				if binding.InputKind == document.EmbeddingInputFace {
+					if err := validateFaceEmbeddingGenerationTx(ctx, tx, generation, binding.Name); err != nil {
+						continue
+					}
+				}
 				if binding.InputKind == document.EmbeddingInputImage {
 					if err := validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name); err != nil {
 						continue
@@ -385,7 +390,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			}
 			if !slices.ContainsFunc(portable.Embeddings, func(b document.EmbeddingBindingV1) bool {
 				_, ok := executable[b.Descriptor.Fingerprint]
-				return b.InputKind == document.EmbeddingInputImage && ok
+				return (b.InputKind == document.EmbeddingInputImage || b.InputKind == document.EmbeddingInputFace) && ok
 			}) {
 				continue
 			}
@@ -393,7 +398,13 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			if name == request.ImageAfter.ProfileFingerprint {
 				after = request.ImageAfter.ContentVersionID
 			}
-			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+` ORDER BY v.version_id LIMIT $2`, after, request.Limit+1-len(pairs))
+			eligibility := photoDescriptionEligibility
+			display := "a.display_file_id=f.file_id"
+			if slices.ContainsFunc(portable.Embeddings, func(b document.EmbeddingBindingV1) bool { return b.InputKind == document.EmbeddingInputFace }) {
+				display = "a.kind='photo' AND f.role IN ('image','raw')"
+				eligibility = liveIncludedDisplayPredicate + ` AND EXISTS(SELECT 1 FROM photo_faces face WHERE face.content_version_id=v.version_id)`
+			}
+			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND `+display+` AND `+eligibility+` ORDER BY v.version_id LIMIT $2`, after, request.Limit+1-len(pairs))
 			if err != nil {
 				return err
 			}
@@ -414,13 +425,16 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				return err
 			}
 			for _, binding := range portable.Embeddings {
-				if binding.InputKind != document.EmbeddingInputImage {
+				if binding.InputKind != document.EmbeddingInputImage && binding.InputKind != document.EmbeddingInputFace {
 					continue
 				}
 				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
 					continue
 				}
 				missing, err := imageEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				if binding.InputKind == document.EmbeddingInputFace {
+					missing, err = faceEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				}
 				if err != nil {
 					return err
 				}

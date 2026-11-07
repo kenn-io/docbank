@@ -149,6 +149,12 @@ The first request to a provider checks it with a synthetic image, and a failed c
 
 Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
 
+## Turn on face suggestions
+
+Run `docbank processing faces`. It reviews the local processing plan and reports the missing download size before installation. The face model runs locally on photo previews and detected or manually drawn face boxes. Turning it on grants ongoing consent for this vault, including new photos. The daemon can start using the consent immediately.
+
+The face model has its own profile and download. Setting up text search doesn't enable face suggestions. Startup reuses installed face assets; missing assets require running setup again. Faces the model can't align remain available for manual naming. Review and name suggested groups in [People](people.md#face-suggestions).
+
 ## Embed photos for meaning search
 
 Image bindings serve Photos search. Documents search uses text bindings; a hybrid search with only image bindings uses filename and retained-text matches.

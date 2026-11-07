@@ -37,11 +37,11 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
-	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kata v0.20.0
-	go.kenn.io/kit v0.47.6
+	github.com/yuin/goldmark v1.8.6
+	go.kenn.io/kata v0.22.0
+	go.kenn.io/kit v0.48.3
 	golang.org/x/crypto v0.58.0
-	golang.org/x/image v0.45.0
+	golang.org/x/image v0.47.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
@@ -121,7 +121,6 @@ require (
 	github.com/posthog/posthog-go v1.39.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pathologize v1.1.0 // indirect

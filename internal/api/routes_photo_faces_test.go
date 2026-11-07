@@ -170,9 +170,9 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	decisions := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
 	response, body := do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: "Grace", Revision: 1, OperationID: uuid.NewString()})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "reject", FaceID: faceID, PersonID: person.PersonID, Revision: 2})
-	require.NoError(t, err)
-	for _, action := range []string{"reject", "key", "withdraw_rejection"} {
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "reject", FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	for _, action := range []string{"key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 3, OperationID: uuid.NewString(), PersonRevision: 1})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}

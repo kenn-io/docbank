@@ -139,6 +139,47 @@ it("names the face selected by its numbered picker title", async () => {
   faces.dispose();
 });
 
+it("ranks a face's picker by similarity and the whole-photo mark by recency", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
+    photoFacePage({ faces: [face], assertions: [], people: [] }),
+  );
+  const search = vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: [personSummary("near", { display_name: "Near" }), personSummary("far")],
+    next_cursor: "next",
+  });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByTitle("Name face 1"));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "" } });
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "", limit: 100, recent_first: true, face_id: face.face_id },
+      expect.anything(),
+    ),
+  );
+  // The server's order stands, and Load more keeps the face's ranking.
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent?.trim()),
+  ).toEqual(["Near", "far", "Load more"]);
+  await fireEvent.mouseDown(screen.getByRole("option", { name: "Load more" }));
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "", limit: 100, recent_first: true, face_id: face.face_id, cursor: "next" },
+      expect.anything(),
+    ),
+  );
+  await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+  await fireEvent.click(screen.getByRole("button", { name: "Mark person in photo" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "N" } });
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "N", limit: 100, recent_first: true },
+      expect.anything(),
+    ),
+  );
+  faces.dispose();
+});
 it("resets validated person search input on reopen", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
   const search = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
@@ -406,6 +447,7 @@ it.each(["distinct", "tied-whole", "tied-empty", "empty", "image500", "switch"])
               expect.anything(),
               false,
               id,
+              undefined,
             );
           }
         }
