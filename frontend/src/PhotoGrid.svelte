@@ -99,7 +99,7 @@
   const showTimeline = $derived(
     !!onjump &&
       (!!timelineError ||
-        timelineLoading ||
+        (timelineLoading && !timeline) ||
         !!timeline?.values.length ||
         (timeline?.missing ?? 0) > 0),
   );
@@ -226,7 +226,7 @@
 {#snippet dates(compact: boolean)}
   <PhotoTimeline
     facet={timeline}
-    loading={timelineLoading}
+    loading={timelineLoading && !timeline}
     error={timelineError}
     chosen={chosenYear}
     {current}
