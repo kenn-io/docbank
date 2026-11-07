@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -308,4 +309,47 @@ func TestActorKeysForPersonForwardsMergedPersonID(t *testing.T) {
 	page, err := s.ActorKeysForPerson(t.Context(), PersonActorKeysRequest{PersonID: absorbed.PersonID, Limit: 10})
 	require.NoError(t, err)
 	require.Equal(t, []string{"email:absorbed@example.test"}, page.Items)
+}
+
+// Cancel when the first post-commit context observation occurs. This models a
+// caller disappearing after the write is durable, before a response readback.
+type externalLinkCancelAfterCommitContext struct {
+	context.Context
+	store  *Store
+	before uint64
+	cancel context.CancelFunc
+}
+
+func (c externalLinkCancelAfterCommitContext) Done() <-chan struct{} {
+	if c.store.WriteRevision() > c.before {
+		c.cancel()
+	}
+	return c.Context.Done()
+}
+
+func TestLinkExternalIdentityReturnsCommittedSnapshotAfterCancellation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	person, err := s.CreatePerson(t.Context(), "Synthetic Profile", "operator")
+	require.NoError(t, err)
+	base, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx := externalLinkCancelAfterCommitContext{Context: base, store: s, before: s.WriteRevision(), cancel: cancel}
+	identity := PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic-archive",
+		UID: "synthetic-card", UIDKind: "vcard_uid", UIDState: "current", DisplayNameSnapshot: "Synthetic Profile"}
+	saved, err := s.LinkExternalIdentity(ctx, identity, person.Revision)
+	require.NoError(t, err, "a durable write must return its captured response without a post-commit read")
+	<-ctx.Done()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.Equal(t, "current", saved.UIDState)
+	require.NotEmpty(t, saved.LinkedAt)
+	require.Equal(t, saved.LinkedAt, saved.UpdatedAt)
+	// The first write advances the exact fenced revision once. A later unlink
+	// changes the catalog, while the captured first response stays current.
+	require.NoError(t, s.UnlinkExternalIdentity(t.Context(), identity.System, identity.ArchiveID, identity.UID, person.Revision+1))
+	latest, err := s.PersonExternalIdentities(t.Context(), person.PersonID)
+	require.NoError(t, err)
+	require.Len(t, latest, 1)
+	require.Equal(t, "unlinked", latest[0].UIDState)
+	require.Equal(t, "current", saved.UIDState)
 }

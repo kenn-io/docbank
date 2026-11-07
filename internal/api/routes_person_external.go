@@ -59,6 +59,8 @@ func registerPersonExternalRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
+		// LinkExternalIdentity captures the body inside the write transaction;
+		// its exact revision fence advances the person once, to revision+1.
 		return &struct {
 			ETag string `header:"ETag"`
 			Body PersonExternalIdentity
