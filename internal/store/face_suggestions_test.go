@@ -84,7 +84,6 @@ func TestFaceCandidateRejectionAfterSourceUnavailable(t *testing.T) {
 						require.Zero(t, total)
 					} else {
 						// Rejection covered the original three-face evidence; this pair is new.
-						// Dismissed regrouping keeps all three stored faces, so its identity stays rejected.
 						require.Len(t, page, 1)
 						require.Len(t, page[0].Faces, 2)
 						require.EqualValues(t, 1, total)
@@ -308,6 +307,12 @@ func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
 	decision.FaceIDs = []string{second.FaceID}
 	saved, err := s.DecidePersonCandidate(ctx, decision)
 	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{group}))
+	retained, _, err := s.PersonCandidates(ctx, "linked", 24, 0)
+	require.NoError(t, err)
+	require.Len(t, retained, 1)
+	require.Equal(t, saved.Revision, retained[0].Revision)
+	require.Equal(t, saved.DecidedPersonID, retained[0].DecidedPersonID)
 	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, assertions, 1)
@@ -465,25 +470,6 @@ func TestUnnamedFaceCandidateRequiresTwoReviewableFaces(t *testing.T) {
 			require.Zero(t, total)
 		})
 	}
-}
-
-func TestFaceSnapshotPublicationPreservesPartialConfirmation(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	pair := faceCandidatePair(t, s)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{pair.group}))
-	page, _, err := s.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	decision, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "new_person", DisplayName: "Ada", FaceOnly: true, FaceIDs: []string{pair.first.FaceID}})
-	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{pair.group}))
-	retained, _, err := s.PersonCandidates(ctx, "linked", 24, 0)
-	require.NoError(t, err)
-	require.Len(t, retained, 1)
-	require.Equal(t, decision.Revision, retained[0].Revision)
-	require.Equal(t, decision.DecidedPersonID, retained[0].DecidedPersonID)
 }
 
 func TestFaceSnapshotPublicationSkipsRetiredTarget(t *testing.T) {

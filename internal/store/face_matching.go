@@ -32,7 +32,11 @@ type FaceCentroid struct {
 // Candidate output is absent: publishing suggestions cannot invalidate its input.
 func (s *Store) FaceMatchingInputs(ctx context.Context) (FaceMatchingSnapshot, error) {
 	var result FaceMatchingSnapshot
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error { var err error; result, err = s.faceMatchingInputsTx(ctx, tx); return err })
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = s.faceMatchingInputsTx(ctx, tx)
+		return err
+	})
 	return result, err
 }
 func (s *Store) faceMatchingInputsTx(ctx context.Context, tx *sql.Tx) (FaceMatchingSnapshot, error) {

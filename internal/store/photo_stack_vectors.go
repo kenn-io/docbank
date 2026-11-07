@@ -38,7 +38,7 @@ func vectorHeads(ctx context.Context, q metadataQuerier, kind string) (heads map
 	if kind == "image" {
 		metric = " AND s.metric IN ('cosine','dot_product')"
 	}
-	rows, err := q.QueryContext(ctx, `SELECT h.vector_space_id,h.generation_id FROM vector_index_heads h JOIN embedding_vector_spaces s ON s.vector_space_id=h.vector_space_id WHERE EXISTS(SELECT 1 FROM embedding_heads e WHERE e.vector_space_id=h.vector_space_id AND e.input_kind=$1)`+metric, kind)
+	rows, err := q.QueryContext(ctx, `SELECT h.vector_space_id,h.generation_id FROM vector_index_heads h JOIN embedding_vector_spaces s ON s.vector_space_id=h.vector_space_id WHERE ($1='' OR EXISTS(SELECT 1 FROM embedding_heads e WHERE e.vector_space_id=h.vector_space_id AND e.input_kind=$1))`+metric, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -63,13 +63,17 @@ func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier
 }
 
 func (s *Store) openVectorReader(ctx context.Context, q metadataQuerier, heads map[string]string) (*photoStackVectorReader, error) {
+	active, err := vectorHeads(ctx, q, "")
+	if err != nil {
+		return nil, err
+	}
 	reader := &photoStackVectorReader{heads: heads}
 	s.photoStackVectorsMu.Lock()
 	if s.photoStackVectors == nil {
 		s.photoStackVectors = make(map[string]photoStackOpenedGeneration)
 	}
 	for space, opened := range s.photoStackVectors {
-		if id, present := heads[space]; present && id != opened.id {
+		if active[space] != opened.id {
 			delete(s.photoStackVectors, space)
 		}
 	}

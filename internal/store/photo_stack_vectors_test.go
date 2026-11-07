@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -39,6 +40,10 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, first.indexes[0], second.indexes[0], "the immutable generation is reused")
 	require.Equal(t, 1, generationReads)
+	other, err := f.s.openVectorReader(t.Context(), f.s.db, map[string]string{})
+	require.NoError(t, err)
+	require.Empty(t, other.indexes)
+	require.Same(t, first.indexes[0], f.s.photoStackVectors[index.space].index, "a request for another input kind retains an active generation")
 	index.generation(t, "replacement-image-generation")
 	replacement, err := f.s.newPhotoStackVectorReader(t.Context(), q)
 	require.NoError(t, err)
@@ -85,6 +90,16 @@ func TestPhotoStackPagesReuseOpenedGeneration(t *testing.T) {
 		require.Nil(t, reader)
 		require.ErrorIs(t, err, context.Canceled)
 	})
+	_, err = f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
+	require.NoError(t, err)
+	require.Len(t, f.s.photoStackVectors, 1)
+	_, err = f.s.db.ExecContext(t.Context(), "DELETE FROM embedding_heads")
+	require.NoError(t, err)
+	require.NoError(t, f.s.RetireEmptyVectorIndexHead(t.Context(), index.space, time.Now()))
+	retired, err := f.s.newPhotoStackVectorReader(t.Context(), f.s.db)
+	require.NoError(t, err)
+	require.Empty(t, retired.indexes)
+	require.Empty(t, f.s.photoStackVectors, "the retired generation must be released")
 	require.NoError(t, f.s.Close())
 	require.Empty(t, f.s.photoStackVectors)
 }

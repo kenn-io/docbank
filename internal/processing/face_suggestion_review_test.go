@@ -274,16 +274,19 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 	require.NoError(t, err)
 	_, err = x.f.catalog.DecidePhotoFace(ctx, face.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: "name", PersonID: person.PersonID})
 	require.NoError(t, err)
-	for range 4 {
+	for attempts := 0; x.service.faceSuggestionsSignature == "" && attempts < 32; attempts++ {
 		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 	}
+	require.NotEmpty(t, x.service.faceSuggestionsSignature)
 	for i, name := range []string{"Beth", "Cora"} {
 		person, err = x.f.catalog.UpdatePerson(ctx, person.PersonID, person.Revision, name)
 		require.NoError(t, err)
 		if i == 0 {
 			require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+			require.NotNil(t, x.service.faceSuggestionsPending, "the next rename must happen during an unfinished pass")
 		}
 	}
+	require.NotNil(t, x.service.faceSuggestionsPending, "the lane starts with the earlier snapshot still pending")
 	current, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
 	// Both renames change inputs without changing candidate identities. The

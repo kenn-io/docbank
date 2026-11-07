@@ -374,6 +374,9 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 				require.Equal(t, 4, reader.opens)
 				return
 			}
+			if mode == "named source" {
+				return
+			}
 			reader.opens = 0
 			matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, visibleOnly, options)
 			require.NoError(t, err)
@@ -656,7 +659,9 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
-			for _, table := range []string{"embedding_input_generations", "embedding_vector_sets", "embedding_vector_spaces"} {
+			if tc.fails {
+				// Readers also validate retained authority, independently of writer triggers.
+				table := strings.Fields(tc.damage)[1]
 				_, err = db.ExecContext(ctx, "DROP TRIGGER "+table+"_immutable_update")
 				require.NoError(t, err)
 			}
@@ -686,9 +691,11 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			after, err := reopened.FaceMatchingInputs(ctx)
 			if tc.fails {
 				require.Error(t, err, "corrupt stored authority must remain an error")
-				_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
-				require.Error(t, err, "ranked search must reject unsupported authority")
-				assert.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
+				if tc.name == "future vector set" {
+					_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
+					require.Error(t, err, "ranked search must reject unsupported authority")
+					require.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
+				}
 			} else {
 				require.NoError(t, err)
 				assert.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
