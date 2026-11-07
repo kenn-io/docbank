@@ -496,11 +496,17 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 	}
 	join()
 	err = context.Cause(ctx)
+	var rootErr error
+	if err == nil && s.evidence == nil {
+		// Legacy scans have no completion callbacks; evidence-enabled scans
+		// verify inside finishScan before AfterScan can commit a receipt.
+		rootErr = root.verify()
+	}
 	_, finishErr := s.finishScan(ctx, root, err)
 	if err != nil {
 		return errors.Join(fmt.Errorf("scanning folder: %w", err), finishErr)
 	}
-	return errors.Join(finishErr, root.verify())
+	return errors.Join(finishErr, rootErr)
 }
 
 func checkFolderSource(expected watchFingerprint, open localFileOpener) error {

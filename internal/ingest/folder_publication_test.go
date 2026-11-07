@@ -180,7 +180,10 @@ func TestFolderPublicationIncompleteEvidence(t *testing.T) {
 			}
 			var results []FolderScanResult
 			scanner.AfterScan = func(_ context.Context, result FolderScanResult) error { results = append(results, result); return nil }
-			_ = scanner.ScanOnce(t.Context(), 1)
+			err := scanner.ScanOnce(t.Context(), 1)
+			if mode == "root replaced" {
+				require.ErrorIs(t, err, ErrSourceChanged)
+			}
 			require.Len(t, results, 1)
 			assert.False(t, results[0].Complete, "continued/skipped failures are not absence evidence")
 			assert.Positive(t, results[0].Failed)
@@ -222,4 +225,25 @@ func TestFolderPublicationAfterScanJoinsWorkers(t *testing.T) {
 	}
 	require.NoError(t, scanner.ScanOnce(t.Context(), 3))
 	assert.True(t, afterCalled)
+}
+
+// A change after the completion receipt belongs to the next scan. It must not
+// make the already-completed one-shot inventory look uncommitted to its caller.
+func TestFolderPublicationRootChangeAfterCompletionKeepsReceipt(t *testing.T) {
+	scanner, _ := publicationScanner(t, nil)
+	root := scanner.watcher.config.Source
+	moved := root + "-moved"
+	t.Cleanup(func() { _ = os.RemoveAll(moved) })
+	completed := false
+	scanner.AfterScan = func(_ context.Context, result FolderScanResult) error {
+		require.True(t, result.Complete)
+		completed = true
+		if err := os.Rename(root, moved); err != nil {
+			t.Skipf("opened root rename unavailable: %v", err)
+		}
+		require.NoError(t, os.Mkdir(root, 0o700))
+		return nil
+	}
+	require.NoError(t, scanner.ScanOnce(t.Context(), 1))
+	require.True(t, completed)
 }
