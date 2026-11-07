@@ -537,9 +537,8 @@ jobs:
           device=$(hdiutil attach -nomount ram://4194304)
           device=${device//[[:space:]]/}
           trap 'hdiutil detach "$device"' EXIT
-          volume="docbank-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          diskutil eraseVolume APFS "$volume" "$device"
-          TMPDIR=$(mktemp -d "/Volumes/$volume/tmp.XXXXXX")
+          diskutil eraseVolume APFS docbank-test "$device"
+          TMPDIR=$(mktemp -d /Volumes/docbank-test/tmp.XXXXXX)
           export TMPDIR GOTMPDIR="$RUNNER_TEMP"
           bash scripts/test-go-ci.sh
 
