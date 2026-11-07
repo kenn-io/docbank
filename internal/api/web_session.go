@@ -742,7 +742,7 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "limit" && key != "offset") || len(entries) != 1 {
+			if (key != webLimitQuery && key != "offset") || len(entries) != 1 {
 				return false
 			}
 		}

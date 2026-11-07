@@ -106,7 +106,7 @@ func registerEmailDocumentRoutes(mux *http.ServeMux, api huma.API, d Deps, g *ga
 			{Name: "child_version_id", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "string"}},
 			{Name: "after_operation_id", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "string"}},
 			{Name: "after_order", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "integer"}},
-			{Name: packageLimitParameter, In: openAPIQueryLocation, Schema: &huma.Schema{Type: "integer"}},
+			{Name: "limit", In: openAPIQueryLocation, Schema: &huma.Schema{Type: "integer"}},
 		},
 	}, nil, reflect.TypeFor[document.EmailDocumentRelationPage](), func(w http.ResponseWriter, r *http.Request) {
 		values := r.URL.Query()
