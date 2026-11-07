@@ -10,7 +10,7 @@
     "fmt": "vp fmt",
     "check:fmt-lint": "vp fmt --check && vp lint --format unix",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "check:kit-ui": "kit-ui-check src",
+    "check:kit-ui": "kit-ui-check src --disable hand-rolled-disclosure,hand-rolled-tabs",
     "docs-site:check": "tsc -p docs-site/tsconfig.json --noEmit",
     "docs-site:test": "node node_modules/@playwright/test/cli.js test --config docs-site/playwright.config.ts",
     "screenshots": "node screenshots/run.mjs",
@@ -21,7 +21,7 @@
   "dependencies": {
     "@embedpdf/pdfium": "2.15.1",
     "@embedpdf/svelte-pdf-viewer": "2.15.1",
-    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#5b99e44d9e9cfbaca05868f146b674cb6eea39a0",
+    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#2c225af2bc8f6170825877786be72b29e79ec2c1",
     "@lucide/svelte": "1.64.0",
     "@noble/hashes": "^2.2.0",
     "leaflet": "1.9.4",

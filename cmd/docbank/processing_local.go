@@ -103,23 +103,12 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
 	if !managed {
 		return nil
 	}
-	_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true})
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, embedlocal.ErrNotFound) {
-		return fmt.Errorf("discover embeddings server: %w", err)
-	}
-	dir, err := embedlocal.DefaultDir()
-	if err != nil {
-		return fmt.Errorf("find embeddings directory: %w", err)
-	}
-	report := func(_ context.Context, bytes int64) (bool, error) {
+	confirm := func(_ context.Context, bytes int64) (bool, error) {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Downloading local embeddings: %d bytes\n", bytes); err != nil {
 			return false, fmt.Errorf("write download size: %w", err)
 		}
 		return true, nil
 	}
-	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: report})
+	_, err := localEmbeddingOriginWithRuntime(cmd.Context(), confirm, endpoint, install)
 	return err
 }

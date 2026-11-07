@@ -48,6 +48,9 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 			return candidate.Processing, nil
 		}
 		deps.LocalText = setup
+		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) {
+			return api.LocalTextStatus{DownloadBytes: 295000000}, nil
+		}
 	})
 	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/local/plans", nil, api.LocalTextPlanRequest{Server: "local"})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -66,6 +69,11 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	startupFailure.Store(false)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/processing/local/status", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var status api.LocalTextStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	require.Equal(t, int64(295000000), status.DownloadBytes)
 	saveFailure.Store(true)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)

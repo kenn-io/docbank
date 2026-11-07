@@ -8639,6 +8639,40 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    LocalTextStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LocalTextStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        active:
+          type: boolean
+        download_bytes:
+          format: int64
+          type: integer
+        provider:
+          enum:
+            - ""
+            - local
+            - ollama
+            - configured
+          type: string
+        restart_required:
+          type: boolean
+      required:
+        - active
+        - provider
+        - download_bytes
+        - restart_required
+      type: object
+      x-go-type: api.LocalTextStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Locator:
       additionalProperties: false
       properties:
@@ -30611,6 +30645,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Approve vault-wide and ongoing text indexing
+  /api/v1/processing/local/status:
+    get:
+      operationId: getLocalTextStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalTextStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read search by meaning setup status
   /api/v1/processing/plans:
     post:
       operationId: planDocumentProcessing

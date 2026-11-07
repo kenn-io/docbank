@@ -12256,6 +12256,51 @@ func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequ
 	return responseParser(ctx, resp)
 }
 
+// GetLocalTextStatus Read search by meaning setup status
+func (c *Client) GetLocalTextStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalTextStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetLocalTextStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetLocalTextStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetLocalTextStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetLocalTextStatusErrorResponse](resp, "GetLocalTextStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -29939,6 +29984,10 @@ type ApplyLocalTextResponse = api.LocalTextPlan
 
 type ApplyLocalTextErrorResponse = Error
 
+type GetLocalTextStatusResponse = api.LocalTextStatus
+
+type GetLocalTextStatusErrorResponse = Error
+
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
 type PlanDocumentProcessingErrorResponse = Error
@@ -31017,6 +31066,8 @@ type LocalTextApplyRequest = api.LocalTextApplyRequest
 type LocalTextPlan = api.LocalTextPlan
 
 type LocalTextPlanRequest = api.LocalTextPlanRequest
+
+type LocalTextStatus = api.LocalTextStatus
 
 type Locator = report.Locator
 
