@@ -174,8 +174,10 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
-				if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, generation); err != nil {
-					continue
+				if binding.InputKind != document.EmbeddingInputRenditionChunk {
+					if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, generation); err != nil {
+						continue
+					}
 				}
 				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
 				if err != nil {

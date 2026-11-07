@@ -19,72 +19,78 @@ func TestFaceCandidateRejectionAfterSourceUnavailable(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"named", "unnamed"} {
 		for _, change := range []string{"excluded", "replaced", "trashed"} {
-			t.Run(kind+"/"+change, func(t *testing.T) {
-				t.Parallel()
-				s := newTestStore(t)
-				ctx := t.Context()
-				var nodes []Node
-				var faces []FaceSuggestionFace
-				for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
-					node := browsePhotoNode(t, s, name, fakeHash("a1"), "image/jpeg")
-					face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+			for _, restore := range []bool{false, true} {
+				t.Run(kind+"/"+change+"/restored="+strconv.FormatBool(restore), func(t *testing.T) {
+					t.Parallel()
+					s := newTestStore(t)
+					ctx := t.Context()
+					var nodes []Node
+					var faces []FaceSuggestionFace
+					for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+						node := browsePhotoNode(t, s, name, fakeHash("a1"), "image/jpeg")
+						face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+						require.NoError(t, err)
+						nodes = append(nodes, node)
+						faces = append(faces, FaceSuggestionFace{PhotoFace: face})
+					}
+					personID, name := "", ""
+					if kind == "named" {
+						person, err := s.CreatePerson(ctx, "Ada", "operator")
+						require.NoError(t, err)
+						personID, name = person.PersonID, person.DisplayName
+					}
+					group, err := NewFaceCandidate(faces, personID, name)
 					require.NoError(t, err)
-					nodes = append(nodes, node)
-					faces = append(faces, FaceSuggestionFace{PhotoFace: face})
-				}
-				personID, name := "", ""
-				if kind == "named" {
-					person, err := s.CreatePerson(ctx, "Ada", "operator")
+					require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{group}))
+					original, _, err := s.PersonCandidates(ctx, "open", 24, 0)
 					require.NoError(t, err)
-					personID, name = person.PersonID, person.DisplayName
-				}
-				group, err := NewFaceCandidate(faces, personID, name)
-				require.NoError(t, err)
-				require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{group}))
-				original, _, err := s.PersonCandidates(ctx, "open", 24, 0)
-				require.NoError(t, err)
-				require.Len(t, original, 1)
-				switch change {
-				case "excluded":
-					asset, err := s.PhotoAssetForNode(ctx, nodes[0].ID)
+					require.Len(t, original, 1)
+					switch change {
+					case "excluded":
+						asset, err := s.PhotoAssetForNode(ctx, nodes[0].ID)
+						require.NoError(t, err)
+						_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+						require.NoError(t, err)
+					case "replaced":
+						_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("b2"), 8, "image/jpeg")
+						require.NoError(t, err)
+					case "trashed":
+						_, _, err = s.Trash(ctx, nodes[0].ID, UnconditionalRev)
+						require.NoError(t, err)
+					}
+					page, total, err := s.FaceCandidates(ctx, 24, 0)
 					require.NoError(t, err)
-					_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-					require.NoError(t, err)
-				case "replaced":
-					_, _, err = s.ReplaceContent(ctx, nodes[0].ID, nodes[0].Revision, fakeHash("b2"), 8, "image/jpeg")
-					require.NoError(t, err)
-				case "trashed":
-					_, _, err = s.Trash(ctx, nodes[0].ID, UnconditionalRev)
-					require.NoError(t, err)
-				}
-				page, total, err := s.FaceCandidates(ctx, 24, 0)
-				require.NoError(t, err)
-				require.EqualValues(t, 1, total)
-				require.Len(t, page, 1)
-				require.Len(t, page[0].Faces, 2)
-				decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "reject", FaceOnly: true})
-				require.NoError(t, err)
-				require.Equal(t, "rejected", decided.State)
-				require.Equal(t, original[0].EvidenceSHA256, decided.EvidenceSHA256)
-				var backup bytes.Buffer
-				require.NoError(t, s.ExportMetadata(ctx, &backup))
-				restored := newTestStore(t)
-				require.NoError(t, restored.ImportMetadata(ctx, &backup))
-				pair, err := NewFaceCandidate(faces[1:], personID, name)
-				require.NoError(t, err)
-				require.NoError(t, restored.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{pair}))
-				page, total, err = restored.FaceCandidates(ctx, 24, 0)
-				require.NoError(t, err)
-				if kind == "named" {
-					require.Empty(t, page)
-					require.Zero(t, total)
-				} else {
-					// A changed unnamed group has a different rejection identity.
+					require.EqualValues(t, 1, total)
 					require.Len(t, page, 1)
 					require.Len(t, page[0].Faces, 2)
-					require.EqualValues(t, 1, total)
-				}
-			})
+					decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "reject", FaceOnly: true})
+					require.NoError(t, err)
+					require.Equal(t, "rejected", decided.State)
+					require.Equal(t, original[0].EvidenceSHA256, decided.EvidenceSHA256)
+					catalog := s
+					if restore {
+						var backup bytes.Buffer
+						require.NoError(t, s.ExportMetadata(ctx, &backup))
+						catalog = newTestStore(t)
+						require.NoError(t, catalog.ImportMetadata(ctx, &backup))
+					}
+					pair, err := NewFaceCandidate(faces[1:], personID, name)
+					require.NoError(t, err)
+					require.NoError(t, catalog.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{pair}))
+					page, total, err = catalog.FaceCandidates(ctx, 24, 0)
+					require.NoError(t, err)
+					if kind == "named" {
+						require.Empty(t, page)
+						require.Zero(t, total)
+					} else {
+						// Rejection covered the original three-face evidence; this pair is new.
+						// Dismissed regrouping keeps all three stored faces, so its identity stays rejected.
+						require.Len(t, page, 1)
+						require.Len(t, page[0].Faces, 2)
+						require.EqualValues(t, 1, total)
+					}
+				})
+			}
 		}
 	}
 }
@@ -279,8 +285,6 @@ func TestFaceCandidateConfirmationHonorsCurrentFaceDecisions(t *testing.T) {
 						require.NotEmpty(t, face.AssertionID)
 					}
 				}
-				// Manual naming remains an explicit correction of a prior decision.
-				decideFaceForTest(t, s, pair.node, pair.first.FaceID, person.PersonID, "name")
 			})
 		}
 	}

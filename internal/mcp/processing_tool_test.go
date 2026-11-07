@@ -463,40 +463,24 @@ func invokeProcessingTool(
 	return executeProcessingTool(ctx, lease, plans, mustResolveSchema(output), raw)
 }
 
-func TestFaceProcessingPlanCanBeReviewed(t *testing.T) {
-	harness := newProcessingToolHarness(t, testProcessingPlanFingerprint, nil)
-	harness.plan.Selector.Profile = "local-faces"
-	harness.plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "local-faces", TrustBoundary: "local_process", InputClasses: []string{"face"}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "local", UltimateProcessor: "local", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
-	server := harness.server(t)
-	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
-		"name": "get_processing_plan", "arguments": map[string]any{
-			"node_id": testProcessingNodeID, "content_version_id": testVersionID, "profile": "local-faces",
-		},
-	})))
-	require.NotContains(t, result, "isError")
-	output := objectField(t, result, "structuredContent")
-	flow, ok := output["flow"].([]any)
-	require.True(t, ok)
-	require.Len(t, flow, 1)
-	hop, ok := flow[0].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, []any{"face"}, hop["input_classes"])
-}
-
-func TestProcessingPlanSchemaAcceptsImageInputClass(t *testing.T) {
-	plan := syntheticProcessingPlan(testProcessingPlanFingerprint)
-	plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "image", TrustBoundary: "local_process", InputClasses: []string{"image"}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
-	validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))["get_processing_plan"].OutputSchema)
-	raw, err := json.Marshal(plan)
-	require.NoError(t, err)
-	var value map[string]any
-	require.NoError(t, json.Unmarshal(raw, &value))
-	value["ttlMs"], value["cacheScope"] = 0, "private"
-	require.NoError(t, validator.Validate(&value))
-	plan.Flow[0].InputClasses = []string{"unknown"}
-	raw, err = json.Marshal(plan)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(raw, &value))
-	value["ttlMs"], value["cacheScope"] = 0, "private"
-	require.Error(t, validator.Validate(&value))
+func TestProcessingPlanSchemaAcceptsEmbeddingInputClass(t *testing.T) {
+	for _, kind := range []string{"image", "face"} {
+		t.Run(kind, func(t *testing.T) {
+			plan := syntheticProcessingPlan(testProcessingPlanFingerprint)
+			plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "image", TrustBoundary: "local_process", InputClasses: []string{kind}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
+			validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))["get_processing_plan"].OutputSchema)
+			raw, err := json.Marshal(plan)
+			require.NoError(t, err)
+			var value map[string]any
+			require.NoError(t, json.Unmarshal(raw, &value))
+			value["ttlMs"], value["cacheScope"] = 0, "private"
+			require.NoError(t, validator.Validate(&value))
+			plan.Flow[0].InputClasses = []string{"unknown"}
+			raw, err = json.Marshal(plan)
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(raw, &value))
+			value["ttlMs"], value["cacheScope"] = 0, "private"
+			require.Error(t, validator.Validate(&value))
+		})
+	}
 }

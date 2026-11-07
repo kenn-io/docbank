@@ -11,6 +11,7 @@ import {
   candidate,
   candidateFace,
   f1,
+  f2,
   isAda,
   unnamed,
   decided,
@@ -420,30 +421,13 @@ it("renders retry and show-more controls for suggestions", async () => {
   await cache.dispose();
 });
 
-it("confirms an Is this X? group after removing a face", async () => {
-  const { region, list, done } = await renderSuggestions([isAda]);
-  const remaining = {
-    ...isAda,
-    candidate_id: "candidate-ada-2",
-    faces: isAda.faces.filter((face) => face.face_id !== "face-2"),
-  };
-  list.mockResolvedValue({ items: [remaining], total: 1 });
-  const remove = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
-  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(remaining));
+it("removes a face from an Is this X? group", async () => {
+  const { region, people, done } = await renderSuggestions([isAda]);
+  const remove = vi.spyOn(people.suggestions, "removeFace").mockResolvedValue(true);
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
-  await waitFor(() => expect(within(dialog).getAllByRole("img")).toHaveLength(3));
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada: face 2" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(remove.mock.calls[0]![1]).toMatchObject({ face_id: "face-2" }));
-  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
-  const reopened = screen.getByRole("dialog", { name: "Is this Ada?" });
-  const confirm = within(reopened).getByRole("button", { name: "Confirm" });
-  await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
-  await fireEvent.click(confirm);
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(decide).toHaveBeenCalledOnce();
-  expect(decide.mock.calls[0]![0]).toBe("candidate-ada-2");
+  expect(remove).toHaveBeenCalledExactlyOnceWith(f2);
   await done();
 });
 

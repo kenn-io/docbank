@@ -158,12 +158,9 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 			continue
 		}
 		r := a.set
-		g, v := r.InputGeneration, r.VectorSet
-		if len(g.Inputs) != a.inputs || len(g.Inputs) > maxEmbeddingCatalogRows {
+		g := r.InputGeneration
+		if len(g.Inputs) != a.inputs {
 			return nil, errors.New("embedding input generation count is corrupt")
-		}
-		if v.RowCount < 1 || v.RowCount > maxEmbeddingCatalogRows || len(v.rows) != v.RowCount || embeddingVectorManifestChecksum(v.rows) != v.ManifestChecksum {
-			return nil, errors.New("embedding vector-set manifest is corrupt")
 		}
 		space, ok := spaces[r.VectorSpace.ID]
 		if !ok {
@@ -174,6 +171,9 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 			spaces[space.ID] = space
 		}
 		r.VectorSpace = space
+		if err := validateEmbeddingSetRecord(r); err != nil {
+			return nil, err
+		}
 		if !a.live {
 			continue
 		}

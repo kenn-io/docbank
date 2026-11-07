@@ -590,7 +590,9 @@ func TestFaceAggregateStatusIncludesLiveJobs(t *testing.T) {
 	}
 }
 
-func TestFacePickerBatchPreservesStoredAuthority(t *testing.T) {
+// Exercise the consumer read after reopening independently of writer triggers.
+// The processing fixture publishes real face generations and payloads for all three readers.
+func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, damage string
@@ -601,6 +603,8 @@ func TestFacePickerBatchPreservesStoredAuthority(t *testing.T) {
 		{"invalid generation", `UPDATE embedding_input_generations SET chunk_policy_fingerprint='` + workerHash("invalid policy") + `'`, true},
 		{"input count", `UPDATE embedding_input_generations SET input_count=input_count+1`, true},
 		{"vector manifest", `UPDATE embedding_vector_sets SET manifest_checksum='` + workerHash("invalid manifest") + `'`, true},
+		{"future vector set", `UPDATE embedding_vector_sets SET contract_version='review-future/v99'`, true},
+		{"future vector space", `UPDATE embedding_vector_spaces SET contract_version='review-future/v99'`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -615,7 +619,7 @@ func TestFacePickerBatchPreservesStoredAuthority(t *testing.T) {
 			db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
-			for _, table := range []string{"embedding_input_generations", "embedding_vector_sets"} {
+			for _, table := range []string{"embedding_input_generations", "embedding_vector_sets", "embedding_vector_spaces"} {
 				_, err = db.ExecContext(ctx, "DROP TRIGGER "+table+"_immutable_update")
 				require.NoError(t, err)
 			}
@@ -623,9 +627,15 @@ func TestFacePickerBatchPreservesStoredAuthority(t *testing.T) {
 				_, err = db.ExecContext(ctx, statement)
 				require.NoError(t, err)
 			}
-			after, err := x.f.catalog.FaceMatchingInputs(ctx)
+			reopened, err := store.Open(ctx, x.f.databasePath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+			after, err := reopened.FaceMatchingInputs(ctx)
 			if tc.fails {
 				require.Error(t, err, "corrupt stored authority must remain an error")
+				_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
+				require.Error(t, err, "ranked search must reject unsupported authority")
+				assert.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
 			} else {
 				require.NoError(t, err)
 				require.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
