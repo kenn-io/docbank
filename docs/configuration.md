@@ -578,7 +578,7 @@ Compute the task-specific fingerprints:
 docbank processing vision-fingerprints --task compatible-vision.understand-v1 --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
-Use the printed assignments in this configuration. The endpoint and credential settings follow the photo-description transport above:
+The four labeled output sections require `max_units` of at least four. Use the printed assignments in this configuration. The endpoint and credential settings follow the photo-description transport above:
 
 ```toml
 [credential_bindings.image_understanding]
@@ -599,7 +599,7 @@ disclose_filename = false
 requested_artifacts = ["markdown"]
 max_document_bytes = 16777216
 max_response_bytes = 1048576
-max_units = 1
+max_units = 4
 
 [rendition_profiles.image_understanding.runtime]
 endpoint = "http://127.0.0.1:8080"
