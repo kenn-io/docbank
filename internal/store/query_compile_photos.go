@@ -86,13 +86,17 @@ func (c queryCompiler) compilePhotoMetadataPredicate(headsFirst bool, predicate 
 	}, args...)
 }
 
+type photoMetadataDensityError struct{ error }
+
+func (err photoMetadataDensityError) Unwrap() error { return err.error }
+
 func (c queryCompiler) compilePhotoTextMetadataPredicate(value, predicate string, args ...any) (compiledQueryFragment, error) {
 	headsFirst := false
 	if c.photoMetadataDensity != nil {
 		var err error
 		headsFirst, err = c.photoMetadataDensity(value)
 		if err != nil {
-			return compiledQueryFragment{}, err
+			return compiledQueryFragment{}, photoMetadataDensityError{err}
 		}
 	}
 	return c.compilePhotoMetadataPredicate(headsFirst, predicate, args...), nil

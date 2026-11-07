@@ -359,6 +359,9 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
+			if probeErr, ok := errors.AsType[photoMetadataDensityError](err); ok {
+				return compiledQueryFragment{}, probeErr.error
+			}
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
 		}
 		return part, nil
