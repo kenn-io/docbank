@@ -11,12 +11,12 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/yuin/goldmark"
-	goldmarkast "github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/renderer"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2"
+	goldmarkast "github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/renderer"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
+	"github.com/yuin/goldmark/v2/util"
 	"golang.org/x/net/html"
 )
 

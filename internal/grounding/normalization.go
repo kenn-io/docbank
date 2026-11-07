@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 func digit(r rune) bool     { return r >= '0' && r <= '9' }

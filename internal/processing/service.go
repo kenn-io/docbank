@@ -24,7 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/v2/parser"
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"

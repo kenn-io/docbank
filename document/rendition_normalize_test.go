@@ -12,12 +12,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	extensionast "github.com/yuin/goldmark/extension/ast"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	extensionast "github.com/yuin/goldmark/v2/extension/ast"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
+	"github.com/yuin/goldmark/v2/text"
 )
 
 func TestBuildRenditionV1(t *testing.T) {

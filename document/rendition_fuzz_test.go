@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
+	"github.com/yuin/goldmark/v2/text"
 )
 
 // FuzzSanitizeRenditionMarkdown checks the invariants the example tests rely
