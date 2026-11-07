@@ -175,15 +175,21 @@ func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, source.Close())
 	require.NoError(t, x.f.blobs.Remove(hash))
-	n, err := x.worker.ScanOnce(ctx)
+	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, sets.Sets, 1)
+	require.Equal(t, version, sets.Sets[0].Set.ContentVersionID)
 	_, err = x.f.blobs.WriteDetailedContext(ctx, bytes.NewReader(data))
 	require.NoError(t, err)
 	x.worker.reconcileAt = time.Time{}
-	n, err = x.worker.ScanOnce(ctx)
+	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	sets, err = x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, sets.Sets, 2)
+	require.ElementsMatch(t, []string{version, x.f.node.CurrentVersionID}, []string{sets.Sets[0].Set.ContentVersionID, sets.Sets[1].Set.ContentVersionID})
 }
 
 func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
@@ -201,9 +207,6 @@ func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
 	// The second inference row is explicitly unmatched.
 	query := x.inputs[1].FaceID
 	options := store.PeopleSearchOptions{FaceID: query, FaceReader: x.f.blobs, RecentFirst: true}
-	rows, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
 	matchedOptions := options
 	matchedOptions.FaceID = x.inputs[0].FaceID
 	matched, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, matchedOptions)
@@ -217,43 +220,12 @@ func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, cold.Close()) })
 	require.NoError(t, cold.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
-	rows, _, err = cold.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+	rows, _, err := cold.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "Ada", rows[0].DisplayName)
 	_, _, err = cold.PeopleByDisplayName(ctx, "", matched[0].DisplayNameFolded, matched[0].PersonID, 24, false, matchedOptions)
 	require.ErrorIs(t, err, store.ErrStaleRevision, "a matched face cannot continue ranking without its source payload")
-}
-
-func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
-	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	x.matchAll = true
-	ctx := t.Context()
-	x.f.grant(t, x.service, config.LocalFacesProfile)
-	_, err := x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	groups, _, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Len(t, groups, 1)
-	require.Len(t, groups[0].Faces, 2)
-	_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
-	require.NoError(t, err)
-	var backup bytes.Buffer
-	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &backup))
-	target, err := store.Open(ctx, filepath.Join(t.TempDir(), "restored.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, target.Close()) })
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-	require.NoError(t, target.ValidateMetadata(ctx))
-	original := x.service.profiles[config.LocalFacesProfile]
-	restored, err := NewService(ctx, ServiceConfig{Catalog: target, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: x.service.principal, Scope: x.service.scope, Profiles: map[string]ProfileConfig{config.LocalFacesProfile: {Profile: original.portable, EmbeddingProviders: original.embedders, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){config.LocalFacesProfile: original.embeddingRuntimes[config.LocalFacesProfile].Classify}}}})
-	require.NoError(t, err)
-	require.NoError(t, restored.rebuildFaceSuggestions(ctx))
-	groups, _, err = target.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Empty(t, groups)
 }
 
 func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {

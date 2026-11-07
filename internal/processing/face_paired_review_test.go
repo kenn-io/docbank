@@ -41,14 +41,8 @@ func TestReviewPairedFaceSources(t *testing.T) {
 	_, _, err = f.catalog.CreatePhotoFace(ctx, raw.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
 	require.NoError(t, err)
 	f.grant(t, x.service, config.LocalFacesProfile)
-	quality, err := document.CurrentPhotoQualityFingerprints()
+	_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, raw.CurrentVersionID, f.recipe)
 	require.NoError(t, err)
-	targets, err := f.catalog.MissingPhotoVisualPreviewTargetsAfter(ctx, quality.GridRecipe, "", 100)
-	require.NoError(t, err)
-	for _, target := range targets {
-		_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, target.VersionID, f.recipe)
-		require.NoError(t, err)
-	}
 	for range 2 {
 		x.worker.reconcileAt = time.Time{}
 		_, err = x.worker.ScanOnce(ctx)

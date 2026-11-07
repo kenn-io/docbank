@@ -395,3 +395,18 @@ func TestLocalTextCandidateRejections(t *testing.T) {
 	_, err = localTextCandidate(cfg, "local", "archive")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
+func TestLocalPlanPrintsScope(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+	plan := api.LocalTextPlan{Profile: "synthetic-profile", Server: "local", Scope: "Selected synthetic documents"}
+	require.NoError(t, writeLocalTextPlan(cmd, plan))
+	var scope string
+	for line := range strings.SplitSeq(output.String(), "\n") {
+		if value, ok := strings.CutPrefix(line, "scope:"); ok {
+			scope = strings.TrimSpace(value)
+		}
+	}
+	require.Equal(t, "Selected synthetic documents", scope)
+}
