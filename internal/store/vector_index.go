@@ -22,6 +22,7 @@ var (
 	ErrVectorIndexBuildFenced     = errors.New("vector index build is fenced")
 	ErrVectorIndexLeaseFenced     = errors.New("vector index reader lease is fenced")
 	ErrVectorIndexSourceStale     = errors.New("vector index source membership is stale")
+	ErrVectorIndexUnavailable     = errors.New("vector index has no active generation")
 	ErrVectorSetUnavailable       = errors.New("vector set payload is unavailable")
 )
 

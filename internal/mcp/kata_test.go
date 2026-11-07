@@ -159,7 +159,7 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 			case "kata_evidence_integrity":
 				require.Equal(t, "Stored document failed verification; do not retry", output["message"])
 			case "kata_incompatible":
-				require.Equal(t, "Kata API schema 0.21.0 through 0.31.x is required.", output["message"])
+				require.Equal(t, "Kata API schema "+kataclient.SupportedSchemaRange()+" is required.", output["message"])
 			}
 			require.NotContains(t, output["message"], "private")
 			require.NotContains(t, output["message"], "secret")

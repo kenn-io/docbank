@@ -230,6 +230,57 @@ it("revokes mounted URLs and ignores previews that complete after unmount", asyn
   expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
 });
 
+it("keeps an unchanged tile image and reloads changed preview generations and states", async () => {
+  let sequence = 0;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => `blob:synthetic-${++sequence}`),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  const item = photo(1);
+  item.previews.grid = { state: "ready", generation_id: "generation-1" };
+  let finish!: (blob: Blob) => void;
+  const get = vi
+    .fn()
+    .mockResolvedValueOnce(new Blob(["synthetic-jpeg"]))
+    .mockImplementation(() => new Promise<Blob>((resolve) => (finish = resolve)));
+  const props = {
+    photo: item,
+    cache: { get } as unknown as PhotoPreviewCache,
+    selected: false,
+    onclick: vi.fn(),
+  };
+  const view = render(PhotoCell, props);
+  const image = await screen.findByRole("img");
+  for (let pass = 0; pass < 3; pass++) {
+    await view.rerender({ photo: structuredClone(item) });
+    expect(screen.getByRole("img")).toBe(image);
+    expect(image.getAttribute("src")).toBe("blob:synthetic-1");
+    expect(screen.queryByText("Loading preview")).toBeNull();
+  }
+  const changed = structuredClone(item);
+  changed.previews.grid.generation_id = "generation-2";
+  await view.rerender({ photo: changed });
+  expect(screen.queryByRole("img")).toBeNull();
+  expect(screen.getByText("Loading preview")).toBeTruthy();
+  finish(new Blob(["changed-jpeg"]));
+  expect((await screen.findByRole("img")).getAttribute("src")).toBe("blob:synthetic-2");
+  await view.rerender({
+    photo: {
+      ...changed,
+      previews: { ...changed.previews, grid: { state: "failed", generation_id: "generation-3" } },
+    },
+  });
+  expect(screen.queryByRole("img")).toBeNull();
+  expect(screen.getByText("Preview failed")).toBeTruthy();
+  const recovered = structuredClone(changed);
+  recovered.previews.grid.generation_id = "generation-4";
+  await view.rerender({ photo: recovered });
+  expect(screen.getByText("Loading preview")).toBeTruthy();
+  finish(new Blob(["recovered-jpeg"]));
+  expect((await screen.findByRole("img")).getAttribute("src")).toBe("blob:synthetic-3");
+});
+
 it("reloads a preview from the network after the image fails to decode", async () => {
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,

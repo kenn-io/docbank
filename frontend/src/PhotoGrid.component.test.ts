@@ -3,7 +3,7 @@ import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import PhotoGrid from "./PhotoGrid.svelte";
 import { createPhotoChunks, createPhotoGrouper, groupPhotos } from "./photoGrid.js";
-import { photo } from "./photo-test-fixtures.js";
+import { photo, photoTimelineCounts } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 beforeEach(() => {
@@ -22,6 +22,48 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+it.each([false, true])(
+  "keeps settled empty dates hidden during refresh and shows fresh counts, narrow=%s",
+  async (narrow) => {
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    const view = render(PhotoGrid, {
+      groups: [],
+      loadedItems: [],
+      narrow,
+      timelineLoading: true,
+      cache,
+      selectedIDs: new Set<string>(),
+      targetRowHeight: 200,
+      loading: false,
+      onselect: vi.fn(),
+      oncheck: vi.fn(),
+      onopen: vi.fn(),
+      onjump: vi.fn(),
+      onloadmore: vi.fn(),
+    });
+    expect(view.getByText(narrow ? "Loading dates…" : "Loading…")).toBeTruthy();
+
+    await view.rerender({ timeline: photoTimelineCounts([]).facets[0], timelineLoading: false });
+    expect(view.queryAllByRole("status")).toHaveLength(0);
+    expect(view.queryByRole("navigation", { name: "Timeline" })).toBeNull();
+    await view.rerender({ timelineLoading: true });
+    expect(view.queryAllByRole("status")).toHaveLength(0);
+    expect(view.queryByRole("navigation", { name: "Timeline" })).toBeNull();
+
+    await view.rerender({
+      timeline: photoTimelineCounts([["2025-07-01", 1]]).facets[0],
+      timelineLoading: false,
+    });
+    if (narrow)
+      expect(view.getByRole("combobox", { name: "Jump to date: Jump to date" })).toBeTruthy();
+    else expect(view.getByRole("button", { name: "2025, 1 photo" })).toBeTruthy();
+
+    await view.rerender({ timeline: undefined, timelineLoading: true });
+    expect(view.getByText(narrow ? "Loading dates…" : "Loading…")).toBeTruthy();
+    await cache.dispose();
+  },
+);
 
 it("keeps a pending date jump aligned after density changes while loading", async () => {
   const rows = [photo(1, "2025-07-01T12:00:00Z"), photo(2, "2025-05-01T12:00:00Z")];

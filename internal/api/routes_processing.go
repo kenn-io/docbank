@@ -54,14 +54,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		profiles := d.Processing.Profiles()
-		result := make([]ProcessingProfileSummary, len(profiles))
-		for index, profile := range profiles {
-			result[index] = ProcessingProfileSummary{Name: profile.Name, Fingerprint: profile.Fingerprint,
-				Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings,
-				QueryEmbeddingBindings: profile.QueryEmbeddingBindings,
-				RerankingAvailable:     profile.RerankingAvailable}
-		}
+		result := processingProfileSummaries(d.Processing)
 		return &profilesOutput{Body: result}, nil
 	})
 
@@ -817,9 +810,11 @@ func fromProcessingError(err error) error {
 		{processing.ErrPurgePlanChanged, http.StatusConflict, "derivative_purge_plan_changed", "derivative purge plan changed after preview"},
 		{processing.ErrInvalidPurgeRequest, http.StatusUnprocessableEntity, "invalid_derivative_purge", "derivative purge request is invalid"},
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
+		{processing.ErrSemanticUnavailable, http.StatusUnprocessableEntity, "semantic_unavailable", "semantic retrieval is not configured"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
+		{store.ErrVectorIndexUnavailable, http.StatusConflict, "index_unavailable", "The search index needs building."},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
