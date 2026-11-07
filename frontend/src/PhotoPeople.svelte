@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Button, Notice, Typeahead } from "@kenn-io/kit-ui";
   import {
-    listPeople,
     type PhotoFace,
     type PersonSummary,
     type PhotoPersonAssertion,
@@ -9,6 +8,7 @@
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { APIError } from "./api-transport.js";
+  import { readNamePage } from "./people.svelte.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import PersonNamesakes, {
     groupKey,
@@ -157,57 +157,17 @@
       !request.signal.aborted &&
       faces.version === pending.version &&
       (faces.hiddenAccess?.scope ?? 0) === pending.scope;
-    if (new TextEncoder().encode(pending.query.trim()).length > 200) {
-      searchState = { ...pending, status: "invalid", error: "Name must be 200 bytes or fewer." };
-      return;
-    }
-    try {
-      const fetch = () => {
-        request.signal.throwIfAborted();
-        return listPeople(
-          {
-            query: pending.query.trim(),
-            limit: 100,
-            recent_first: true,
-            // A face ranks people by similarity when it has a vector.
-            ...(pending.face && pending.face !== "mark" ? { face_id: pending.face } : {}),
-            ...(cursor ? { cursor } : {}),
-          },
-          { session, signal: request.signal },
-        );
-      };
-      const page = await (faces.hiddenAccess ? faces.hiddenAccess.run(fetch) : fetch());
-      if (owns())
-        searchState = {
-          ...pending,
-          // A falling rank can repeat a person; dedupe those rows. A rising
-          // rank can move a group ahead of the cursor and skip it until restart.
-          people: [
-            ...new Map(
-              [...pending.people, ...page.items].map((person) => [person.person_id, person]),
-            ).values(),
-          ],
-          nextCursor: page.next_cursor,
-          incompleteName:
-            page.next_cursor && page.same_name_continues
-              ? page.items.at(-1)!.display_name_folded
-              : "",
-          status: "ready",
-        };
-    } catch (cause) {
-      if (owns()) {
-        previewFailure(cause);
-        const expired = cause instanceof APIError && cause.code === "cursor_expired";
-        searchState = {
-          ...pending,
-          ...(expired
-            ? { people: [], pendingCursor: undefined, nextCursor: undefined, incompleteName: "" }
-            : {}),
-          status: "error",
-          error: cause instanceof Error ? cause.message : String(cause),
-        };
-      }
-    }
+    const next = await readNamePage(pending, {
+      session,
+      face: pending.face,
+      signal: request.signal,
+      run: (read) => (faces.hiddenAccess ? faces.hiddenAccess.run(read) : read()),
+      failure: (cause) => {
+        if (owns()) previewFailure(cause);
+        return cause instanceof Error ? cause.message : String(cause);
+      },
+    });
+    if (owns()) searchState = { ...pending, ...next };
   }
   async function search(faceID: string, value: string) {
     searchState.controller?.abort();

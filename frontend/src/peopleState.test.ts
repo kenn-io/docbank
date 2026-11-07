@@ -696,6 +696,12 @@ it("ranks a group's name search by its first face", async () => {
   const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const people = new People("session", vi.fn());
   people.suggestions.open(unnamed);
+  await people.suggestions.searchNames("é".repeat(101));
+  expect(read).not.toHaveBeenCalled();
+  expect(people.suggestions.names).toMatchObject({
+    status: "invalid",
+    error: "Name must be 200 bytes or fewer.",
+  });
   await people.suggestions.searchNames(" Ad ");
   expect(read).toHaveBeenCalledExactlyOnceWith(
     { query: "Ad", limit: 100, recent_first: true, face_id: "face-1" },
