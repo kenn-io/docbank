@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/pgtest"
+	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func TestFaceDismissedRegroupKeepsDecisionIdentity(t *testing.T) {
@@ -123,7 +125,12 @@ func TestFaceSuggestionRegroupPreservesRejectedEvidence(t *testing.T) {
 	require.NoError(t, err)
 	group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
 	require.NoError(t, err)
+	signature := faceMatchingSignature(t, s)
+	_, err = s.CreateFile(ctx, s.RootID(), "unrelated.txt", fakeHash("e1"), 12, "text/plain")
+	require.NoError(t, err)
+	require.Equal(t, signature, faceMatchingSignature(t, s))
 	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+	require.Equal(t, signature, faceMatchingSignature(t, s))
 	page, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
@@ -138,8 +145,11 @@ func TestFaceSuggestionRegroupPreservesRejectedEvidence(t *testing.T) {
 	require.Len(t, page, 1)
 	require.Equal(t, original.CandidateID, page[0].CandidateID)
 	require.Greater(t, page[0].Revision, original.Revision)
+	signature = faceMatchingSignature(t, s)
 	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "reject", FaceOnly: true})
 	require.NoError(t, err)
+	require.NotEqual(t, signature, faceMatchingSignature(t, s))
+	require.ErrorIs(t, s.ReplaceFaceSuggestions(ctx, signature, []PersonMatchCandidate{group}), ErrStaleRevision)
 	retained, _, err := s.PersonCandidates(ctx, "rejected", 24, 0)
 	require.NoError(t, err)
 	require.Len(t, retained, 1)
@@ -235,19 +245,44 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 
 }
 
-func TestFaceMatchingCatalogQueriesPostgres(t *testing.T) {
-	s := newPostgresQueryStore(t)
+func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
+	t.Helper()
+	var s *Store
+	var seed *sql.DB
+	prefix := ""
+	if postgres {
+		setup, owner := pgtest.NewDatabase(t)
+		s = newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+		seed, prefix = setup, "documents."
+	} else {
+		s = newTestStore(t)
+		seed = s.db
+	}
 	ctx := t.Context()
-	f := seedImageEmbeddingCatalog(t, s)
-	f.publish(t)
-	sets, err := s.FaceMatchingInputs(ctx)
+	node, err := s.CreateFile(ctx, s.RootID(), "faces.jpg", fakeHash("f1"), 12, "image/jpeg")
 	require.NoError(t, err)
-	require.Empty(t, sets.Sets)
-	_, _, err = s.FaceCandidates(ctx, 24, 0)
+	faces := make([]FaceSuggestionFace, 2)
+	for i := range faces {
+		faces[i].PhotoFace = PhotoFace{FaceID: uuid.New().String(), ContentVersionID: node.CurrentVersionID, Box: document.FaceBox{X: float64(i) * .5, Width: .2, Height: .2}, Revision: 1}
+		_, err = s.db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES($1,$2,$3,0,0.2,0.2,1,$4)`, faces[i].FaceID, node.CurrentVersionID, faces[i].Box.X, "2026-01-01T00:00:00Z")
+		require.NoError(t, err)
+	}
+	candidate, err := NewFaceCandidate(faces, "", "")
 	require.NoError(t, err)
-	require.NoError(t, s.withReadTx(ctx, func(tx *sql.Tx) error {
-		return s.readFaceDecisionsTx(ctx, tx, []PhotoFace{{FaceID: uuid.New().String(), ContentVersionID: uuid.New().String()}})
-	}))
+	candidate, err = normalizePersonCandidate(candidate)
+	require.NoError(t, err)
+	id := uuid.New().String()
+	_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at) VALUES($1,$2,$3,'face_match',$4,$5,2,1,'open',$6)`, id, candidate.ActorKey, candidate.DisplayName, string(candidate.Evidence), candidate.EvidenceSHA256, "2026-01-01T00:00:00Z")
+	require.NoError(t, err)
+	page, total, err := s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, page, 1)
+	require.Equal(t, id, page[0].CandidateID)
+	require.Len(t, page[0].Faces, 2)
+	for _, face := range page[0].Faces {
+		require.Equal(t, node.CurrentVersionID, face.ContentVersionID)
+	}
 }
 
 func faceMatchingSignature(t *testing.T, s *Store) string {

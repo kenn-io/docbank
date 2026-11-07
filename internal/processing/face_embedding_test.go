@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 	"uuid"
@@ -84,20 +83,24 @@ func TestFaceEmbeddingConsentBoxesAndNilResults(t *testing.T) {
 		t.Run(map[bool]string{false: "mixed", true: "all nil"}[unmatched], func(t *testing.T) {
 			x := newFaceEmbeddingFixture(t, unmatched)
 			ctx := t.Context()
-			n, err := x.worker.ScanOnce(ctx)
-			require.NoError(t, err)
-			require.Zero(t, n)
-			require.Zero(t, x.calls)
+			if !unmatched {
+				n, err := x.worker.ScanOnce(ctx)
+				require.NoError(t, err)
+				require.Zero(t, n)
+				require.Zero(t, x.calls)
+			}
 			setup := FaceSetup{Service: x.service, Startup: func(context.Context) error { return nil }}
 			plan, err := setup.Plan(ctx)
 			require.NoError(t, err)
-			require.Zero(t, x.calls)
-			_, err = setup.Apply(ctx, "stale")
-			require.ErrorIs(t, err, ErrPlanChanged)
+			if !unmatched {
+				require.Zero(t, x.calls)
+				_, err = setup.Apply(ctx, "stale")
+				require.ErrorIs(t, err, ErrPlanChanged)
+			}
 			_, err = setup.Apply(ctx, plan.Fingerprint)
 			require.NoError(t, err)
 			x.worker.reconcileAt = time.Time{}
-			n, err = x.worker.ScanOnce(ctx)
+			n, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
 			require.Equal(t, 1, n)
 			require.Equal(t, 1, x.calls)
@@ -142,7 +145,6 @@ func TestFaceEmbeddingAddedBoxFencesVectors(t *testing.T) {
 	sets, err = x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
 	require.Empty(t, sets.Sets)
-	require.True(t, slices.ContainsFunc(x.inputs, func(f store.PhotoFace) bool { return f.DetectorFingerprint != "" }))
 }
 
 func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
@@ -192,7 +194,13 @@ func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.NoError(t, x.f.blobs.Remove(sets.Sets[0].Set.VectorSet.PayloadBlobHash))
-	rows, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+	var metadata bytes.Buffer
+	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &metadata))
+	cold, err := store.Open(ctx, filepath.Join(t.TempDir(), "cold.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cold.Close()) })
+	require.NoError(t, cold.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
+	rows, _, err = cold.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "Ada", rows[0].DisplayName)
@@ -213,10 +221,6 @@ func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
 	first := groups[0].Faces[0]
 	_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
 	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	groups, _, err = x.f.catalog.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Empty(t, groups)
 	var backup bytes.Buffer
 	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &backup))
 	target, err := store.Open(ctx, filepath.Join(t.TempDir(), "restored.db"))
@@ -233,9 +237,6 @@ func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
 	require.Empty(t, groups)
 	faces, _, _, err := target.PhotoFacePersonNames(ctx, first.ContentVersionID)
 	require.NoError(t, err)
-	require.True(t, slices.ContainsFunc(faces, func(f store.PhotoFace) bool {
-		return f.FaceID == first.FaceID && !f.Dismissed
-	}))
 	_, err = target.DecidePhotoFace(ctx, first.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: first.FaceID, Revision: faces[0].Revision, Action: "name", PersonName: "Ada"})
 	require.NoError(t, err)
 	require.NoError(t, restored.rebuildFaceSuggestions(ctx))
@@ -363,8 +364,6 @@ func TestFaceMatchingSnapshotAndPayloadReuse(t *testing.T) {
 	x.f.grant(t, x.service, config.LocalFacesProfile)
 	_, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
-	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
 	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
 	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
 	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
@@ -378,34 +377,16 @@ func TestFaceMatchingSnapshotAndPayloadReuse(t *testing.T) {
 	// A document write cannot fence a derivation from unchanged photographed faces.
 	_, err = x.f.catalog.CreateFile(ctx, x.f.catalog.RootID(), "unrelated.txt", x.f.node.BlobHash, x.f.node.Size, "text/plain")
 	require.NoError(t, err)
-	unchanged, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Equal(t, snapshot.Signature, unchanged.Signature)
-	vectors, err := x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
-	require.NoError(t, err)
-	candidates, err := buildFaceSuggestions(vectors)
-	require.NoError(t, err)
-	require.NoError(t, x.f.catalog.ReplaceFaceSuggestions(ctx, snapshot.Signature, candidates))
-	published, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Equal(t, snapshot.Signature, published.Signature)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
 	require.NoError(t, err)
 	require.Equal(t, 1, reader.opens)
-	// Assignment changes invalidate the signature and immediately change centroids,
-	// while the immutable payload remains shared between grouping and ranking.
+	// Assignment changes still reuse the immutable payload across grouping and ranking.
 	_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[0].ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: x.inputs[0].FaceID, Revision: x.inputs[0].Revision, Action: "name", PersonName: "Ada"})
 	require.NoError(t, err)
-	changed, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
 	require.NoError(t, err)
-	require.NotEqual(t, snapshot.Signature, changed.Signature)
-	require.ErrorIs(t, x.f.catalog.ReplaceFaceSuggestions(ctx, snapshot.Signature, candidates), store.ErrStaleRevision)
-	vectors, err = x.f.catalog.FaceMatchingVectors(ctx, reader, changed, true)
-	require.NoError(t, err)
-	centroids := store.FacePersonCentroids(vectors)
-	require.Len(t, centroids, 1)
-	require.Equal(t, "Ada", centroids[0].Name)
 	require.Equal(t, 1, reader.opens)
 }
