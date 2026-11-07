@@ -2509,3 +2509,70 @@ CREATE TABLE {{schema}}.photo_face_scans (
 );
 CREATE INDEX visual_preview_generations_ready
     ON {{schema}}.visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
+
+-- Rebuildable authored-note projections; omitted from metadata JSONL.
+CREATE TABLE {{schema}}.note_parse_generations (
+    generation_id TEXT COLLATE "C" PRIMARY KEY,
+    blob_hash TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    source_size BIGINT NOT NULL,
+    recipe TEXT COLLATE "C" NOT NULL,
+    state TEXT COLLATE "C" NOT NULL,
+    reason TEXT COLLATE "C" NOT NULL,
+    checksum TEXT COLLATE "C" NOT NULL,
+    artifact BYTEA,
+    UNIQUE(blob_hash,recipe)
+);
+CREATE TABLE {{schema}}.note_parse_bindings (
+    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    recipe TEXT COLLATE "C" NOT NULL,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_parse_generations(generation_id) ON DELETE CASCADE,
+    PRIMARY KEY(content_version_id,recipe)
+);
+CREATE INDEX note_parse_bindings_generation ON {{schema}}.note_parse_bindings(generation_id);
+CREATE TABLE {{schema}}.note_index_generations (
+    generation_id TEXT COLLATE "C" PRIMARY KEY,
+    publication_name TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_publications(name) ON DELETE CASCADE,
+    database_epoch TEXT COLLATE "C" NOT NULL,
+    namespace_revision BIGINT NOT NULL,
+    parser_recipe TEXT COLLATE "C" NOT NULL,
+    resolver_recipe TEXT COLLATE "C" NOT NULL,
+    expected_sources BIGINT NOT NULL,
+    keys_sealed INTEGER NOT NULL,
+    completed INTEGER NOT NULL
+);
+CREATE INDEX note_index_generations_publication ON {{schema}}.note_index_generations(publication_name);
+CREATE TABLE {{schema}}.note_index_heads (
+    publication_name TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.note_publications(name) ON DELETE CASCADE,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_index_generations(generation_id) ON DELETE CASCADE
+);
+CREATE TABLE {{schema}}.note_index_sources (
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_index_generations(generation_id) ON DELETE CASCADE,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    node_id BIGINT NOT NULL,
+    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    source_revision BIGINT NOT NULL,
+    parse_generation_id TEXT COLLATE "C" REFERENCES {{schema}}.note_parse_generations(generation_id) ON DELETE CASCADE,
+    edges_done INTEGER NOT NULL,
+    PRIMARY KEY(generation_id,source_ref)
+);
+CREATE INDEX note_index_sources_version ON {{schema}}.note_index_sources(content_version_id);
+CREATE INDEX note_index_sources_parse ON {{schema}}.note_index_sources(parse_generation_id);
+CREATE TABLE {{schema}}.note_lookup_keys (
+    generation_id TEXT COLLATE "C" NOT NULL,
+    key_kind TEXT COLLATE "C" NOT NULL,
+    key_value TEXT COLLATE "C" NOT NULL,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY(generation_id,key_kind,key_value,source_ref),
+    FOREIGN KEY(generation_id,source_ref) REFERENCES {{schema}}.note_index_sources(generation_id,source_ref) ON DELETE CASCADE
+);
+CREATE TABLE {{schema}}.note_link_edges (
+    generation_id TEXT COLLATE "C" NOT NULL,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    ordinal BIGINT NOT NULL,
+    target_source_ref TEXT COLLATE "C" NOT NULL,
+    edge_state TEXT COLLATE "C" NOT NULL,
+    edge_json BYTEA NOT NULL,
+    PRIMARY KEY(generation_id,source_ref,ordinal),
+    FOREIGN KEY(generation_id,source_ref) REFERENCES {{schema}}.note_index_sources(generation_id,source_ref) ON DELETE CASCADE
+);
+CREATE INDEX note_link_edges_target ON {{schema}}.note_link_edges(generation_id,target_source_ref,source_ref,ordinal);

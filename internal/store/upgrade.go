@@ -157,6 +157,8 @@ var currentSchemaTables = [...]string{
 	"note_publications", "published_note_sources", "note_publication_state",
 	"note_publication_scans", "note_publication_seen", "note_publication_operations",
 	"note_publication_recoveries", "note_publication_recovery_operations",
+	"note_parse_generations", "note_parse_bindings", "note_index_generations", "note_index_heads",
+	"note_index_sources", "note_lookup_keys", "note_link_edges",
 	"blobs", "blob_packs", "vault_metadata",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",
@@ -362,7 +364,7 @@ func validateCurrentSchemaColumns(
 			strings.Join(blobs, ","), strings.Join(packs, ","), strings.Join(vaultMetadata, ","),
 		)
 	}
-	for _, table := range currentSchemaTables[3:] {
+	for _, table := range currentSchemaTables {
 		got, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err
