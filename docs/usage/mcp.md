@@ -238,6 +238,13 @@ fields are rejected. Every successful tool result contains both structured
 content and its JSON text representation. The complete result, including
 resource links, is capped at 1 MiB.
 
+Tests enforce a 150,000-byte default catalog budget and a 235,000-byte budget
+with all six write flags enabled, set from baseline measurements of 135,667 and
+213,288 bytes, respectively.
+They measure compact JSON of the complete client-decoded `tools/list` result
+with HTML escaping disabled to match the SDK, including output schemas,
+metadata, and cache fields; a larger catalog requires a reviewed budget edit.
+
 | Tool | Contract and important bounds |
 | --- | --- |
 | `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
