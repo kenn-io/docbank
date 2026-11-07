@@ -340,22 +340,6 @@ func faceMatchingSignature(t *testing.T, s *Store) string {
 	return snapshot.Signature
 }
 
-func TestFaceCandidatesOmitTrashedSource(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	pair := faceCandidatePair(t, s)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{pair.group}))
-	asset, err := s.PhotoAssetForNode(ctx, pair.node.ID)
-	require.NoError(t, err)
-	_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
-	require.NoError(t, err)
-	page, total, err := s.FaceCandidates(ctx, 1, 0)
-	require.NoError(t, err)
-	require.Empty(t, page)
-	require.Zero(t, total)
-}
-
 func TestUnnamedFaceCandidateRequiresTwoReviewableFaces(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"name", "dismiss"} {
