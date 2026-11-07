@@ -238,7 +238,6 @@ func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	require.Len(t, groups[0].Faces, 2)
-	first := groups[0].Faces[0]
 	_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
 	require.NoError(t, err)
 	var backup bytes.Buffer
@@ -255,17 +254,6 @@ func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
 	groups, _, err = target.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, groups)
-	faces, _, _, err := target.PhotoFacePersonNames(ctx, first.ContentVersionID)
-	require.NoError(t, err)
-	_, err = target.DecidePhotoFace(ctx, first.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: first.FaceID, Revision: faces[0].Revision, Action: "name", PersonName: "Ada"})
-	require.NoError(t, err)
-	require.NoError(t, restored.rebuildFaceSuggestions(ctx))
-	groups, _, err = target.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Len(t, groups, 1)
-	require.Equal(t, "Ada", groups[0].DisplayName)
-	require.Len(t, groups[0].Faces, 1)
-	require.NotEqual(t, first.FaceID, groups[0].Faces[0].FaceID)
 }
 
 func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {

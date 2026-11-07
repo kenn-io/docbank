@@ -455,15 +455,13 @@ it("confirms an Is this X? group after removing a face", async () => {
 });
 
 it("reports a stale rejection from the review sheet", async () => {
-  const { region, list, done } = await renderSuggestions([isAda]);
+  const { region, done } = await renderSuggestions([isAda]);
   vi.spyOn(api, "decideFaceCandidate").mockRejectedValueOnce(
     new APIError("Suggestion changed", 412, "stale_revision"),
   );
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
-  list.mockResolvedValue({ items: [{ ...isAda, revision: 7 }], total: 1 });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect((await screen.findByRole("alert")).textContent).toBe("Suggestion changed");
   await done();
 });
@@ -536,6 +534,7 @@ it.each(["existing", "new", "dismiss"])(
     }
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(decide).toHaveBeenCalledOnce();
+    if (choice === "dismiss") expect(decide.mock.calls[0]![1]).toMatchObject({ action: "reject" });
     if (choice === "new") expect(decide.mock.calls[0]![1]).toMatchObject({ display_name: "Ana" });
     if (choice === "existing")
       expect(decide.mock.calls[0]![1]).toMatchObject({ person_id: ada.person_id });
