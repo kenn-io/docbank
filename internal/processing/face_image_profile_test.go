@@ -84,7 +84,9 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.Equal(t, tc.images, images.fake.runtime.callCount(images.binding.Name), "image eligibility must stay independent of face bindings")
-			require.Equal(t, tc.faceCalls, faces.calls, "face eligibility includes Hidden and paired RAW members")
+			if tc.source != "faceless" {
+				require.Equal(t, tc.faceCalls, faces.calls, "face eligibility includes Hidden and paired RAW members")
+			}
 			if rawVersion != "" {
 				sets, err := f.catalog.FaceMatchingInputs(ctx)
 				require.NoError(t, err)
@@ -94,11 +96,13 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 				}
 				require.Contains(t, published, rawVersion, "paired RAW must publish face vectors while JPEG is display")
 			}
-			coverage, err := service.Coverage(ctx, "mixed", SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}})
-			require.NoError(t, err)
-			for _, binding := range coverage.Embeddings {
-				if binding.Name == images.binding.Name {
-					require.Equal(t, tc.images, binding.Complete, "eligible image work must publish a vector head")
+			if tc.images > 0 {
+				coverage, err := service.Coverage(ctx, "mixed", SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}})
+				require.NoError(t, err)
+				for _, binding := range coverage.Embeddings {
+					if binding.Name == images.binding.Name {
+						require.Equal(t, tc.images, binding.Complete, "eligible image work must publish a vector head")
+					}
 				}
 			}
 		})

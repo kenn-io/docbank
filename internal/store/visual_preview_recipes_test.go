@@ -374,6 +374,32 @@ func checkFaceMemberGridPreviews(t *testing.T, open func(*testing.T) *Store) {
 	view, err := s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
 	require.NoError(t, err)
 	require.Equal(t, raw.CurrentVersionID, view.Version.ID)
+	for _, change := range []string{"excluded", "trashed"} {
+		asset, err = s.PhotoAssetByID(ctx, asset.ID)
+		require.NoError(t, err)
+		if change == "excluded" {
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+		} else {
+			_, _, err = s.Trash(ctx, raw.ID, UnconditionalRev)
+		}
+		require.NoError(t, err)
+		require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID), ErrNotFound, change)
+		_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
+		require.ErrorIs(t, err, ErrNotFound, change)
+		if change == "excluded" {
+			asset, err = s.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+		} else {
+			_, _, err = s.Restore(ctx, raw.ID, UnconditionalRev)
+		}
+		require.NoError(t, err)
+		require.NoError(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID))
+		_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
+		require.NoError(t, err)
+	}
+	raw, err = s.NodeByID(ctx, raw.ID)
+	require.NoError(t, err)
 	_, _, err = s.ReplaceContent(ctx, raw.ID, raw.Revision, fakeHash("d4"), 12, "image/x-adobe-dng")
 	require.NoError(t, err)
 	require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID), ErrNotFound)

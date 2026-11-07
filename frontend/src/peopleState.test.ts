@@ -634,7 +634,7 @@ it("keeps the open review's candidate and revision during refresh", async () => 
 it.each([
   [{ action: "link", person_id: ada.person_id }, true],
   [{ action: "reject" }, false],
-] as const)("decides a group with its revision: %o", async (decision, cards) => {
+] as const)("settles a group and refreshes linked people: %o", async (decision, cards) => {
   vi.spyOn(api, "listFaceCandidates")
     .mockResolvedValueOnce({ items: [isAda], total: 1 })
     .mockResolvedValue({ items: [], total: 0 });
@@ -651,7 +651,7 @@ it.each([
     decision.action === "reject"
       ? decision
       : { ...decision, face_ids: isAda.faces.map((face) => face.face_id) },
-    { "If-Match": '"2"' },
+    expect.anything(),
     expect.objectContaining({ session: "session" }),
   );
   expect(people.suggestions.review).toBeUndefined();

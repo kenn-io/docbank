@@ -420,9 +420,15 @@ it("renders retry and show-more controls for suggestions", async () => {
 });
 
 it("confirms an Is this X? group after removing a face", async () => {
-  const { region, done } = await renderSuggestions([isAda]);
+  const { region, list, done } = await renderSuggestions([isAda]);
+  const remaining = {
+    ...isAda,
+    candidate_id: "candidate-ada-2",
+    faces: isAda.faces.filter((face) => face.face_id !== "face-2"),
+  };
+  list.mockResolvedValue({ items: [remaining], total: 1 });
   const remove = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
-  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda));
+  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(remaining));
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
   await waitFor(() => expect(within(dialog).getAllByRole("img")).toHaveLength(3));
@@ -435,7 +441,12 @@ it("confirms an Is this X? group after removing a face", async () => {
   await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
   await fireEvent.click(confirm);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(decide).toHaveBeenCalledOnce();
+  expect(decide).toHaveBeenCalledExactlyOnceWith(
+    "candidate-ada-2",
+    { action: "link", person_id: ada.person_id, face_ids: ["face-1", "face-3"] },
+    expect.anything(),
+    expect.anything(),
+  );
   await done();
 });
 

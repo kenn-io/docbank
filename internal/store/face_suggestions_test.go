@@ -69,11 +69,20 @@ func TestFaceCandidateRejectionAfterSourceUnavailable(t *testing.T) {
 				require.NoError(t, s.ExportMetadata(ctx, &backup))
 				restored := newTestStore(t)
 				require.NoError(t, restored.ImportMetadata(ctx, &backup))
-				require.NoError(t, restored.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, restored), []PersonMatchCandidate{group}))
+				pair, err := NewFaceCandidate(faces[1:], personID, name)
+				require.NoError(t, err)
+				require.NoError(t, restored.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, restored), []PersonMatchCandidate{pair}))
 				page, total, err = restored.FaceCandidates(ctx, 24, 0)
 				require.NoError(t, err)
-				require.Empty(t, page)
-				require.Zero(t, total)
+				if kind == "named" {
+					require.Empty(t, page)
+					require.Zero(t, total)
+				} else {
+					// A changed unnamed group has a different rejection identity.
+					require.Len(t, page, 1)
+					require.Len(t, page[0].Faces, 2)
+					require.EqualValues(t, 1, total)
+				}
 			})
 		}
 	}

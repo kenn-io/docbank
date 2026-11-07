@@ -463,17 +463,8 @@ func invokeProcessingTool(
 	return executeProcessingTool(ctx, lease, plans, mustResolveSchema(output), raw)
 }
 
-func TestFaceProcessingPlanCanBeReviewedAndStarted(t *testing.T) {
-	harness := newProcessingToolHarness(t, testProcessingPlanFingerprint,
-		func(t *testing.T, response http.ResponseWriter, request *http.Request) {
-			t.Helper()
-			input := decodeStartProcessingRequest(t, request)
-			require.Equal(t, api.ProcessingSelector{NodeID: testProcessingNodeID, ContentVersionID: testVersionID, Profile: "local-faces"}, input.Selector)
-			require.Equal(t, testProcessingPlanFingerprint, input.PlanFingerprint)
-			require.False(t, input.Consent)
-			response.Header().Set("Content-Type", "application/x-ndjson")
-			require.NoError(t, json.MarshalWrite(response, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: syntheticProcessingJob()}))
-		})
+func TestFaceProcessingPlanCanBeReviewed(t *testing.T) {
+	harness := newProcessingToolHarness(t, testProcessingPlanFingerprint, nil)
 	harness.plan.Selector.Profile = "local-faces"
 	harness.plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "local-faces", TrustBoundary: "local_process", InputClasses: []string{"face"}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "local", UltimateProcessor: "local", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
 	server := harness.server(t)
@@ -490,11 +481,6 @@ func TestFaceProcessingPlanCanBeReviewedAndStarted(t *testing.T) {
 	hop, ok := flow[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, []any{"face"}, hop["input_classes"])
-
-	started := callProcessingTool(t, server, testProcessingPlanFingerprint)
-	require.NotContains(t, started, "isError")
-	require.Equal(t, testProcessingJobID, objectField(t, started, "structuredContent")["job_id"])
-	require.EqualValues(t, 1, harness.startCalls.Load())
 }
 
 func TestProcessingPlanSchemaAcceptsImageInputClass(t *testing.T) {

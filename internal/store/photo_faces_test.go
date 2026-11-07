@@ -175,6 +175,36 @@ func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
 	_, err = s.DecidePhotoFace(ctx, source.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, PersonID: person.PersonID, Revision: face.Revision + 2})
 	require.NoError(t, err)
 	require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
+	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+	require.NoError(t, err)
+	generation, err := s.PublishVisualPreviewGeneration(ctx, source.CurrentVersionID, readyVisualPreviewWithRecipe(t, source.BlobHash, fakeHash("e5"), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	for _, change := range []string{"excluded", "trashed"} {
+		asset, err = s.PhotoAssetByID(ctx, asset.ID)
+		require.NoError(t, err)
+		if change == "excluded" {
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+		} else {
+			_, _, err = s.Trash(ctx, source.ID, UnconditionalRev)
+		}
+		require.NoError(t, err)
+		require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID), ErrNotFound, change)
+		_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, person.PersonID, "")
+		require.ErrorIs(t, err, ErrNotFound, change)
+		if change == "excluded" {
+			asset, err = s.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+		} else {
+			_, _, err = s.Restore(ctx, source.ID, UnconditionalRev)
+		}
+		require.NoError(t, err)
+		require.NoError(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID))
+		_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, person.PersonID, "")
+		require.NoError(t, err)
+	}
+	source, err = s.NodeByID(ctx, source.ID)
+	require.NoError(t, err)
 	_, _, err = s.ReplaceContent(ctx, source.ID, source.Revision, fakeHash("stale-preview"), 4, "image/jpeg")
 	require.NoError(t, err)
 	require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID), ErrNotFound)

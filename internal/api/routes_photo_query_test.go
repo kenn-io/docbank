@@ -756,21 +756,11 @@ func TestPersonSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, ts, sourcePath, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	// Exclusion and trash revoke both preparation and previously issued URLs.
+	// A revoked source maps to 404 for an already issued URL.
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
-	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
-	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	response, body = get(t, ts, sourcePath, headers)
-	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, source.ID, source.Revision)
-	require.NoError(t, err)
-	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
-	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	response, body = get(t, ts, sourcePath, headers)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
