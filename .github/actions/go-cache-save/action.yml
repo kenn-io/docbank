@@ -5,6 +5,20 @@ description: >-
 runs:
   using: composite
   steps:
+    - name: Trim unused cache entries
+      if: >-
+        github.event_name == 'push' && github.ref == 'refs/heads/main'
+        && env.GO_CACHE_HIT != 'true'
+      shell: bash
+      run: |
+        while IFS= read -r path; do
+          if [ -d "$path" ]; then
+            du -sh "$path"
+            find "$path" -type f \( -name '*-a' -o -name '*-d' \) ! -newer "$RUNNER_TEMP/go-cache-use" -delete
+            du -sh "$path"
+          fi
+        done <<< "$GO_CACHE_TRIM_PATHS"
+
     - name: Save caches
       if: >-
         github.event_name == 'push' && github.ref == 'refs/heads/main'

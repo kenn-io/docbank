@@ -1876,10 +1876,14 @@ The browser proofs still install Poppler, util-linux, and Chromium on their runn
 The GHCR package must be public so fork pull requests can reuse the image.
 
 Go jobs restore build and module caches through `.github/actions/go-cache-restore`
-by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
+by group: Linux CGO, Linux pure-Go, macOS, lint (with the golangci-lint analysis
 cache), and each Windows architecture. Only `main` pushes save, once per group
 per day, from the job that builds the most of that group; pull requests restore
 without saving so they cannot evict `main`'s caches from the repository quota.
+Before each daily save, the owning job retains only build and analysis entries
+it used. It rebuilds the module cache from restored downloads through a local
+file proxy, keeping checksum-database records and the configured proxy fallback.
+An exact daily cache hit skips this preparation and trimming.
 
 Windows jobs put `GOCACHE` and `GOMODCACHE` under `D:\a\_temp`. If D: is
 missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`
