@@ -1,7 +1,9 @@
 package processing
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,9 +19,27 @@ func TestFaceGenericPlanDisclosesDiscoveryScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, plan.Estimate.Scope, "throughout this vault")
 	require.Contains(t, plan.Estimate.Scope, "Hidden")
-	setup, err := (&FaceSetup{Service: x.service}).Plan(t.Context())
+	setup := FaceSetup{Service: x.service, Startup: func(context.Context) error { return nil }}
+	reviewed, err := setup.Plan(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, plan.Estimate.Scope, setup.Scope)
+	require.Equal(t, plan.Estimate.Scope, reviewed.Scope)
+	n, err := x.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Zero(t, x.calls)
+	_, err = setup.Apply(t.Context(), "stale")
+	require.ErrorIs(t, err, ErrPlanChanged)
+	n, err = x.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Zero(t, x.calls)
+	_, err = setup.Apply(t.Context(), reviewed.Fingerprint)
+	require.NoError(t, err)
+	x.worker.reconcileAt = time.Time{}
+	n, err = x.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, 1, x.calls)
 }
 
 func TestFaceAggregateStatusIncludesLiveJobs(t *testing.T) {

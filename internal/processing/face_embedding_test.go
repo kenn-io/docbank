@@ -85,28 +85,13 @@ func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture
 	require.NoError(t, err)
 	return x
 }
-func TestFaceEmbeddingConsentBoxesAndNilResults(t *testing.T) {
+func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 	t.Parallel()
 	for _, unmatched := range []bool{false, true} {
 		t.Run(map[bool]string{false: "mixed", true: "all nil"}[unmatched], func(t *testing.T) {
 			x := newFaceEmbeddingFixture(t, unmatched)
 			ctx := t.Context()
-			if !unmatched {
-				n, err := x.worker.ScanOnce(ctx)
-				require.NoError(t, err)
-				require.Zero(t, n)
-				require.Zero(t, x.calls)
-			}
-			setup := FaceSetup{Service: x.service, Startup: func(context.Context) error { return nil }}
-			plan, err := setup.Plan(ctx)
-			require.NoError(t, err)
-			if !unmatched {
-				require.Zero(t, x.calls)
-				_, err = setup.Apply(ctx, "stale")
-				require.ErrorIs(t, err, ErrPlanChanged)
-			}
-			_, err = setup.Apply(ctx, plan.Fingerprint)
-			require.NoError(t, err)
+			x.f.grant(t, x.service, config.LocalFacesProfile)
 			x.worker.reconcileAt = time.Time{}
 			n, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
@@ -148,7 +133,7 @@ func TestFaceEmbeddingAddedBoxFencesVectors(t *testing.T) {
 	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
 	require.Len(t, sets.Sets, 1)
-	// Another face invalidates the whole input digest before the next inference.
+	// Adding a face makes the previous vectors ineligible for matching.
 	_, _, err = x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .4, Y: .5, Width: .2, Height: .2}, "")
 	require.NoError(t, err)
 	sets, err = x.f.catalog.FaceMatchingInputs(ctx)

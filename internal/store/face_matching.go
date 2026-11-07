@@ -1,10 +1,12 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -68,7 +70,6 @@ func (s *Store) faceRankingInputsTx(ctx context.Context, tx *sql.Tx, faceID stri
 // membership is projected for each caller, after its source authorization.
 func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobReader, snapshot FaceMatchingSnapshot, includeHidden bool) ([]FaceVector, error) {
 	s.faceVectorsMu.Lock()
-	defer s.faceVectorsMu.Unlock()
 	live := make(map[string]bool, len(snapshot.Sets))
 	for _, item := range snapshot.Sets {
 		live[item.Set.ID] = true
@@ -77,14 +78,14 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 	for _, id := range snapshot.ReferencedSetIDs {
 		live[id] = true
 	}
-	for id := range s.faceVectors {
-		if !live[id] {
-			delete(s.faceVectors, id)
+	cache := make(map[string]document.VectorSetV1, len(live))
+	for id, decoded := range s.faceVectors {
+		if live[id] {
+			cache[id] = decoded
 		}
 	}
-	if s.faceVectors == nil {
-		s.faceVectors = map[string]document.VectorSetV1{}
-	}
+	s.faceVectors = cache
+	s.faceVectorsMu.Unlock()
 	var vectors []FaceVector
 	var unavailable error
 	seen := map[string]bool{}
@@ -95,13 +96,12 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		if !includeHidden && len(item.Faces) > 0 && item.Faces[0].Hidden {
 			continue
 		}
-		decoded, ok := s.faceVectors[item.Set.ID]
+		// Only this call writes cache; its writes lock against another call's pruning read.
+		decoded, ok := cache[item.Set.ID]
 		if !ok {
 			data, err := s.ReadVectorIndexVectorSet(ctx, reader, VectorIndexMember{EmbeddingSetID: item.Set.ID, VectorSetID: item.Set.VectorSet.ID, PayloadBlobHash: item.Set.VectorSet.PayloadBlobHash, PayloadSize: item.Set.VectorSet.PayloadSize})
 			if errors.Is(err, ErrVectorSetUnavailable) {
-				if unavailable == nil {
-					unavailable = err
-				}
+				unavailable = fmt.Errorf("%w", cmp.Or(unavailable, err))
 				continue
 			}
 			if err != nil {
@@ -111,7 +111,9 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 			if err != nil {
 				return nil, err
 			}
-			s.faceVectors[item.Set.ID] = decoded
+			s.faceVectorsMu.Lock()
+			cache[item.Set.ID] = decoded
+			s.faceVectorsMu.Unlock()
 		}
 		faces := make(map[string]FaceSuggestionFace, len(item.Faces))
 		for _, face := range item.Faces {

@@ -1272,6 +1272,7 @@ version 1 request format, date choices, counts, and retention limits.
 ```
 docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing local [--server auto|local]
+docbank processing faces
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
@@ -1285,6 +1286,8 @@ docbank processing status <job-id> [--json]
 `probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
 `local` previews text indexing for this vault and future imports, including provider disclosures, then enables it without a prompt and downloads any missing server and model files. An indexed compatible Nomic profile keeps its extractor, chunks, and vectors when it moves to the shared server; setup previews a rebuild when another model requires a new built-in index. It saves the selected profile and server outside `config.toml`, then restarts and reconnects the daemon. Both `auto` and `local` select Kit's shared per-user server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
+
+`faces` previews local face suggestions, downloads any missing runtime and model assets, and enables suggestions without a prompt. Faces in Hidden photos are included. If an older text embeddings server needs a restart, stop the reported server and rerun the command. See [People](usage/people.md).
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.
