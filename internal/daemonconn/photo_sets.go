@@ -23,7 +23,7 @@ func validatePhotoAlbumResponse(album api.PhotoAlbum, etag, id string) error {
 	if err := validatePhotoAlbumIdentity(album, id); err != nil {
 		return err
 	}
-	return validatePhotoETag(etag, album.Revision)
+	return validateRevisionETag(etag, album.Revision)
 }
 
 func photoAlbumMutationResponse(response *http.Response, album *api.PhotoAlbum, err error, id string) (api.PhotoAlbum, error) {

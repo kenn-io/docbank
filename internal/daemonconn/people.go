@@ -14,17 +14,6 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func validatePersonETag(etag string, revision int64) error {
-	if etag == "" {
-		return errors.New("person response is missing ETag")
-	}
-	want := revisionIfMatch(revision)
-	if etag != want {
-		return fmt.Errorf("person response ETag %q, expected %q", etag, want)
-	}
-	return nil
-}
-
 func validatePersonResponse(person api.Person, etag, requestedID string) error {
 	if !validUUIDv4(person.PersonID) || person.Revision < 1 {
 		return errors.New("person response has invalid identity or revision")
@@ -32,7 +21,7 @@ func validatePersonResponse(person api.Person, etag, requestedID string) error {
 	if requestedID != "" && person.PersonID != requestedID && person.ReachedThroughPersonID != requestedID {
 		return fmt.Errorf("person response ID %s does not address request %s", person.PersonID, requestedID)
 	}
-	return validatePersonETag(etag, person.Revision)
+	return validateRevisionETag(etag, person.Revision)
 }
 
 func validatePersonDetailResponse(detail api.PersonDetail, etag, requestedID string) error {
@@ -178,7 +167,7 @@ func (c *Connection) MergePerson(ctx context.Context, survivorID string, survivo
 	if !validUUIDv4(receipt.MergeID) || receipt.OperationID != request.OperationID || receipt.SurvivorPersonID != survivorID || receipt.AbsorbedPersonID != request.AbsorbedPersonID || receipt.SurvivorRevisionAfter < 1 {
 		return api.PersonMergeReceipt{}, &responseDecodeError{err: errors.New("person merge response has invalid identity")}
 	}
-	if err := validatePersonETag(response.Header.Get("ETag"), receipt.SurvivorRevisionAfter); err != nil {
+	if err := validateRevisionETag(response.Header.Get("ETag"), receipt.SurvivorRevisionAfter); err != nil {
 		return api.PersonMergeReceipt{}, &responseDecodeError{err: err}
 	}
 	return *receipt, nil
@@ -204,7 +193,7 @@ func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64,
 	if !validUUIDv4(receipt.OperationID) || receipt.OperationID != request.OperationID || receipt.SourcePersonID != id || !validUUIDv4(receipt.NewPersonID) || receipt.NewPersonID == id || receipt.SourceRevisionAfter < 1 {
 		return api.PersonSplitReceipt{}, &responseDecodeError{err: errors.New("person split response has invalid identity")}
 	}
-	if err := validatePersonETag(response.Header.Get("ETag"), receipt.SourceRevisionAfter); err != nil {
+	if err := validateRevisionETag(response.Header.Get("ETag"), receipt.SourceRevisionAfter); err != nil {
 		return api.PersonSplitReceipt{}, &responseDecodeError{err: err}
 	}
 	return *receipt, nil
