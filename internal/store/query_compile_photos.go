@@ -86,10 +86,10 @@ func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...a
 	}, args...)
 }
 
-func (c queryCompiler) compilePhotoTextMetadataPredicate(predicate string, args ...any) (compiledQueryFragment, error) {
+func (c queryCompiler) compilePhotoTextMetadataPredicate(value, predicate string, args ...any) (compiledQueryFragment, error) {
 	if c.photoMetadataDensity != nil {
 		var err error
-		c.photoMetadataHeadsFirst, err = c.photoMetadataDensity()
+		c.photoMetadataHeadsFirst, err = c.photoMetadataDensity(value)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
@@ -163,13 +163,13 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return c.compilePhotoTextMetadataPredicate(`p.location_label=?`, value)
+		return c.compilePhotoTextMetadataPredicate(value, `p.location_label=?`, value)
 	case compiledCameraField, compiledLensField:
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
 		folded := cases.Fold().String(value)
-		return c.compilePhotoTextMetadataPredicate(`(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, folded, folded)
+		return c.compilePhotoTextMetadataPredicate(value, `(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, folded, folded)
 	case "iso", "iso_min", "iso_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil {

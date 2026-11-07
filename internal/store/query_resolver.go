@@ -14,11 +14,13 @@ import (
 // own transaction here rather than resolving against a second connection.
 type queryResolver struct{ q rowQuerier }
 
-func (r queryResolver) photoMetadataHeadsFirst(ctx context.Context) (bool, error) {
+func (r queryResolver) photoMetadataHeadsFirst(ctx context.Context, value string) (bool, error) {
 	var dense bool
-	err := r.q.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM photo_technical_metadata) > 2 * (SELECT COUNT(*) FROM photo_files)`).Scan(&dense)
+	err := r.q.QueryRowContext(ctx, `WITH capacity AS MATERIALIZED (SELECT COUNT(*)+1 AS n FROM photo_files)
+ SELECT (SELECT COUNT(*) FROM (SELECT 1 FROM photo_metadata_fts WHERE photo_metadata_fts MATCH ? LIMIT (SELECT n FROM capacity))) = (SELECT n FROM capacity)`,
+		`text : `+quoteFTSOperand(value, false)).Scan(&dense)
 	if err != nil {
-		return false, fmt.Errorf("checking photo metadata density: %w", err)
+		return false, fmt.Errorf("checking photo metadata matches: %w", err)
 	}
 	return dense, nil
 }
