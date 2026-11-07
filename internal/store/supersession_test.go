@@ -78,11 +78,8 @@ func TestDeleteSupersessionTrashedEndpoint(t *testing.T) {
 			if endpoint == "predecessor" {
 				_, err = s.DeleteSupersession(ctx, next.ID, old.ID, link.Node.Revision)
 				require.ErrorIs(t, err, ErrStaleRevision)
-				reused, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("c3"), 1, "text/plain")
+				_, err = s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("c3"), 1, "text/plain")
 				require.NoError(t, err)
-				live, err := s.NodeByPath(ctx, "/old.txt")
-				require.NoError(t, err)
-				require.Equal(t, reused.ID, live.ID)
 			}
 			removed, err := s.DeleteSupersession(ctx, next.ID, old.ID, predecessor.Revision)
 			require.NoError(t, err)

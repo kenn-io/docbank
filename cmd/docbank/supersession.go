@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document"
@@ -173,7 +174,7 @@ var validityCmd = &cobra.Command{
 		if validityJSON {
 			return json.MarshalWrite(cmd.OutOrStdout(), view)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (as of %s)\n", view.Node.Path, humanValidityState(view.State), view.AsOf)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (as of %s)\n", strconv.QuoteToASCII(view.Node.Path), humanValidityState(view.State), view.AsOf)
 		if err != nil {
 			return fmt.Errorf("writing document validity: %w", err)
 		}
@@ -190,7 +191,7 @@ var validityCmd = &cobra.Command{
 		for _, link := range view.Predecessors {
 			note := ""
 			if link.Note != "" {
-				note = " " + link.Note
+				note = " " + strconv.QuoteToASCII(link.Note)
 			}
 			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Replaces: %s%s\n", formatNodeSelector(link.PredecessorID), note); err != nil {
 				return fmt.Errorf("writing document validity: %w", err)
@@ -199,7 +200,7 @@ var validityCmd = &cobra.Command{
 		for _, link := range view.Successors {
 			note := ""
 			if link.Note != "" {
-				note = " " + link.Note
+				note = " " + strconv.QuoteToASCII(link.Note)
 			}
 			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Successor: %s%s\n", formatNodeSelector(link.SuccessorID), note); err != nil {
 				return fmt.Errorf("writing document validity: %w", err)
