@@ -6974,6 +6974,358 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 	return responseParser(ctx, resp)
 }
 
+// GetNotePublicationStatus Read publication freshness, conflicts and source counts
+func (c *Client) GetNotePublicationStatus(ctx context.Context, options *GetNotePublicationStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNotePublicationStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNotePublicationStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNotePublicationStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNotePublicationStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNotePublicationStatusErrorResponse](resp, "GetNotePublicationStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BeginNotePublicationScan Begin or replay a managed note inventory
+func (c *Client) BeginNotePublicationScan(ctx context.Context, options *BeginNotePublicationScanRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BeginNotePublicationScanResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/scans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BeginNotePublicationScanResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(BeginNotePublicationScanResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BeginNotePublicationScanResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BeginNotePublicationScanErrorResponse](resp, "BeginNotePublicationScanErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/scans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CompleteNotePublicationScan Seal a successful inventory and retire unseen sources
+func (c *Client) CompleteNotePublicationScan(ctx context.Context, options *CompleteNotePublicationScanRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteNotePublicationScanResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/scans/{scan_id}/complete",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CompleteNotePublicationScanResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CompleteNotePublicationScanResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CompleteNotePublicationScanResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CompleteNotePublicationScanErrorResponse](resp, "CompleteNotePublicationScanErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/scans/{scan_id}/complete")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AcknowledgePublishedNotes Acknowledge exact unchanged sources atomically
+func (c *Client) AcknowledgePublishedNotes(ctx context.Context, options *AcknowledgePublishedNotesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AcknowledgePublishedNotesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/scans/{scan_id}/seen",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AcknowledgePublishedNotesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AcknowledgePublishedNotesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AcknowledgePublishedNotesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AcknowledgePublishedNotesErrorResponse](resp, "AcknowledgePublishedNotesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/scans/{scan_id}/seen")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListNotePublicationSources Read exact accepted sources within one inventory epoch
+func (c *Client) ListNotePublicationSources(ctx context.Context, options *ListNotePublicationSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNotePublicationSourcesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after":   {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":   {Style: "form", Explode: &[]bool{false}[0]},
+		"scan_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/sources",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListNotePublicationSourcesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListNotePublicationSourcesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListNotePublicationSourcesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListNotePublicationSourcesErrorResponse](resp, "ListNotePublicationSourcesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/sources")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AcceptLocalPublishedNote Authorize a fresh local upload against an exact archive head
+func (c *Client) AcceptLocalPublishedNote(ctx context.Context, options *AcceptLocalPublishedNoteRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AcceptLocalPublishedNoteResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/sources/accept-local",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AcceptLocalPublishedNoteResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AcceptLocalPublishedNoteResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AcceptLocalPublishedNoteResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AcceptLocalPublishedNoteErrorResponse](resp, "AcceptLocalPublishedNoteErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/sources/accept-local")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UploadPublishedNote Upload verified original bytes with source and scan preconditions
+func (c *Client) UploadPublishedNote(ctx context.Context, options *UploadPublishedNoteRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadPublishedNoteResult, error) {
+	var err error
+	bodyEncoding := make(map[string]runtime.FieldEncoding)
+	bodyEncoding["file"] = runtime.FieldEncoding{
+		ContentType: "*/*",
+		Style:       "",
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:   c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/uploads",
+		Method:       "POST",
+		Options:      options,
+		ContentType:  "multipart/form-data",
+		BodyEncoding: bodyEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UploadPublishedNoteResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UploadPublishedNoteResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadPublishedNoteResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &UploadPublishedNoteResult{Status200: target}, nil
+
+		case 201:
+
+			target := new(UploadPublishedNoteResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadPublishedNoteResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &UploadPublishedNoteResult{Status201: target}, nil
+
+		default:
+
+			return nil, decodeAPIError[UploadPublishedNoteErrorResponse](resp, "UploadPublishedNoteErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/uploads")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListPackages List received and produced packages
 func (c *Client) ListPackages(ctx context.Context, options *ListPackagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackagesResponse, error) {
 	var err error
@@ -16283,6 +16635,12 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 	return responseParser(ctx, resp)
 }
 
+// UploadPublishedNoteResult contains the decoded body for the returned success status.
+type UploadPublishedNoteResult struct {
+	Status200 *UploadPublishedNoteResponse
+	Status201 *UploadPublishedNoteResponseJSON
+}
+
 // ReadPhotoPreviewResult contains the decoded body for the returned success status.
 type ReadPhotoPreviewResult struct {
 	Status200 *ReadPhotoPreviewResponse
@@ -20738,6 +21096,264 @@ func (o *PruneNodeContentVersionsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *PruneNodeContentVersionsRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetNotePublicationStatusRequestOptions is the options needed to make a request to GetNotePublicationStatus.
+type GetNotePublicationStatusRequestOptions struct {
+	PathParams *GetNotePublicationStatusPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNotePublicationStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNotePublicationStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNotePublicationStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNotePublicationStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// BeginNotePublicationScanRequestOptions is the options needed to make a request to BeginNotePublicationScan.
+type BeginNotePublicationScanRequestOptions struct {
+	PathParams *BeginNotePublicationScanPath
+	Body       *BeginNotePublicationScanBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BeginNotePublicationScanRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *BeginNotePublicationScanRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BeginNotePublicationScanRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BeginNotePublicationScanRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CompleteNotePublicationScanRequestOptions is the options needed to make a request to CompleteNotePublicationScan.
+type CompleteNotePublicationScanRequestOptions struct {
+	PathParams *CompleteNotePublicationScanPath
+	Body       *CompleteNotePublicationScanBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CompleteNotePublicationScanRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CompleteNotePublicationScanRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CompleteNotePublicationScanRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CompleteNotePublicationScanRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AcknowledgePublishedNotesRequestOptions is the options needed to make a request to AcknowledgePublishedNotes.
+type AcknowledgePublishedNotesRequestOptions struct {
+	PathParams *AcknowledgePublishedNotesPath
+	Body       *AcknowledgePublishedNotesBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AcknowledgePublishedNotesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AcknowledgePublishedNotesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AcknowledgePublishedNotesRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AcknowledgePublishedNotesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListNotePublicationSourcesRequestOptions is the options needed to make a request to ListNotePublicationSources.
+type ListNotePublicationSourcesRequestOptions struct {
+	PathParams *ListNotePublicationSourcesPath
+	Query      *ListNotePublicationSourcesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListNotePublicationSourcesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListNotePublicationSourcesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListNotePublicationSourcesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListNotePublicationSourcesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// AcceptLocalPublishedNoteRequestOptions is the options needed to make a request to AcceptLocalPublishedNote.
+type AcceptLocalPublishedNoteRequestOptions struct {
+	PathParams *AcceptLocalPublishedNotePath
+	Body       *AcceptLocalPublishedNoteBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AcceptLocalPublishedNoteRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AcceptLocalPublishedNoteRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AcceptLocalPublishedNoteRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AcceptLocalPublishedNoteRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UploadPublishedNoteRequestOptions is the options needed to make a request to UploadPublishedNote.
+type UploadPublishedNoteRequestOptions struct {
+	PathParams *UploadPublishedNotePath
+	Query      *UploadPublishedNoteQuery
+	Body       *UploadPublishedNoteBody
+	Header     *UploadPublishedNoteHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UploadPublishedNoteRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UploadPublishedNoteRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UploadPublishedNoteRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UploadPublishedNoteRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -26948,6 +27564,14 @@ type PruneNodeContentVersionsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type UploadPublishedNoteHeaders struct {
+	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
+	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
+
+	// XDocbankBlobSize Expected raw file byte length
+	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
+}
+
 type UploadPackageChunkHeaders struct {
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
@@ -27346,6 +27970,37 @@ type ListContentVersionsPath struct {
 
 type PruneNodeContentVersionsPath struct {
 	ID int64 `json:"id"`
+}
+
+type GetNotePublicationStatusPath struct {
+	Name string `json:"name"`
+}
+
+type BeginNotePublicationScanPath struct {
+	Name string `json:"name"`
+}
+
+type CompleteNotePublicationScanPath struct {
+	Name   string `json:"name"`
+	ScanID string `json:"scan_id"`
+}
+
+type AcknowledgePublishedNotesPath struct {
+	Name   string `json:"name"`
+	ScanID string `json:"scan_id"`
+}
+
+type ListNotePublicationSourcesPath struct {
+	Name string `json:"name"`
+}
+
+type AcceptLocalPublishedNotePath struct {
+	Name string `json:"name"`
+}
+
+type UploadPublishedNotePath struct {
+	// Name Publication identity
+	Name string `json:"name"`
 }
 
 type GetPackagePath struct {
@@ -27882,6 +28537,18 @@ type RevertNodeContentBody = RevertNodeContentRequest
 
 type PruneNodeContentVersionsBody = VersionPruneRequest
 
+type BeginNotePublicationScanBody = NotePublicationBeginRequest
+
+type CompleteNotePublicationScanBody = NotePublicationCompleteRequest
+
+type AcknowledgePublishedNotesBody = NotePublicationSeenRequest
+
+type AcceptLocalPublishedNoteBody = NotePublicationAcceptLocalRequest
+
+type UploadPublishedNoteBody struct {
+	File runtime.File `json:"file"`
+}
+
 type AssignPackageCustodianBody = PackageCustodianRequest
 
 type BeginPackageContainerBody = PackageContainerInput
@@ -28293,6 +28960,23 @@ type ListNodeTagsQuery struct {
 type ListContentVersionsQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListNotePublicationSourcesQuery struct {
+	ScanID string  `json:"scan_id"`
+	After  *string `json:"after,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+}
+
+type UploadPublishedNoteQuery struct {
+	// Name Virtual filename; must equal the multipart filename
+	Name                   string  `json:"name"`
+	ScanID                 string  `json:"scan_id"`
+	SourceRef              string  `json:"source_ref"`
+	ParentPath             string  `json:"parent_path"`
+	OperationID            string  `json:"operation_id"`
+	ModifiedAt             *string `json:"modified_at,omitempty"`
+	ExpectedSourceRevision int64   `json:"expected_source_revision"`
 }
 
 type ListPackagesQuery struct {
@@ -29127,6 +29811,36 @@ type ListContentVersionsErrorResponse = Error
 type PruneNodeContentVersionsResponse = api.VersionPruneReport
 
 type PruneNodeContentVersionsErrorResponse = Error
+
+type GetNotePublicationStatusResponse = api.NotePublicationStatus
+
+type GetNotePublicationStatusErrorResponse = Error
+
+type BeginNotePublicationScanResponse = api.NotePublicationScan
+
+type BeginNotePublicationScanErrorResponse = Error
+
+type CompleteNotePublicationScanResponse = api.NotePublicationStatus
+
+type CompleteNotePublicationScanErrorResponse = Error
+
+type AcknowledgePublishedNotesResponse = api.NotePublicationAck
+
+type AcknowledgePublishedNotesErrorResponse = Error
+
+type ListNotePublicationSourcesResponse = api.NotePublicationSourcesPage
+
+type ListNotePublicationSourcesErrorResponse = Error
+
+type AcceptLocalPublishedNoteResponse = api.NotePublicationRecoveryGrant
+
+type AcceptLocalPublishedNoteErrorResponse = Error
+
+type UploadPublishedNoteResponse = api.NotePublicationReceipt
+
+type UploadPublishedNoteResponseJSON = api.NotePublicationReceipt
+
+type UploadPublishedNoteErrorResponse = Error
 
 type ListPackagesResponse = api.PackagePage
 
@@ -30838,6 +31552,30 @@ type Node = api.Node
 
 type NodePage = api.NodePage
 
+type NoteArchiveHead = api.NoteArchiveHead
+
+type NotePublicationAcceptLocalRequest = api.NotePublicationAcceptLocalRequest
+
+type NotePublicationAck = api.NotePublicationAck
+
+type NotePublicationBeginRequest = api.NotePublicationBeginRequest
+
+type NotePublicationCompleteRequest = api.NotePublicationCompleteRequest
+
+type NotePublicationReceipt = api.NotePublicationReceipt
+
+type NotePublicationRecoveryGrant = api.NotePublicationRecoveryGrant
+
+type NotePublicationScan = api.NotePublicationScan
+
+type NotePublicationSeenRequest = api.NotePublicationSeenRequest
+
+type NotePublicationSource = api.NotePublicationSource
+
+type NotePublicationSourcesPage = api.NotePublicationSourcesPage
+
+type NotePublicationStatus = api.NotePublicationStatus
+
 type NumberedDelivery = processing.NumberedDelivery
 
 type NumberedFooter = pdfproduction.NumberedFooter
@@ -31313,6 +32051,8 @@ type PruneBackupRepositoryRequest struct {
 }
 
 type PublicationSelection = bundle.PublicationSelection
+
+type PublishedNoteIdentity = api.PublishedNoteIdentity
 
 type PushSourceCursor = api.PushSourceCursor
 

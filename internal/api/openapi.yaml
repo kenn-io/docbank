@@ -10081,6 +10081,376 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    NoteArchiveHead:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          type: string
+        hash:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        size:
+          format: int64
+          type: integer
+      required:
+        - node_id
+        - content_version_id
+        - hash
+        - size
+      type: object
+      x-go-type: api.NoteArchiveHead
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationAcceptLocalRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationAcceptLocalRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        database_epoch:
+          maxLength: 36
+          type: string
+        expected_head_version_id:
+          maxLength: 36
+          type: string
+        expected_source_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        name:
+          maxLength: 64
+          type: string
+        operation_id:
+          maxLength: 36
+          type: string
+        source_ref:
+          maxLength: 4096
+          type: string
+      required:
+        - database_epoch
+        - source_ref
+        - expected_head_version_id
+        - operation_id
+        - expected_source_revision
+      type: object
+      x-go-type: api.NotePublicationAcceptLocalRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationAck:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationAck.json
+          format: uri
+          readOnly: true
+          type: string
+        scan:
+          $ref: "#/components/schemas/NotePublicationScan"
+        sources:
+          items:
+            $ref: "#/components/schemas/PublishedNoteIdentity"
+          type: array
+      required:
+        - scan
+        - sources
+      type: object
+      x-go-type: api.NotePublicationAck
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationBeginRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationBeginRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        destination:
+          maxLength: 4096
+          type: string
+        name:
+          maxLength: 64
+          type: string
+        operation_id:
+          maxLength: 36
+          type: string
+        policy_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+      required:
+        - destination
+        - policy_fingerprint
+        - operation_id
+      type: object
+      x-go-type: api.NotePublicationBeginRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationCompleteRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationCompleteRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        inventory_complete:
+          type: boolean
+        name:
+          maxLength: 64
+          type: string
+        policy_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        scan_id:
+          maxLength: 36
+          type: string
+      required:
+        - policy_fingerprint
+        - inventory_complete
+      type: object
+      x-go-type: api.NotePublicationCompleteRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        outcome:
+          type: string
+        scan:
+          $ref: "#/components/schemas/NotePublicationScan"
+        source:
+          $ref: "#/components/schemas/NotePublicationSource"
+      required:
+        - scan
+        - source
+        - outcome
+      type: object
+      x-go-type: api.NotePublicationReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationRecoveryGrant:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationRecoveryGrant.json
+          format: uri
+          readOnly: true
+          type: string
+        expected_head_version_id:
+          type: string
+        source_ref:
+          type: string
+        source_revision:
+          format: int64
+          type: integer
+      required:
+        - source_ref
+        - expected_head_version_id
+        - source_revision
+      type: object
+      x-go-type: api.NotePublicationRecoveryGrant
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationScan:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationScan.json
+          format: uri
+          readOnly: true
+          type: string
+        database_epoch:
+          type: string
+        epoch:
+          format: int64
+          type: integer
+        namespace_revision:
+          format: int64
+          type: integer
+        policy_fingerprint:
+          type: string
+        scan_id:
+          type: string
+      required:
+        - scan_id
+        - database_epoch
+        - policy_fingerprint
+        - epoch
+        - namespace_revision
+      type: object
+      x-go-type: api.NotePublicationScan
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationSeenRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationSeenRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        bindings:
+          items:
+            $ref: "#/components/schemas/PublishedNoteIdentity"
+          maxItems: 200
+          type: array
+        name:
+          maxLength: 64
+          type: string
+        scan_id:
+          maxLength: 36
+          type: string
+      required:
+        - bindings
+      type: object
+      x-go-type: api.NotePublicationSeenRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationSource:
+      additionalProperties: false
+      properties:
+        archive_head:
+          $ref: "#/components/schemas/NoteArchiveHead"
+        availability:
+          type: string
+        conflict:
+          type: string
+        identity:
+          $ref: "#/components/schemas/PublishedNoteIdentity"
+        presence:
+          type: string
+        recovery:
+          $ref: "#/components/schemas/NotePublicationRecoveryGrant"
+      required:
+        - identity
+        - presence
+        - availability
+      type: object
+      x-go-type: api.NotePublicationSource
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationSourcesPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationSourcesPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/NotePublicationSource"
+          type: array
+        next:
+          type: string
+        scan:
+          $ref: "#/components/schemas/NotePublicationScan"
+      required:
+        - scan
+        - items
+      type: object
+      x-go-type: api.NotePublicationSourcesPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    NotePublicationStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/NotePublicationStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        absent:
+          format: int64
+          type: integer
+        active_scan:
+          $ref: "#/components/schemas/NotePublicationScan"
+        conflicts:
+          format: int64
+          type: integer
+        database_epoch:
+          type: string
+        incomplete:
+          type: boolean
+        last_accepted_at:
+          type: string
+        last_complete_at:
+          type: string
+        name:
+          type: string
+        namespace_revision:
+          format: int64
+          type: integer
+        present:
+          format: int64
+          type: integer
+        recovery_pending:
+          format: int64
+          type: integer
+        unavailable:
+          format: int64
+          type: integer
+        unknown:
+          format: int64
+          type: integer
+      required:
+        - name
+        - database_epoch
+        - last_complete_at
+        - last_accepted_at
+        - namespace_revision
+        - incomplete
+        - present
+        - absent
+        - unknown
+        - conflicts
+        - unavailable
+        - recovery_pending
+      type: object
+      x-go-type: api.NotePublicationStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     NumberedDelivery:
       additionalProperties: false
       properties:
@@ -17091,6 +17461,52 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PublishedNoteIdentity:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          type: string
+        hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        namespace_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        publication:
+          type: string
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+        source_ref:
+          maxLength: 4096
+          type: string
+        source_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        vault_id:
+          type: string
+      required:
+        - vault_id
+        - publication
+        - source_ref
+        - node_id
+        - content_version_id
+        - hash
+        - size
+        - source_revision
+        - namespace_revision
+      type: object
+      x-go-type: api.PublishedNoteIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PushSourceCursor:
       additionalProperties: false
       properties:
@@ -26809,6 +27225,313 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Preview or prune selected non-current content versions
+  /api/v1/note-publications/{name}:
+    get:
+      operationId: getNotePublicationStatus
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read publication freshness, conflicts and source counts
+  /api/v1/note-publications/{name}/scans:
+    post:
+      operationId: beginNotePublicationScan
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotePublicationBeginRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationScan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Begin or replay a managed note inventory
+  /api/v1/note-publications/{name}/scans/{scan_id}/complete:
+    post:
+      operationId: completeNotePublicationScan
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+        - in: path
+          name: scan_id
+          required: true
+          schema:
+            maxLength: 36
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotePublicationCompleteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Seal a successful inventory and retire unseen sources
+  /api/v1/note-publications/{name}/scans/{scan_id}/seen:
+    post:
+      operationId: acknowledgePublishedNotes
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+        - in: path
+          name: scan_id
+          required: true
+          schema:
+            maxLength: 36
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotePublicationSeenRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationAck"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Acknowledge exact unchanged sources atomically
+  /api/v1/note-publications/{name}/sources:
+    get:
+      operationId: listNotePublicationSources
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: scan_id
+          required: true
+          schema:
+            maxLength: 36
+            type: string
+        - explode: false
+          in: query
+          name: after
+          schema:
+            maxLength: 4096
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 1000
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationSourcesPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read exact accepted sources within one inventory epoch
+  /api/v1/note-publications/{name}/sources/accept-local:
+    post:
+      operationId: acceptLocalPublishedNote
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotePublicationAcceptLocalRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationRecoveryGrant"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Authorize a fresh local upload against an exact archive head
+  /api/v1/note-publications/{name}/uploads:
+    post:
+      operationId: uploadPublishedNote
+      parameters:
+        - description: Publication identity
+          in: path
+          name: name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+        - description: Virtual filename; must equal the multipart filename
+          in: query
+          name: name
+          required: true
+          schema:
+            minLength: 1
+            type: string
+        - description: Expected lowercase hexadecimal SHA-256 of the file payload
+          in: header
+          name: X-Docbank-Blob-Hash
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - description: Expected raw file byte length
+          in: header
+          name: X-Docbank-Blob-Size
+          required: true
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - in: query
+          name: scan_id
+          required: true
+          schema:
+            maxLength: 36
+            type: string
+        - in: query
+          name: source_ref
+          required: true
+          schema:
+            maxLength: 4096
+            type: string
+        - in: query
+          name: parent_path
+          required: true
+          schema:
+            maxLength: 4096
+            type: string
+        - in: query
+          name: operation_id
+          required: true
+          schema:
+            maxLength: 36
+            type: string
+        - in: query
+          name: modified_at
+          schema:
+            maxLength: 64
+            type: string
+        - in: query
+          name: expected_source_revision
+          required: true
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: "*/*"
+            schema:
+              properties:
+                file:
+                  contentMediaType: application/octet-stream
+                  format: binary
+                  type: string
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationReceipt"
+          description: Exact accepted publication receipt
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotePublicationReceipt"
+          description: Exact accepted publication receipt
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Upload verified original bytes with source and scan preconditions
   /api/v1/packages:
     get:
       operationId: listPackages

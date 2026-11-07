@@ -4370,6 +4370,152 @@ export interface NodePage {
   total: number;
 }
 
+export interface NoteArchiveHead {
+  content_version_id: string;
+  hash: string;
+  node_id: number;
+  size: number;
+}
+
+export interface NotePublicationAcceptLocalRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 36 */
+  database_epoch: string;
+  /** @maxLength 36 */
+  expected_head_version_id: string;
+  /** @minimum 1 */
+  expected_source_revision: number;
+  /** @maxLength 64 */
+  name?: string;
+  /** @maxLength 36 */
+  operation_id: string;
+  /** @maxLength 4096 */
+  source_ref: string;
+}
+
+export interface NotePublicationScan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  database_epoch: string;
+  epoch: number;
+  namespace_revision: number;
+  policy_fingerprint: string;
+  scan_id: string;
+}
+
+export interface PublishedNoteIdentity {
+  content_version_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  hash: string;
+  /** @minimum 1 */
+  namespace_revision: number;
+  /** @minimum 1 */
+  node_id: number;
+  publication: string;
+  /** @minimum 0 */
+  size: number;
+  /** @maxLength 4096 */
+  source_ref: string;
+  /** @minimum 1 */
+  source_revision: number;
+  vault_id: string;
+}
+
+export interface NotePublicationAck {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  scan: NotePublicationScan;
+  sources: PublishedNoteIdentity[];
+}
+
+export interface NotePublicationBeginRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 4096 */
+  destination: string;
+  /** @maxLength 64 */
+  name?: string;
+  /** @maxLength 36 */
+  operation_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  policy_fingerprint: string;
+}
+
+export interface NotePublicationCompleteRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  inventory_complete: boolean;
+  /** @maxLength 64 */
+  name?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  policy_fingerprint: string;
+  /** @maxLength 36 */
+  scan_id?: string;
+}
+
+export interface NotePublicationRecoveryGrant {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_head_version_id: string;
+  source_ref: string;
+  source_revision: number;
+}
+
+export interface NotePublicationSource {
+  archive_head?: NoteArchiveHead;
+  availability: string;
+  conflict?: string;
+  identity: PublishedNoteIdentity;
+  presence: string;
+  recovery?: NotePublicationRecoveryGrant;
+}
+
+export interface NotePublicationReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  outcome: string;
+  scan: NotePublicationScan;
+  source: NotePublicationSource;
+}
+
+export interface NotePublicationSeenRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 200 */
+  bindings: PublishedNoteIdentity[];
+  /** @maxLength 64 */
+  name?: string;
+  /** @maxLength 36 */
+  scan_id?: string;
+}
+
+export interface NotePublicationSourcesPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: NotePublicationSource[];
+  next?: string;
+  scan: NotePublicationScan;
+}
+
+export interface NotePublicationStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  absent: number;
+  active_scan?: NotePublicationScan;
+  conflicts: number;
+  database_epoch: string;
+  incomplete: boolean;
+  last_accepted_at: string;
+  last_complete_at: string;
+  name: string;
+  namespace_revision: number;
+  present: number;
+  recovery_pending: number;
+  unavailable: number;
+  unknown: number;
+}
+
 export interface NumberedFooter {
   font_sha256: string;
   font_size_milli_points: number;
@@ -9761,6 +9907,71 @@ offset?: number;
 
 export type PruneNodeContentVersionsHeaders = {
 'If-Match': string;
+};
+
+export type ListNotePublicationSourcesParams = {
+/**
+ * @maxLength 36
+ */
+scan_id: string;
+/**
+ * @maxLength 4096
+ */
+after?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+};
+
+export type UploadPublishedNoteParams = {
+/**
+ * Virtual filename; must equal the multipart filename
+ * @minLength 1
+ */
+name: string;
+/**
+ * @maxLength 36
+ */
+scan_id: string;
+/**
+ * @maxLength 4096
+ */
+source_ref: string;
+/**
+ * @maxLength 4096
+ */
+parent_path: string;
+/**
+ * @maxLength 36
+ */
+operation_id: string;
+/**
+ * @maxLength 64
+ */
+modified_at?: string;
+/**
+ * @minimum 0
+ */
+expected_source_revision: number;
+};
+
+export type UploadPublishedNoteHeaders = {
+/**
+ * Expected lowercase hexadecimal SHA-256 of the file payload
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw file byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
+};
+
+export type UploadPublishedNoteBody = {
+  file: Blob | File;
 };
 
 export type ListPackagesParams = {
@@ -15382,6 +15593,274 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(versionPruneRequest)
+  }
+);}
+
+
+
+export const getGetNotePublicationStatusUrl = (name: string,) => {
+
+
+
+
+  return `/api/v1/note-publications/${encodeURIComponent(String(name))}`
+}
+
+/**
+ * @summary Read publication freshness, conflicts and source counts
+ */
+export const getNotePublicationStatus = async (name: string, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationStatus> => {
+
+  return sessionJSON<NotePublicationStatus>(getGetNotePublicationStatusUrl(name),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getBeginNotePublicationScanUrl = (name: string,) => {
+
+
+
+
+  return `/api/v1/note-publications/${encodeURIComponent(String(name))}/scans`
+}
+
+/**
+ * @summary Begin or replay a managed note inventory
+ */
+export const beginNotePublicationScan = async (name: string,
+    notePublicationBeginRequest: NonReadonly<NotePublicationBeginRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationScan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<NotePublicationScan>(getBeginNotePublicationScanUrl(name),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(notePublicationBeginRequest)
+  }
+);}
+
+
+
+export const getCompleteNotePublicationScanUrl = (name: string,
+    scanId: string,) => {
+
+
+
+
+  return `/api/v1/note-publications/${encodeURIComponent(String(name))}/scans/${encodeURIComponent(String(scanId))}/complete`
+}
+
+/**
+ * @summary Seal a successful inventory and retire unseen sources
+ */
+export const completeNotePublicationScan = async (name: string,
+    scanId: string,
+    notePublicationCompleteRequest: NonReadonly<NotePublicationCompleteRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<NotePublicationStatus>(getCompleteNotePublicationScanUrl(name,scanId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(notePublicationCompleteRequest)
+  }
+);}
+
+
+
+export const getAcknowledgePublishedNotesUrl = (name: string,
+    scanId: string,) => {
+
+
+
+
+  return `/api/v1/note-publications/${encodeURIComponent(String(name))}/scans/${encodeURIComponent(String(scanId))}/seen`
+}
+
+/**
+ * @summary Acknowledge exact unchanged sources atomically
+ */
+export const acknowledgePublishedNotes = async (name: string,
+    scanId: string,
+    notePublicationSeenRequest: NonReadonly<NotePublicationSeenRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationAck> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<NotePublicationAck>(getAcknowledgePublishedNotesUrl(name,scanId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(notePublicationSeenRequest)
+  }
+);}
+
+
+
+export const getListNotePublicationSourcesUrl = (name: string,
+    params: ListNotePublicationSourcesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/note-publications/${encodeURIComponent(String(name))}/sources?${stringifiedParams}` : `/api/v1/note-publications/${encodeURIComponent(String(name))}/sources`
+}
+
+/**
+ * @summary Read exact accepted sources within one inventory epoch
+ */
+export const listNotePublicationSources = async (name: string,
+    params: ListNotePublicationSourcesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationSourcesPage> => {
+
+  return sessionJSON<NotePublicationSourcesPage>(getListNotePublicationSourcesUrl(name,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getAcceptLocalPublishedNoteUrl = (name: string,) => {
+
+
+
+
+  return `/api/v1/note-publications/${encodeURIComponent(String(name))}/sources/accept-local`
+}
+
+/**
+ * @summary Authorize a fresh local upload against an exact archive head
+ */
+export const acceptLocalPublishedNote = async (name: string,
+    notePublicationAcceptLocalRequest: NonReadonly<NotePublicationAcceptLocalRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationRecoveryGrant> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<NotePublicationRecoveryGrant>(getAcceptLocalPublishedNoteUrl(name),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(notePublicationAcceptLocalRequest)
+  }
+);}
+
+
+
+export const getUploadPublishedNoteUrl = (name: string,
+    params: UploadPublishedNoteParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/note-publications/${encodeURIComponent(String(name))}/uploads?${stringifiedParams}` : `/api/v1/note-publications/${encodeURIComponent(String(name))}/uploads`
+}
+
+/**
+ * @summary Upload verified original bytes with source and scan preconditions
+ */
+export const uploadPublishedNote = async (name: string,
+    uploadPublishedNoteBody: UploadPublishedNoteBody,
+    params: UploadPublishedNoteParams,
+    headers: UploadPublishedNoteHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationReceipt> => {
+    const formData = new FormData();
+formData.append(`file`, uploadPublishedNoteBody.file);
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<NotePublicationReceipt>(getUploadPublishedNoteUrl(name,params),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) },
+    body: formData
   }
 );}
 
