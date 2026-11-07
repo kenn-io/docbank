@@ -790,11 +790,12 @@ func drainHTTPServer(server *http.Server) func(context.Context) error {
 	}
 }
 
-// withMCPRoute serves hosted MCP at /mcp ahead of the API middleware. The MCP
-// transport applies its own bearer, Host, and Origin checks.
+// withMCPRoute serves hosted MCP and its public icon aliases ahead of the API
+// middleware. The MCP transport applies its own bearer, Host, and Origin checks.
 func withMCPRoute(api, mcp http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == mcpHTTPPath {
+		switch r.URL.Path {
+		case mcpHTTPPath, "/icon.png", "/favicon.ico":
 			mcp.ServeHTTP(w, r)
 			return
 		}

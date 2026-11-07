@@ -38,3 +38,5 @@ internal/api/openapi.yaml linguist-generated=true
 internal/apiclient/*.gen.go linguist-generated=true
 frontend/src/generated/** linguist-generated=true
 frontend/package-lock.json linguist-generated=true
+# The MCP server embeds and declares these exact image bytes.
+internal/mcp/assets/*.png binary
