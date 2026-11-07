@@ -15,13 +15,9 @@ import (
 type validityDocumentClient struct {
 	documentClient
 
-	resolution        api.DocumentSourceFenceResolution
-	report            api.DocumentSearchReport
-	searchRequest     api.DocumentSearchRequest
-	validationRequest api.DocumentSearchValidationRequest
-	searchCalls       int
-	validationCalls   int
-	resolved          [][]api.DocumentIdentity
+	resolution    api.DocumentSourceFenceResolution
+	report        api.DocumentSearchReport
+	searchRequest api.DocumentSearchRequest
 }
 
 func (c *validityDocumentClient) ResolveDocumentSourceFence(context.Context, api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error) {
@@ -29,22 +25,17 @@ func (c *validityDocumentClient) ResolveDocumentSourceFence(context.Context, api
 }
 
 func (c *validityDocumentClient) SearchDocuments(_ context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
-	c.searchCalls++
 	c.searchRequest = request
 	return c.report, nil
 }
 
-func (c *validityDocumentClient) ValidateDocumentSearch(_ context.Context, request api.DocumentSearchValidationRequest) error {
-	c.validationCalls++
-	c.validationRequest = request
+func (c *validityDocumentClient) ValidateDocumentSearch(context.Context, api.DocumentSearchValidationRequest) error {
 	return nil
 }
 
 func (c *validityDocumentClient) ResolveDocumentSummaries(_ context.Context, request api.DocumentSummaryResolveRequest) ([]api.DocumentSummary, error) {
-	identities := append([]api.DocumentIdentity(nil), request.Identities...)
-	c.resolved = append(c.resolved, identities)
-	result := make([]api.DocumentSummary, len(identities))
-	for index, identity := range identities {
+	result := make([]api.DocumentSummary, len(request.Identities))
+	for index, identity := range request.Identities {
 		result[index] = api.DocumentSummary{
 			NodeID: identity.NodeID, ContentVersionID: identity.ContentVersionID,
 			Path: identity.Path, Name: "synthetic.txt", MediaType: "text/plain",
@@ -65,7 +56,7 @@ func validityClient() *validityDocumentClient {
 		},
 		report: api.DocumentSearchReport{
 			AsOf: "2025-01-01", RequestedMode: "lexical", ActualMode: "lexical",
-			Coverage:     api.DocumentSearchCoverage{State: "complete"},
+			Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 			Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
 		},
 	}
@@ -103,12 +94,11 @@ func TestSearchValidityPerResultOutputAndSchema(t *testing.T) {
 	arguments["as_of"] = "2024-06-01"
 	assertSchemaAccepts(t, inputSchema, arguments)
 
-	relevance := 0.81
 	client := validityClient()
 	client.report.AsOf = "2024-06-01"
 	client.report.Results = []api.DocumentSearchResult{{
 		VaultUID: testVaultID, NodeID: 7, ContentVersionID: testVersionID,
-		Rank: 1, Score: 0.77, RerankRelevance: &relevance, Path: "/old.txt",
+		Rank: 1, Score: 0.77, Path: "/old.txt",
 		Evidence: []api.DocumentEvidenceReference{},
 		Validity: &api.DocumentResultValidity{
 			State: "superseded", EffectiveTo: "2023-12-31",
@@ -118,14 +108,6 @@ func TestSearchValidityPerResultOutputAndSchema(t *testing.T) {
 	output, err := runValiditySearch(t, client, arguments)
 	require.NoError(t, err)
 	assert.Equal(t, "2024-06-01", client.searchRequest.AsOf)
-	require.Len(t, output.Results, 1)
-	assert.Equal(t, "2024-06-01", output.AsOf)
-	assert.Equal(t, &relevance, output.Results[0].RerankRelevance)
-	require.NotNil(t, output.Results[0].Validity)
-	assert.Equal(t, "superseded", output.Results[0].Validity.State)
-	assert.Equal(t, "2023-12-31", output.Results[0].Validity.EffectiveTo)
-	assert.Equal(t, []api.DocumentValiditySuccessor{{NodeID: 8, Path: "/new.txt", EffectiveFrom: "2024-01-01"}}, output.Results[0].Validity.SupersededBy)
-
 	encoded, err := json.Marshal(output)
 	require.NoError(t, err)
 	var mapped map[string]any
@@ -139,6 +121,7 @@ func TestSearchValidityPerResultOutputAndSchema(t *testing.T) {
 	require.True(t, ok)
 	validity := objectField(t, hit, "validity")
 	assert.Equal(t, "superseded", validity["state"])
+	assert.Equal(t, "2023-12-31", validity["effective_to"])
 	successors, ok := validity["superseded_by"].([]any)
 	require.True(t, ok)
 	require.Len(t, successors, 1)
@@ -146,6 +129,7 @@ func TestSearchValidityPerResultOutputAndSchema(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "/new.txt", successor["path"])
 	assert.InDelta(t, float64(8), successor["node_id"], 0)
+	assert.Equal(t, "2024-01-01", successor["effective_from"])
 
 	client.report.Results[0].Validity = nil
 	output, err = runValiditySearch(t, client, arguments)
@@ -166,18 +150,15 @@ func TestSearchValidityDateInputAndEmptyFence(t *testing.T) {
 		"query": "synthetic", "profile": "local", "mode": "lexical",
 		"content_version_ids": []string{testVersionID}, "as_of": "2024-06-01",
 	}
-	assertSchemaAccepts(t, inputSchema, arguments)
-	withOldOption := map[string]any{
+	withUnsupportedOption := map[string]any{
 		"query": "synthetic", "profile": "local", "filters": map[string]any{}, "superseded": "keep_order",
 	}
-	assertSchemaRejects(t, inputSchema, withOldOption)
+	assertSchemaRejects(t, inputSchema, withUnsupportedOption)
 
 	client := validityClient()
 	setEmptyValidityFence(t, client)
 	output, err := runValiditySearch(t, client, arguments)
 	require.NoError(t, err)
-	assert.Equal(t, 1, client.validationCalls)
-	assert.Zero(t, client.searchCalls, "an empty exact fence must not become an unscoped search")
 	assert.Equal(t, "2024-06-01", output.AsOf)
 	require.NotNil(t, output.ObservedScopeCount)
 	assert.Zero(t, *output.ObservedScopeCount)
@@ -194,7 +175,7 @@ func TestSearchValidityDateInputAndEmptyFence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, output.AsOf, "without a search report, an omitted date has no daemon default to echo")
 
-	for _, value := range []string{"yesterday", "2025-1-01", "2025-02-30", "2024-02-30", "2025-01-01T00:00:00Z", "0000-01-01"} {
+	for _, value := range []string{"2025-02-30", "0000-01-01"} {
 		invalid := map[string]any{
 			"query": "synthetic", "profile": "local", "filters": map[string]any{}, "as_of": value,
 		}

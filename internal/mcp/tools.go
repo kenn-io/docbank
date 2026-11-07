@@ -348,10 +348,7 @@ func validOptionalCalendarDate(arguments map[string]any, field string) bool {
 	if !ok {
 		return true
 	}
-	text, ok := value.(string)
-	if !ok {
-		return false
-	}
+	text, _ := value.(string)
 	return document.ValidateDate(text) == nil
 }
 

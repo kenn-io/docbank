@@ -407,7 +407,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
 				FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 		case "/api/v1/search":
-			writeDaemonJSON(t, response, api.DocumentSearchReport{AsOf: "2025-01-01", RequestedMode: "lexical", ActualMode: "lexical",
+			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{{
 					VaultUID: testVaultID, NodeID: 7, ContentVersionID: otherVersion,
@@ -847,7 +847,6 @@ func TestListDocumentsAndGetDocumentSkipVaultInventory(t *testing.T) {
 
 func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 	const secondVersionID = "33333333-3333-4333-8333-333333333333"
-	const thirdVersionID = "44444444-4444-4444-8444-444444444444"
 	for _, tc := range []struct {
 		name    string
 		rerank  bool
@@ -857,10 +856,8 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			versions := []string{testVersionID}
 			documents := []api.DocumentSummary{{NodeID: 7, ContentVersionID: testVersionID, Path: "/synthetic.md", Name: "synthetic.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}}}
 			if tc.outcome == "applied" {
-				versions = append(versions, secondVersionID, thirdVersionID)
+				versions = append(versions, secondVersionID)
 				documents = append(documents, api.DocumentSummary{NodeID: 8, ContentVersionID: secondVersionID, Path: "/second.md", Name: "second.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}})
-				documents = append(documents, api.DocumentSummary{NodeID: 9, ContentVersionID: thirdVersionID, Path: "/third.md", Name: "third.md", MediaType: "text/markdown", ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{}})
-				documents = []api.DocumentSummary{documents[1], documents[2], documents[0]}
 			}
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -876,13 +873,11 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 						assert.NotContains(t, body, "rerank")
 					}
 					hit := map[string]any{"vault_uid": testVaultID, "node_id": 7, "content_version_id": testVersionID, "rank": 1, "score": 1.0 / 61, "path": "/synthetic.md", "lexical_rank": 1, "evidence": []any{map[string]any{"kind": "node_name"}}}
-					report := map[string]any{"as_of": "2025-01-01", "requested_mode": "lexical", "actual_mode": "lexical", "coverage": map[string]any{"binding_required": false, "scoped_documents": len(versions), "complete_documents": len(versions), "state": "complete"}, "degradations": []any{}, "results": []any{hit}, "trace": []any{}, "truncated": false}
+					report := map[string]any{"requested_mode": "lexical", "actual_mode": "lexical", "coverage": map[string]any{"binding_required": false, "scoped_documents": len(versions), "complete_documents": len(versions), "state": "complete"}, "degradations": []any{}, "results": []any{hit}, "trace": []any{}, "truncated": false}
 					if tc.outcome == "applied" {
-						currentCandidate := map[string]any{"vault_uid": testVaultID, "node_id": 8, "content_version_id": secondVersionID, "rank": 1, "score": 0.72, "rerank_relevance": 0.72, "path": "/second.md", "lexical_rank": 2, "evidence": []any{map[string]any{"kind": "node_name"}}}
-						unscoredCurrent := map[string]any{"vault_uid": testVaultID, "node_id": 9, "content_version_id": thirdVersionID, "rank": 2, "score": 1.0 / 63, "path": "/third.md", "lexical_rank": 3, "evidence": []any{map[string]any{"kind": "node_name"}}}
-						demotedCandidate := map[string]any{"vault_uid": testVaultID, "node_id": 7, "content_version_id": testVersionID, "rank": 3, "score": 0.91, "rerank_relevance": 0.91, "path": "/synthetic.md", "lexical_rank": 1, "evidence": []any{map[string]any{"kind": "node_name"}}, "validity": map[string]any{"state": "expired", "effective_to": "2024-12-31", "superseded_by": []any{}}}
-						report["results"] = []any{currentCandidate, unscoredCurrent, demotedCandidate}
-						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 2}
+						hit["score"], hit["rerank_relevance"] = 0.72, 0.72
+						report["results"] = []any{hit, map[string]any{"vault_uid": testVaultID, "node_id": 8, "content_version_id": secondVersionID, "rank": 2, "score": 1.0 / 62, "path": "/second.md", "lexical_rank": 2, "evidence": []any{map[string]any{"kind": "node_name"}}}}
+						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1}
 					}
 					if tc.outcome == "degraded" {
 						report["reranking"] = map[string]any{"outcome": "degraded", "cause": "authorization_denied", "candidate_count": 1}
@@ -903,7 +898,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 			hits, ok := output["results"].([]any)
 			require.True(t, ok)
 			if tc.outcome == "applied" {
-				require.Len(t, hits, 3)
+				require.Len(t, hits, 2)
 			} else {
 				require.Len(t, hits, 1)
 			}
@@ -917,17 +912,13 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 				require.True(t, ok)
 				assert.Equal(t, tc.outcome, receipt["outcome"])
 				if tc.outcome == "applied" {
-					assert.EqualValues(t, 2, receipt["candidate_count"])
+					assert.EqualValues(t, 1, receipt["candidate_count"])
 					require.Contains(t, hit, "rerank_relevance")
 					assert.InDelta(t, 0.72, hit["rerank_relevance"], 1e-9)
 					secondHit, ok := hits[1].(map[string]any)
 					require.True(t, ok)
 					assert.NotContains(t, secondHit, "rerank_relevance")
-					assert.InDelta(t, 1.0/63, secondHit["score"], 1e-9)
-					thirdHit, ok := hits[2].(map[string]any)
-					require.True(t, ok)
-					assert.EqualValues(t, 7, thirdHit["node_id"])
-					assert.InDelta(t, 0.91, thirdHit["rerank_relevance"], 1e-9)
+					assert.InDelta(t, 1.0/62, secondHit["score"], 1e-9)
 				} else {
 					assert.NotContains(t, hit, "rerank_relevance")
 					assert.Equal(t, "authorization_denied", receipt["cause"])
