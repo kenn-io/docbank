@@ -182,3 +182,24 @@ func TestMediaSearchValidityBeforeLimitAndSelectedScope(t *testing.T) {
 	require.Equal(t, old.ID, report.Results[0].Document.NodeID)
 	require.Nil(t, report.Results[0].Validity, "the fenced replacement was not selected")
 }
+
+func TestApplyValidityDropsCandidatesThatLeftScope(t *testing.T) {
+	t.Parallel()
+	f := newMediaStateFixture(t)
+	ctx := t.Context()
+	kept, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "kept", processingHash("kept"), 1, "text/plain")
+	require.NoError(t, err)
+	gone, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "gone", processingHash("gone"), 1, "text/plain")
+	require.NoError(t, err)
+	_, _, err = f.catalog.Trash(ctx, gone.ID, gone.Revision)
+	require.NoError(t, err)
+	report := retrieval.Report{Results: []retrieval.Result{
+		{Document: retrieval.DocumentIdentity{NodeID: gone.ID}, Rank: 1},
+		{Document: retrieval.DocumentIdentity{NodeID: kept.ID}, Rank: 2},
+	}}
+	require.NoError(t, f.service.applyValidity(ctx, &report, store.SearchOptions{}, "2025-06-01"))
+	require.Len(t, report.Results, 1)
+	require.Equal(t, kept.ID, report.Results[0].Document.NodeID)
+	require.Equal(t, 1, report.Results[0].Rank)
+	require.True(t, report.Truncated)
+}

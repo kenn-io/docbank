@@ -60,7 +60,7 @@ func (service *Service) searchMediaSources(
 	}
 	plan.dropChanged(current)
 	report.Results = plan.attributedResults(report.Results)
-	report.Results, err = service.applyValidity(ctx, report.Results, scope, request.AsOf)
+	err = service.applyValidity(ctx, &report, scope, request.AsOf)
 	if err != nil {
 		return retrieval.Report{}, err
 	}

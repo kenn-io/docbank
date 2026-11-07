@@ -10,15 +10,28 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func (service *Service) applyValidity(ctx context.Context, results []retrieval.Result, scope store.SearchOptions, asOf string) ([]retrieval.Result, error) {
+// applyValidity drops candidates that left the search scope while reranking
+// waited, as retrieval does, and orders the rest with out-of-force matches last.
+func (service *Service) applyValidity(ctx context.Context, report *retrieval.Report, scope store.SearchOptions, asOf string) error {
+	results := report.Results
 	ids := make([]int64, len(results))
 	for i, r := range results {
 		ids[i] = r.Document.NodeID
 	}
 	declarations, err := service.catalog.SearchResultValidity(ctx, scope, ids)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	kept := results[:0]
+	for _, r := range results {
+		if _, ok := declarations[r.Document.NodeID]; ok {
+			kept = append(kept, r)
+		}
+	}
+	if len(kept) != len(results) {
+		report.Truncated = true
+	}
+	results = kept
 	for i := range results {
 		r := &results[i]
 		n := declarations[r.Document.NodeID]
@@ -48,5 +61,6 @@ func (service *Service) applyValidity(ctx context.Context, results []retrieval.R
 	for i := range results {
 		results[i].Rank = i + 1
 	}
-	return results, nil
+	report.Results = results
+	return nil
 }

@@ -1672,7 +1672,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	report.Results, err = service.applyValidity(ctx, report.Results, searchScope, asOf)
+	err = service.applyValidity(ctx, &report, searchScope, asOf)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
