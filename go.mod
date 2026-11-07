@@ -8,8 +8,8 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
-	github.com/aws/aws-sdk-go-v2/config v1.33.12
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.12
+	github.com/aws/aws-sdk-go-v2/config v1.33.13
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
 	github.com/cenkalti/backoff/v7 v7.0.2
 	github.com/charmbracelet/x/ansi v0.11.9
@@ -23,7 +23,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/klippa-app/go-pdfium v1.20.0
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -37,11 +37,11 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
-	github.com/yuin/goldmark v1.8.5
-	go.kenn.io/kata v0.20.0
-	go.kenn.io/kit v0.47.6
+	github.com/yuin/goldmark v1.8.6
+	go.kenn.io/kata v0.22.0
+	go.kenn.io/kit v0.48.4
 	golang.org/x/crypto v0.58.0
-	golang.org/x/image v0.45.0
+	golang.org/x/image v0.47.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
@@ -67,9 +67,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.11.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.8 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.12.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.39.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.12.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.39.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6 // indirect
 	github.com/aws/smithy-go v1.28.7 // indirect
 	github.com/bitfield/gotestdox v0.2.2 // indirect
@@ -102,7 +102,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
@@ -121,7 +121,6 @@ require (
 	github.com/posthog/posthog-go v1.39.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pathologize v1.1.0 // indirect
