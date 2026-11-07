@@ -705,7 +705,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["explain"] = booleanSchema()
 	properties["as_of"] = calendarDateSchema()
 	properties["rerank"] = booleanSchema()
-	input := rootObjectSchema(properties, "query", "profile")
+	input := rootObjectSchema(properties, "query")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
@@ -723,6 +723,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"as_of":                calendarDateSchema(),
+		"profile":              stringSchema(128),
 		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
 		"fence_fingerprint":    fenceFingerprintSchema(),
@@ -736,10 +737,10 @@ func searchDocumentsSchemas() (schema, schema) {
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
 		"reranking":       searchRerankingSchema(),
-		"skipped_reasons": arraySchema(stringSchema(64), 64),
+		"skipped_reasons": arraySchema(stringSchema(2048), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("requested_mode",
+	}), cacheRequired("profile", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	output["if"] = schema{kataRequiredField: []string{"fence"}}
 	output["then"] = schema{

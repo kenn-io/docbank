@@ -717,6 +717,10 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, s.db, profileFingerprint, bindingID)
+	if errors.Is(err, ErrNotFound) && fingerprints.Profile == "" {
+		// A configured profile can be searched before processing persists it.
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -733,6 +737,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		}
 	}
 	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -744,6 +751,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
 	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}

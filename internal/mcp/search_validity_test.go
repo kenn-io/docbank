@@ -24,6 +24,10 @@ func (c *validityDocumentClient) ResolveDocumentSourceFence(context.Context, api
 	return c.resolution, nil
 }
 
+func (c *validityDocumentClient) ListDocumentProcessingProfiles(context.Context) ([]api.ProcessingProfileSummary, error) {
+	return []api.ProcessingProfileSummary{{Name: "local", Fingerprint: testProfileID}}, nil
+}
+
 func (c *validityDocumentClient) SearchDocuments(_ context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	c.searchRequest = request
 	return c.report, nil
