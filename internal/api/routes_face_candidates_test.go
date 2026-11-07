@@ -53,6 +53,12 @@ func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	browser["Cookie"] = response.Cookies()[0].String()
+	response, body = get(t, ts, "/api/v1/people/face-candidates", browser)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+	require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, response.Header.Get("Vary"))
 	browser["If-Match"] = `"9"`
 	response, body = do(t, ts, http.MethodPost, path, browser, api.FaceCandidateDecisionRequest{Action: "new_person", DisplayName: "Ada"})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)

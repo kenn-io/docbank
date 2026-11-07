@@ -122,6 +122,45 @@ func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 	}
 }
 
+func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	ctx := t.Context()
+	x.f.grant(t, x.service, config.LocalFacesProfile)
+	_, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	var backup bytes.Buffer
+	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &backup))
+	path := filepath.Join(t.TempDir(), "restart.db")
+	restored, err := store.Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+	require.NoError(t, restored.Close())
+	reopened, err := store.Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	service, err := NewService(ctx, ServiceConfig{Catalog: reopened, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	_, total, err := reopened.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Zero(t, total, "restart after saving vectors but before publishing groups")
+	synctest.Test(t, func(t *testing.T) {
+		laneContext, cancel := context.WithCancel(t.Context())
+		finished := make(chan error, 1)
+		go func() { finished <- service.FaceSuggestionBackfill(laneContext, nil) }()
+		defer func() {
+			cancel()
+			require.ErrorIs(t, <-finished, context.Canceled)
+		}()
+		require.Eventually(t, func() bool {
+			groups, total, err := reopened.FaceCandidates(t.Context(), 24, 0)
+			return err == nil && total == 1 && len(groups) == 1 && len(groups[0].Faces) == 2
+		}, 5*time.Second, 10*time.Millisecond, "retained vectors must publish without another write")
+	})
+}
+
 func TestFaceSuggestionBatchesResumeAndDiscardChangedInputs(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)

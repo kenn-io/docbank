@@ -189,7 +189,7 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	return nil
 }
 func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog.Logger) error {
-	var settled uint64
+	settled := ^uint64(0)
 	lane := Backfill[string]{Name: "face-suggestions", Page: 1, IdleDelay: time.Second, WriteRevision: service.catalog.WriteRevision, Logger: logger, Mutate: service.gate.MutateContext,
 		List: func(_ context.Context, after string, _ int) ([]string, error) {
 			service.faceSuggestionsMu.Lock()
