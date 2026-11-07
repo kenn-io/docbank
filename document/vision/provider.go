@@ -79,6 +79,8 @@ type Provider struct {
 // taskPrompt selects a task's prompt and completion budget. Detection output grows with each face.
 func taskPrompt(id string) (string, int, error) {
 	switch id {
+	case UnderstandingProviderID:
+		return understandingPrompt, 8192, nil
 	case ProviderID:
 		return prompt, 2048, nil
 	case document.FaceDetectionProviderID:
@@ -100,13 +102,28 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 	if model == "" || len(model) > 255 || model != strings.TrimSpace(model) || strings.ContainsAny(model, "\r\n\x00") {
 		return document.RenditionDescriptor{}, errors.New("vision model is invalid")
 	}
-	fingerprint := providerutil.SHA256Hex([]byte(AdapterContract + "\x00" + model + "\x00" + InputProfile + "\x00" + text))
-	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
+	contract, inputProfile := AdapterContract, InputProfile
+	formats := []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}
+	roles := []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
+	if id == UnderstandingProviderID {
+		contract, inputProfile = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v1"
+		roles = nil
+		formats = nil
+		for _, mediaType := range []string{"image/jpeg", "image/png", "image/webp"} {
+			formats = append(formats, document.RenditionFormatCapability{MediaFamily: "image", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
+		}
+	}
+	fingerprint := providerutil.SHA256Hex([]byte(contract + "\x00" + model + "\x00" + inputProfile + "\x00" + text))
+	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: formats, ReturnsStructured: true, ReturnsMarkdown: id == UnderstandingProviderID, ArtifactRoles: roles})
 }
 
 // DisclosureFingerprint binds consent to the exact destination and deployment.
 func DisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	return providerutil.SHA256Hex([]byte(strings.Join([]string{AdapterContract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment}, "\x00")))
+	contract := AdapterContract
+	if descriptor.ID == UnderstandingProviderID {
+		contract = UnderstandingAdapterContract
+	}
+	return providerutil.SHA256Hex([]byte(strings.Join([]string{contract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment}, "\x00")))
 }
 
 // ValidateOrigin accepts a provider root origin under the selected trust boundary.
@@ -170,7 +187,11 @@ type response struct {
 }
 
 func (p *Provider) describe(ctx context.Context, data []byte, text string, tokens int, expiresAt string) ([]byte, error) {
-	body, err := json.Marshal(request{Model: p.profile.Model, Messages: []message{{Role: "user", Content: []part{{Type: "text", Text: text}, {Type: "image_url", ImageURL: &imageURL{URL: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data)}}}}}, MaxCompletionTokens: tokens})
+	return p.describeImage(ctx, data, "image/jpeg", text, tokens, expiresAt)
+}
+
+func (p *Provider) describeImage(ctx context.Context, data []byte, mediaType, text string, tokens int, expiresAt string) ([]byte, error) {
+	body, err := json.Marshal(request{Model: p.profile.Model, Messages: []message{{Role: "user", Content: []part{{Type: "text", Text: text}, {Type: "image_url", ImageURL: &imageURL{URL: "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)}}}}}, MaxCompletionTokens: tokens})
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +308,9 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 	return out, nil
 }
 func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+	if p.descriptor.ID == UnderstandingProviderID {
+		return p.renderUnderstanding(ctx, upload, authorization)
+	}
 	started := time.Now().UTC()
 	meta := upload.Metadata()
 	if meta.InputKind != document.RenditionInputDerivedUpload || meta.ByteLength > 4<<20 {

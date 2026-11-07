@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-07
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -565,6 +565,81 @@ retain_typed_artifacts = false
 Automatic description picks the profile with the lexicographically smallest name among those with active [consent](usage/document-processing.md#describe-photos) whose provider passes its probe. If the probe for the smallest name fails, the next consented name receives the photos. Docbank checks readiness on demand when a description starts. Status output does not list it. Automatic work leaves settled descriptions alone.
 
 A consented explicit build under another provider fingerprint can refresh rotation even when the photo already has a description. Pending and accepted caption and tag decisions stay settled. After a dismissal, an explicit build with a different provider fingerprint can offer replacement text along with the new rotation answer.
+
+### Image and meme understanding
+
+Use an image-understanding profile to search JPEG, PNG and WebP files by generated descriptions and possible meme meaning. It keeps four labeled sections: visible text (best-effort transcription), literal description, possible meaning (interpretation), and uncertainty or missing context. The output is machine-generated, with degraded provenance and no verified text coordinates. A meme does not establish the sender's or recipient's beliefs, endorsement, or intent. Models can still misread text or context; inspect the original when relying on a result.
+
+This task uses the ordinary rendition pipeline. It sends the selected original image, including any embedded metadata, to your configured endpoint under that profile's consent. It sends no surrounding messages. The input is at most 16 MiB; the response is at most 1 MiB. It does not use the stripped 512px photo-suggestion preview. It creates no authored caption, tag, or person identity and does not run automatic photo-description backfill.
+
+Compute the task-specific fingerprints:
+
+```sh
+docbank processing vision-fingerprints --task compatible-vision.understand-v1 --model vision-model --trust-boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+The four labeled output sections require `max_units` of at least four. Use the printed assignments in this configuration. The endpoint and credential settings follow the photo-description transport above:
+
+```toml
+[credential_bindings.image_understanding]
+environment_variable = "DOCBANK_VISION_KEY"
+
+[rendition_profiles.image_understanding]
+adapter_contract = "docbank-compatible-image-understanding/v1"
+model = "vision-model"
+descriptor_id = "compatible-vision.understand-v1"
+descriptor_fingerprint = "<descriptor_fingerprint>"
+disclosure_fingerprint = "<disclosure_fingerprint>"
+deployment_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+authorization_fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+upload_options_fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+credential_binding = "credential:image_understanding"
+trust_boundary = "operator_network"
+disclose_filename = false
+requested_artifacts = ["provider_markdown"]
+max_document_bytes = 16777216
+max_response_bytes = 1048576
+max_units = 4
+
+[rendition_profiles.image_understanding.runtime]
+endpoint = "http://127.0.0.1:8080"
+request_timeout = "2m"
+allowed_cidrs = ["127.0.0.0/8"]
+proxy_mode = "disabled"
+connect_timeout = "10s"
+keep_alive = "30s"
+tls_handshake_timeout = "10s"
+
+[retrieval_profiles.image_understanding]
+lexical_limit = 40
+vector_limit = 60
+
+[processing_profiles.image_understanding]
+rendition = "image_understanding"
+retrieval = "image_understanding"
+trust_boundary = "operator_network"
+attachment_policy_fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+completeness_fingerprint = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+consent_fingerprint = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+lexical_segmenter_fingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+normalizer_fingerprint = "2222222222222222222222222222222222222222222222222222222222222222"
+sanitizer_fingerprint = "3333333333333333333333333333333333333333333333333333333333333333"
+max_document_chars = 100000
+max_segment_runes = 2000
+max_unit_runes = 100000
+retain_provider_markdown = false
+retain_sanitized_markdown = true
+retain_typed_artifacts = false
+```
+
+Build a rendition after adding an image:
+
+```sh
+docbank processing plan /images/cartoon.png --profile image_understanding
+docbank processing build /images/cartoon.png --profile image_understanding --plan-fingerprint <fingerprint> --consent
+```
+
+For semantic and hybrid search, attach an existing text embedding profile with `input_kind = "rendition_chunk"` to this processing profile, using the [text embedding configuration](#embedding-workers-and-credentials). Generated content then follows the same chunking, immutable model input, vector-space identity and query authorization as other document text. OCR-only processing and image-vector search remain separate choices. Keyword search works on the generated rendition without an embedding provider.
 
 ### Automatic face detection
 
