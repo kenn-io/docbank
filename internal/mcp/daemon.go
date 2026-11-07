@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.kenn.io/docbank/internal/answercard"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
@@ -35,15 +36,16 @@ func (e *daemonBoundaryError) Unwrap() error        { return e.facts.MappedError
 func (e *daemonBoundaryError) Is(target error) bool { return target == e.message }
 
 type daemonLease struct {
-	mu         sync.Mutex
-	daemonconn *daemonconn.Connection
-	generation uint64
-	acquiring  *daemonAcquisition
-	acquireErr error
-	ensure     func(context.Context) (*daemonconn.Connection, error)
-	close      func(*daemonconn.Connection) error
-	newContext func() (context.Context, context.CancelFunc)
-	keyPolicy  daemonconn.APIKeyExclusionPolicy
+	answerCards *answercard.Matcher
+	mu          sync.Mutex
+	daemonconn  *daemonconn.Connection
+	generation  uint64
+	acquiring   *daemonAcquisition
+	acquireErr  error
+	ensure      func(context.Context) (*daemonconn.Connection, error)
+	close       func(*daemonconn.Connection) error
+	newContext  func() (context.Context, context.CancelFunc)
+	keyPolicy   daemonconn.APIKeyExclusionPolicy
 }
 
 type leasedDaemonClient struct {

@@ -249,6 +249,7 @@ resource links, is capped at 1 MiB.
 | `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
+| `match_answer_cards` | Matches a 1–300-character question to freshly verified approved cards. Optional `root` defaults to `/answer-cards`; `limit` defaults to 3 and is capped at 10. See [approved answers](#approved-answers). |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `find_conflicts` | Uses the query, profile, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
@@ -524,6 +525,22 @@ and end, next offset, EOF state, media type, checksum, response byte count, and
 source identities. `read_rendition_text` returns the same window data with the
 tool error codes above. Resource reads report unavailable identities and invalid
 windows as resource-not-found errors, and are capped at 1 MiB.
+
+## Approved answers
+
+Call `match_answer_cards` before raw passage search. On `matched`, answer from
+the returned card and show its source quotes. On `no_match`, use
+`search_documents`. Raw search results under the card root are card text, not
+independent evidence for an answer.
+
+This default read-only tool shares the [CLI matcher](../cli-reference.md#docbank-cards-match).
+Only approved, unchanged cards with current live sources and resolvable quotes
+can match. Results carry a private cache scope. The process caches at most
+4,096 immutable versions and 8 MiB of verified card bytes; source freshness and
+card identity are checked on every call. The cache never serves as evidence of
+freshness. Source checks are sequential observations, not an atomic snapshot.
+A `card_limit` failure returns no partial answers; narrow the root and retry.
+Approval remains an owner-directed [CLI operation](../cli-reference.md#docbank-cards-approve).
 
 ## Saved text citations
 

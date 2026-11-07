@@ -36,6 +36,14 @@ backup progress, error handling, and a complete safe filing loop. The
 [HTTP API](architecture/http-api.md) page explains the design contract and
 non-goals.
 
+## Reuse approved answers
+
+Call MCP `match_answer_cards` first for questions that may have an
+[approved answer card](cli-reference.md#docbank-cards-match). On `matched`, use
+the card's answer and show its source quotes. On `no_match`, fall through to
+`search_documents`. Card files found by raw search are not source evidence.
+MCP matching is read-only; approval is a CLI operation directed by the owner.
+
 ## The mental model
 
 - **The daemon owns storage.** Never open `docbank.db`, rewrite pack files, or

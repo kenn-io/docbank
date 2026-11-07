@@ -23,6 +23,7 @@ import (
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
+		"match_answer_cards",
 		"read_document_content",
 		"resolve_text_citation", "check_answer", "get_text_outline", "read_text_section",
 		"get_kata_context",
