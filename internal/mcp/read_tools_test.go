@@ -506,6 +506,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assert.Equal(t, 1, missCalls)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
 			assert.NotContains(t, output, "vault_id")

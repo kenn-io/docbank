@@ -765,6 +765,8 @@ func TestRestoreKeepsMissLogsLocal(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	cfg := config.Default().MissLog
 	cfg.Enabled = true
+	sourceLog := misslog.New(t.Context(), fixture.root, "synthetic-source", cfg, nil)
+	sourceLog.Record(t.Context(), misslog.Request{Query: "synthetic source miss"})
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	manifest, err := backupapp.Create(

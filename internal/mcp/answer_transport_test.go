@@ -395,6 +395,7 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			}
 			if tc.wantFailure != "" {
 				require.Equal(t, tc.wantFailure, output["semantic_failure"])
+				require.Equal(t, "hybrid", misses[0]["requested_mode"])
 				require.Equal(t, "lexical", misses[0]["actual_mode"])
 				require.Contains(t, misses[0]["degradations"], tc.wantFailure)
 			}

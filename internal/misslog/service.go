@@ -100,7 +100,6 @@ func New(ctx context.Context, root, vaultUID string, cfg config.MissLogConfig, l
 			logger.Warn("miss_log_prune_failed")
 		}
 	}
-	slices.Sort(s.files)
 	if err := s.prune(ctx, time.Now().UTC()); err != nil {
 		logger.Warn("miss_log_prune_failed")
 	}

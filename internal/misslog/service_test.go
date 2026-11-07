@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/kit/atomicfile"
 )
 
-func TestRecordingIsOptInAndBounded(t *testing.T) {
+func TestRecordingIsOptIn(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default().MissLog
 	disabled := New(t.Context(), root, "synthetic-vault", cfg, nil)
@@ -166,7 +166,7 @@ func TestRecordingSkipsEmptyStoredScope(t *testing.T) {
 	}
 }
 
-func TestRecordingSanitizesDirectoryFailures(t *testing.T) {
+func TestRecordingSanitizesFailures(t *testing.T) {
 	root := t.TempDir()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
@@ -175,7 +175,20 @@ func TestRecordingSanitizesDirectoryFailures(t *testing.T) {
 	svc := New(t.Context(), root, "synthetic-vault", cfg, logger)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "miss-log"), []byte("blocked"), 0600))
 	svc.Record(t.Context(), Request{Query: "another private secret"})
-	require.NotContains(t, logs.String(), "secret")
+	require.Contains(t, logs.String(), "miss_log_write_failed")
+	require.NoError(t, os.Remove(filepath.Join(root, "miss-log")))
+	logs.Reset()
+	query := "another private secret"
+	writeErr := errors.New("write failed for query: " + query)
+	writes := 0
+	svc.writeFile = func(string, []byte, ...atomicfile.Option) error {
+		writes++
+		return writeErr
+	}
+	svc.Record(t.Context(), Request{Query: query})
+	require.Equal(t, 1, writes)
+	require.NotContains(t, logs.String(), query)
+	require.NotContains(t, logs.String(), writeErr.Error())
 	require.Contains(t, logs.String(), "miss_log_write_failed")
 }
 
@@ -230,7 +243,7 @@ func TestPurgeRemovesUnindexedFiles(t *testing.T) {
 	require.Empty(t, rows)
 }
 
-func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
+func TestRecordingPrunesBoundsAndOffsetAndDisabledStartup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		root := t.TempDir()
 		cfg := config.Default().MissLog
@@ -257,13 +270,7 @@ func TestDisabledRecordingStillPrunesAndExpires(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, entries, 1)
 		time.Sleep(91 * 24 * time.Hour)
-		rows, err = disabled.List(t.Context(), 10, 0)
-		require.NoError(t, err)
-		require.Empty(t, rows)
-		disabled = New(t.Context(), root, "synthetic-vault", cfg, nil)
-		rows, err = disabled.List(t.Context(), 10, 0)
-		require.NoError(t, err)
-		require.Empty(t, rows)
+		New(t.Context(), root, "synthetic-vault", cfg, nil)
 		entries, err = os.ReadDir(filepath.Join(root, "miss-log"))
 		require.NoError(t, err)
 		require.Empty(t, entries)

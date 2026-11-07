@@ -106,10 +106,15 @@ it("notices an unfinished run without touching its in-flight batch", async () =>
   expect(workspace.retained).toBeNull();
 });
 
-it("shows a retained run instead of enumerating results for a new Tag all", async () => {
+it.each([
+  { name: "shows a retained run instead of enumerating results for a new Tag all", receipt: false },
+  { name: "returns the search receipt with query filters and coverage", receipt: true },
+])("$name", async ({ receipt }) => {
   const actionID = await retainSendingAction();
   const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
-  const query = parseQuery(JSON.stringify({ text: "report", filters: { size_min: 20 } }));
+  const query = parseQuery(
+    JSON.stringify({ text: "report", ...(receipt ? { filters: { size_min: 20 } } : {}) }),
+  );
   const rows = Array.from({ length: 100 }, (_, index) => ({
     ...member,
     node_id: index + 1,
@@ -135,14 +140,18 @@ it("shows a retained run instead of enumerating results for a new Tag all", asyn
         )
       : Response.json({ vault_id: vaultID }),
   );
-  expect(await workspace.run(query, { page_size: 100 })).toMatchObject({
-    receipt: {
-      query: "report",
-      actual_mode: "lexical",
-      filters: { filters: { size_min: 20 } },
-      coverage: { configuration: "unconfigured" },
-    },
-  });
+  const outcome = await workspace.run(query, { page_size: 100 });
+  if (receipt) {
+    expect(outcome).toMatchObject({
+      receipt: {
+        query: "report",
+        actual_mode: "lexical",
+        filters: { filters: { size_min: 20 } },
+        coverage: { configuration: "unconfigured" },
+      },
+    });
+    return;
+  }
   await workspace.refreshRetained();
   vi.mocked(fetch).mockClear();
   workspace.openActions("query");

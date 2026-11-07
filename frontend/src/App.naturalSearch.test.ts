@@ -334,9 +334,17 @@ it.each([
     state: "incomplete",
     scoped: 2,
   },
+  {
+    name: "failed reranking with stale base results",
+    rerank: true,
+    rerankStatus: 500,
+    truncated: false,
+    state: "complete",
+    scoped: 2,
+  },
 ])(
   "records the accepted empty natural search receipt: $name",
-  async ({ rerank, truncated, state, scoped }) => {
+  async ({ rerank, rerankStatus, truncated, state, scoped }) => {
     const baseCandidate = node(4, "stale-base.txt", baseVersion);
     const rerankedCandidate = node(5, "stale-reranked.txt", rerankedVersion);
     const harness = installHarness({
@@ -351,6 +359,7 @@ it.each([
       ],
       files: [node(2, "existing.txt", baseVersion)],
       baseReport: report("hybrid", rerank ? [result(baseCandidate, 1, "stale base excerpt")] : []),
+      rerankStatus,
       rerankReport: {
         ...report("hybrid", [result(rerankedCandidate, 1, "stale reranked excerpt")], {
           outcome: "applied",
@@ -386,7 +395,16 @@ it.each([
       truncated,
       coverage: { scoped_documents: scoped, state },
       document_count: scoped,
-      ...(rerank ? { reranking: { outcome: "applied" } } : {}),
+      ...(rerankStatus
+        ? {
+            reranking: {
+              outcome: "failed",
+              cause: expect.stringContaining("synthetic rerank failure"),
+            },
+          }
+        : rerank
+          ? { reranking: { outcome: "applied" } }
+          : {}),
     });
   },
 );
@@ -2096,30 +2114,3 @@ it.each(["plain", "tag-filtered", "fallback", "filtered", "saved"])(
     expect(harness.misses).toHaveLength(1);
   },
 );
-
-it("records failed reranking when base results cannot be hydrated", async () => {
-  const stale = node(99, "stale.txt", baseVersion);
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
-      },
-    ],
-    files: [node(2, "existing.txt", baseVersion)],
-    baseReport: report("hybrid", [result(stale, 1, "stale excerpt")]),
-    rerankStatus: 500,
-  });
-  render(App);
-  await screen.findAllByText("existing.txt");
-  await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
-  await submitSearch("missing");
-  await waitFor(() => expect(harness.misses).toHaveLength(1));
-  expect(harness.misses[0]).toMatchObject({
-    query: "missing",
-    reranking: { outcome: "failed", cause: expect.stringContaining("synthetic rerank failure") },
-  });
-});

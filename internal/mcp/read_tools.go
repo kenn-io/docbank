@@ -473,7 +473,6 @@ func searchDocuments(
 }
 
 type documentSearchResponse struct {
-	request    api.DocumentSearchRequest
 	resolution api.DocumentSourceFenceResolution
 	vaultID    string
 	report     api.DocumentSearchReport
@@ -504,13 +503,13 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		if daemon, ok := c.(daemonDocumentClient); ok {
 			daemon.RecordMiss(ctx, api.DocumentSearchMiss(input.Query, input.Profile, request, report))
 		}
-		return documentSearchResponse{request: request, resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
+		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 	}
 	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
 	if callErr != nil {
 		return documentSearchResponse{}, callErr
 	}
-	return documentSearchResponse{request: request, resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
+	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
 }
 
 // retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
