@@ -16,17 +16,8 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 )
 
-// These pins identify x/image v0.47.0 and visual preview recipe revision v11.
-const (
-	pinnedVisualPreviewProcessorFingerprint = "a5a513b11c952821d991111c3a74736ea92950b087959f9790e590edc85177ea"
-	pinnedVisualPreviewRecipeFingerprint    = "2793233e9c1a0614d98f99b344b0ad8ab08123cef785fecad5e0e202cecd0da4"
-)
-
-func TestVisualPreviewProcessorFingerprintIsPinned(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, pinnedVisualPreviewProcessorFingerprint,
-		CurrentVisualPreviewRecipe().ProcessorFingerprint)
-}
+// This pin identifies the complete visual preview recipe at revision v11.
+const pinnedVisualPreviewRecipeFingerprint = "2793233e9c1a0614d98f99b344b0ad8ab08123cef785fecad5e0e202cecd0da4"
 
 func TestVisualPreviewRecipeFingerprintIsPinned(t *testing.T) {
 	t.Parallel()
