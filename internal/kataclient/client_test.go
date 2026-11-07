@@ -231,7 +231,6 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "Synthetic issue", issue.Title)
 			} else {
-				require.ErrorContains(t, err, "unsupported Kata API schema")
 				require.EqualError(t, err, "unsupported Kata API schema: require 0.21.0 through 0.41.x")
 				failure, ok := errors.AsType[*Error](err)
 				require.True(t, ok)
