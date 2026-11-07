@@ -419,15 +419,20 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 		if beforeScan != nil {
 			beforeScan()
 		}
-		complete, err := w.scanWithHints(ctx, root, hints)
-		if w.notificationErr != nil {
-			failure := w.notificationErr
-			w.notificationErr = nil
-			disable(failure)
-		}
-		if statusErr != nil {
-			return errors.Join(err, statusErr)
-		}
+		complete, err := w.scanWithHintsAndStatus(ctx, root, hints, func(complete bool) error {
+			if w.notificationErr != nil {
+				failure := w.notificationErr
+				w.notificationErr = nil
+				disable(failure)
+			}
+			if complete && source != nil && degraded {
+				jobs.ReportError(ctx, nil)
+				w.logger.Info("watch notifications restored", "watch", w.config.Name)
+				degraded = false
+				statusErr = errors.Join(statusErr, w.folderScanner.notificationStatus(ctx, false))
+			}
+			return statusErr
+		})
 		if errors.Is(err, errWatchBlocked) || (err == nil && !complete) {
 			if err == nil {
 				err = fmt.Errorf("watch %q source inventory incomplete; reconciliation deferred", w.config.Name)
@@ -450,14 +455,6 @@ func (w *Watcher) run(ctx context.Context, root *watchRoot, beforeScan func()) e
 			}
 			w.logger.Info("watch source reconciliation restored", "watch", w.config.Name)
 			blocked = false
-		}
-		if complete && source != nil && degraded {
-			jobs.ReportError(ctx, nil)
-			w.logger.Info("watch notifications restored", "watch", w.config.Name)
-			degraded = false
-			if err := w.folderScanner.notificationStatus(ctx, false); err != nil {
-				return err
-			}
 		}
 		return nil
 	}
@@ -1009,7 +1006,13 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 	return err
 }
 
-func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (complete bool, err error) {
+func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
+	return w.scanWithHintsAndStatus(ctx, root, hints, nil)
+}
+
+// updateStatus reports notification changes observed during traversal before a
+// managed completion can commit. Its failure is part of this scan's evidence.
+func (w *Watcher) scanWithHintsAndStatus(ctx context.Context, root *watchRoot, hints watchScanHints, updateStatus func(bool) error) (complete bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -1018,12 +1021,21 @@ func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watc
 			s.evidence = nil
 			return false, err
 		}
-		defer func() {
+	}
+	defer func() {
+		candidate := complete && err == nil
+		if s := w.folderScanner; s != nil && s.evidence != nil {
+			candidate = candidate && s.evidence.result.Complete
+		}
+		if updateStatus != nil {
+			err = errors.Join(err, updateStatus(candidate))
+		}
+		if s := w.folderScanner; s != nil && !s.once {
 			ok, finishErr := s.finishScan(ctx, root, err)
 			complete = complete && ok
 			err = errors.Join(err, finishErr)
-		}()
-	}
+		}
+	}()
 	if w.notifications != nil {
 		w.notifications.BeginScan()
 	}
