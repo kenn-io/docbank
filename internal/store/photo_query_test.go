@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -370,15 +371,112 @@ func TestPhotoBrowseIgnoresTrashedPairMember(t *testing.T) {
 
 func TestPhotoBrowseActiveMetadata(t *testing.T) {
 	t.Parallel()
+	for _, dense := range []bool{false, true} {
+		t.Run(fmt.Sprint("dense=", dense), func(t *testing.T) {
+			s := newTestStore(t)
+			node := browsePhotoNode(t, s, "active.jpg", browseHash("active-fields"), "image/jpeg")
+			for i := range 8 {
+				other := browsePhotoNode(t, s, fmt.Sprintf("document-%d.txt", i), browseHash(fmt.Sprint("document", i)), "text/plain")
+				browsePhotoMetadata(t, s, other, "document-fields", photoMetadataField("title", "pdf.info", "Title", photoString("Document")))
+			}
+			for i, value := range []string{"A", "B"} {
+				latitude, longitude := "41.9028", "12.4964"
+				if value == "B" {
+					latitude, longitude = "48.8566", "2.3522"
+				}
+				if dense && i == 0 {
+					for j := range 5 {
+						browsePhotoMetadata(t, s, node, fmt.Sprint("history", j), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("A")))
+					}
+				}
+				browsePhotoMetadata(t, s, node, "fields-"+value,
+					photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(value)),
+					photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString(value)),
+					photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString(latitude)),
+					photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString(longitude)))
+			}
+			shared := browsePhotoNode(t, s, "shared.jpg", node.BlobHash, "image/jpeg")
+			for _, tc := range []struct{ field, old, current string }{
+				{"camera", "A", "B"}, {"lens", "A", "B"}, {"location", "Rome, Roma, Italy", "Paris, Paris, France"},
+			} {
+				for _, value := range []string{tc.old, tc.current} {
+					want := int64(0)
+					if value == tc.current {
+						want = 2
+					}
+					q := compilerQuery(t, fmt.Sprintf(`%s:%q`, tc.field, value))
+					for _, set := range []bool{false, true} {
+						compiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: set}).compile(t.Context(), q, queryResolver{q: s.db})
+						require.NoError(t, err)
+						ids := compiledFixtureIDs(t, s.db, compiled, "")
+						if want == 0 {
+							require.Empty(t, ids)
+						} else {
+							require.Equal(t, []int64{node.ID, shared.ID}, ids)
+						}
+						if dense && set {
+							rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
+							require.NoError(t, err)
+							for rows.Next() {
+								var id, parent, unused int
+								var detail string
+								require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+								require.NotContains(t, detail, "SCAN p")
+							}
+							require.NoError(t, rows.Err())
+							require.NoError(t, rows.Close())
+						}
+					}
+					page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: q, Facets: []string{"camera"}}, nil)
+					require.NoError(t, err)
+					require.Equal(t, want, page.Total)
+					require.Len(t, page.Items, int(want))
+					require.Equal(t, want, *page.Facets[0].Total)
+				}
+			}
+		})
+	}
+}
+
+func TestPhotoMetadataDensity(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
-	node := browsePhotoNode(t, s, "active.jpg", browseHash("active-fields"), "image/jpeg")
-	browsePhotoMetadata(t, s, node, "fields-a", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("A")))
-	browsePhotoMetadata(t, s, node, "fields-b", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("B")))
-	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"cameras":["A"]}}`).Total)
-	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"filters":{"cameras":["B"]}}`).Total)
-	shared := browsePhotoNode(t, s, "shared.jpg", node.BlobHash, "image/jpeg")
-	require.NotEqual(t, node.ID, shared.ID)
-	require.Equal(t, int64(2), browsePhotoPage(t, s, `{"filters":{"cameras":["B"]}}`).Total)
+	node := browsePhotoNode(t, s, "density.jpg", browseHash("density"), "image/jpeg")
+	for i := range 3 {
+		browsePhotoMetadata(t, s, node, fmt.Sprint("density", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Camera")))
+		dense, err := (queryResolver{q: s.db}).photoMetadataHeadsFirst(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, i == 2, dense)
+	}
+}
+
+type photoMetadataCountingQuerier struct {
+	rowQuerier
+	calls int
+}
+
+func (q *photoMetadataCountingQuerier) QueryRowContext(ctx context.Context, statement string, args ...any) *sql.Row {
+	q.calls++
+	return q.rowQuerier.QueryRowContext(ctx, statement, args...)
+}
+
+func TestPhotoMetadataDensityLazy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, tc := range []struct {
+		text string
+		set  bool
+		want int
+	}{
+		{"", true, 0}, {"iso:100", true, 0}, {`gps:"-1,-1,1,1"`, true, 0},
+		{"camera:A", false, 0}, {"camera:A", true, 1},
+		{"camera:A OR camera:B OR lens:C OR location:Paris", true, 1},
+	} {
+		q := &photoMetadataCountingQuerier{rowQuerier: s.db}
+		_, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: tc.set}).compile(t.Context(), compilerQuery(t, tc.text), queryResolver{q: q})
+		require.NoError(t, err)
+		require.Equal(t, tc.want, q.calls, tc.text)
+	}
 }
 
 func TestPhotoBrowseEligibility(t *testing.T) {

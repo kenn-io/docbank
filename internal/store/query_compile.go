@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.kenn.io/docbank/internal/query"
 )
@@ -69,10 +70,12 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
-	photoDisplayMetadata bool
-	photoMetadataSet     bool
-	pdfOnly              bool
-	photoHidden          bool
+	photoDisplayMetadata    bool
+	photoMetadataSet        bool
+	photoMetadataHeadsFirst bool
+	photoMetadataDensity    func() (bool, error)
+	pdfOnly                 bool
+	photoHidden             bool
 }
 
 func (c queryCompiler) compile(
@@ -81,6 +84,11 @@ func (c queryCompiler) compile(
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
+	}
+	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
+		c.photoMetadataDensity = sync.OnceValues(func() (bool, error) {
+			return r.photoMetadataHeadsFirst(ctx)
+		})
 	}
 	predicate, err := c.compileResolvedQuery(resolved)
 	if err != nil {
