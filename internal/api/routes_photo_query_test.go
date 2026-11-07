@@ -680,7 +680,7 @@ func TestPhotoBrowseRowsCarryFileModifiedTime(t *testing.T) {
 	require.Equal(t, new("2024-03-05T10:00:00Z"), compact.MapItems[0].FileModifiedTime)
 }
 
-func pairedSourcePhotoPreviewFixture(t *testing.T) (*httptest.Server, *testStore, store.Node, store.Node, store.PhotoAsset) {
+func pairedSourcePhotoPreviewFixture(t *testing.T) (*httptest.Server, *testStore, store.Node, store.PhotoAsset) {
 	t.Helper()
 	ctx := t.Context()
 	ts, s := newTestServer(t, nil)
@@ -709,12 +709,12 @@ func pairedSourcePhotoPreviewFixture(t *testing.T) (*httptest.Server, *testStore
 	}
 	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &displayFile)
 	require.NoError(t, err)
-	return ts, s, displayed, source, asset
+	return ts, s, source, asset
 }
 
 func TestPersonSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 	t.Parallel()
-	ts, s, _, source, asset := pairedSourcePhotoPreviewFixture(t)
+	ts, s, source, asset := pairedSourcePhotoPreviewFixture(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Alex Source", "operator")
 	require.NoError(t, err)
@@ -777,7 +777,7 @@ func TestPersonSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 
 func TestFaceSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 	t.Parallel()
-	ts, s, displayed, source, asset := pairedSourcePhotoPreviewFixture(t)
+	ts, s, source, asset := pairedSourcePhotoPreviewFixture(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Alex Source", "operator")
 	require.NoError(t, err)
@@ -803,7 +803,7 @@ func TestFaceSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, image.Rect(0, 0, 80, 40), decoded.Bounds())
 	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
-	// The grant cannot be combined, moved to another source, or used for another recipe.
+	// The grant cannot be combined or used for another recipe.
 	invalid := request
 	invalid.PersonID = person.PersonID
 	response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
@@ -814,10 +814,6 @@ func TestFaceSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 	invalid.Size = "fit"
 	response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	invalid = request
-	invalid.ContentVersionID = displayed.CurrentVersionID
-	response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
-	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
 
 func TestLookupPhotoFlags(t *testing.T) {

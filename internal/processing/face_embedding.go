@@ -1,15 +1,11 @@
 package processing
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -70,31 +66,17 @@ func (runtime *ProviderEmbeddingRuntime) prepareFaces(ctx context.Context, work 
 	if err != nil {
 		return EmbeddingExecution{}, err
 	}
-	execution := EmbeddingExecution{Provider: runtime.provider, Classify: runtime.classify}
+	var inputs []document.EmbeddingInput
 	byID := make(map[string]store.PhotoFace, len(faces))
 	for _, face := range faces {
 		byID[face.FaceID] = face
 	}
-	policy := directEmbeddingInspectionPolicy(work)
-	policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
-	policy.InputKind = document.RenditionInputDerivedUpload
-	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
-	capability, err := media.InspectCapability(bytes.NewReader(data), policy)
-	if err != nil || !capability.Eligible {
-		return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
-	}
 	for _, reference := range work.InputGeneration.Inputs {
 		face, ok := byID[reference.ID]
 		if !ok {
-			closeEmbeddingInputs(execution.Inputs)
 			return EmbeddingExecution{}, ErrEmbeddingInputRejected
 		}
-		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
-		if err != nil {
-			closeEmbeddingInputs(execution.Inputs)
-			return EmbeddingExecution{}, err
-		}
-		execution.Inputs = append(execution.Inputs, document.EmbeddingInput{Key: face.FaceID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputFace, Source: source, Box: new(face.Box)})
+		inputs = append(inputs, document.EmbeddingInput{Key: face.FaceID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputFace, Box: new(face.Box)})
 	}
-	return execution, nil
+	return runtime.prepareJPEG(ctx, data, directEmbeddingInspectionPolicy(work), inputs)
 }

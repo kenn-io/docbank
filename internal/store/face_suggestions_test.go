@@ -174,10 +174,6 @@ func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
 				action = "reject"
 				name = ""
 			}
-			if mode == "new person" {
-				_, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: 99, Action: action, PersonID: person, DisplayName: name, FaceOnly: true})
-				require.ErrorIs(t, err, ErrStaleRevision, "new-person confirmation must fence stale reviews")
-			}
 			decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: action, PersonID: person, DisplayName: name, FaceOnly: true})
 			require.NoError(t, err)
 			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)

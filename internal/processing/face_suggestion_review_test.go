@@ -214,9 +214,6 @@ func TestFaceSuggestionBatchesDiscardChangedInputs(t *testing.T) {
 	t.Parallel()
 	x, omitted := newFaceSuggestionBatchFixture(t)
 	ctx := t.Context()
-	for range 4 {
-		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	}
 	service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)

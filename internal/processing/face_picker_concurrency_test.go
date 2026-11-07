@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -64,32 +65,34 @@ func TestFacePickerCachedVectorsRemainAvailableDuringColdRead(t *testing.T) {
 	vectors, err := x.f.catalog.FaceMatchingVectors(t.Context(), x.f.blobs, warm, true)
 	require.NoError(t, err)
 	require.Len(t, vectors, 2)
-	reader := &blockedFacePayload{RenditionBlobReader: x.f.blobs, hash: coldHash, entered: make(chan struct{}), release: make(chan struct{})}
-	coldDone, warmDone := make(chan error, 1), make(chan error, 1)
-	var cached []store.FaceVector
-	go func() {
-		_, err := x.f.catalog.FaceMatchingVectors(t.Context(), reader, snapshot, true)
-		coldDone <- err
-	}()
-	<-reader.entered
-	go func() {
-		var err error
-		cached, err = x.f.catalog.FaceMatchingVectors(t.Context(), &blockedFacePayload{err: errors.New("cached payload must not be opened")}, warm, true)
-		warmDone <- err
-	}()
-	completed := false
-	var warmErr error
-	select {
-	case warmErr = <-warmDone:
-		completed = true
-	case <-time.After(5 * time.Second):
-		assert.Fail(t, "cached picker vectors must remain available while an unrelated payload read is blocked")
-	}
-	close(reader.release)
-	require.NoError(t, <-coldDone)
-	if !completed {
-		warmErr = <-warmDone
-	}
-	require.NoError(t, warmErr)
-	require.Len(t, cached, 2)
+	synctest.Test(t, func(t *testing.T) {
+		reader := &blockedFacePayload{RenditionBlobReader: x.f.blobs, hash: coldHash, entered: make(chan struct{}), release: make(chan struct{})}
+		coldDone, warmDone := make(chan error, 1), make(chan error, 1)
+		var cached []store.FaceVector
+		go func() {
+			_, err := x.f.catalog.FaceMatchingVectors(t.Context(), reader, snapshot, true)
+			coldDone <- err
+		}()
+		<-reader.entered
+		go func() {
+			var err error
+			cached, err = x.f.catalog.FaceMatchingVectors(t.Context(), &blockedFacePayload{err: errors.New("cached payload must not be opened")}, warm, true)
+			warmDone <- err
+		}()
+		completed := false
+		var warmErr error
+		select {
+		case warmErr = <-warmDone:
+			completed = true
+		case <-time.After(5 * time.Second):
+			assert.Fail(t, "cached picker vectors must remain available while an unrelated payload read is blocked")
+		}
+		close(reader.release)
+		require.NoError(t, <-coldDone)
+		if !completed {
+			warmErr = <-warmDone
+		}
+		require.NoError(t, warmErr)
+		require.Len(t, cached, 2)
+	})
 }

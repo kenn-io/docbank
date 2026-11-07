@@ -12,7 +12,7 @@ import (
 
 func TestFaceEmbeddingCrowdFitsDescriptorBudget(t *testing.T) {
 	t.Parallel()
-	// The Linux descriptor limit checks worker preparation; Kit owns request chunking.
+	// The Linux descriptor limit checks preparation across the worker's eight-box requests.
 	withFaceDescriptorBudget(t, func() {
 		x := newFaceEmbeddingFixture(t, false)
 		x.matchAll = true

@@ -343,6 +343,7 @@ func checkFaceMemberGridPreviews(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	grid, err := document.CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)
+	require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, image.CurrentVersionID, faceID), ErrNotFound)
 	targets, err := s.MissingPhotoVisualPreviewTargetsAfter(ctx, grid.GridRecipe, "", 100)
 	require.NoError(t, err)
 	require.Len(t, targets, 2)

@@ -102,19 +102,8 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 			return EmbeddingExecution{}, err
 		}
 		policy := directEmbeddingInspectionPolicy(work)
-		policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
-		policy.InputKind = document.RenditionInputDerivedUpload
-		policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
 		policy.MaxPixels = 1024 * 1024
-		capability, err := media.InspectCapability(bytes.NewReader(data), policy)
-		if err != nil || !capability.Eligible {
-			return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
-		}
-		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
-		if err != nil {
-			return EmbeddingExecution{}, err
-		}
-		return EmbeddingExecution{Provider: runtime.provider, Inputs: []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage, Source: source}}, Classify: runtime.classify}, nil
+		return runtime.prepareJPEG(ctx, data, policy, []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage}})
 
 	case document.EmbeddingInputRenditionChunk:
 		hydrated, err := hydrateEmbeddingGeneration(ctx, runtime.blobs, work.InputGeneration)
@@ -217,6 +206,25 @@ func readExactEmbeddingBlob(ctx context.Context, blobs embeddingRuntimeBlobs, ha
 		return nil, fmt.Errorf("embedding generation blob could not be read exactly: %w", ErrEmbeddingInputRejected)
 	}
 	return data, nil
+}
+
+func (runtime *ProviderEmbeddingRuntime) prepareJPEG(ctx context.Context, data []byte, policy media.InspectionPolicy, inputs []document.EmbeddingInput) (EmbeddingExecution, error) {
+	policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
+	policy.InputKind = document.RenditionInputDerivedUpload
+	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
+	capability, err := media.InspectCapability(bytes.NewReader(data), policy)
+	if err != nil || !capability.Eligible {
+		return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
+	}
+	for i := range inputs {
+		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
+		if err != nil {
+			closeEmbeddingInputs(inputs)
+			return EmbeddingExecution{}, err
+		}
+		inputs[i].Source = source
+	}
+	return EmbeddingExecution{Provider: runtime.provider, Inputs: inputs, Classify: runtime.classify}, nil
 }
 
 func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy {

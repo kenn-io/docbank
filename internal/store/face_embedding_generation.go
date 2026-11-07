@@ -37,6 +37,9 @@ func validateFaceEmbeddingGenerationTx(ctx context.Context, tx metadataQuerier, 
 	if err := validateFaceEmbeddingGeneration(g, binding); err != nil {
 		return err
 	}
+	return validateFaceEmbeddingPreviewTx(ctx, tx, g)
+}
+func validateFaceEmbeddingPreviewTx(ctx context.Context, tx metadataQuerier, g EmbeddingInputGenerationRecord) error {
 	if err := liveFaceEmbeddingSource(ctx, tx, g.SourceVersionID); err != nil {
 		return err
 	}
