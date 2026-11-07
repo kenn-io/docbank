@@ -31,6 +31,7 @@ type faceSuggestionPass struct {
 	incomplete                     bool
 	vectors                        []faceVector
 	centroids                      []store.FaceCentroid
+	visibleCentroids               []store.FaceCentroid
 	groups                         []faceSuggestionGroup
 	known                          map[string]int
 	face, centroid, group, closest int
@@ -39,7 +40,7 @@ type faceSuggestionPass struct {
 
 func newFaceSuggestionPass(vectors []faceVector) *faceSuggestionPass {
 	slices.SortFunc(vectors, func(a, b faceVector) int { return strings.Compare(a.Face.FaceID, b.Face.FaceID) })
-	return &faceSuggestionPass{vectors: vectors, centroids: store.FacePersonCentroids(vectors), known: map[string]int{}, closest: -1, distance: FaceMatchDistance}
+	return &faceSuggestionPass{vectors: vectors, centroids: store.FacePersonCentroids(vectors, true), visibleCentroids: store.FacePersonCentroids(vectors, false), known: map[string]int{}, closest: -1, distance: FaceMatchDistance}
 }
 
 // advance preserves the exact leader order while releasing the maintenance gate
@@ -55,7 +56,11 @@ nextFace:
 			p.face++
 			continue
 		}
-		for p.centroid < len(p.centroids) {
+		centroids := p.centroids
+		if !v.Face.Hidden {
+			centroids = p.visibleCentroids
+		}
+		for p.centroid < len(centroids) {
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
@@ -65,7 +70,7 @@ nextFace:
 			budget--
 			i := p.centroid
 			p.centroid++
-			c := p.centroids[i]
+			c := centroids[i]
 			if c.Space != v.Space || slices.Contains(v.Face.RejectedPersonIDs, c.Person) {
 				continue
 			}
@@ -75,8 +80,11 @@ nextFace:
 			}
 		}
 		if p.closest >= 0 {
-			c := p.centroids[p.closest]
+			c := centroids[p.closest]
 			key := c.Space + "\x00" + c.Person
+			if v.Face.Hidden {
+				key += "\x00hidden"
+			}
 			i, ok := p.known[key]
 			if !ok {
 				i = len(p.groups)

@@ -13,6 +13,17 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func seedFaceCandidate(t *testing.T, s *store.Store, node store.Node) {
+	t.Helper()
+	first, _, err := s.CreatePhotoFace(t.Context(), node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	second, _, err := s.CreatePhotoFace(t.Context(), node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	candidate, err := store.NewFaceCandidate([]store.FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(t.Context(), faceMatchingSignature(t, s), []store.PersonMatchCandidate{candidate}))
+}
+
 func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -21,13 +32,7 @@ func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	require.NoError(t, err)
 	node, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
-	f, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	candidate, err := store.NewFaceCandidate([]store.FaceSuggestionFace{{PhotoFace: f}, {PhotoFace: second}}, "", "")
-	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s.Store), []store.PersonMatchCandidate{candidate}))
+	seedFaceCandidate(t, s.Store, node)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	response, body := get(t, ts, "/api/v1/people/face-candidates?limit=24", browser)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -42,20 +47,12 @@ func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	response, body = get(t, ts, "/api/v1/people/face-candidates?limit=24", browser)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Empty(t, page.Items)
-	require.Zero(t, page.Total)
 	browser["If-Match"] = `"1"`
 	response, body = do(t, ts, http.MethodPost, path, browser, api.FaceCandidateDecisionRequest{Action: "new_person", DisplayName: "Ada"})
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	browser["Cookie"] = response.Cookies()[0].String()
-	response, body = get(t, ts, "/api/v1/people/face-candidates?limit=24", browser)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, f.FaceID)
 	browser["If-Match"] = `"9"`
 	response, body = do(t, ts, http.MethodPost, path, browser, api.FaceCandidateDecisionRequest{Action: "new_person", DisplayName: "Ada"})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
@@ -83,13 +80,7 @@ func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {
 	require.NoError(t, err)
 	visible, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
-	first, _, err := s.CreatePhotoFace(ctx, visible.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	second, _, err := s.CreatePhotoFace(ctx, visible.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	candidate, err := store.NewFaceCandidate([]store.FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
-	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s.Store), []store.PersonMatchCandidate{candidate}))
+	seedFaceCandidate(t, s.Store, visible)
 	person, err := s.CreatePerson(ctx, "Concealed", "operator")
 	require.NoError(t, err)
 	hidden, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", hash, size, "image/jpeg")

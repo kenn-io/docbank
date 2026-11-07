@@ -716,6 +716,10 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 	materializedGeneration *store.EmbeddingInputGenerationRecord, receipt *EmbeddingAttemptReceipt, started time.Time,
 ) (document.EmbeddingResult, store.ProviderOperationAuthorization, store.EmbeddingFailureCode, error) {
 	batchSize := min(work.Binding.MaxBatchItems, worker.maxRows)
+	if work.Binding.InputKind == document.EmbeddingInputFace {
+		// Match Kit's eight-box face requests without holding a photo's worth of uploads.
+		batchSize = min(batchSize, 8)
+	}
 	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, 0, len(work.InputGeneration.Inputs))}
 	var prior store.ProviderOperationAuthorization
 	var execution EmbeddingExecution
@@ -730,9 +734,14 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 			if err := worker.catalog.ValidateEmbeddingWork(ctx, claim, work, worker.clock().UTC()); err != nil {
 				return document.EmbeddingResult{}, prior, "", err
 			}
+			preparedWork, inputOffset := work, offset
+			if work.Binding.InputKind == document.EmbeddingInputFace {
+				preparedWork.InputGeneration.Inputs = work.InputGeneration.Inputs[offset:end]
+				inputOffset = 0
+			}
 			var err error
 			if execution.Provider == nil || work.Binding.InputKind == document.EmbeddingInputOriginalFile || work.Binding.InputKind == document.EmbeddingInputImage || work.Binding.InputKind == document.EmbeddingInputFace {
-				execution, err = worker.runtime.Prepare(ctx, work)
+				execution, err = worker.runtime.Prepare(ctx, preparedWork)
 				if err != nil {
 					closeEmbeddingInputs(execution.Inputs)
 					switch {
@@ -752,19 +761,22 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 					closeEmbeddingInputs(execution.Inputs)
 					return document.EmbeddingResult{}, prior, store.EmbeddingFailureProviderUnavailable, ErrEmbeddingRuntimeUnavailable
 				}
-				hydrated, err := validateEmbeddingExecution(work, execution)
+				hydrated, err := validateEmbeddingExecution(preparedWork, execution)
 				if err != nil {
 					closeEmbeddingInputs(execution.Inputs)
 					return document.EmbeddingResult{}, prior, store.EmbeddingFailureInvalidResponse, err
 				}
-				*materializedGeneration = hydrated
+				if work.Binding.InputKind != document.EmbeddingInputFace {
+					*materializedGeneration = hydrated
+				}
 			}
-			end, err = boundedEmbeddingBatchEnd(execution.Provider, work, execution.Inputs, offset, end)
+			inputEnd, err := boundedEmbeddingBatchEnd(execution.Provider, work, execution.Inputs, inputOffset, inputOffset+end-offset)
 			if err != nil {
 				closeEmbeddingInputs(execution.Inputs)
 				return document.EmbeddingResult{}, prior, store.EmbeddingFailureInputRejected, err
 			}
-			batch := execution.Inputs[offset:end]
+			end = offset + inputEnd - inputOffset
+			batch := execution.Inputs[inputOffset:inputEnd]
 			priorPtr := (*store.ProviderOperationAuthorization)(nil)
 			if prior.GrantID != "" {
 				priorPtr = &prior

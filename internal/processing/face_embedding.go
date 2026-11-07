@@ -71,15 +71,23 @@ func (runtime *ProviderEmbeddingRuntime) prepareFaces(ctx context.Context, work 
 		return EmbeddingExecution{}, err
 	}
 	execution := EmbeddingExecution{Provider: runtime.provider, Classify: runtime.classify}
+	byID := make(map[string]store.PhotoFace, len(faces))
 	for _, face := range faces {
-		policy := directEmbeddingInspectionPolicy(work)
-		policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
-		policy.InputKind = document.RenditionInputDerivedUpload
-		policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
-		capability, err := media.InspectCapability(bytes.NewReader(data), policy)
-		if err != nil || !capability.Eligible {
+		byID[face.FaceID] = face
+	}
+	policy := directEmbeddingInspectionPolicy(work)
+	policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
+	policy.InputKind = document.RenditionInputDerivedUpload
+	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
+	capability, err := media.InspectCapability(bytes.NewReader(data), policy)
+	if err != nil || !capability.Eligible {
+		return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
+	}
+	for _, reference := range work.InputGeneration.Inputs {
+		face, ok := byID[reference.ID]
+		if !ok {
 			closeEmbeddingInputs(execution.Inputs)
-			return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
+			return EmbeddingExecution{}, ErrEmbeddingInputRejected
 		}
 		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
 		if err != nil {

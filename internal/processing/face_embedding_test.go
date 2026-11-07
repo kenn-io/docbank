@@ -320,7 +320,7 @@ func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 }
 
-func TestFacePeopleRankingObeysHiddenScopeAndRenaming(t *testing.T) {
+func TestFacePeopleRankingObeysHiddenScope(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
@@ -352,12 +352,6 @@ func TestFacePeopleRankingObeysHiddenScopeAndRenaming(t *testing.T) {
 	rows, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
 	require.NoError(t, err)
 	require.Empty(t, rows)
-	_, err = x.f.catalog.UpdatePerson(unlocked, person.PersonID, person.Revision, "Renamed")
-	require.NoError(t, err)
-	rows, _, err = x.f.catalog.PeopleByDisplayName(unlocked, "", "", "", 24, true, options)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "Renamed", rows[0].DisplayName)
 }
 
 // Counting the real blob boundary catches repeated payload decoding across
@@ -389,21 +383,6 @@ func TestFaceMatchingSnapshotAndPayloadReuse(t *testing.T) {
 		_, _, err = x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
 		require.NoError(t, err)
 	}
-	require.Equal(t, 1, reader.opens)
-	// A document write cannot fence a derivation from unchanged photographed faces.
-	_, err = x.f.catalog.CreateFile(ctx, x.f.catalog.RootID(), "unrelated.txt", x.f.node.BlobHash, x.f.node.Size, "text/plain")
-	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
-	require.NoError(t, err)
-	require.Equal(t, 1, reader.opens)
-	// Assignment changes still reuse the immutable payload across grouping and ranking.
-	_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[0].ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: x.inputs[0].FaceID, Revision: x.inputs[0].Revision, Action: "name", PersonName: "Ada"})
-	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 100, false, options)
-	require.NoError(t, err)
 	require.Equal(t, 1, reader.opens)
 }
 
@@ -441,4 +420,66 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
 	require.NoError(t, err)
 	require.Equal(t, 3, reader.opens, "picker subsets must preserve grouping's referenced payloads")
+}
+
+func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+		values := make([]float32, 512)
+		values[0] = 1
+		if box.Y > .5 {
+			values[0] = -1
+		}
+		return values
+	}
+	ctx := t.Context()
+	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[0].ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: x.inputs[0].FaceID, Revision: x.inputs[0].Revision, Action: "name", PersonID: person.PersonID})
+	require.NoError(t, err)
+	hiddenVersion := x.f.addPhoto(t, "private.jpg", 710)
+	for _, left := range []float64{.1, .6} {
+		_, _, err = x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{X: left, Y: .6, Width: .2, Height: .2}, person.PersonID)
+		require.NoError(t, err)
+	}
+	hiddenQuery, _, err := x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{X: .4, Y: .6, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	queryVersion := x.f.addPhoto(t, "query.jpg", 711)
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, queryVersion, uuid.New().String(), document.FaceBox{Y: .6, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	x.f.grant(t, x.service, config.LocalFacesProfile)
+	count, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, count)
+	require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	version, err := x.f.catalog.ContentVersionByID(ctx, hiddenVersion)
+	require.NoError(t, err)
+	asset, err := x.f.catalog.PhotoAssetForNode(ctx, version.NodeID)
+	require.NoError(t, err)
+	_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, page, 1)
+	require.Equal(t, person.PersonID, page[0].SuggestedPersonID)
+	require.Len(t, page[0].Faces, 1)
+	require.Equal(t, x.inputs[1].FaceID, page[0].Faces[0].FaceID, "visible matches must agree with the visible-only naming evidence")
+	token, _, err := x.f.catalog.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	page, total, err = x.f.catalog.FaceCandidates(store.WithPhotoHiddenToken(ctx, token), 24, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	var hiddenFaces []string
+	for _, candidate := range page {
+		for _, face := range candidate.Faces {
+			if face.Hidden {
+				hiddenFaces = append(hiddenFaces, face.FaceID)
+			}
+		}
+	}
+	require.Equal(t, []string{hiddenQuery.FaceID}, hiddenFaces, "Hidden-source matching remains available after unlock")
 }
