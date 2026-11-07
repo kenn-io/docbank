@@ -12,6 +12,20 @@ runs:
         while IFS= read -r path; do
           if [ -d "$path" ]; then
             du -sh "$path"
+            # New action records can reuse old output bytes without refreshing their mtime.
+            # Retain each referenced output, including whole executable directories.
+            find "$path" -mindepth 2 -maxdepth 2 -name '*-a' -newer "$RUNNER_TEMP/go-cache-use" -exec perl -e '
+              $root = shift @ARGV;
+              for $record (@ARGV) {
+                open my $file, "<", $record or die "$record: $!";
+                local $/;
+                $entry = <$file>;
+                $entry =~ /\Av1 [0-9a-f]{64} ([0-9a-f]{64}) [ 0-9]{20} [ 0-9]{20}\n\z/
+                  or die "Unsupported cache action record: $record";
+                $output = "$root/" . substr($1, 0, 2) . "/$1-d";
+                if (-e $output) { utime undef, undef, $output or die "$output: $!"; }
+              }
+            ' "$path" {} +
             find "$path" -mindepth 2 -maxdepth 2 \( -name '*-a' -o -name '*-d' \) ! -newer "$RUNNER_TEMP/go-cache-use" -exec rm -rf -- {} +
             du -sh "$path"
           fi

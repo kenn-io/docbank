@@ -107,8 +107,7 @@ runs:
         while IFS= read -r path; do
           if [ -d "$path" ]; then
             # Go refreshes cache mtimes at most hourly; force used entries to refresh.
-            # Executable outputs are directories; track each entry at the shard depth.
-            find "$path" -mindepth 2 -maxdepth 2 \( -name '*-a' -o -name '*-d' \) -exec perl -e '$t=time-7200; utime $t,$t,@ARGV or die $!' {} +
+            find "$path" -mindepth 2 -maxdepth 2 -name '*-a' -exec perl -e '$t=time-7200; utime $t,$t,@ARGV or die $!' {} +
           fi
         done <<< "$paths"
         touch "$RUNNER_TEMP/go-cache-use"
