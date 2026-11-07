@@ -122,3 +122,16 @@ func TestNotePublicationRejectsOversizedSuccess(t *testing.T) {
 	_, err := daemonconn.New(ts.URL, serverKey).NotePublicationStatus(t.Context(), "research")
 	require.True(t, daemonconn.IsResponseDecodeError(err))
 }
+
+func TestNotePublicationInterruptedReceiptStaysRetryable(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "200")
+		_, _ = w.Write([]byte(`{"name":"research"`))
+	}))
+	defer ts.Close()
+	_, err := daemonconn.New(ts.URL, serverKey).NotePublicationStatus(t.Context(), "research")
+	require.ErrorIs(t, err, daemonconn.ErrPushResponseInterrupted)
+	require.False(t, daemonconn.IsResponseDecodeError(err))
+}

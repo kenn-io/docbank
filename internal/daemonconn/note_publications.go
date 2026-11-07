@@ -103,7 +103,7 @@ func (c *Connection) BeginNotePublicationScan(ctx context.Context, r api.NotePub
 	var resp *http.Response
 	v, err := c.apiWithResponse(&resp).BeginNotePublicationScan(runtime.WithStreamingResponse(ctx), &apiclient.BeginNotePublicationScanRequestOptions{PathParams: &apiclient.BeginNotePublicationScanPath{Name: r.Name}, Body: &r})
 	v, err = readNotePublicationResponse[api.NotePublicationScan](resp, err, 64<<10)
-	if err = notePublicationWireError(resp, err); err != nil {
+	if err != nil {
 		return zero, err
 	}
 	if v == nil || !validNoteScan(*v) || v.PolicyFingerprint != r.PolicyFingerprint {
@@ -126,7 +126,7 @@ func (c *Connection) NotePublicationSources(ctx context.Context, r api.NotePubli
 	var resp *http.Response
 	v, err := c.apiWithResponse(&resp).ListNotePublicationSources(runtime.WithStreamingResponse(ctx), &apiclient.ListNotePublicationSourcesRequestOptions{PathParams: &apiclient.ListNotePublicationSourcesPath{Name: r.Name}, Query: q})
 	v, err = readNotePublicationResponse[api.NotePublicationSourcesPage](resp, err, int64(r.Limit+1)*(64<<10))
-	if err = notePublicationWireError(resp, err); err != nil {
+	if err != nil {
 		return zero, err
 	}
 	if v == nil || !validNoteScan(v.Scan) || v.Scan.ScanID != r.ScanID || len(v.Items) > r.Limit {
@@ -218,7 +218,7 @@ func (c *Connection) AcknowledgePublishedNotes(ctx context.Context, r api.NotePu
 	var resp *http.Response
 	v, err := c.apiWithResponse(&resp).AcknowledgePublishedNotes(runtime.WithStreamingResponse(ctx), &apiclient.AcknowledgePublishedNotesRequestOptions{PathParams: &apiclient.AcknowledgePublishedNotesPath{Name: r.Name, ScanID: r.ScanID}, Body: &r})
 	v, err = readNotePublicationResponse[api.NotePublicationAck](resp, err, 2<<20)
-	if err = notePublicationWireError(resp, err); err != nil {
+	if err != nil {
 		return zero, err
 	}
 	if v == nil || !validNoteScan(v.Scan) || v.Scan.ScanID != r.ScanID || len(v.Sources) != len(r.Bindings) {
@@ -242,7 +242,7 @@ func (c *Connection) CompleteNotePublicationScan(ctx context.Context, r api.Note
 	var resp *http.Response
 	v, err := c.apiWithResponse(&resp).CompleteNotePublicationScan(runtime.WithStreamingResponse(ctx), &apiclient.CompleteNotePublicationScanRequestOptions{PathParams: &apiclient.CompleteNotePublicationScanPath{Name: r.Name, ScanID: r.ScanID}, Body: &r})
 	v, err = readNotePublicationResponse[api.NotePublicationStatus](resp, err, 64<<10)
-	if err = notePublicationWireError(resp, err); err != nil {
+	if err != nil {
 		return zero, err
 	}
 	if v == nil || !validNoteStatus(*v, r.Name) {
@@ -258,7 +258,7 @@ func (c *Connection) NotePublicationStatus(ctx context.Context, name string) (ap
 	var resp *http.Response
 	v, err := c.apiWithResponse(&resp).GetNotePublicationStatus(runtime.WithStreamingResponse(ctx), &apiclient.GetNotePublicationStatusRequestOptions{PathParams: &apiclient.GetNotePublicationStatusPath{Name: name}})
 	v, err = readNotePublicationResponse[api.NotePublicationStatus](resp, err, 64<<10)
-	if err = notePublicationWireError(resp, err); err != nil {
+	if err != nil {
 		return zero, err
 	}
 	if v == nil || !validNoteStatus(*v, name) {
