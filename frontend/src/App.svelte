@@ -53,7 +53,6 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
-    type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -3786,9 +3785,8 @@
   />
 {/snippet}
 
-{#snippet addMenu(align: MenuAlign = "start")}
+{#snippet addMenu()}
   <DocumentAddMenu
-    {align}
     disabledReason={!directory || loading
       ? "Waiting for the folder to load"
       : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
@@ -4733,7 +4731,7 @@
                     <RefreshCwIcon size="14" aria-hidden="true" />
                   </IconAction>
                   {#if !showingResults}
-                    {@render addMenu("end")}
+                    {@render addMenu()}
                   {/if}
                 </div>
               </div>

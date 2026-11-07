@@ -5,24 +5,12 @@
 <script lang="ts">
   import PlusIcon from "@lucide/svelte/icons/plus";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import {
-    Menu,
-    MenuTrigger,
-    MenuContent,
-    MenuItem,
-    MenuSeparator,
-    type MenuAlign,
-  } from "@kenn-io/kit-ui";
+  import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from "@kenn-io/kit-ui";
 
   let {
-    align,
     disabledReason = "",
     onselect,
-  }: {
-    align: MenuAlign;
-    disabledReason?: string;
-    onselect: (choice: AddChoice) => void;
-  } = $props();
+  }: { disabledReason?: string; onselect: (choice: AddChoice) => void } = $props();
 
   const choices = [
     { id: "files", label: "Upload files" },
@@ -32,7 +20,7 @@
   ] as const;
 </script>
 
-<Menu {align}>
+<Menu align="end">
   <MenuTrigger class="document-add-trigger"
     ><PlusIcon size="14" />Add<ChevronDownIcon size="12" /></MenuTrigger
   >
@@ -53,6 +41,12 @@
     background: var(--accent-blue);
     color: var(--bg-surface);
     font-weight: var(--font-weight-medium);
+  }
+
+  /* Kit's menu is at least as wide as its trigger, so in the centred empty
+     state a trigger wider than the menu keeps both edges on one centre line. */
+  :global(.kit-empty-state__actions .kit-menu .kit-menu__trigger.document-add-trigger) {
+    min-width: 144px;
   }
 
   :global(.kit-menu .kit-menu__trigger.document-add-trigger:hover),
