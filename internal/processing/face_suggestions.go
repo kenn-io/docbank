@@ -145,8 +145,6 @@ func (p *faceSuggestionPass) candidates() ([]store.PersonMatchCandidate, error) 
 // signature omits payload availability and queue capacity, so a pass that left
 // either short is not cached.
 func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
-	service.faceSuggestionsMu.Lock()
-	defer service.faceSuggestionsMu.Unlock()
 	pass := service.faceSuggestionsPending
 	if pass == nil {
 		snapshot, err := service.catalog.FaceMatchingInputs(ctx)
@@ -189,26 +187,20 @@ func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog
 	settled, revision := ^uint64(0), uint64(0)
 	lane := Backfill[string]{Name: "face-suggestions", Page: 1, IdleDelay: time.Second, WriteRevision: service.catalog.WriteRevision, Logger: logger, Mutate: service.gate.MutateContext,
 		List: func(_ context.Context, after string, _ int) ([]string, error) {
-			service.faceSuggestionsMu.Lock()
 			pending := service.faceSuggestionsPending != nil
-			service.faceSuggestionsMu.Unlock()
 			if after != "" && !pending || settled == service.catalog.WriteRevision() {
 				return nil, nil
 			}
 			return []string{"faces"}, nil
 		}, Key: func(s string) string { return s },
 		Process: func(ctx context.Context, _ string) error {
-			service.faceSuggestionsMu.Lock()
 			if service.faceSuggestionsPending == nil {
 				revision = service.catalog.WriteRevision()
 			}
-			service.faceSuggestionsMu.Unlock()
 			err := service.rebuildFaceSuggestions(ctx)
-			service.faceSuggestionsMu.Lock()
 			if err == nil && service.faceSuggestionsPending == nil {
 				settled = revision
 			}
-			service.faceSuggestionsMu.Unlock()
 			return err
 		}}
 	return lane.Run(ctx)

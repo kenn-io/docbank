@@ -321,10 +321,8 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 		finished := make(chan error, 1)
 		go func() { finished <- x.service.FaceSuggestionBackfill(ctx, nil) }()
 		defer func() { cancel(); require.ErrorIs(t, <-finished, context.Canceled) }()
-		require.Eventually(t, func() bool {
-			x.service.faceSuggestionsMu.Lock()
-			defer x.service.faceSuggestionsMu.Unlock()
-			return x.service.faceSuggestionsSignature == current.Signature
-		}, 5*time.Second, 10*time.Millisecond, "the lane must publish the final input snapshot without another write")
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		require.Equal(t, current.Signature, x.service.faceSuggestionsSignature, "the lane must publish the final input snapshot without another write")
 	})
 }

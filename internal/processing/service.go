@@ -157,7 +157,6 @@ type Service struct {
 	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
 
-	faceSuggestionsMu        sync.Mutex
 	faceSuggestionsSignature string
 	faceSuggestionsPending   *faceSuggestionPass
 }
