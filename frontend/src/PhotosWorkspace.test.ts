@@ -25,6 +25,7 @@ import {
   photo,
   photoTimelineCounts,
   stubPhotoTimeline,
+  stubDeferredPhotoFetch,
   touchTap,
 } from "./photo-test-fixtures.js";
 import type { Query, QuerySort } from "./query.js";
@@ -3377,6 +3378,137 @@ it("shows a loading pill while a page loads and Load more when it settles", asyn
   await waitFor(() => expect(screen.queryByText("Loading photos…")).toBeNull());
   expect(document.querySelector(".photo-results > [role=status]")).toBe(status);
   expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each(["library", "map"] as const)(
+  "keeps the settled %s empty state through a live refresh",
+  async (state) => {
+    let finish!: (response: Response) => void;
+    stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+    const mapMode = state === "map";
+    const photos = new Photos("scoped", vi.fn(), false, photoQuery, {
+      projection: mapMode ? "map" : undefined,
+    });
+    photos.started = true;
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    render(PhotosWorkspace, {
+      photos,
+      cache,
+      mapMode,
+      tiles: { ...tiles, tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}" },
+    });
+    const title = {
+      library: "Your photo library is empty",
+      map: "No located photos",
+    }[state]!;
+    await screen.findByText(title);
+    let refreshing!: Promise<boolean>;
+    await act(() => {
+      refreshing = photos.refresh(undefined, true);
+    });
+    expect(screen.queryByText(title)).toBeTruthy();
+    expect(screen.queryByText("Loading photos…")).toBeNull();
+    expect(screen.queryByText(/^Loading located photos:/)).toBeNull();
+    await act(async () => {
+      finish(
+        Response.json({
+          [mapMode ? "map_items" : "items"]: photos.items,
+          total: photos.total,
+        }),
+      );
+      await refreshing;
+    });
+    expect(screen.getByText(title)).toBeTruthy();
+    photos.dispose();
+    await cache.dispose();
+  },
+);
+
+it("keeps the removed-photo note through a live refresh", async () => {
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, photoID: "photo-1" });
+  const note = "This photo is no longer in the refreshed result.";
+  await screen.findByText(note);
+  let refreshing!: Promise<boolean>;
+  await act(() => {
+    refreshing = photos.refresh(undefined, true);
+  });
+  expect(screen.queryByText(note)).toBeTruthy();
+  await act(async () => {
+    finish(Response.json({ items: [], total: 0 }));
+    await refreshing;
+  });
+  expect(screen.getByText(note)).toBeTruthy();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("keeps Load more and counts on screen through unchanged live refreshes", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  const facet = {
+    dimension: "camera",
+    available: true,
+    reason: "",
+    total: 60,
+    values: [{ key: "Canon EOS R6", label: "Canon EOS R6", count: 60, selected: true }],
+  };
+  const { rows, counts, fetcher } = stubDeferredPhotoFetch();
+  const page = () =>
+    Response.json({
+      items: Array.from({ length: 60 }, (_, index) => photo(index + 1)),
+      total: 100,
+      next_cursor: "next",
+    });
+  const photos = new Photos("scoped", vi.fn(), false, {
+    ...photoQuery,
+    filters: { cameras: ["Canon EOS R6"] },
+  });
+  photos.filtersOpen = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await waitFor(() => expect(rows).toHaveLength(1));
+  expect(screen.getByText("Loading photos…")).toBeTruthy();
+  rows[0]!(page());
+  await waitFor(() => expect(counts).toHaveLength(1));
+  expect(await screen.findByText("Loading counts…")).toBeTruthy();
+  counts[0]!(Response.json({ facets: [facet] }));
+  await screen.findByRole("button", { name: "Load more" });
+  await screen.findByRole("button", { name: "Canon EOS R6, 60 photos, selected" });
+  const steady = () => {
+    expect(screen.queryByText("Loading photos…")).toBeNull();
+    expect(screen.queryByText("Loading counts…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  };
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(rows).toHaveLength(2));
+  await tick();
+  steady();
+  rows[1]!(page());
+  await waitFor(() => expect(counts).toHaveLength(2));
+  await tick();
+  steady();
+  counts[1]!(Response.json({ facets: [facet] }));
+  await act(() => refreshing);
+  steady();
+  await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  await waitFor(() =>
+    expect(JSON.parse(String(fetcher.mock.calls.at(-1)![1].body)).cursor).toBe("next"),
+  );
   photos.dispose();
   await cache.dispose();
 });
