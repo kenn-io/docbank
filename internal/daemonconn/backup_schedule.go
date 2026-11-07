@@ -45,5 +45,5 @@ func validateBackupScheduleResponse(schedule api.BackupSchedule, etag string) er
 	if schedule.Revision < 1 || schedule.EffectiveIntervalSeconds < 0 || schedule.EffectiveKeepLast < 0 {
 		return errors.New("backup schedule response is invalid")
 	}
-	return validatePhotoETag(etag, schedule.Revision)
+	return validateRevisionETag(etag, schedule.Revision)
 }

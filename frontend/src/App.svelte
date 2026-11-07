@@ -208,6 +208,7 @@
     match?: generated.SearchHitMatch;
     excerpt?: string;
     evidence?: string[];
+    validity?: generated.DocumentResultValidity;
     naturalMode?: NaturalSearchMode;
   };
   type Snapshot = {
@@ -2441,11 +2442,28 @@
         excerpt: result.excerpt || "",
         evidence: evidenceKindLabels(result.evidence.map((item) => item.kind)),
         naturalMode,
+        validity: result.validity,
       };
       hydrated.push(row);
     }
     if (request !== generation || session !== webSession || signal.aborted) return [];
     return hydrated;
+  }
+
+  function validityReason(
+    validity: generated.DocumentResultValidity | undefined,
+    fullPaths = false,
+  ): string {
+    switch (validity?.state) {
+      case "superseded":
+        return `superseded by ${validity.superseded_by.map((next) => (fullPaths ? next.path : next.path.slice(next.path.lastIndexOf("/") + 1))).join(", ")}`;
+      case "expired":
+        return "expired";
+      case "not_yet_effective":
+        return "not yet effective";
+      default:
+        return "";
+    }
   }
 
   async function loadTaggedNodes(tagID: string, preferredSelectedID?: number): Promise<void> {
@@ -4880,6 +4898,8 @@
                               folder={parentPath(row.path)}
                               mime={row.node.mime_type}
                               excerpt={matchExcerpt(row)}
+                              validityReason={validityReason(row.validity)}
+                              validityReasonTitle={validityReason(row.validity, true)}
                             />
                           {:else}
                             <span class="document-name">

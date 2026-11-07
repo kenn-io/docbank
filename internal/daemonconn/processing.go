@@ -546,8 +546,8 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if report.Reranking == nil {
 			return errors.New("reranking receipt is missing for an opted-in request")
 		}
-		if report.Reranking.CandidateCount < 0 || report.Reranking.CandidateCount > len(report.Results) {
-			return errors.New("reranking receipt candidate count is outside the result bound")
+		if report.Reranking.CandidateCount < 0 || report.Reranking.CandidateCount > document.MaxRetrievalCandidateLimit {
+			return errors.New("reranking receipt candidate count is outside the retrieval bound")
 		}
 		switch report.Reranking.Outcome {
 		case "applied":

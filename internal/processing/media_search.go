@@ -40,6 +40,10 @@ func (service *Service) searchMediaSources(
 	plan := newMediaSearchPlan(request.MediaSources, requests, selected)
 	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: retrieval.ModeLexical,
 		Results: []retrieval.Result{}}
+	scope := store.SearchOptions{}
+	for _, source := range request.MediaSources {
+		scope.ContentVersionIDs = append(scope.ContentVersionIDs, source.ContentVersionID)
+	}
 	if len(plan.builds) != 0 {
 		candidateLimit := service.profiles[request.Profile].portable.Retrieval.LexicalLimit
 		report, err = prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query,
@@ -56,10 +60,15 @@ func (service *Service) searchMediaSources(
 	}
 	plan.dropChanged(current)
 	report.Results = plan.attributedResults(report.Results)
+	err = service.applyValidity(ctx, &report, scope, request.AsOf)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
 	if len(report.Results) > prepared.limit {
 		report.Results = report.Results[:prepared.limit]
 		report.Truncated = true
 	}
+	report.AsOf = request.AsOf
 	report.RequestedMode = prepared.requestedMode
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	report.MediaSourceSelection, report.Coverage = true, plan.coverage()

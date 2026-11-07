@@ -105,6 +105,9 @@ func (s *Store) initializeAuditAuthorityWithInput(
 func (s *Store) buildInitialAuditEnrollment(
 	ctx context.Context, tx metadataQuerier, input initialAuditEnrollmentInput,
 ) (initialAuditEnrollmentSet, error) {
+	if err := requireNoValidityDeclarations(ctx, tx); err != nil {
+		return initialAuditEnrollmentSet{}, err
+	}
 	values, err := makeInitialAuditValues(s.vaultID, input)
 	if err != nil {
 		return initialAuditEnrollmentSet{}, err

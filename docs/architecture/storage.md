@@ -101,6 +101,8 @@ push_sources   (push_name, source_ref, node_id, provenance identity,
                 last blob_hash and size, accepted_at)
 tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
+node_supersessions(successor_node_id, predecessor_node_id, note, recorded_at)
+node_effective_windows(node_id, effective_from, effective_to)
 audit_records  (digest PRIMARY KEY, kind, operation/event/node indexes, record_json)
 audit_authority(lineage_id, operation high-water, allocation count/head)
 audit_scopes   (scope_id, target_node_id, enable operation, count/head)
@@ -131,6 +133,48 @@ content-verified but not encrypted by Docbank. Raw store readers are inside the
 deployment trust boundary. Provider/filesystem encryption and access control
 remain external responsibilities, while native live-store encryption is
 deferred product scope.
+
+### Declared document validity
+
+Storage schema 49 adds owner-declared document replacements and effective
+dates. `node_supersessions` points from the successor file to the predecessor
+file. `node_effective_windows` holds inclusive calendar dates in `YYYY-MM-DD`
+form; a null endpoint is open. These declarations belong to nodes, so editing
+a document's content does not remove them. They are separate from provenance
+supersession, which replaces source facts on the same node.
+
+A link write checks and advances the predecessor's revision. A date-window
+write checks and advances its node's revision. Repeating an unchanged write or
+removing an absent declaration preserves the revision. Both link endpoints
+must be live files when declared. Setting windows also requires a live file. Removing links and clearing windows accept trashed files.
+Declaration and effective-window writes emit no change-feed events.
+See [Audit restrictions](#audit-restrictions) for audited vaults.
+
+Go validates notes, dates, endpoint kinds, and graph structure before authority
+is published. Notes are valid UTF-8 and at most 1,024 bytes. A file can have at
+most 16 direct successors and 16 direct predecessors. Cycles are rejected.
+Structural checks include trashed endpoints and deduplicate traversal, with a
+limit of 4,096 nodes per connected component.
+Exceeding the limit fails the operation. Link writes walk the component only
+when adding a new link.
+
+Trashing a successor keeps the declaration but excludes it from validity
+evaluation. Restoring it makes the link apply again; purging either endpoint
+cascades its links. Purging a file also removes its effective window.
+Metadata JSONL format 2 carries declarations as `node_supersession` and
+`node_effective_window` records. Import, restore, validation, and export check
+the persisted authority, including file endpoints and the complete graph.
+An older build rejects the new record types instead of discarding them.
+See [Organizing documents](../usage/organizing.md) for the owner commands.
+
+### Audit restrictions
+
+Document validity declarations and audit authority cannot coexist yet. Audit
+baselines and replay do not record these links or effective windows, so audit
+history cannot detect changes to them. Enrollment refuses a vault while either
+declaration table has rows, and metadata restore rejects streams containing both
+audit authority and declarations. Declaration mutations in an audited vault fail
+with `ErrAuditMutationUnsupported`. Remove declarations before enrolling.
 
 ## Released upgrades
 
@@ -166,6 +210,18 @@ vault, so it also keeps state that a restore deliberately resets:
 - Unexpired package preflights and in-progress mailbox uploads with their
   accepted chunks, so the user can continue within the 24-hour session instead
   of starting again.
+- Photo checkout bindings and file observations, so checkouts keep their
+  destinations and know which local files changed.
+- Watch absence marks, so a watched file that a scan found missing stays
+  marked while a later scan cannot recheck it.
+- Pending photo descriptions with their generated text and rotation, and face
+  scan markers, so photos already described or scanned are not sent to the
+  provider again.
+- Photo description and face detection jobs, including which description
+  requests the user started explicitly, so failed jobs keep their retry budget
+  and an explicit request can still replace a dismissed description.
+- The change feed position, so a client's change cursor stays valid without a
+  rescan.
 
 A copied source table whose columns differ from the current schema stops the
 upgrade before the vault changes. Restoring a backup still requires fresh
@@ -182,9 +238,10 @@ query, so the unversioned released binary also fails closed rather than
 silently writing with obsolete storage rules.
 
 For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. For a
-v0.15.0 source it is `<database>.schema-v28.bak`. If v0.15.1 refused that vault
-with `schema version 28 has no supported JSONL cutover`, open it with v0.15.2
-or later to complete the upgrade.
+v0.15.0 source it is `<database>.schema-v28.bak`; later releases use their
+schema version the same way, such as `<database>.schema-v48.bak` for v0.17.0.
+If v0.15.1 refused that vault with `schema version 28 has no supported JSONL
+cutover`, open it with v0.15.2 or later to complete the upgrade.
 
 The recovery copy contains private vault metadata and inherits the vault's
 owner-private boundary. Keep it until the upgraded vault and a fresh backup
