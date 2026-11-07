@@ -268,12 +268,14 @@ it("keeps an unchanged tile image and reloads changed preview generations and st
   await view.rerender({
     photo: {
       ...changed,
-      previews: { ...changed.previews, grid: { state: "failed", generation_id: "generation-2" } },
+      previews: { ...changed.previews, grid: { state: "failed", generation_id: "generation-3" } },
     },
   });
   expect(screen.queryByRole("img")).toBeNull();
   expect(screen.getByText("Preview failed")).toBeTruthy();
-  await view.rerender({ photo: structuredClone(changed) });
+  const recovered = structuredClone(changed);
+  recovered.previews.grid.generation_id = "generation-4";
+  await view.rerender({ photo: recovered });
   expect(screen.getByText("Loading preview")).toBeTruthy();
   finish(new Blob(["recovered-jpeg"]));
   expect((await screen.findByRole("img")).getAttribute("src")).toBe("blob:synthetic-3");
