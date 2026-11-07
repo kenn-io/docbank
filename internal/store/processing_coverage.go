@@ -149,6 +149,14 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			if requested.VectorSpaceID != "" {
 				vectorSpace = requested.VectorSpaceID
 			}
+			if binding.InputKind == document.EmbeddingInputFace {
+				if err := processingFaceCoverageTx(ctx, tx, scope.ProcessingProfileFingerprint, binding.Name, vectorSpace, string(versionsJSON), d, &item); err != nil {
+					return ProcessingCoverageSnapshot{}, err
+				}
+				item.State = processingCoverageClassState(item)
+				result.Embeddings = append(result.Embeddings, item)
+				continue
+			}
 			complete, err := s.processingEmbeddingCompleteTx(ctx, tx, scope.ProcessingProfileFingerprint,
 				binding.Name, binding.InputKind, vectorSpace, opts.ContentVersionIDs)
 			if err != nil {
@@ -196,6 +204,54 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		return ProcessingCoverageSnapshot{}, fmt.Errorf("closing processing coverage snapshot: %w", err)
 	}
 	return result, nil
+}
+
+func processingFaceCoverageTx(ctx context.Context, tx *sql.Tx, profile, binding, space, versions string, d metadataJSONDialect, item *ProcessingClassCoverage) error {
+	rows, err := tx.QueryContext(ctx, `SELECT es.input_generation_id, 1 FROM embedding_heads h
+		JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+		AND es.content_version_id=h.content_version_id AND es.binding_id=h.binding_id
+		AND es.input_kind=h.input_kind AND es.vector_space_id=h.vector_space_id AND es.profile_fingerprint=h.profile_fingerprint
+		WHERE h.profile_fingerprint=$1 AND h.binding_id=$2 AND h.vector_space_id=$3 AND h.input_kind='face'
+		AND h.content_version_id IN (SELECT value FROM `+d.arrayValues("$4")+`)
+		UNION ALL SELECT generation_id, 2 FROM embedding_jobs
+		WHERE profile_fingerprint=$1 AND binding_id=$2 AND vector_space_id=$3 AND input_kind='face'
+		AND state IN ('queued','running','retry_wait')
+		AND content_version_id IN (SELECT value FROM `+d.arrayValues("$4")+`)`, profile, binding, space, versions)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	generationStates := map[string]int{}
+	for rows.Next() {
+		var generation string
+		var state int
+		if err := rows.Scan(&generation, &state); err != nil {
+			return err
+		}
+		generationStates[generation] |= state
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	versionStates := map[string]int{}
+	for id, state := range generationStates {
+		generation, err := loadInputGenerationTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := validateFaceEmbeddingGenerationTx(ctx, tx, generation, binding); err != nil {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrEmbeddingJobFenced) {
+				continue
+			}
+			return err
+		}
+		versionStates[generation.SourceVersionID] |= state
+	}
+	for _, state := range versionStates {
+		countProcessingCoverage(item, state&1 != 0, state&2 != 0)
+		item.Unavailable--
+	}
+	return nil
 }
 
 func processingRenditionAvailableTx(ctx context.Context, tx *sql.Tx, attachmentID string) (bool, error) {
