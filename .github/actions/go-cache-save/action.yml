@@ -19,7 +19,8 @@ runs:
 
     - name: Save caches
       if: >-
-        github.event_name == 'push' && github.ref == 'refs/heads/main'
+        ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+          || (github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache'))
         && env.GO_CACHE_HIT != 'true'
       uses: actions/cache/save@v6.1.0
       with:

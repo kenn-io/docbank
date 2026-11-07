@@ -44,10 +44,15 @@ runs:
         GROUP: ${{ inputs.group }}
         EXTRA_PATH: ${{ inputs.extra-path }}
         GO_SUM: ${{ hashFiles('go.sum') }}
+        PR_BENCH: ${{ github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache' }}
       run: |
         # One key per group and day: main refreshes it daily instead of freezing on go.sum.
         {
-          echo "GO_CACHE_KEY=go-${GROUP}-${GO_SUM}-$(date -u +%Y-%m-%d)"
+          if [ "$PR_BENCH" = 'true' ]; then
+            echo "GO_CACHE_KEY=go-round7-prbench-${GROUP}-${GO_SUM}"
+          else
+            echo "GO_CACHE_KEY=go-${GROUP}-${GO_SUM}-$(date -u +%Y-%m-%d)"
+          fi
           echo "GO_CACHE_PREFIX=go-${GROUP}-${GO_SUM}-"
           echo "GO_CACHE_GROUP_PREFIX=go-${GROUP}-"
           echo "GO_CACHE_PATHS<<EOF"
@@ -74,7 +79,8 @@ runs:
     - name: Track cache use for the daily save
       if: >-
         inputs.save-owner == 'true'
-        && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+          || (github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache'))
         && steps.restore.outputs.cache-hit != 'true'
       shell: bash
       env:
