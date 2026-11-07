@@ -30,10 +30,14 @@ var ErrFilesFailed = errors.New("some files were not pushed")
 // Progress receives each acknowledged outcome and Failure each file the run
 // skipped after the daemon or the local source rejected it.
 type Options struct {
-	Folder   config.WatchConfig
-	Watch    bool
-	Progress func(ref, outcome string) error
-	Failure  func(ref string, err error) error
+	// Publication selects current Markdown membership with archived history.
+	Publication bool
+	// Reconnect reacquires a proved local daemon after a transport failure.
+	Reconnect func(context.Context) (*daemonconn.Connection, error)
+	Folder    config.WatchConfig
+	Watch     bool
+	Progress  func(ref, outcome string) error
+	Failure   func(ref string, err error) error
 }
 
 // Report counts only independently acknowledged file outcomes, plus the files
@@ -57,6 +61,9 @@ type Report struct {
 // proof, an invalid daemon response, a refused key, or a push name in use by a
 // daemon watch stops either mode.
 func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (Report, error) {
+	if opts.Publication {
+		return runPublication(ctx, connection, opts)
+	}
 	var report Report
 	if connection == nil {
 		return report, errors.New("push requires a daemon connection")
