@@ -155,6 +155,7 @@ var (
 // currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
 	"note_publications", "published_note_sources", "note_publication_state",
+	"note_publication_scans", "note_publication_seen", "note_publication_operations",
 	"blobs", "blob_packs", "vault_metadata",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",

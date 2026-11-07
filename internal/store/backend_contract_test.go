@@ -989,6 +989,7 @@ var backendSuites = []backendSuite{
 		{"IngestOperations", nil, checkIngestOperationsPostgres},
 		{"PlannedIngest", nil, checkPlannedIngestPostgres},
 		{"WatchAndPush", nil, checkWatchAndPushPostgres},
+		{"NotePublicationScan", checkNotePublicationScanSQLite, checkNotePublicationScanPostgres},
 	}},
 	{name: "sources", postgres: "native operations", scope: "Provenance, collections, labels and related photo/event effects.", scenarios: []backendScenario{
 		{"ProvenancePhotoEffects", nil, checkProvenancePhotoEffectsPostgres},

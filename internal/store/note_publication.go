@@ -118,6 +118,20 @@ func notePublicationStatusTx(ctx context.Context, q metadataQuerier, name string
 	if err != nil {
 		return status, err
 	}
+	var scan NotePublicationScan
+	var sealed bool
+	err = q.QueryRowContext(ctx, `SELECT scan_id,database_epoch,policy_fingerprint,epoch,namespace_revision,sealed
+		FROM note_publication_scans WHERE publication_name=$1 AND database_epoch=$2 ORDER BY epoch DESC LIMIT 1`, name, status.DatabaseEpoch).
+		Scan(&scan.ScanID, &scan.DatabaseEpoch, &scan.PolicyFingerprint, &scan.Epoch, &scan.NamespaceRevision, &sealed)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return status, err
+	}
+	if err == nil {
+		status.Incomplete = !sealed
+		if !sealed {
+			status.ActiveScan = &scan
+		}
+	}
 	err = q.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(CASE WHEN s.presence='present' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN s.presence='absent' THEN 1 ELSE 0 END),0),

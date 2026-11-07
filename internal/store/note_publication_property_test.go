@@ -19,5 +19,5 @@ func TestPublishedNoteValidationProperty(t *testing.T) {
 		if (err == nil) != (ValidatePushRef(ref) == nil) {
 			ht.Fatalf("source ref validation differs for %q: %v", ref, err)
 		}
-	}, hegel.WithDatabase(t.TempDir()))
+	}, hegel.WithDatabase(t.TempDir()), hegel.WithTestCases(2000))
 }

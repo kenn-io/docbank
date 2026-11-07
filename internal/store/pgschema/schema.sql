@@ -929,6 +929,30 @@ CREATE TABLE {{schema}}.note_publication_state (
     singleton BIGINT PRIMARY KEY,
     database_epoch TEXT COLLATE "C" NOT NULL
 );
+CREATE TABLE {{schema}}.note_publication_scans (
+    scan_id TEXT COLLATE "C" PRIMARY KEY,
+    publication_name TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_publications(name),
+    database_epoch TEXT COLLATE "C" NOT NULL,
+    epoch BIGINT NOT NULL,
+    begin_operation_id TEXT COLLATE "C" NOT NULL UNIQUE,
+    request_sha256 TEXT COLLATE "C" NOT NULL,
+    policy_fingerprint TEXT COLLATE "C" NOT NULL,
+    namespace_revision BIGINT NOT NULL,
+    sealed BIGINT NOT NULL,
+    completed_at TEXT COLLATE "C" NOT NULL,
+    UNIQUE(publication_name,epoch)
+);
+CREATE TABLE {{schema}}.note_publication_seen (
+    scan_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_publication_scans(scan_id) ON DELETE CASCADE,
+    source_ref TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY(scan_id,source_ref)
+);
+CREATE TABLE {{schema}}.note_publication_operations (
+    operation_id TEXT COLLATE "C" PRIMARY KEY,
+    scan_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_publication_scans(scan_id) ON DELETE CASCADE,
+    request_sha256 TEXT COLLATE "C" NOT NULL,
+    receipt_json TEXT COLLATE "C" NOT NULL
+);
 
 CREATE TABLE {{schema}}.push_sources (
     push_name          TEXT COLLATE "C" NOT NULL,

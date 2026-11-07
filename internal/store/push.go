@@ -208,45 +208,53 @@ func (s *Store) AcceptPush(
 	var node Node
 	var outcome string
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		run, err := pushRunTx(ctx, tx, content.RunID, source.Name)
-		if err != nil {
-			return err
-		}
-		state, stateErr := pushStateTx(ctx, tx, source.Name, source.Ref)
-		switch {
-		case errors.Is(stateErr, ErrNotFound):
-			plan := IngestDirectoryPlan{anchorID: s.rootID, segments: segments}
-			receipt, _, _, createErr := s.ingestFileTx(ctx, tx, run, 0, content.Name,
-				content.Hash, content.Size, content.MIMEType, source.Ref, source.ModifiedAt,
-				ingestFileOptions{exact: true, directoryPlan: &plan}, physical...)
-			node, outcome = receipt.Node, "added"
-			return createErr
-		case stateErr != nil:
-			return stateErr
-		case state.Hash == content.Hash && state.Size == content.Size:
-			node, outcome = state.Node, "skipped"
-			return nil
-		}
-		run, err = pushObservationRun(run, state.AcceptedAt)
-		if err != nil {
-			return err
-		}
-		node, outcome = state.Node, "skipped"
-		if node.BlobHash != content.Hash || node.Size != content.Size {
-			node, _, err = s.replaceContentTx(ctx, tx, node, UnconditionalRev,
-				content.Hash, content.Size, content.MIMEType, physical...)
-			if err != nil {
-				return err
-			}
-			outcome = "updated"
-		}
-		node, err = s.recordPushObservationTx(ctx, tx, run, source, node, content)
+		var err error
+		node, outcome, err = s.acceptPushTx(ctx, tx, source, content, segments, false, physical...)
 		return err
 	})
 	if err != nil {
 		return Node{}, "", fmt.Errorf("accepting push source %q/%q: %w", source.Name, source.Ref, err)
 	}
 	return node, outcome, nil
+}
+
+// acceptPushTx lets managed publication fence the same verified content and
+// provenance commit in its transaction. Ordinary push never forces a version.
+func (s *Store) acceptPushTx(ctx context.Context, tx *sql.Tx, source PushSource, content PushContent,
+	segments []string, forceVersion bool, physical ...BlobPhysical,
+) (Node, string, error) {
+	run, err := pushRunTx(ctx, tx, content.RunID, source.Name)
+	if err != nil {
+		return Node{}, "", err
+	}
+	state, stateErr := pushStateTx(ctx, tx, source.Name, source.Ref)
+	switch {
+	case errors.Is(stateErr, ErrNotFound):
+		plan := IngestDirectoryPlan{anchorID: s.rootID, segments: segments}
+		receipt, _, _, createErr := s.ingestFileTx(ctx, tx, run, 0, content.Name,
+			content.Hash, content.Size, content.MIMEType, source.Ref, source.ModifiedAt,
+			ingestFileOptions{exact: true, directoryPlan: &plan}, physical...)
+		return receipt.Node, "added", createErr
+	case stateErr != nil:
+		return Node{}, "", stateErr
+	case !forceVersion && state.Hash == content.Hash && state.Size == content.Size:
+		return state.Node, "skipped", nil
+	}
+	run, err = pushObservationRun(run, state.AcceptedAt)
+	if err != nil {
+		return Node{}, "", err
+	}
+	node, outcome := state.Node, "skipped"
+	if forceVersion || node.BlobHash != content.Hash || node.Size != content.Size {
+		node, _, err = s.replaceContentTx(ctx, tx, node, UnconditionalRev,
+			content.Hash, content.Size, content.MIMEType, physical...)
+		if err != nil {
+			return Node{}, "", err
+		}
+		outcome = "updated"
+	}
+	node, err = s.recordPushObservationTx(ctx, tx, run, source, node, content)
+	return node, outcome, err
 }
 
 func pushParentSegments(parentPath string) ([]string, error) {

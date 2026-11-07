@@ -30,6 +30,30 @@ CREATE TABLE IF NOT EXISTS note_publication_state (
     singleton INTEGER PRIMARY KEY,
     database_epoch TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS note_publication_scans (
+    scan_id TEXT PRIMARY KEY,
+    publication_name TEXT NOT NULL REFERENCES note_publications(name),
+    database_epoch TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    begin_operation_id TEXT NOT NULL UNIQUE,
+    request_sha256 TEXT NOT NULL,
+    policy_fingerprint TEXT NOT NULL,
+    namespace_revision INTEGER NOT NULL,
+    sealed INTEGER NOT NULL,
+    completed_at TEXT NOT NULL,
+    UNIQUE(publication_name,epoch)
+);
+CREATE TABLE IF NOT EXISTS note_publication_seen (
+    scan_id TEXT NOT NULL REFERENCES note_publication_scans(scan_id) ON DELETE CASCADE,
+    source_ref TEXT NOT NULL,
+    PRIMARY KEY(scan_id,source_ref)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS note_publication_operations (
+    operation_id TEXT PRIMARY KEY,
+    scan_id TEXT NOT NULL REFERENCES note_publication_scans(scan_id) ON DELETE CASCADE,
+    request_sha256 TEXT NOT NULL,
+    receipt_json TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS export_sources (
     id TEXT PRIMARY KEY,
