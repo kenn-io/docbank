@@ -14,6 +14,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -351,8 +352,7 @@ func validOptionalCalendarDate(arguments map[string]any, field string) bool {
 	if !ok {
 		return false
 	}
-	_, err := time.Parse("2006-01-02", text)
-	return err == nil
+	return document.ValidateDate(text) == nil
 }
 
 func stringBytesWithin(arguments map[string]any, field string, maximum int) bool {

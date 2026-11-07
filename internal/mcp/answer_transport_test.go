@@ -518,6 +518,7 @@ func TestSearchRerankRelevanceFollowsDemotedResults(t *testing.T) {
 	require.Equal(t, unscored["node_id"], schemaMap(t, after[0])["node_id"], "the in-force match moves ahead of reranked ones")
 	require.NotContains(t, schemaMap(t, after[0]), "rerank_relevance")
 	for i, hit := range after[1:] {
-		require.Equal(t, schemaMap(t, before[i])["rerank_relevance"], schemaMap(t, hit)["rerank_relevance"])
+		require.Equal(t, schemaMap(t, before[i])["node_id"], schemaMap(t, hit)["node_id"])
+		require.InDelta(t, []float64{0.9, 0.8}[i], schemaMap(t, hit)["rerank_relevance"], 1e-9)
 	}
 }

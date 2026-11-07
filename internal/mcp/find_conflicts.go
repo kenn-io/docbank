@@ -143,6 +143,7 @@ func findConflictsSchemas() (schema, schema) {
 	delete(properties, "rerank")
 	delete(properties, "mode")
 	delete(properties, "binding_id")
+	delete(properties, "as_of")
 	figure := objectSchema(schema{
 		"passage": integerSchema(1, 100), "text": stringSchema(512), "value": stringSchema(512), "quote": stringSchema(512),
 	}, "passage", "text", "value", "quote")

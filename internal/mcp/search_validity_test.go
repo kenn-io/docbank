@@ -194,7 +194,7 @@ func TestSearchValidityDateInputAndEmptyFence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, output.AsOf, "without a search report, an omitted date has no daemon default to echo")
 
-	for _, value := range []string{"yesterday", "2025-1-01", "2025-02-30", "2024-02-30", "2025-01-01T00:00:00Z"} {
+	for _, value := range []string{"yesterday", "2025-1-01", "2025-02-30", "2024-02-30", "2025-01-01T00:00:00Z", "0000-01-01"} {
 		invalid := map[string]any{
 			"query": "synthetic", "profile": "local", "filters": map[string]any{}, "as_of": value,
 		}
