@@ -164,8 +164,8 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 	})
 }
 
-func TestFaceSuggestionBatchesFinishAcrossWritesAndDiscardChangedInputs(t *testing.T) {
-	t.Parallel()
+func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.PhotoFace) {
+	t.Helper()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	x.worker.maxRows = 1000
@@ -188,19 +188,35 @@ func TestFaceSuggestionBatchesFinishAcrossWritesAndDiscardChangedInputs(t *testi
 	n, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+	return x, omitted
+}
+
+func TestFaceSuggestionBatchesFinishAcrossWrites(t *testing.T) {
+	t.Parallel()
+	x, _ := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, page, "partial groups must stay unpublished")
 	require.Zero(t, total)
 	for i := range 3 {
-		_, err = x.f.catalog.CreatePerson(ctx, fmt.Sprintf("Unrelated person %d", i), "operator")
+		_, err := x.f.catalog.CreatePerson(ctx, fmt.Sprintf("Unrelated person %d", i), "operator")
 		require.NoError(t, err)
 		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 	}
 	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 499, total, "unrelated writes must let the original pass finish in four batches")
+}
+
+func TestFaceSuggestionBatchesDiscardChangedInputs(t *testing.T) {
+	t.Parallel()
+	x, omitted := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
+	for range 4 {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
 	service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
@@ -210,7 +226,7 @@ func TestFaceSuggestionBatchesFinishAcrossWritesAndDiscardChangedInputs(t *testi
 	for range 4 {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
-	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
+	_, total, err := x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 498, total, "changed inputs must restart the pass and omit the dismissed face pair")
 }

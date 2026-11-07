@@ -313,8 +313,6 @@ func TestRestoreRetainsVisualPreviewRecipes(t *testing.T) {
 	}
 }
 
-// Paired face state is retained directly: this contract qualifies preview
-// discovery and reads, rather than claiming the face-write workflow is ported.
 func checkFaceMemberGridPreviews(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
@@ -336,7 +334,12 @@ func checkFaceMemberGridPreviews(t *testing.T, open func(*testing.T) *Store) {
 	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFile.ID)
 	require.NoError(t, err)
 	faceID := "00000000-0000-4000-8000-000000000001"
-	_, err = s.db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES($1,$2,0,0,0.2,0.2,1,$3)`, faceID, raw.CurrentVersionID, "2026-01-01T00:00:00Z")
+	if s.postgresSchema == "" {
+		_, _, err = s.CreatePhotoFace(ctx, raw.CurrentVersionID, faceID, document.FaceBox{Width: .2, Height: .2}, "")
+	} else {
+		// PostgreSQL qualifies preview reads; its face-write transaction isn't ported.
+		_, err = s.db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES($1,$2,0,0,0.2,0.2,1,$3)`, faceID, raw.CurrentVersionID, "2026-01-01T00:00:00Z")
+	}
 	require.NoError(t, err)
 	grid, err := document.CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)

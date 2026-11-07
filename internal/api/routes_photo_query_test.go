@@ -680,122 +680,144 @@ func TestPhotoBrowseRowsCarryFileModifiedTime(t *testing.T) {
 	require.Equal(t, new("2024-03-05T10:00:00Z"), compact.MapItems[0].FileModifiedTime)
 }
 
-func TestSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{"person", "face"} {
-		t.Run(kind, func(t *testing.T) {
-			ts, s := newTestServer(t, nil)
-			ctx := t.Context()
-			hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(mediatest.JPEG(24, 16, color.Black)))
-			require.NoError(t, err)
-			displayed, err := s.CreateFile(ctx, s.RootID(), "paired.jpg", hash, size, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, displayed.ID)
-			require.NoError(t, err)
-			raw := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(80, 40, color.White)})
-			hash, size, err = s.Blobs.WriteContext(t.Context(), bytes.NewReader(raw))
-			require.NoError(t, err)
-			source, err := s.CreateFile(ctx, s.RootID(), "paired.dng", hash, size, "image/x-adobe-dng")
-			require.NoError(t, err)
-			singleton, err := s.PhotoAssetForNode(ctx, source.ID)
-			require.NoError(t, err)
-			_, err = s.DetachPhotoFile(ctx, singleton.ID, singleton.Revision, singleton.Files[0].ID, store.PhotoDetachOptions{})
-			require.NoError(t, err)
-			asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, source.ID, store.PhotoRoleRAW, nil)
-			require.NoError(t, err)
-			var displayFile string
-			for _, file := range asset.Files {
-				if file.NodeID == displayed.ID {
-					displayFile = file.ID
-				}
-			}
-			asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &displayFile)
-			require.NoError(t, err)
-			person, err := s.CreatePerson(ctx, "Alex Source", "operator")
-			require.NoError(t, err)
-			owner := person.PersonID
-			if kind == "face" {
-				owner = ""
-			}
-			face, _, err := s.CreatePhotoFace(ctx, source.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .6, Y: .2, Width: .2, Height: .3}, owner)
-			require.NoError(t, err)
-			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-			preparePath := "/api/v1/photos/assets/" + asset.ID + "/preview"
-			request := api.PreparePhotoPreviewRequest{ContentVersionID: source.CurrentVersionID, PersonID: person.PersonID, Size: "grid"}
-			grant := "person_id=" + person.PersonID
-			if kind == "face" {
-				request.PersonID, request.FaceID = "", face.FaceID
-				grant = "face_id=" + face.FaceID
-			}
-			response, body := do(t, ts, http.MethodPost, preparePath, headers, request)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			var slot api.PhotoPreviewSlot
-			require.NoError(t, json.Unmarshal([]byte(body), &slot))
-			require.Equal(t, "ready", slot.State)
-			readPath := "/api/v1/photos/assets/" + asset.ID + "/previews/" + slot.GenerationID
-			response, body = get(t, ts, readPath, headers)
-			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-			sourcePath := readPath + "?" + grant
-			require.Equal(t, sourcePath, slot.URL)
-			response, body = get(t, ts, sourcePath, headers)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			decoded, err := jpeg.Decode(strings.NewReader(body))
-			require.NoError(t, err)
-			require.Equal(t, image.Rect(0, 0, 80, 40), decoded.Bounds())
-			require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
-			if kind == "face" {
-				// The grant cannot be combined, moved to another source, or used for another recipe.
-				invalid := request
-				invalid.PersonID = person.PersonID
-				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
-				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-				response, body = get(t, ts, sourcePath+"&person_id="+person.PersonID, headers)
-				require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-				invalid = request
-				invalid.Size = "fit"
-				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
-				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-				invalid = request
-				invalid.ContentVersionID = displayed.CurrentVersionID
-				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
-				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-				return
-			}
-			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-			request.Hidden = true
-			response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
-			require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-			response, body = get(t, ts, sourcePath, headers)
-			require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			headers["Cookie"] = response.Cookies()[0].String()
-			ctx = store.WithPhotoHiddenToken(ctx, response.Cookies()[0].Value)
-			response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			response, body = get(t, ts, sourcePath, headers)
-			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			// Exclusion and trash revoke both preparation and previously issued URLs.
-			asset, err = s.PhotoAssetByID(ctx, asset.ID)
-			require.NoError(t, err)
-			asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-			response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
-			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-			response, body = get(t, ts, sourcePath, headers)
-			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
-			require.NoError(t, err)
-			_, _, err = s.Trash(ctx, source.ID, source.Revision)
-			require.NoError(t, err)
-			response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
-			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-			response, body = get(t, ts, sourcePath, headers)
-			require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-		})
+func pairedSourcePhotoPreviewFixture(t *testing.T) (*httptest.Server, *testStore, store.Node, store.Node, store.PhotoAsset) {
+	t.Helper()
+	ctx := t.Context()
+	ts, s := newTestServer(t, nil)
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(mediatest.JPEG(24, 16, color.Black)))
+	require.NoError(t, err)
+	displayed, err := s.CreateFile(ctx, s.RootID(), "paired.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, displayed.ID)
+	require.NoError(t, err)
+	raw := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(80, 40, color.White)})
+	hash, size, err = s.Blobs.WriteContext(t.Context(), bytes.NewReader(raw))
+	require.NoError(t, err)
+	source, err := s.CreateFile(ctx, s.RootID(), "paired.dng", hash, size, "image/x-adobe-dng")
+	require.NoError(t, err)
+	singleton, err := s.PhotoAssetForNode(ctx, source.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, singleton.ID, singleton.Revision, singleton.Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, source.ID, store.PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	var displayFile string
+	for _, file := range asset.Files {
+		if file.NodeID == displayed.ID {
+			displayFile = file.ID
+		}
 	}
+	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &displayFile)
+	require.NoError(t, err)
+	return ts, s, displayed, source, asset
+}
+
+func TestPersonSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
+	t.Parallel()
+	ts, s, _, source, asset := pairedSourcePhotoPreviewFixture(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Alex Source", "operator")
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, source.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .6, Y: .2, Width: .2, Height: .3}, person.PersonID)
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	preparePath := "/api/v1/photos/assets/" + asset.ID + "/preview"
+	request := api.PreparePhotoPreviewRequest{ContentVersionID: source.CurrentVersionID, PersonID: person.PersonID, Size: "grid"}
+	grant := "person_id=" + person.PersonID
+	response, body := do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var slot api.PhotoPreviewSlot
+	require.NoError(t, json.Unmarshal([]byte(body), &slot))
+	require.Equal(t, "ready", slot.State)
+	readPath := "/api/v1/photos/assets/" + asset.ID + "/previews/" + slot.GenerationID
+	response, body = get(t, ts, readPath, headers)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	sourcePath := readPath + "?" + grant
+	require.Equal(t, sourcePath, slot.URL)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	decoded, err := jpeg.Decode(strings.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, image.Rect(0, 0, 80, 40), decoded.Bounds())
+	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	request.Hidden = true
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	headers["Cookie"] = response.Cookies()[0].String()
+	ctx = store.WithPhotoHiddenToken(ctx, response.Cookies()[0].Value)
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	// Exclusion and trash revoke both preparation and previously issued URLs.
+	asset, err = s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, source.ID, source.Revision)
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+}
+
+func TestFaceSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
+	t.Parallel()
+	ts, s, displayed, source, asset := pairedSourcePhotoPreviewFixture(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Alex Source", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, source.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .6, Y: .2, Width: .2, Height: .3}, "")
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	preparePath := "/api/v1/photos/assets/" + asset.ID + "/preview"
+	request := api.PreparePhotoPreviewRequest{ContentVersionID: source.CurrentVersionID, FaceID: face.FaceID, Size: "grid"}
+	grant := "face_id=" + face.FaceID
+	response, body := do(t, ts, http.MethodPost, preparePath, headers, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var slot api.PhotoPreviewSlot
+	require.NoError(t, json.Unmarshal([]byte(body), &slot))
+	require.Equal(t, "ready", slot.State)
+	readPath := "/api/v1/photos/assets/" + asset.ID + "/previews/" + slot.GenerationID
+	response, body = get(t, ts, readPath, headers)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	sourcePath := readPath + "?" + grant
+	require.Equal(t, sourcePath, slot.URL)
+	response, body = get(t, ts, sourcePath, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	decoded, err := jpeg.Decode(strings.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, image.Rect(0, 0, 80, 40), decoded.Bounds())
+	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+	// The grant cannot be combined, moved to another source, or used for another recipe.
+	invalid := request
+	invalid.PersonID = person.PersonID
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = get(t, ts, sourcePath+"&person_id="+person.PersonID, headers)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	invalid = request
+	invalid.Size = "fit"
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	invalid = request
+	invalid.ContentVersionID = displayed.CurrentVersionID
+	response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
 
 func TestLookupPhotoFlags(t *testing.T) {
