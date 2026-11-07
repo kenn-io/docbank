@@ -16,7 +16,7 @@ type queryResolver struct{ q rowQuerier }
 
 func (r queryResolver) photoMetadataHeadsFirst(ctx context.Context, value string) (bool, error) {
 	var dense bool
-	err := r.q.QueryRowContext(ctx, `WITH capacity AS MATERIALIZED (SELECT COUNT(*)+1 AS n FROM photo_files)
+	err := r.q.QueryRowContext(ctx, `WITH capacity AS MATERIALIZED (SELECT COUNT(*)+1 AS n FROM source_metadata_heads)
  SELECT (SELECT COUNT(*) FROM (SELECT 1 FROM photo_metadata_fts WHERE photo_metadata_fts MATCH ? LIMIT (SELECT n FROM capacity))) = (SELECT n FROM capacity)`,
 		`text : `+quoteFTSOperand(value, false)).Scan(&dense)
 	if err != nil {

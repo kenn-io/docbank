@@ -63,11 +63,11 @@ func photoXMPRequired(expression *query.Expression) bool {
 	}
 }
 
-func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+func (c queryCompiler) compilePhotoMetadataPredicate(headsFirst bool, predicate string, args ...any) compiledQueryFragment {
 	if c.photoDisplayMetadata && c.photoMetadataSet {
 		metadata := `photo_technical_metadata p
  CROSS JOIN source_metadata_heads h ON h.generation_id=p.generation_id`
-		if c.photoMetadataHeadsFirst {
+		if headsFirst {
 			metadata = `source_metadata_heads h
  CROSS JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
 		}
@@ -87,14 +87,15 @@ func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...a
 }
 
 func (c queryCompiler) compilePhotoTextMetadataPredicate(value, predicate string, args ...any) (compiledQueryFragment, error) {
+	headsFirst := false
 	if c.photoMetadataDensity != nil {
 		var err error
-		c.photoMetadataHeadsFirst, err = c.photoMetadataDensity(value)
+		headsFirst, err = c.photoMetadataDensity(value)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
 	}
-	return c.compilePhotoMetadataPredicate(predicate, args...), nil
+	return c.compilePhotoMetadataPredicate(headsFirst, predicate, args...), nil
 }
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
@@ -182,7 +183,7 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if field == "iso_max" {
 			operator = "<="
 		}
-		return c.compilePhotoMetadataPredicate(`p.iso `+operator+` ?`, n), nil
+		return c.compilePhotoMetadataPredicate(false, `p.iso `+operator+` ?`, n), nil
 	case "capture_after", "capture_before":
 		_, err := query.CaptureDateKey(value)
 		if err != nil {
@@ -220,7 +221,7 @@ func (c queryCompiler) compilePhotoGPSPredicate(bounds query.GPSBounds) compiled
 	if west > east {
 		operator = ` OR `
 	}
-	return c.compilePhotoMetadataPredicate(`p.latitude>=? AND p.latitude<=? AND (p.longitude>=?`+operator+`p.longitude<=?)`, south, north, west, east)
+	return c.compilePhotoMetadataPredicate(false, `p.latitude>=? AND p.latitude<=? AND (p.longitude>=?`+operator+`p.longitude<=?)`, south, north, west, east)
 }
 
 func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {

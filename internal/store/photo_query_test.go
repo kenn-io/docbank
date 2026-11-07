@@ -385,7 +385,7 @@ func TestPhotoBrowseActiveMetadata(t *testing.T) {
 					latitude, longitude = "48.8566", "2.3522"
 				}
 				if dense && i == 0 {
-					for j := range 5 {
+					for j := range 12 {
 						browsePhotoMetadata(t, s, node, fmt.Sprint("history", j), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("A")))
 					}
 				}
@@ -415,16 +415,8 @@ func TestPhotoBrowseActiveMetadata(t *testing.T) {
 							require.Equal(t, []int64{node.ID, shared.ID}, ids)
 						}
 						if dense && set && tc.field == "camera" && value == tc.old {
-							rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
-							require.NoError(t, err)
-							for rows.Next() {
-								var id, parent, unused int
-								var detail string
-								require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-								require.NotContains(t, detail, "SCAN p")
-							}
-							require.NoError(t, rows.Err())
-							require.NoError(t, rows.Close())
+							plan := explainQueryPlan(t, s, "SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
+							require.NotContains(t, plan, "SCAN p")
 						}
 					}
 					page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: q, Facets: []string{"camera"}}, nil)
@@ -459,24 +451,31 @@ func TestPhotoMetadataMatchDensity(t *testing.T) {
 	} {
 		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true}).compile(t.Context(), compilerQuery(t, fmt.Sprintf(`camera:%q`, tc.value)), queryResolver{q: s.db})
 		require.NoError(t, err)
-		rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
-		require.NoError(t, err)
-		scan := false
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-			scan = scan || strings.Contains(detail, "SCAN p")
-		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		require.Equal(t, tc.scan, scan, tc.value)
+		plan := explainQueryPlan(t, s, "SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
+		require.Equal(t, tc.scan, strings.Contains(plan, "SCAN p"), tc.value)
 		ids := compiledFixtureIDs(t, s.db, compiled, "")
 		if tc.scan {
 			require.Empty(t, ids)
 		} else {
 			require.Equal(t, []int64{node.ID}, ids)
 		}
+	}
+	for i := range 8 {
+		other := browsePhotoNode(t, s, fmt.Sprintf("document-%d.txt", i), browseHash(fmt.Sprint("density-document", i)), "text/plain")
+		browsePhotoMetadata(t, s, other, "document-fields", photoMetadataField("title", "pdf.info", "Title", photoString("Document")))
+	}
+	dense, err = (queryResolver{q: s.db}).photoMetadataHeadsFirst(t.Context(), `Camera "A"`)
+	require.NoError(t, err)
+	require.False(t, dense)
+	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true}).compile(t.Context(), compilerQuery(t, `camera:"Camera \"A\""`), queryResolver{q: s.db})
+	require.NoError(t, err)
+	plan := explainQueryPlan(t, s, "SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
+	require.Contains(t, plan, "SCAN p")
+	for i := range 7 {
+		browsePhotoMetadata(t, s, node, fmt.Sprint("mixed-density", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(`Camera "A"`)))
+		dense, err = (queryResolver{q: s.db}).photoMetadataHeadsFirst(t.Context(), `Camera "A"`)
+		require.NoError(t, err)
+		require.Equal(t, i == 6, dense)
 	}
 }
 
@@ -501,7 +500,7 @@ func TestPhotoMetadataMatchDensityLazy(t *testing.T) {
 		{"", true, 0}, {"iso:100", true, 0}, {`gps:"-1,-1,1,1"`, true, 0},
 		{"camera:A", false, 0}, {"camera:A", true, 1},
 		{"camera:A OR camera:B OR lens:C OR location:Paris", true, 4},
-		{"camera:A OR camera:A OR lens:A OR location:A", true, 1},
+		{"camera:A OR camera:A OR lens:A OR location:A", true, 4},
 	} {
 		q := &photoMetadataCountingQuerier{rowQuerier: s.db}
 		_, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: tc.set}).compile(t.Context(), compilerQuery(t, tc.text), queryResolver{q: q})

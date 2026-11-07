@@ -69,12 +69,11 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
-	photoDisplayMetadata    bool
-	photoMetadataSet        bool
-	photoMetadataHeadsFirst bool
-	photoMetadataDensity    func(string) (bool, error)
-	pdfOnly                 bool
-	photoHidden             bool
+	photoDisplayMetadata bool
+	photoMetadataSet     bool
+	photoMetadataDensity func(string) (bool, error)
+	pdfOnly              bool
+	photoHidden          bool
 }
 
 func (c queryCompiler) compile(
@@ -85,16 +84,8 @@ func (c queryCompiler) compile(
 		return CompiledQuery{}, err
 	}
 	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
-		values := make(map[string]bool)
 		c.photoMetadataDensity = func(value string) (bool, error) {
-			if headsFirst, ok := values[value]; ok {
-				return headsFirst, nil
-			}
-			headsFirst, err := r.photoMetadataHeadsFirst(ctx, value)
-			if err == nil {
-				values[value] = headsFirst
-			}
-			return headsFirst, err
+			return r.photoMetadataHeadsFirst(ctx, value)
 		}
 	}
 	predicate, err := c.compileResolvedQuery(resolved)
