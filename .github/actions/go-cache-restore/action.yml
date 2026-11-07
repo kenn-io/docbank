@@ -76,6 +76,19 @@ runs:
       shell: bash
       run: echo "GO_CACHE_HIT=${{ steps.restore.outputs.cache-hit }}" >> "$GITHUB_ENV"
 
+    - name: Measure restored cache directories
+      shell: bash
+      run: |
+        labels=(build module extra-path)
+        index=0
+        while IFS= read -r path; do
+          path="${path/#\~/$HOME}"
+          path="${path//\\//}"
+          printf 'Restored %s cache (KiB):\n' "${labels[$index]}"
+          if [ -d "$path" ]; then du -sk "$path"; else echo absent; fi
+          index=$((index + 1))
+        done <<< "$GO_CACHE_PATHS"
+
     - name: Track cache use for the daily save
       if: >-
         inputs.save-owner == 'true'
