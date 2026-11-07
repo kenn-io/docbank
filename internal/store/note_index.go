@@ -453,3 +453,38 @@ func (s *Store) PublishNoteIndex(ctx context.Context, g NoteIndexGeneration) err
 		return err
 	})
 }
+
+// NoteIndexSource returns one staged exact identity and validated parser record.
+func (s *Store) NoteIndexSource(ctx context.Context, g NoteIndexGeneration, sourceRef string) (PublishedNoteIdentity, NoteParseRecord, error) {
+	if ValidatePushRef(sourceRef) != nil {
+		return PublishedNoteIdentity{}, NoteParseRecord{}, ErrInvalidNoteProjection
+	}
+	var identity PublishedNoteIdentity
+	var record NoteParseRecord
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		sealed, _, err := readNoteIndexTx(ctx, tx, g)
+		if err != nil {
+			return err
+		}
+		if !sealed {
+			return ErrNoteIndexIncomplete
+		}
+		identity, _, err = s.noteIndexSourceTx(ctx, tx, g, sourceRef)
+		if err != nil {
+			return err
+		}
+		var found bool
+		record, found, err = noteParseForVersionTx(ctx, tx, identity.ContentVersionID, g.ParserRecipe)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrNoteIndexIncomplete
+		}
+		return nil
+	})
+	if err != nil {
+		return PublishedNoteIdentity{}, NoteParseRecord{}, err
+	}
+	return identity, record, nil
+}

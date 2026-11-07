@@ -250,6 +250,10 @@ func checkNoteIndexBackend(t *testing.T, s *Store) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "note.md", rows[0].SourceRef)
+	identity, record, err := s.NoteIndexSource(t.Context(), g, "note.md")
+	require.NoError(t, err)
+	require.Equal(t, notes[0].source.Identity, identity)
+	require.Equal(t, notes[0].parse, record)
 	require.NoError(t, s.StageNoteIndexEdges(t.Context(), g, "note.md", nil))
 	require.NoError(t, s.PublishNoteIndex(t.Context(), g))
 }
