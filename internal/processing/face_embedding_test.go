@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/packstore"
@@ -390,14 +391,46 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 			reader.opens = 0
 			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
 			require.NoError(t, err)
-			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
+			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true, nil)
 			require.NoError(t, err)
 			require.Equal(t, 5, reader.opens, "grouping reads all five payloads")
 			_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
 			require.NoError(t, err)
-			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
+			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true, nil)
 			require.NoError(t, err)
 			require.Equal(t, 14, reader.opens, "each operation reads only its own payloads")
+			index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+				Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
+				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+					return x.f.catalog.ReadVectorIndexVectorSet(ctx, x.f.blobs, member)
+				},
+			})
+			require.NoError(t, err)
+			spaces, err := x.f.catalog.ListVectorIndexSpaces(ctx)
+			require.NoError(t, err)
+			_, err = index.Rebuild(ctx, spaces[0])
+			require.NoError(t, err)
+			reader.opens = 0
+			indexed, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
+			require.NoError(t, err)
+			require.Equal(t, people, indexed, "the index preserves exact ordering and continuation")
+			require.Zero(t, reader.opens, "all current rows are in the built index")
+			late := x.f.addPhoto(t, "late-named.jpg", 705)
+			lateFace, _, err := x.f.catalog.CreatePhotoFace(ctx, late, uuid.New().String(), document.FaceBox{Y: .8, Width: .2, Height: .2}, "")
+			require.NoError(t, err)
+			x.worker.reconcileAt = time.Time{}
+			_, err = x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			newPerson, err := x.f.catalog.CreatePerson(ctx, "Aaron", "operator")
+			require.NoError(t, err)
+			_, err = x.f.catalog.DecidePhotoFace(ctx, late, store.PhotoFaceDecisionRequest{Action: "name", FaceID: lateFace.FaceID, Revision: 1, PersonID: newPerson.PersonID})
+			require.NoError(t, err)
+			reader.opens = 0
+			current, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
+			require.NoError(t, err)
+			require.Equal(t, newPerson.PersonID, current[0].PersonID, "the unindexed named face contributes immediately")
+			require.Equal(t, 1, reader.opens, "only the photo missing from the index reads its file")
 		})
 	}
 }

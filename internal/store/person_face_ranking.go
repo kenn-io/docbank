@@ -33,7 +33,19 @@ func (s *Store) peopleForFaceTx(ctx context.Context, tx *sql.Tx, options PeopleS
 	if hiddenErr != nil && !errors.Is(hiddenErr, ErrHiddenLocked) {
 		return nil, hiddenErr
 	}
-	vectors, err := s.FaceMatchingVectors(ctx, options.FaceReader, snapshot, hiddenErr == nil)
+	var indexes []*vectorindex.Generation
+	if prefix == "" {
+		heads, err := vectorHeads(ctx, tx, "face")
+		if err != nil {
+			return nil, err
+		}
+		reader, err := s.openVectorReader(ctx, tx, heads)
+		if err != nil {
+			return nil, err
+		}
+		indexes = reader.indexes
+	}
+	vectors, err := s.FaceMatchingVectors(ctx, options.FaceReader, snapshot, hiddenErr == nil, indexes)
 	if err != nil && !errors.Is(err, ErrVectorSetUnavailable) {
 		return nil, err
 	}

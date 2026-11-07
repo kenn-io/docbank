@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
-// photoStackVectorReader holds the immutable image generations selected for one grouping request.
+// photoStackVectorReader holds the immutable generations selected for one request.
 type photoStackVectorReader struct {
 	indexes   []*vectorindex.Generation
 	heads     map[string]string
@@ -33,8 +33,12 @@ type photoStackOpenedGeneration struct {
 	index *vectorindex.Generation
 }
 
-func photoStackVectorHeads(ctx context.Context, q metadataQuerier) (heads map[string]string, err error) {
-	rows, err := q.QueryContext(ctx, `SELECT h.vector_space_id,h.generation_id FROM vector_index_heads h JOIN embedding_vector_spaces s ON s.vector_space_id=h.vector_space_id WHERE s.metric IN ('cosine','dot_product') AND EXISTS(SELECT 1 FROM embedding_heads e WHERE e.vector_space_id=h.vector_space_id AND e.input_kind='image')`)
+func vectorHeads(ctx context.Context, q metadataQuerier, kind string) (heads map[string]string, err error) {
+	metric := ""
+	if kind == "image" {
+		metric = " AND s.metric IN ('cosine','dot_product')"
+	}
+	rows, err := q.QueryContext(ctx, `SELECT h.vector_space_id,h.generation_id FROM vector_index_heads h JOIN embedding_vector_spaces s ON s.vector_space_id=h.vector_space_id WHERE EXISTS(SELECT 1 FROM embedding_heads e WHERE e.vector_space_id=h.vector_space_id AND e.input_kind=$1)`+metric, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -51,17 +55,21 @@ func photoStackVectorHeads(ctx context.Context, q metadataQuerier) (heads map[st
 }
 
 func (s *Store) newPhotoStackVectorReader(ctx context.Context, q metadataQuerier) (*photoStackVectorReader, error) {
-	heads, err := photoStackVectorHeads(ctx, q)
+	heads, err := vectorHeads(ctx, q, "image")
 	if err != nil {
 		return nil, err
 	}
+	return s.openVectorReader(ctx, q, heads)
+}
+
+func (s *Store) openVectorReader(ctx context.Context, q metadataQuerier, heads map[string]string) (*photoStackVectorReader, error) {
 	reader := &photoStackVectorReader{heads: heads}
 	s.photoStackVectorsMu.Lock()
 	if s.photoStackVectors == nil {
 		s.photoStackVectors = make(map[string]photoStackOpenedGeneration)
 	}
 	for space, opened := range s.photoStackVectors {
-		if heads[space] != opened.id {
+		if id, present := heads[space]; present && id != opened.id {
 			delete(s.photoStackVectors, space)
 		}
 	}

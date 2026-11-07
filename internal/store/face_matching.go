@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
@@ -63,9 +64,9 @@ func (s *Store) faceRankingInputsTx(ctx context.Context, tx *sql.Tx, faceID, can
 	return FaceMatchingSnapshot{Sets: sets}, nil
 }
 
-// FaceMatchingVectors decodes immutable payloads for the current operation.
+// FaceMatchingVectors reads exact immutable vectors for the current operation.
 // Hidden membership is projected after the caller's source authorization.
-func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobReader, snapshot FaceMatchingSnapshot, includeHidden bool) ([]FaceVector, error) {
+func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobReader, snapshot FaceMatchingSnapshot, includeHidden bool, indexes []*vectorindex.Generation) ([]FaceVector, error) {
 	var vectors []FaceVector
 	var unavailable error
 	seen := map[string]bool{}
@@ -76,15 +77,11 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		if !includeHidden && len(item.Faces) > 0 && item.Faces[0].Hidden {
 			continue
 		}
-		data, err := s.ReadVectorIndexVectorSet(ctx, reader, VectorIndexMember{EmbeddingSetID: item.Set.ID, VectorSetID: item.Set.VectorSet.ID, PayloadBlobHash: item.Set.VectorSet.PayloadBlobHash, PayloadSize: item.Set.VectorSet.PayloadSize})
+		decoded, err := s.faceVectorSet(ctx, reader, item.Set, indexes)
 		if errors.Is(err, ErrVectorSetUnavailable) {
 			unavailable = fmt.Errorf("%w", cmp.Or(unavailable, err))
 			continue
 		}
-		if err != nil {
-			return nil, err
-		}
-		decoded, err := ValidateReusableEmbeddingPayload(item.Set, data)
 		if err != nil {
 			return nil, err
 		}
@@ -102,6 +99,32 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		}
 	}
 	return vectors, unavailable
+}
+
+func (s *Store) faceVectorSet(ctx context.Context, reader RenditionBlobReader, set EmbeddingSetRecord, indexes []*vectorindex.Generation) (document.VectorSetV1, error) {
+	for _, index := range indexes {
+		if index.VectorSpaceID() != set.VectorSpace.ID {
+			continue
+		}
+		identities := make([]vectorindex.RowIdentity, len(set.VectorSet.rows))
+		for i, row := range set.VectorSet.rows {
+			identities[i] = vectorindex.RowIdentity{SetID: set.VectorSet.ID, InputKey: row.InputID, InputChecksum: row.Checksum}
+		}
+		rows := index.RowVectors(identities)
+		if len(rows) == len(identities) {
+			result := document.VectorSetV1{}
+			for _, identity := range identities {
+				result.InputKeys = append(result.InputKeys, identity.InputKey)
+				result.Vectors = append(result.Vectors, rows[identity])
+			}
+			return result, nil
+		}
+	}
+	data, err := s.ReadVectorIndexVectorSet(ctx, reader, VectorIndexMember{EmbeddingSetID: set.ID, VectorSetID: set.VectorSet.ID, PayloadBlobHash: set.VectorSet.PayloadBlobHash, PayloadSize: set.VectorSet.PayloadSize})
+	if err != nil {
+		return document.VectorSetV1{}, err
+	}
+	return ValidateReusableEmbeddingPayload(set, data)
 }
 func FacePersonCentroids(vectors []FaceVector, includeHidden bool) []FaceCentroid {
 	groups := map[string][]FaceVector{}

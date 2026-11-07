@@ -154,7 +154,7 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 		if snapshot.Signature == service.faceSuggestionsSignature {
 			return nil
 		}
-		vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
+		vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true, nil)
 		if unavailable != nil && !errors.Is(unavailable, store.ErrVectorSetUnavailable) {
 			return unavailable
 		}
