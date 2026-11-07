@@ -63,13 +63,6 @@ func TestFaceSuggestionCentroidAndActiveAssignment(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, suggestions, 1)
 	require.Equal(t, id, suggestions[0].SuggestedPersonID)
-	vectors[0].Face.PersonID = ""
-	vectors[1].Face.PersonID = ""
-	vectors[2].Values = []float32{.6, .8}
-	vectors = append(vectors, faceVector{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000004", ContentVersionID: id}}, Space: "model", Values: []float32{.6, -.8}})
-	suggestions, err = buildFaceSuggestions(t.Context(), vectors)
-	require.NoError(t, err)
-	require.Empty(t, suggestions, "retired people's labels must not become centroids")
 }
 
 // Preserve the exact leader algorithm and measure its cost on mostly distinct

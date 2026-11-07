@@ -42,6 +42,24 @@ func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	require.Len(t, page.Items[0].Faces, 2)
 	id := page.Items[0].CandidateID
 	path := "/api/v1/people/face-candidates/" + id + "/decision"
+	browser["If-Match"] = `"1"`
+	oversize := make([]string, 49)
+	for i := range oversize {
+		oversize[i] = uuid.New().String()
+	}
+	for _, tc := range []struct {
+		name, message string
+		faces         []string
+	}{
+		{"duplicate", "invalid_person", []string{page.Items[0].Faces[0].FaceID, page.Items[0].Faces[0].FaceID}},
+		{"oversize", "expected array length <= 48", oversize},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, path, browser, api.FaceCandidateDecisionRequest{Action: "new_person", DisplayName: "Ada", FaceIDs: tc.faces})
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Contains(t, body, tc.message)
+		})
+	}
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))

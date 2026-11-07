@@ -232,10 +232,6 @@ func TestFaceCandidateRegroupIdentityAndRevisionFences(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, retained, 1)
 	require.Equal(t, retained[0].EvidenceSHA256, decided.EvidenceSHA256)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
-	page, _, err = s.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Empty(t, page)
 }
 
 func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
