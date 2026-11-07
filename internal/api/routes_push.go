@@ -202,7 +202,7 @@ func registerPushUploadOpenAPI(api huma.API) {
 	parameters = append(parameters, &huma.Param{
 		Name: "run_id", In: openAPIQueryLocation, Required: true,
 		Description: "UUIDv4 naming the client's scan; every file one run accepts joins one ingest run",
-		Schema:      &huma.Schema{Type: openAPIStringType, Format: "uuid"},
+		Schema:      &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat},
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "uploadPushFile", Method: http.MethodPost, Path: pushUploadPath,

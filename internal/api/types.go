@@ -14,6 +14,7 @@ import (
 const (
 	openAPIStringType   = "string"
 	openAPIBinaryFormat = "binary"
+	openAPIUUIDFormat   = "uuid"
 )
 const openAPIQueryLocation = "query"
 const openAPIPathLocation = "path"

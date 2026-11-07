@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
@@ -27,7 +27,7 @@ func newProcessingFacesCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Face suggestions enabled.")
+		_, err = io.WriteString(cmd.OutOrStdout(), "Face suggestions enabled.\n")
 		return err
 	}}
 }

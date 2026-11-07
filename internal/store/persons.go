@@ -261,14 +261,14 @@ func personDerivedExactIdentitySQL(alias string) string {
 // people. It binds visibleOnly, then hideLocked twice. Its correlated
 // subqueries use the person index. visiblePersonByIDSQL applies the same rule
 // to one person.
-func personVisibleSQL(person string, bindings [3]string) string {
-	return `(` + bindings[0] + `=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
-		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
-		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
+func personVisibleSQL(bindings [3]string) string {
+	return `(` + bindings[0] + `=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
+		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
+		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=persons.person_id
 			AND ` + personDerivedExactIdentitySQL("i") + `)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a
-		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", bindings[1]) + `) OR EXISTS(
-		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
+		WHERE a.person_id=persons.person_id AND ` + personVisibleAssertionSQL("a", bindings[1]) + `) OR EXISTS(
+		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
 		AND ` + personVisibleActorSQL("p", bindings[2]) + `))`
 }
 
@@ -375,7 +375,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
-			candidates += personVisibleSQL("persons.person_id", [3]string{"?", "?", "?"}) + " AND "
+			candidates += personVisibleSQL([3]string{"?", "?", "?"}) + " AND "
 			args = append(args, true, hideLocked, hideLocked)
 		}
 		if options.FaceID != "" {
@@ -423,7 +423,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 	joins, where := personPhotoSource(!hideLocked)
 	walkCandidates, walkArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
 	if visibleOnly && !photosOnly {
-		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id", [3]string{"?", "?", "?"}) + ") AND "
+		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL([3]string{"?", "?", "?"}) + ") AND "
 		walkArgs = append(walkArgs, true, hideLocked, hideLocked)
 	}
 	if photosOnly {
@@ -456,7 +456,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if photosOnly {
 			eligible += "own IS NOT NULL AND "
 		} else if visibleOnly {
-			eligible += personVisibleSQL("persons.person_id", [3]string{"?", "?", "?"}) + " AND "
+			eligible += personVisibleSQL([3]string{"?", "?", "?"}) + " AND "
 			matchArgs = append(slices.Clone(matchArgs), true, hideLocked, hideLocked)
 		}
 		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + `

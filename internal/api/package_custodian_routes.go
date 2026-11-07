@@ -26,9 +26,9 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 		}}
 	}
 	packageID := &huma.Param{Name: "package_id", In: openAPIPathLocation, Required: true,
-		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
+		Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}
 	assignmentID := &huma.Param{Name: "assignment_id", In: openAPIPathLocation, Required: true,
-		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
+		Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}}
 	limit := &huma.Param{Name: packageLimitParameter, In: openAPIQueryLocation,
 		Schema: &huma.Schema{Type: "integer", Default: 100, Minimum: new(float64(1)), Maximum: new(float64(250))}}
 	cursor := &huma.Param{Name: "cursor", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}
@@ -36,7 +36,7 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",
 			Parameters: []*huma.Param{{Name: "query", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}, limit, cursor,
 				{Name: "photo_summary", In: openAPIQueryLocation, Description: "Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.", Schema: &huma.Schema{Type: "boolean"}},
-				{Name: "face_id", In: openAPIQueryLocation, Description: "Rank people by similarity to this face", Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}},
+				{Name: "face_id", In: openAPIQueryLocation, Description: "Rank people by similarity to this face", Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIUUIDFormat}},
 				{Name: "recent_first", In: openAPIQueryLocation, Description: "Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.", Schema: &huma.Schema{Type: "boolean"}}},
 			Responses: map[string]*huma.Response{"200": jsonResponse("Bounded person candidates", reflect.TypeFor[PersonPage]()), "422": errorResponse}},
 		{OperationID: "listPackageCustodians", Method: http.MethodGet, Path: "/api/v1/packages/by-id/{package_id}/custodians",

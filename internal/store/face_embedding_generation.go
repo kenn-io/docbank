@@ -105,16 +105,16 @@ func faceEmbeddingMissingTx(ctx context.Context, tx *sql.Tx, version, profile st
 	if err != nil {
 		return false, err
 	}
+	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
 			return false, err
 		}
 		ids = append(ids, id)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := rows.Err(); err != nil {
 		return false, err
 	}
 	for _, id := range ids {

@@ -39,12 +39,12 @@ func emailNavigationBrowserReadAllowed(r *http.Request) bool {
 			q.ChildVersionID = entries[0]
 		case "after_operation_id":
 			q.AfterOperationID = entries[0]
-		case "after_order", "limit":
+		case "after_order", packageLimitParameter:
 			n, err := strconv.Atoi(entries[0])
 			if err != nil || n < 1 {
 				return false
 			}
-			if key == "limit" {
+			if key == packageLimitParameter {
 				q.Limit = n
 			} else {
 				q.AfterOrder = n

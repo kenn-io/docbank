@@ -663,7 +663,7 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	}
 	if work.Binding.InputKind == document.EmbeddingInputFace && !slices.ContainsFunc(result.Vectors, func(v document.EmbeddingVector) bool { return v.Values != nil }) {
 		completer, ok := worker.catalog.(interface {
-			CompleteUnmatchedFaceWork(context.Context, store.EmbeddingJobClaim, store.EmbeddingJobWork, store.EmbeddingAttemptReceipt, time.Time) error
+			CompleteUnmatchedFaceWork(ctx context.Context, claim store.EmbeddingJobClaim, work store.EmbeddingJobWork, receipt store.EmbeddingAttemptReceipt, now time.Time) error
 		})
 		if !ok {
 			return ErrEmbeddingPersistence

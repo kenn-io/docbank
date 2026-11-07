@@ -12,6 +12,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/localface"
@@ -47,10 +48,12 @@ func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture
 	x.inputs, _, _, err = f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
 	require.NoError(t, err)
 	server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/faces", r.URL.Path)
+		assert.Equal(t, "/v1/faces", r.URL.Path)
 		var request embedclient.FaceRequest
-		require.NoError(t, json.UnmarshalRead(r.Body, &request))
-		require.NotEmpty(t, request.Image)
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+			return
+		}
+		assert.NotEmpty(t, request.Image)
 		x.calls++
 		x.boxes = append(x.boxes, request.Boxes...)
 		reply := embedclient.FaceResponse{Model: embedclient.FaceModel, Revision: embedclient.FaceRevision, Recipe: embedclient.FaceRecipe, Data: make([]embedclient.FaceResult, len(request.Boxes))}
@@ -64,7 +67,7 @@ func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture
 				}
 			}
 		}
-		require.NoError(t, json.MarshalWrite(w, reply, json.FormatNilSliceAsNull(true)))
+		assert.NoError(t, json.MarshalWrite(w, reply, json.FormatNilSliceAsNull(true)))
 	}))
 	server.Start()
 	profile, descriptor, err := config.LocalFaces()
@@ -79,6 +82,7 @@ func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture
 	return x
 }
 func TestFaceEmbeddingConsentBoxesAndNilResults(t *testing.T) {
+	t.Parallel()
 	for _, unmatched := range []bool{false, true} {
 		t.Run(map[bool]string{false: "mixed", true: "all nil"}[unmatched], func(t *testing.T) {
 			x := newFaceEmbeddingFixture(t, unmatched)
@@ -131,6 +135,7 @@ func TestFaceEmbeddingConsentBoxesAndNilResults(t *testing.T) {
 	}
 }
 func TestFaceEmbeddingAddedBoxFencesVectors(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
 	x.f.grant(t, x.service, config.LocalFacesProfile)
@@ -148,6 +153,7 @@ func TestFaceEmbeddingAddedBoxFencesVectors(t *testing.T) {
 }
 
 func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
 	version := x.f.addPhoto(t, "healthy.jpg", 720)
@@ -177,6 +183,7 @@ func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 }
 
 func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
 	_, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
@@ -207,6 +214,7 @@ func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
 }
 
 func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
@@ -250,6 +258,7 @@ func TestFaceSuggestionsRebuildAndRestoreDecisions(t *testing.T) {
 }
 
 func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
@@ -308,6 +317,7 @@ func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
 }
 
 func TestFacePeopleRankingObeysHiddenScopeAndRenaming(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
@@ -350,6 +360,7 @@ func TestFacePeopleRankingObeysHiddenScopeAndRenaming(t *testing.T) {
 // picker searches without replacing the ranking or matching implementation.
 type facePayloadReads struct {
 	store.RenditionBlobReader
+
 	opens int
 }
 
@@ -358,6 +369,7 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 func TestFaceMatchingSnapshotAndPayloadReuse(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()

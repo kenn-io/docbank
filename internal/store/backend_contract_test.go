@@ -308,8 +308,8 @@ var backendSuites = []backendSuite{
 		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
 		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
 		{"PreviewBatchRecipes", func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newPostgresQueryStore) }},
-		{"FaceCandidateCatalogReads", func(t *testing.T) { checkFaceCandidateCatalogReads(t, false) }, func(t *testing.T) { checkFaceCandidateCatalogReads(t, true) }},
-		{"FaceMemberGridPreviews", func(t *testing.T) { checkFaceMemberGridPreviews(t, newTestStore) }, func(t *testing.T) { checkFaceMemberGridPreviews(t, newPostgresQueryStore) }},
+		{"FaceCandidateCatalogReads", func(t *testing.T) { t.Helper(); checkFaceCandidateCatalogReads(t, false) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCatalogReads(t, true) }},
+		{"FaceMemberGridPreviews", func(t *testing.T) { t.Helper(); checkFaceMemberGridPreviews(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceMemberGridPreviews(t, newPostgresQueryStore) }},
 		{"MissingPhotoVisualPreviewTargetsAfter", func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newPostgresQueryStore) }},
 		{"VisualPreviewPublicationIsExactVersionAndIdempotent", func(t *testing.T) {
 			t.Helper()

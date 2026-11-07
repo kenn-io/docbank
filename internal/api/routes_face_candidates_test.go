@@ -14,6 +14,7 @@ import (
 )
 
 func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader("synthetic photo"))

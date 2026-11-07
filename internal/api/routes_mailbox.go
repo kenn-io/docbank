@@ -112,11 +112,11 @@ func mailboxPage(r *http.Request) (string, int, error) {
 	limit := 100
 	after := r.URL.Query().Get("after")
 	for k, v := range r.URL.Query() {
-		if len(v) != 1 || (k != "after" && k != "limit") {
+		if len(v) != 1 || (k != "after" && k != packageLimitParameter) {
 			return "", 0, store.ErrMailboxInvalid
 		}
 	}
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := r.URL.Query().Get(packageLimitParameter); v != "" {
 		var err error
 		limit, err = strconv.Atoi(v)
 		if err != nil {

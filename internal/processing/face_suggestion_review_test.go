@@ -17,6 +17,7 @@ import (
 )
 
 func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
@@ -28,7 +29,7 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	evidence, err := json.Marshal([]store.PersonCandidateOccurrence{{ContentVersionID: x.f.node.CurrentVersionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "capacity"}})
 	require.NoError(t, err)
 	candidate, retained, err := x.f.catalog.OpenPersonCandidate(ctx, tx, store.PersonMatchCandidate{ActorKey: "name_alias:capacity", DisplayName: "Capacity", Reason: "name_only", Evidence: evidence})
@@ -65,6 +66,7 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 }
 
 func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
+	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
