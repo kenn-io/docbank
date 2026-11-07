@@ -279,6 +279,10 @@ func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
 	id := uuid.New().String()
 	_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at) VALUES($1,$2,$3,'face_match',$4,$5,2,1,'open',$6)`, id, candidate.ActorKey, candidate.DisplayName, string(candidate.Evidence), candidate.EvidenceSHA256, "2026-01-01T00:00:00Z")
 	require.NoError(t, err)
+	for _, face := range faces {
+		_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_candidate_faces(candidate_id,face_id,content_version_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, face.FaceID, face.ContentVersionID)
+		require.NoError(t, err)
+	}
 	page, total, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)
@@ -288,6 +292,12 @@ func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
 	for _, face := range page[0].Faces {
 		require.Equal(t, node.CurrentVersionID, face.ContentVersionID)
 	}
+	_, err = seed.ExecContext(ctx, `UPDATE `+prefix+`photo_assets SET excluded_at=$1 WHERE asset_id=(SELECT asset_id FROM `+prefix+`photo_files WHERE node_id=$2)`, "2026-01-02T00:00:00Z", node.ID)
+	require.NoError(t, err)
+	page, total, err = s.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, page)
+	require.Zero(t, total)
 }
 
 func faceMatchingSignature(t *testing.T, s *Store) string {
@@ -295,4 +305,33 @@ func faceMatchingSignature(t *testing.T, s *Store) string {
 	snapshot, err := s.FaceMatchingInputs(t.Context())
 	require.NoError(t, err)
 	return snapshot.Signature
+}
+
+func TestFaceCandidatesOmitUnavailableSourcesBeforePaging(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"trash", "exclude"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			node, first := faceForDecisionTest(t, s, "")
+			second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+			require.NoError(t, err)
+			group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+			require.NoError(t, err)
+			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}))
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			if action == "trash" {
+				_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
+			} else {
+				_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+			}
+			require.NoError(t, err)
+			page, total, err := s.FaceCandidates(ctx, 1, 0)
+			require.NoError(t, err)
+			require.Empty(t, page)
+			require.Zero(t, total)
+		})
+	}
 }

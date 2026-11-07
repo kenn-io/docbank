@@ -12,62 +12,108 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+// FaceMatchDistance follows Kit's expanded AuraFace acceptance corpus in docs/kennembed.md.
 const FaceMatchDistance = 1.189402
 
 type faceVector = store.FaceVector
 
-func buildFaceSuggestions(vectors []faceVector) ([]store.PersonMatchCandidate, error) {
+const faceSuggestionComparisonBatch = 64_000
+
+type faceSuggestionGroup struct {
+	person, name, space string
+	faces               []store.FaceSuggestionFace
+	leader              []float32
+}
+
+type faceSuggestionPass struct {
+	signature                      string
+	revision                       uint64
+	incomplete                     bool
+	vectors                        []faceVector
+	centroids                      []store.FaceCentroid
+	groups                         []faceSuggestionGroup
+	known                          map[string]int
+	face, centroid, group, closest int
+	distance                       float64
+}
+
+func newFaceSuggestionPass(vectors []faceVector) *faceSuggestionPass {
 	slices.SortFunc(vectors, func(a, b faceVector) int { return strings.Compare(a.Face.FaceID, b.Face.FaceID) })
-	centroids := store.FacePersonCentroids(vectors)
-	type group struct {
-		person, name, space string
-		faces               []store.FaceSuggestionFace
-		leader              []float32
-	}
-	var groups []group
-	known := map[string]int{}
-	for _, v := range vectors {
+	return &faceSuggestionPass{vectors: vectors, centroids: store.FacePersonCentroids(vectors), known: map[string]int{}, closest: -1, distance: FaceMatchDistance}
+}
+
+// advance preserves the exact leader order while releasing the maintenance gate
+// after at most budget comparisons. No partial candidates are published.
+func (p *faceSuggestionPass) advance(ctx context.Context, budget int) (bool, error) {
+nextFace:
+	for p.face < len(p.vectors) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		v := p.vectors[p.face]
 		if v.Face.AssertionID != "" || v.Face.Dismissed {
+			p.face++
 			continue
 		}
-		closest := -1
-		distance := FaceMatchDistance
-		for i, c := range centroids {
+		for p.centroid < len(p.centroids) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			if budget == 0 {
+				return false, nil
+			}
+			budget--
+			i := p.centroid
+			p.centroid++
+			c := p.centroids[i]
 			if c.Space != v.Space || slices.Contains(v.Face.RejectedPersonIDs, c.Person) {
 				continue
 			}
 			d := vectorindex.Euclidean(v.Values, c.Values)
-			if d < distance || closest < 0 && d == distance {
-				closest, distance = i, d
+			if d < p.distance || p.closest < 0 && d == p.distance {
+				p.closest, p.distance = i, d
 			}
 		}
-		if closest >= 0 {
-			c := centroids[closest]
+		if p.closest >= 0 {
+			c := p.centroids[p.closest]
 			key := c.Space + "\x00" + c.Person
-			i, ok := known[key]
+			i, ok := p.known[key]
 			if !ok {
-				i = len(groups)
-				known[key] = i
-				groups = append(groups, group{person: c.Person, name: c.Name, space: c.Space})
+				i = len(p.groups)
+				p.known[key] = i
+				p.groups = append(p.groups, faceSuggestionGroup{person: c.Person, name: c.Name, space: c.Space})
 			}
-			groups[i].faces = append(groups[i].faces, v.Face)
-			continue
-		}
-		selected := -1
-		for i, g := range groups {
-			if g.person == "" && g.space == v.Space && vectorindex.Euclidean(v.Values, g.leader) <= FaceMatchDistance {
-				selected = i
-				break
+			p.groups[i].faces = append(p.groups[i].faces, v.Face)
+		} else {
+			for p.group < len(p.groups) {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
+				if budget == 0 {
+					return false, nil
+				}
+				budget--
+				i := p.group
+				p.group++
+				g := p.groups[i]
+				if g.person == "" && g.space == v.Space && vectorindex.Euclidean(v.Values, g.leader) <= FaceMatchDistance {
+					p.groups[i].faces = append(p.groups[i].faces, v.Face)
+					p.face++
+					p.centroid, p.group, p.closest, p.distance = 0, 0, -1, FaceMatchDistance
+					continue nextFace
+				}
 			}
+			p.groups = append(p.groups, faceSuggestionGroup{space: v.Space, leader: v.Values, faces: []store.FaceSuggestionFace{v.Face}})
 		}
-		if selected < 0 {
-			selected = len(groups)
-			groups = append(groups, group{space: v.Space, leader: v.Values})
-		}
-		groups[selected].faces = append(groups[selected].faces, v.Face)
+		p.face++
+		p.centroid, p.group, p.closest, p.distance = 0, 0, -1, FaceMatchDistance
 	}
+	return true, nil
+}
+
+func (p *faceSuggestionPass) candidates() ([]store.PersonMatchCandidate, error) {
 	var candidates []store.PersonMatchCandidate
-	for _, g := range groups {
+	for _, g := range p.groups {
 		if g.person == "" && len(g.faces) < 2 {
 			continue
 		}
@@ -94,32 +140,54 @@ func buildFaceSuggestions(vectors []faceVector) ([]store.PersonMatchCandidate, e
 func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	service.faceSuggestionsMu.Lock()
 	defer service.faceSuggestionsMu.Unlock()
-	snapshot, err := service.catalog.FaceMatchingInputs(ctx)
-	if err != nil || snapshot.Signature == service.faceSuggestionsSignature {
+	revision := service.catalog.WriteRevision()
+	pass := service.faceSuggestionsPending
+	if pass == nil || pass.revision != revision {
+		snapshot, err := service.catalog.FaceMatchingInputs(ctx)
+		if err != nil {
+			return err
+		}
+		if snapshot.Signature == service.faceSuggestionsSignature {
+			service.faceSuggestionsPending = nil
+			return nil
+		}
+		if pass == nil || pass.signature != snapshot.Signature {
+			vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
+			if unavailable != nil && !errors.Is(unavailable, store.ErrVectorSetUnavailable) {
+				return unavailable
+			}
+			pass = newFaceSuggestionPass(vectors)
+			pass.signature, pass.incomplete = snapshot.Signature, unavailable != nil
+			service.faceSuggestionsPending = pass
+		}
+		pass.revision = revision
+	}
+	done, err := pass.advance(ctx, faceSuggestionComparisonBatch)
+	if err != nil || !done {
 		return err
 	}
-	vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
-	if unavailable != nil && !errors.Is(unavailable, store.ErrVectorSetUnavailable) {
-		return unavailable
-	}
-	candidates, err := buildFaceSuggestions(vectors)
+	service.faceSuggestionsPending = nil
+	candidates, err := pass.candidates()
 	if err != nil {
 		return err
 	}
-	if err := service.catalog.ReplaceFaceSuggestions(ctx, snapshot.Signature, candidates); err != nil {
+	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.signature, candidates); err != nil {
 		return err
 	}
-	if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full || unavailable != nil {
+	if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full || pass.incomplete {
 		return err
 	}
-	service.faceSuggestionsSignature = snapshot.Signature
+	service.faceSuggestionsSignature = pass.signature
 	return nil
 }
 func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog.Logger) error {
 	var settled uint64
 	lane := Backfill[string]{Name: "face-suggestions", Page: 1, IdleDelay: time.Second, WriteRevision: service.catalog.WriteRevision, Logger: logger, Mutate: service.gate.MutateContext,
 		List: func(_ context.Context, after string, _ int) ([]string, error) {
-			if after != "" || settled == service.catalog.WriteRevision() {
+			service.faceSuggestionsMu.Lock()
+			pending := service.faceSuggestionsPending != nil
+			service.faceSuggestionsMu.Unlock()
+			if after != "" && !pending || settled == service.catalog.WriteRevision() {
 				return nil, nil
 			}
 			return []string{"faces"}, nil
@@ -127,9 +195,11 @@ func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog
 		Process: func(ctx context.Context, _ string) error {
 			revision := service.catalog.WriteRevision()
 			err := service.rebuildFaceSuggestions(ctx)
-			if err == nil {
+			service.faceSuggestionsMu.Lock()
+			if err == nil && service.faceSuggestionsPending == nil {
 				settled = revision
 			}
+			service.faceSuggestionsMu.Unlock()
 			return err
 		}}
 	return lane.Run(ctx)

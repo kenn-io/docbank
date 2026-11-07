@@ -431,9 +431,11 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
 					continue
 				}
-				missing, err := imageEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				var missing bool
 				if binding.InputKind == document.EmbeddingInputFace {
 					missing, err = faceEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				} else {
+					missing, err = imageEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
 				}
 				if err != nil {
 					return err

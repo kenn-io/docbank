@@ -2,9 +2,13 @@ package processing
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
+	"fmt"
+	"math"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -116,4 +120,74 @@ func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 	for _, face := range groups[0].Faces {
 		require.Equal(t, healthy, face.ContentVersionID)
 	}
+}
+
+func TestFaceSuggestionBatchesResumeAndDiscardChangedInputs(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	x.worker.maxRows = 1000
+	x.worker.maxVectorBlobBytes = 8 << 20
+	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+		values := make([]float32, 512)
+		values[int(math.Round(box.X*1000))/2] = 1
+		return values
+	}
+	ctx := t.Context()
+	var omitted store.PhotoFace
+	for i := range 998 {
+		face, _, err := x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), document.FaceBox{X: float64(i) / 1000, Width: .001, Height: .1}, "")
+		require.NoError(t, err)
+		if i == 0 {
+			omitted = face
+		}
+	}
+	x.f.grant(t, x.service, config.LocalFacesProfile)
+	n, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	first := x.service.faceSuggestionsPending
+	require.NotNil(t, first)
+	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, page, "partial groups must stay unpublished")
+	require.Zero(t, total)
+	_, err = x.f.catalog.CreatePerson(ctx, "Unrelated person", "operator")
+	require.NoError(t, err)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	require.Same(t, first, x.service.faceSuggestionsPending, "unrelated writes must preserve progress")
+	_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: "dismiss"})
+	require.NoError(t, err)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	require.NotNil(t, x.service.faceSuggestionsPending)
+	require.NotSame(t, first, x.service.faceSuggestionsPending, "changed faces must discard stale groups")
+	synctest.Test(t, func(t *testing.T) {
+		laneContext, cancel := context.WithCancel(ctx)
+		finished := make(chan error, 1)
+		go func() { finished <- x.service.FaceSuggestionBackfill(laneContext, nil) }()
+		defer func() {
+			cancel()
+			select {
+			case err := <-finished:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Error("face backfill did not stop")
+			}
+		}()
+		require.Eventually(t, func() bool {
+			_, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+			return err == nil && total == 498
+		}, 10*time.Second, 10*time.Millisecond, "batches must finish without another write")
+		for offset := 0; offset < 498; offset += 250 {
+			page, total, err = x.f.catalog.FaceCandidates(ctx, 250, offset)
+			require.NoError(t, err)
+			require.EqualValues(t, 498, total)
+			for _, group := range page {
+				for _, face := range group.Faces {
+					require.NotEqual(t, omitted.FaceID, face.FaceID)
+				}
+			}
+		}
+	})
 }
