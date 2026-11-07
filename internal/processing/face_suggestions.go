@@ -2,6 +2,7 @@ package processing
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -86,25 +87,29 @@ func buildFaceSuggestions(vectors []faceVector) ([]store.PersonMatchCandidate, e
 	}
 	return candidates, nil
 }
+
+// rebuildFaceSuggestions publishes groups from every available vector. Its
+// signature omits payload availability and queue capacity, so a pass that left
+// either short is not cached and the next write revision retries it.
 func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	service.faceSuggestionsMu.Lock()
 	defer service.faceSuggestionsMu.Unlock()
 	snapshot, err := service.catalog.FaceMatchingInputs(ctx)
-	if err != nil {
+	if err != nil || snapshot.Signature == service.faceSuggestionsSignature {
 		return err
 	}
-	if snapshot.Signature == service.faceSuggestionsSignature {
-		return nil
-	}
-	vectors, err := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
-	if err != nil {
-		return err
+	vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
+	if unavailable != nil && !errors.Is(unavailable, store.ErrVectorSetUnavailable) {
+		return unavailable
 	}
 	candidates, err := buildFaceSuggestions(vectors)
 	if err != nil {
 		return err
 	}
 	if err := service.catalog.ReplaceFaceSuggestions(ctx, snapshot.Signature, candidates); err != nil {
+		return err
+	}
+	if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full || unavailable != nil {
 		return err
 	}
 	service.faceSuggestionsSignature = snapshot.Signature
