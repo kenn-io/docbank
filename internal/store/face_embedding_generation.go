@@ -67,7 +67,7 @@ func validateFaceEmbeddingGenerationTx(ctx context.Context, tx metadataQuerier, 
 
 func liveFaceEmbeddingSource(ctx context.Context, tx metadataQuerier, version string) error {
 	var live bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=$1 AND n.current_version_id=v.version_id AND n.trashed_at IS NULL AND a.kind='photo' AND f.role IN ('image','raw') AND a.excluded_at IS NULL)`, version).Scan(&live); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=$1 AND n.current_version_id=v.version_id AND a.kind='photo' AND f.role IN ('image','raw') AND `+liveIncludedDisplayPredicate+`)`, version).Scan(&live); err != nil {
 		return err
 	}
 	if !live {

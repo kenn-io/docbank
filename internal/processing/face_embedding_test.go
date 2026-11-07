@@ -533,3 +533,28 @@ func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 	require.Len(t, page[0].Faces, 2)
 	require.ElementsMatch(t, []string{x.inputs[0].FaceID, x.inputs[1].FaceID}, []string{page[0].Faces[0].FaceID, page[0].Faces[1].FaceID})
 }
+
+func TestFaceCoverageReportsRunningAndCompletedVectors(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	ctx := t.Context()
+	x.f.grant(t, x.service, config.LocalFacesProfile)
+	fence := SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}
+	var running Coverage
+	var coverageErr error
+	x.onRequest = func() { running, coverageErr = x.service.Coverage(ctx, config.LocalFacesProfile, fence) }
+	_, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	require.NoError(t, coverageErr)
+	require.Len(t, running.Embeddings, 1)
+	assert.Equal(t, 1, running.Embeddings[0].Rebuilding, "inference is running for this version")
+	complete, err := x.service.Coverage(ctx, config.LocalFacesProfile, fence)
+	require.NoError(t, err)
+	require.Len(t, complete.Embeddings, 1)
+	assert.Equal(t, 1, complete.Embeddings[0].Complete, "the current face vectors have published")
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .2, Width: .1, Height: .1}, "")
+	require.NoError(t, err)
+	stale, err := x.service.Coverage(ctx, config.LocalFacesProfile, fence)
+	require.NoError(t, err)
+	assert.Zero(t, stale.Embeddings[0].Complete, "a changed face generation must stop counting as complete")
+}
