@@ -82,6 +82,8 @@ func createTestSimilarityFace(t *testing.T, catalog *testStore, name, personID s
 
 func TestFaceSimilarityRouteKeepsSlowInferenceAlive(t *testing.T) {
 	t.Parallel()
+	// Pinned Huma clears the body-read deadline before inference. Preserve that
+	// behavior without widening the default protection against slow request bodies.
 	synctest.Test(t, func(t *testing.T) {
 		model := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "/v1/faces", r.URL.Path)
