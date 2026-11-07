@@ -403,7 +403,7 @@ func (fixture asrFixture) upload() document.AuthorizedUpload {
 	return &asrTestUpload{AuthorizedUpload: fixture.fixture.upload(), capability: fixture.capability}
 }
 
-func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrFixture {
+func newASRFixture(t *testing.T, mediaType, filename string, source []byte, overrides ...document.RenditionDescriptor) asrFixture {
 	t.Helper()
 	policyFingerprint, err := ASRPolicyFingerprint(100_000)
 	require.NoError(t, err)
@@ -419,6 +419,9 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 	})
 	require.NoError(t, err)
+	if len(overrides) > 0 {
+		descriptor = overrides[0]
+	}
 	digest := sha256.Sum256(source)
 	metadata := document.AuthorizedUploadMetadata{
 		Filename: filename, MediaFamily: "audio", MediaType: mediaType,

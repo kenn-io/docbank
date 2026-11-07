@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/workerprotocol"
 )
 
 // RenditionJobState is the bounded durable execution state exposed to
@@ -578,8 +579,8 @@ func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (Renditio
 }
 
 // ClaimRenditionJob claims or reclaims one exact job. An expired provider
-// phase without a durable provider handle is atomically quarantined for
-// operator resolution instead of being resubmitted.
+// phase without a durable provider handle is quarantined unless its immutable
+// binding qualifies for replay-safe preparation.
 func (s *Store) ClaimRenditionJob(
 	ctx context.Context, jobID, owner string, at time.Time, lease time.Duration,
 ) (RenditionJobClaim, error) {
@@ -636,14 +637,23 @@ func (s *Store) ClaimRenditionJob(
 				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&description); err != nil {
 					return fmt.Errorf("reading rendition job input kind: %w", err)
 				}
-				if description {
+				var canonicalProfile, identityJSON string
+				err := tx.QueryRowContext(ctx, `SELECT p.canonical_profile,j.execution_identity_json
+                  FROM rendition_jobs j JOIN rendition_job_waiters w ON w.waiter_id=j.selected_waiter_id
+                  JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint WHERE j.job_id=$1`, jobID).Scan(&canonicalProfile, &identityJSON)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("reading worker replay binding: %w", err)
+				}
+				identity, identityErr := document.ParseRenditionExecutionIdentityV1([]byte(identityJSON))
+				workerReplay := err == nil && identityErr == nil && workerprotocol.ReplaySafeBinding([]byte(canonicalProfile), identity)
+				if description || workerReplay {
 					if _, err := tx.ExecContext(ctx, `
 						UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,
 						lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,
 						selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$1 WHERE job_id=$2`,
 						at.Format(timestampLayout), jobID); err != nil {
-						return fmt.Errorf("requeueing expired photo description: %w", err)
+						return fmt.Errorf("requeueing replay-safe rendition: %w", err)
 					}
 					state, phase, providerStarted = RenditionJobQueued, RenditionPhaseQueued, false
 				}
