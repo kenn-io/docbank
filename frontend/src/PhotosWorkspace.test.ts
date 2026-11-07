@@ -25,6 +25,7 @@ import {
   photo,
   photoTimelineCounts,
   stubPhotoTimeline,
+  stubDeferredPhotoFetch,
   touchTap,
 } from "./photo-test-fixtures.js";
 import type { Query, QuerySort } from "./query.js";
@@ -3389,18 +3390,9 @@ it("keeps Load more and counts on screen through unchanged live refreshes", asyn
     available: true,
     reason: "",
     total: 60,
-    values: [{ key: "Canon", label: "Canon EOS R6", count: 60, selected: false }],
+    values: [{ key: "Canon EOS R6", label: "Canon EOS R6", count: 60, selected: false }],
   };
-  const rows: ((response: Response) => void)[] = [];
-  const counts: ((response: Response) => void)[] = [];
-  vi.stubGlobal(
-    "fetch",
-    (url: string, init: RequestInit) =>
-      photoMetadataResponse(url, init) ??
-      new Promise<Response>((resolve) =>
-        (JSON.parse(String(init.body)).page_size === 1 ? counts : rows).push(resolve),
-      ),
-  );
+  const { rows, counts, fetcher } = stubDeferredPhotoFetch();
   const page = () =>
     Response.json({
       items: Array.from({ length: 60 }, (_, index) => photo(index + 1)),
@@ -3420,13 +3412,25 @@ it("keeps Load more and counts on screen through unchanged live refreshes", asyn
   const camera = { name: "Canon EOS R6, 60 photos" };
   await screen.findByRole("button", camera);
   await screen.findByRole("button", { name: "Load more" });
+  await fireEvent.click(screen.getByRole("button", camera));
+  await waitFor(() => expect(rows).toHaveLength(2));
+  expect(JSON.parse(String(fetcher.mock.calls.at(-1)![1].body)).query.filters.cameras).toEqual([
+    "Canon EOS R6",
+  ]);
+  rows[1]!(page());
+  await waitFor(() => expect(counts).toHaveLength(2));
+  const selectedFacet = { ...facet, values: [{ ...facet.values[0]!, selected: true }] };
+  counts[1]!(Response.json({ facets: [selectedFacet] }));
+  await screen.findByRole("button", { name: "Load more" });
+  const selectedCamera = { name: "Canon EOS R6, 60 photos, selected" };
+  await screen.findByRole("button", selectedCamera);
   const steady = () => {
     expect(screen.queryByText("Loading photos…")).toBeNull();
     expect(screen.queryByText("Loading counts…")).toBeNull();
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
-    expect(screen.getByRole("button", camera)).toBeTruthy();
+    expect(screen.getByRole("button", selectedCamera)).toBeTruthy();
   };
-  for (let pass = 1; pass <= 3; pass++) {
+  for (let pass = 2; pass <= 4; pass++) {
     const refreshing = photos.refresh(undefined, true);
     await waitFor(() => expect(rows).toHaveLength(pass + 1));
     await tick();
@@ -3435,10 +3439,48 @@ it("keeps Load more and counts on screen through unchanged live refreshes", asyn
     await waitFor(() => expect(counts).toHaveLength(pass + 1));
     await tick();
     steady();
-    counts[pass]!(Response.json({ facets: [facet] }));
+    counts[pass]!(Response.json({ facets: [selectedFacet] }));
     await act(() => refreshing);
     steady();
   }
+  const refreshing = photos.refresh(undefined, true);
+  await waitFor(() => expect(rows).toHaveLength(6));
+  await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  rows[5]!(
+    Response.json({
+      items: Array.from({ length: 60 }, (_, i) => photo(i + 1)),
+      total: 61,
+      next_cursor: "refreshed-next",
+    }),
+  );
+  await waitFor(() => expect(counts).toHaveLength(6));
+  counts[5]!(
+    Response.json({
+      facets: [{ ...selectedFacet, values: [{ ...selectedFacet.values[0]!, count: 61 }] }],
+    }),
+  );
+  await act(() => refreshing);
+  await waitFor(() => expect(rows).toHaveLength(7));
+  expect(
+    JSON.parse(
+      String(
+        fetcher.mock.calls
+          .filter(([, init]) => !JSON.parse(String(init.body)).facets?.length)
+          .at(-1)![1].body,
+      ),
+    ).cursor,
+  ).toBe("refreshed-next");
+  expect(screen.getByText("Loading photos…")).toBeTruthy();
+  rows[6]!(Response.json({ items: [photo(61)], total: 61 }));
+  await waitFor(() => expect(screen.queryByText("Loading photos…")).toBeNull());
+  const scroll = screen.getByTestId("photo-scroll");
+  scroll.scrollTop = 2500;
+  await fireEvent.scroll(scroll);
+  await screen.findByRole("button", { name: "Open Photo 61.jpg" });
+  await screen.findByRole("button", { name: "Canon EOS R6, 61 photos, selected" });
+  expect(screen.queryByText("Loading photos…")).toBeNull();
+  expect(screen.queryByText("Loading counts…")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   photos.dispose();
   await cache.dispose();
 });

@@ -18,6 +18,7 @@ import {
   photo,
   photoTimelineCounts,
   stubPhotoTimeline,
+  stubDeferredPhotoFetch,
   preparedPhoto,
   mapPhoto,
   savedSmartSet as savedSmartSetFixture,
@@ -2713,15 +2714,7 @@ it.each([
 );
 
 it("keeps counts through a live refresh until fresh ones replace them", async () => {
-  const counts: ((value: Response) => void)[] = [];
-  const rows: ((value: Response) => void)[] = [];
-  vi.stubGlobal(
-    "fetch",
-    (_url: string, init: RequestInit) =>
-      new Promise<Response>((resolve) =>
-        (JSON.parse(init.body as string).page_size === 1 ? counts : rows).push(resolve),
-      ),
-  );
+  const { rows, counts } = stubDeferredPhotoFetch();
   const photos = new Photos("scoped", vi.fn());
   photos.filtersOpen = true;
   const loading = photos.loadMore();
