@@ -170,7 +170,15 @@ func TestValidityTextOutput(t *testing.T) {
 				Predecessors: []api.SupersessionLink{{PredecessorID: 3, Note: "annual renewal"}, {PredecessorID: 4}},
 				Successors:   []api.SupersessionLink{{SuccessorID: 6, Note: "corrected terms"}, {SuccessorID: 7}},
 			},
-			want: "/lease.txt: superseded (as of 2025-06-01)\nReplaces: id:3 annual renewal\nReplaces: id:4\nSuccessor: id:6 corrected terms\nSuccessor: id:7\n",
+			want: "\"/lease.txt\": superseded (as of 2025-06-01)\nReplaces: id:3 \"annual renewal\"\nReplaces: id:4\nSuccessor: id:6 \"corrected terms\"\nSuccessor: id:7\n",
+		},
+		{
+			name: "control characters stay data",
+			view: api.NodeValidity{
+				Node: api.Node{ID: 5, Path: "/lease\x1b[31m.txt", Revision: 1}, State: "superseded", AsOf: "2025-06-01",
+				Predecessors: []api.SupersessionLink{{PredecessorID: 3, Note: "a\nSuccessor: id:9"}},
+			},
+			want: "\"/lease\\x1b[31m.txt\": superseded (as of 2025-06-01)\nReplaces: id:3 \"a\\nSuccessor: id:9\"\n",
 		},
 		{
 			name: "snapshot path",
@@ -178,7 +186,7 @@ func TestValidityTextOutput(t *testing.T) {
 			view: api.NodeValidity{
 				Node: api.Node{ID: 5, Path: "/renamed-lease.txt", Revision: 2}, State: "not_yet_effective", AsOf: "2025-06-01",
 			},
-			want: "/renamed-lease.txt: not yet effective (as of 2025-06-01)\n",
+			want: "\"/renamed-lease.txt\": not yet effective (as of 2025-06-01)\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
