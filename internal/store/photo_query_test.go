@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -476,17 +475,6 @@ func TestPhotoMetadataMatchDensity(t *testing.T) {
 	}
 }
 
-type photoMetadataCountingQuerier struct {
-	rowQuerier
-
-	calls int
-}
-
-func (q *photoMetadataCountingQuerier) QueryRowContext(ctx context.Context, statement string, args ...any) *sql.Row {
-	q.calls++
-	return q.rowQuerier.QueryRowContext(ctx, statement, args...)
-}
-
 func TestPhotoMetadataMatchDensityLazy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -500,10 +488,11 @@ func TestPhotoMetadataMatchDensityLazy(t *testing.T) {
 		{"camera:A OR camera:B OR lens:C OR location:Paris", true, 4},
 		{"camera:A OR camera:A OR lens:A OR location:A", true, 4},
 	} {
-		q := &photoMetadataCountingQuerier{rowQuerier: s.db}
+		calls := 0
+		q := &photoStackGenerationQuerier{DB: s.db, beforeLoad: func() { calls++ }}
 		_, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: tc.set}).compile(t.Context(), compilerQuery(t, tc.text), queryResolver{q: q})
 		require.NoError(t, err)
-		require.Equal(t, tc.want, q.calls, tc.text)
+		require.Equal(t, tc.want, calls, tc.text)
 	}
 }
 
