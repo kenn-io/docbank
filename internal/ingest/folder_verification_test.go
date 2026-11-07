@@ -319,3 +319,57 @@ func TestFolderVerificationSchedulingProperty(t *testing.T) {
 		}
 	}, hegel.WithDatabase(t.TempDir()))
 }
+
+type failingPublicationNotifications struct{ *fakeWatchNotificationSource }
+
+func (f failingPublicationNotifications) EndScan() error {
+	return errors.New("synthetic mid-scan notification failure")
+}
+
+func TestFolderVerificationNotificationStatusBeforeCompletion(t *testing.T) {
+	for _, transition := range []string{"degraded", "recovered"} {
+		t.Run(transition, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				scanner, _ := publicationScanner(t, nil)
+				scanner.watcher.now = time.Now
+				scanner.watcher.config.CaptureOnChange = true
+				notifier := newFakeWatchNotificationSource(scanner.watcher.config.Source)
+				attempts := 0
+				scanner.watcher.newNotifications = func(string, exclusions) (watchNotificationSource, error) {
+					attempts++
+					if transition == "degraded" {
+						return failingPublicationNotifications{notifier}, nil
+					}
+					if attempts == 1 {
+						return nil, fs.ErrNotExist
+					}
+					return notifier, nil
+				}
+				failure := errors.New("synthetic transition status sink failure")
+				scanner.ScanStatus = func(_ context.Context, status FolderScanStatus) error {
+					if transition == "degraded" && status.Degraded || transition == "recovered" && status.Scan.Number > 1 && !status.Degraded {
+						return failure
+					}
+					return nil
+				}
+				var results []FolderScanResult
+				scanner.AfterScan = func(_ context.Context, result FolderScanResult) error { results = append(results, result); return nil }
+				done := make(chan error, 1)
+				go func() { done <- scanner.Run(t.Context()) }()
+				synctest.Wait()
+				if transition == "recovered" {
+					time.Sleep(5 * time.Second)
+					synctest.Wait()
+				}
+				require.ErrorIs(t, <-done, failure)
+				require.NotEmpty(t, results)
+				require.False(t, results[len(results)-1].Complete, "a failed scan status must precede the affected completion receipt")
+				select {
+				case <-notifier.closed:
+				default:
+					t.Fatal("notification source outlived failed run")
+				}
+			})
+		})
+	}
+}
