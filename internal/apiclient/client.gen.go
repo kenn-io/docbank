@@ -8781,6 +8781,53 @@ func (c *Client) RenamePerson(ctx context.Context, options *RenamePersonRequestO
 	return responseParser(ctx, resp)
 }
 
+// LinkPersonExternalIdentity Link or unlink a stable vCard identity on an explicitly selected person
+func (c *Client) LinkPersonExternalIdentity(ctx context.Context, options *LinkPersonExternalIdentityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LinkPersonExternalIdentityResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}/external-identities",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LinkPersonExternalIdentityResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(LinkPersonExternalIdentityResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LinkPersonExternalIdentityResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[LinkPersonExternalIdentityErrorResponse](resp, "LinkPersonExternalIdentityErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-id/{person_id}/external-identities")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // MergePerson Merge one person into another
 func (c *Client) MergePerson(ctx context.Context, options *MergePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MergePersonResponse, error) {
 	var err error
@@ -9050,6 +9097,59 @@ func (c *Client) GetPeopleRebuild(ctx context.Context, options *GetPeopleRebuild
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/rebuilds/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResolveExternalPerson Resolve an archive-scoped stable person UID
+func (c *Client) ResolveExternalPerson(ctx context.Context, options *ResolveExternalPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveExternalPersonResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"archive_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"system":     {Style: "form", Explode: &[]bool{false}[0]},
+		"uid":        {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/resolve-external",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveExternalPersonResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveExternalPersonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveExternalPersonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveExternalPersonErrorResponse](resp, "ResolveExternalPersonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/resolve-external")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -11640,6 +11740,53 @@ func (c *Client) DecidePhotoFace(ctx context.Context, options *DecidePhotoFaceRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/face-decisions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ComparePhotoFace Compare one face with reviewed reference faces without assigning an identity
+func (c *Client) ComparePhotoFace(ctx context.Context, options *ComparePhotoFaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ComparePhotoFaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/versions/{content_version_id}/face-similarity",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ComparePhotoFaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ComparePhotoFaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ComparePhotoFaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ComparePhotoFaceErrorResponse](resp, "ComparePhotoFaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/face-similarity")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -21949,6 +22096,48 @@ func (o *RenamePersonRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// LinkPersonExternalIdentityRequestOptions is the options needed to make a request to LinkPersonExternalIdentity.
+type LinkPersonExternalIdentityRequestOptions struct {
+	PathParams *LinkPersonExternalIdentityPath
+	Body       *LinkPersonExternalIdentityBody
+	Header     *LinkPersonExternalIdentityHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *LinkPersonExternalIdentityRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *LinkPersonExternalIdentityRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *LinkPersonExternalIdentityRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *LinkPersonExternalIdentityRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // MergePersonRequestOptions is the options needed to make a request to MergePerson.
 type MergePersonRequestOptions struct {
 	PathParams *MergePersonPath
@@ -22127,6 +22316,37 @@ func (o *GetPeopleRebuildRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetPeopleRebuildRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResolveExternalPersonRequestOptions is the options needed to make a request to ResolveExternalPerson.
+type ResolveExternalPersonRequestOptions struct {
+	Query *ResolveExternalPersonQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveExternalPersonRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveExternalPersonRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveExternalPersonRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveExternalPersonRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -23848,6 +24068,41 @@ func (o *DecidePhotoFaceRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *DecidePhotoFaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ComparePhotoFaceRequestOptions is the options needed to make a request to ComparePhotoFace.
+type ComparePhotoFaceRequestOptions struct {
+	PathParams *ComparePhotoFacePath
+	Body       *ComparePhotoFaceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ComparePhotoFaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ComparePhotoFaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ComparePhotoFaceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ComparePhotoFaceRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26860,6 +27115,12 @@ const (
 	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
 )
 
+type ResolveExternalPersonQuerySystem string
+
+const (
+	Msgvault ResolveExternalPersonQuerySystem = "msgvault"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -26955,6 +27216,10 @@ type UploadPackageChunkHeaders struct {
 
 type RenamePersonHeaders struct {
 	IfMatch string `json:"If-Match"`
+}
+
+type LinkPersonExternalIdentityHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
 }
 
 type MergePersonHeaders struct {
@@ -27438,6 +27703,10 @@ type RenamePersonPath struct {
 	PersonID uuid.UUID `json:"person_id"`
 }
 
+type LinkPersonExternalIdentityPath struct {
+	PersonID uuid.UUID `json:"person_id"`
+}
+
 type MergePersonPath struct {
 	PersonID uuid.UUID `json:"person_id"`
 }
@@ -27573,6 +27842,10 @@ type RespondPhotoSuggestionPath struct {
 }
 
 type DecidePhotoFacePath struct {
+	ContentVersionID uuid.UUID `json:"content_version_id"`
+}
+
+type ComparePhotoFacePath struct {
 	ContentVersionID uuid.UUID `json:"content_version_id"`
 }
 
@@ -27920,6 +28193,8 @@ type CreatePersonBody = CreatePersonRequest
 
 type RenamePersonBody = RenamePersonRequest
 
+type LinkPersonExternalIdentityBody = ExternalPersonLinkRequest
+
 type MergePersonBody = MergePersonRequest
 
 type SplitPersonBody = SplitPersonRequest
@@ -27995,6 +28270,8 @@ type GroupPhotoStacksBody = GroupPhotoStacksRequest
 type RespondPhotoSuggestionBody = PhotoSuggestionResponse
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
+
+type ComparePhotoFaceBody = FaceSimilarityRequest
 
 type CreatePhotoFaceBody = CreatePhotoFaceRequest
 
@@ -28367,6 +28644,12 @@ type ListPeopleQuery struct {
 type GetPersonQuery struct {
 	AssertionCursor *uuid.UUID `json:"assertion_cursor,omitempty"`
 	AssertionLimit  *int64     `json:"assertion_limit,omitempty"`
+}
+
+type ResolveExternalPersonQuery struct {
+	System    ResolveExternalPersonQuerySystem `json:"system"`
+	ArchiveID string                           `json:"archive_id"`
+	UID       string                           `json:"uid"`
 }
 
 type DetachPhotoFileQuery struct {
@@ -29362,6 +29645,10 @@ type RenamePersonResponse = api.Person
 
 type RenamePersonErrorResponse = Error
 
+type LinkPersonExternalIdentityResponse = api.PersonExternalIdentity
+
+type LinkPersonExternalIdentityErrorResponse = Error
+
 type MergePersonResponse = api.PersonMergeReceipt
 
 type MergePersonErrorResponse = Error
@@ -29385,6 +29672,10 @@ type RebuildDocumentPeopleErrorResponse = Error
 type GetPeopleRebuildResponse = api.PeopleBuild
 
 type GetPeopleRebuildErrorResponse = Error
+
+type ResolveExternalPersonResponse = api.ExternalPersonResolution
+
+type ResolveExternalPersonErrorResponse = Error
 
 type ListPhotoAlbumsResponse []PhotoAlbumSummary
 
@@ -29603,6 +29894,10 @@ type RespondPhotoSuggestionErrorResponse = Error
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
 type DecidePhotoFaceErrorResponse = Error
+
+type ComparePhotoFaceResponse = processing.FaceSimilarityResult
+
+type ComparePhotoFaceErrorResponse = Error
 
 type ListPhotoFacesResponse = api.PhotoFacePage
 
@@ -30607,7 +30902,19 @@ type EvidenceWindowRequest = api.EvidenceWindowRequest
 
 type ExportJob = bundle.ExportJob
 
+type ExternalPersonLinkRequest = api.ExternalPersonLinkRequest
+
+type ExternalPersonResolution = api.ExternalPersonResolution
+
 type FaceBox = document.FaceBox
+
+type FaceReference = processing.FaceReference
+
+type FaceSimilarityRequest = api.FaceSimilarityRequest
+
+type FaceSimilarityResult = processing.FaceSimilarityResult
+
+type FaceSimilaritySuggestion = processing.FaceSimilaritySuggestion
 
 type Filters = query.Filters
 

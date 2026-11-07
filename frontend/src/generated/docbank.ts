@@ -3302,6 +3302,98 @@ export interface ExportJob {
   state: string;
 }
 
+export type ExternalPersonLinkRequestSystem = typeof ExternalPersonLinkRequestSystem[keyof typeof ExternalPersonLinkRequestSystem];
+
+
+export const ExternalPersonLinkRequestSystem = {
+  msgvault: 'msgvault',
+} as const;
+
+export type ExternalPersonLinkRequestUidState = typeof ExternalPersonLinkRequestUidState[keyof typeof ExternalPersonLinkRequestUidState];
+
+
+export const ExternalPersonLinkRequestUidState = {
+  current: 'current',
+  unlinked: 'unlinked',
+} as const;
+
+export interface ExternalPersonLinkRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  archive_id: string;
+  /** @maxLength 200 */
+  display_name_snapshot?: string;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  last_seen_revision?: number | null;
+  system: ExternalPersonLinkRequestSystem;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  uid: string;
+  uid_state: ExternalPersonLinkRequestUidState;
+}
+
+export interface ExternalPersonResolution {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive_id: string;
+  forwarded: boolean;
+  person_id: string;
+  requested_uid: string;
+  resolved_uid: string;
+  system: string;
+  uid_state: string;
+}
+
+export interface FaceReference {
+  content_version_id: string;
+  face_id: string;
+}
+
+export interface FaceSimilarityRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allow_local_face_recognition: boolean;
+  face_id: string;
+  /**
+     * @minItems 1
+     * @maxItems 16
+     */
+  references: FaceReference[];
+}
+
+export interface FaceSimilaritySuggestion {
+  display_name: string;
+  distance: number;
+  person_id: string;
+  person_revision: number;
+  preview_checksum: string;
+  reference: FaceReference;
+  state: string;
+}
+
+export interface FaceSimilarityResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  face_revision: number;
+  model: string;
+  model_revision: string;
+  preview_checksum: string;
+  recipe: string;
+  state: string;
+  /** @maxItems 16 */
+  suggestions: FaceSimilaritySuggestion[];
+  target: FaceReference;
+}
+
 export interface GPSBounds {
   east: string;
   north: string;
@@ -5170,6 +5262,8 @@ export interface PhotoPersonAssertion {
 }
 
 export interface PersonExternalIdentity {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   archive_id: string;
   display_name_snapshot: string;
   /** @nullable */
@@ -9645,12 +9739,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaArtifactMetadata;
 };
 
@@ -9950,6 +10044,10 @@ export type RenamePersonHeaders = {
 'If-Match': string;
 };
 
+export type LinkPersonExternalIdentityHeaders = {
+'If-Match'?: string;
+};
+
 export type MergePersonHeaders = {
 'If-Match': string;
 };
@@ -9961,6 +10059,27 @@ export type RetirePersonHeaders = {
 export type SplitPersonHeaders = {
 'If-Match': string;
 };
+
+export type ResolveExternalPersonParams = {
+system: ResolveExternalPersonSystem;
+/**
+ * @minLength 1
+ * @maxLength 128
+ */
+archive_id: string;
+/**
+ * @minLength 1
+ * @maxLength 256
+ */
+uid: string;
+};
+
+export type ResolveExternalPersonSystem = typeof ResolveExternalPersonSystem[keyof typeof ResolveExternalPersonSystem];
+
+
+export const ResolveExternalPersonSystem = {
+  msgvault: 'msgvault',
+} as const;
 
 export type DeletePhotoAlbumHeaders = {
 'If-Match': string;
@@ -10113,7 +10232,7 @@ export type UploadPushFileHeaders = {
 };
 
 export type UploadPushFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type ReadRenditionTextParams = {
@@ -10372,7 +10491,7 @@ export type UploadFileHeaders = {
 };
 
 export type UploadFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type GetContentVersionBytesHeaders = {
@@ -16678,6 +16797,46 @@ return sessionResponse<Person>(getRenamePersonUrl(personId),
 
 
 
+export const getLinkPersonExternalIdentityUrl = (personId: string,) => {
+
+
+
+
+  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}/external-identities`
+}
+
+/**
+ * @summary Link or unlink a stable vCard identity on an explicitly selected person
+ */
+export const linkPersonExternalIdentity = async (personId: string,
+    externalPersonLinkRequest: NonReadonly<ExternalPersonLinkRequest>,
+    headers?: LinkPersonExternalIdentityHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonExternalIdentity> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PersonExternalIdentity>(getLinkPersonExternalIdentityUrl(personId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(externalPersonLinkRequest)
+  }
+);}
+
+
+
 export const getMergePersonUrl = (personId: string,) => {
 
 
@@ -16873,6 +17032,37 @@ export const getGetPeopleRebuildUrl = (operationId: string,) => {
 export const getPeopleRebuild = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PeopleBuild> => {
 
   return sessionJSON<PeopleBuild>(getGetPeopleRebuildUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getResolveExternalPersonUrl = (params: ResolveExternalPersonParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/people/resolve-external?${stringifiedParams}` : `/api/v1/people/resolve-external`
+}
+
+/**
+ * @summary Resolve an archive-scoped stable person UID
+ */
+export const resolveExternalPerson = async (params: ResolveExternalPersonParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ExternalPersonResolution> => {
+
+  return sessionJSON<ExternalPersonResolution>(getResolveExternalPersonUrl(params),
   {
     ...options,
     method: 'GET'
@@ -18858,6 +19048,45 @@ return sessionJSON<PhotoFaceDecisionResult>(getDecidePhotoFaceUrl(contentVersion
 
 
 
+export const getComparePhotoFaceUrl = (contentVersionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/versions/${encodeURIComponent(String(contentVersionId))}/face-similarity`
+}
+
+/**
+ * @summary Compare one face with reviewed reference faces without assigning an identity
+ */
+export const comparePhotoFace = async (contentVersionId: string,
+    faceSimilarityRequest: NonReadonly<FaceSimilarityRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<FaceSimilarityResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<FaceSimilarityResult>(getComparePhotoFaceUrl(contentVersionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(faceSimilarityRequest)
+  }
+);}
+
+
+
 export const getListPhotoFacesUrl = (contentVersionId: string,) => {
 
 
@@ -19353,7 +19582,7 @@ export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
     params: UploadPushFileParams,
     headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPushFileBody.file);
+formData.append(`file`, uploadPushFileBody.file instanceof Blob ? uploadPushFileBody.file : new Blob([uploadPushFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -21793,7 +22022,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file, params.name);
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
