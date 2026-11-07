@@ -332,6 +332,9 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 			if stateErr == nil && (state.Node.BlobHash != state.Hash || state.Node.Size != state.Size) {
 				return ErrPublishedSourceDiverged
 			}
+			if errors.Is(stateErr, ErrExists) {
+				return ErrPublishedSourceDiverged
+			}
 			if stateErr != nil && !errors.Is(stateErr, ErrNotFound) {
 				return stateErr
 			}
@@ -342,6 +345,9 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 		}
 		node, outcome, err := s.acceptPushTx(ctx, tx, PushSource{Name: request.Name, Ref: request.SourceRef, ModifiedAt: request.ModifiedAt},
 			PushContent{RunID: scan.ScanID, ParentPath: request.ParentPath, Name: request.FileName, Hash: request.Hash, Size: request.Size, MIMEType: "text/markdown"}, segments, exists && previous.Recovery != nil, physical...)
+		if errors.Is(err, ErrExists) || errors.Is(err, ErrNotDir) {
+			return ErrPublishedSourceDiverged
+		}
 		if err != nil {
 			return err
 		}

@@ -143,3 +143,39 @@ func TestNotePublicationRoutesVerifyAndFence(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	require.Equal(t, receipt.Source.Identity.ContentVersionID, page.Items[0].Identity.ContentVersionID)
 }
+
+func TestNotePublicationFirstAdoptionConflict(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"trashed_push", "occupied_name", "blocked_parent"} {
+		t.Run(kind, func(t *testing.T) {
+			s, _ := newTestAPIServer(t, nil)
+			body := "# Alpha\n"
+			hash := uploadIdentity([]byte(body))
+			switch kind {
+			case "trashed_push":
+				node, _, err := s.AcceptPush(t.Context(), store.PushSource{Name: "research", Ref: "alpha.md"}, store.PushContent{RunID: uuid.NewV4().String(), ParentPath: "/notes", Name: "alpha.md", Hash: hash, Size: int64(len(body)), MIMEType: "text/markdown"}, store.BlobPhysical{Encoding: "raw", StoredBytes: int64(len(body)), PackEligible: true, Created: true})
+				require.NoError(t, err)
+				_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+				require.NoError(t, err)
+			case "occupied_name":
+				parent, err := s.MkdirAll(t.Context(), "/notes")
+				require.NoError(t, err)
+				_, err = s.CreateFile(t.Context(), parent.ID, "alpha.md", hash, int64(len(body)), "text/markdown", store.BlobPhysical{Encoding: "raw", StoredBytes: int64(len(body)), PackEligible: true, Created: true})
+				require.NoError(t, err)
+			case "blocked_parent":
+				_, err := s.CreateFile(t.Context(), s.RootID(), "notes", hash, int64(len(body)), "text/markdown", store.BlobPhysical{Encoding: "raw", StoredBytes: int64(len(body)), PackEligible: true, Created: true})
+				require.NoError(t, err)
+			}
+			scan, err := s.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{Name: "research", Destination: "/notes", PolicyFingerprint: strings.Repeat("a", 64), OperationID: uuid.NewV4().String()})
+			require.NoError(t, err)
+			response := notePublicationUpload(t, s, scan.ScanID, 0, uuid.NewV4().String(), body, hash, false)
+			require.Equal(t, 409, response.Code, response.Body.String())
+			var problem api.Error
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem))
+			require.Equal(t, "published_source_diverged", problem.Code)
+			page, err := s.NotePublicationSources(t.Context(), store.NotePublicationSourcesRequest{Name: "research", ScanID: scan.ScanID, Limit: 100})
+			require.NoError(t, err)
+			require.Empty(t, page.Items, "failed adoption never grants source authority")
+		})
+	}
+}
