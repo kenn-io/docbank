@@ -796,7 +796,7 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 		return validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name)
 	}
 	if binding.InputKind == document.EmbeddingInputOriginalFile {
-		if generation.GenerationChecksum != sourceHash || len(generation.Inputs) != 1 ||
+		if generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint() || generation.GenerationChecksum != sourceHash || len(generation.Inputs) != 1 ||
 			generation.Inputs[0] != (EmbeddingInputReference{ID: generation.SourceVersionID, RenderedChecksum: sourceHash}) {
 			return errors.New("direct embedding generation does not name exact source")
 		}
