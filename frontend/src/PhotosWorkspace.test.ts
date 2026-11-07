@@ -3382,6 +3382,94 @@ it("shows a loading pill while a page loads and Load more when it settles", asyn
   await cache.dispose();
 });
 
+it.each(["filtered", "library", "hidden", "album", "map", "map area"] as const)(
+  "keeps the settled %s empty state through a live refresh",
+  async (state) => {
+    let finish!: (response: Response) => void;
+    stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+    const mapMode = state.startsWith("map");
+    const photos = new Photos(
+      "scoped",
+      vi.fn(),
+      state === "hidden",
+      state === "filtered" ? { ...photoQuery, filters: { cameras: ["Canon EOS R6"] } } : photoQuery,
+      { projection: mapMode ? "map" : undefined },
+    );
+    photos.started = true;
+    if (state === "map area") {
+      photos.items = [mapPhoto(1)];
+      photos.total = 1;
+    }
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    render(PhotosWorkspace, {
+      photos,
+      cache,
+      mapMode,
+      albumID: state === "album" ? "synthetic-album" : undefined,
+      tiles: { ...tiles, tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}" },
+    });
+    const title = {
+      filtered: "No matching photos",
+      library: "Your photo library is empty",
+      hidden: "No hidden photos",
+      album: "This album is empty",
+      map: "No located photos",
+      "map area": "No photos in this area",
+    }[state]!;
+    await screen.findByText(title);
+    let refreshing!: Promise<boolean>;
+    await act(() => {
+      refreshing = photos.refresh(undefined, true);
+    });
+    expect(screen.queryByText(title)).toBeTruthy();
+    expect(screen.queryByText("Loading photos…")).toBeNull();
+    expect(screen.queryByText(/^Loading located photos:/)).toBeNull();
+    await act(async () => {
+      finish(
+        Response.json({
+          [mapMode ? "map_items" : "items"]: photos.items,
+          total: photos.total,
+        }),
+      );
+      await refreshing;
+    });
+    expect(screen.getByText(title)).toBeTruthy();
+    photos.dispose();
+    await cache.dispose();
+  },
+);
+
+it("keeps the removed-photo note through a live refresh", async () => {
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(() => new Promise<Response>((resolve) => (finish = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  vi.spyOn(photos, "lookup").mockResolvedValue(photo(1));
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, photoID: "photo-1" });
+  const note = "This photo is no longer in the refreshed result.";
+  await screen.findByText(note);
+  let refreshing!: Promise<boolean>;
+  await act(() => {
+    refreshing = photos.refresh(undefined, true);
+  });
+  expect(screen.queryByText(note)).toBeTruthy();
+  await act(async () => {
+    finish(Response.json({ items: [], total: 0 }));
+    await refreshing;
+  });
+  expect(screen.getByText(note)).toBeTruthy();
+  photos.dispose();
+  await cache.dispose();
+});
+
 it("keeps Load more and counts on screen through unchanged live refreshes", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
