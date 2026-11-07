@@ -303,7 +303,8 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(unlocked, survivor.PersonID, renamed.PersonID, uuid.New().String(), survivor.Revision, renamed.Revision)
 	require.NoError(t, err)
-	merged, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, survivor.PersonID, "Old Name")
+	// Rebuilding an old match resolves its retired person before retaining it.
+	merged, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, renamed.PersonID, "Old Name")
 	require.NoError(t, err)
 	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{merged}))
 	rows, _, err = s.FaceCandidates(unlocked, 24, 0)

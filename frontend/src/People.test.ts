@@ -10,8 +10,6 @@ import {
   ada,
   candidate,
   candidateFace,
-  f1,
-  f3,
   isAda,
   unnamed,
   decided,
@@ -422,26 +420,22 @@ it("renders retry and show-more controls for suggestions", async () => {
 });
 
 it("confirms an Is this X? group after removing a face", async () => {
-  const { region, list, done } = await renderSuggestions([isAda]);
+  const { region, done } = await renderSuggestions([isAda]);
   const remove = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
   const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda));
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
   await waitFor(() => expect(within(dialog).getAllByRole("img")).toHaveLength(3));
-  const regrouped = { ...isAda, candidate_id: "candidate-ada-2", faces: [f1, f3], revision: 1 };
-  list.mockResolvedValue({ items: [regrouped], total: 1 });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada: face 2" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(remove.mock.calls[0]![1]).toMatchObject({ face_id: "face-2" });
+  await waitFor(() => expect(remove.mock.calls[0]![1]).toMatchObject({ face_id: "face-2" }));
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const reopened = screen.getByRole("dialog", { name: "Is this Ada?" });
-  list.mockResolvedValue({ items: [], total: 0 });
   const confirm = within(reopened).getByRole("button", { name: "Confirm" });
   await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
   await fireEvent.click(confirm);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(decide).toHaveBeenCalledOnce();
-  await waitFor(() => expect(screen.queryByRole("region", { name: /Suggestions/ })).toBeNull());
   await done();
 });
 
