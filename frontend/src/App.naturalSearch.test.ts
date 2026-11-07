@@ -12,6 +12,14 @@ const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const baseVersion = "11111111-1111-4111-8111-111111111111";
 const rerankedVersion = "22222222-2222-4222-8222-222222222222";
 const tagID = "33333333-3333-4333-8333-333333333333";
+const localOff = {
+  active: false,
+  provider: "",
+  download_bytes: 290_000_000,
+  restart_required: false,
+};
+const localSaved = { ...localOff, download_bytes: 0, restart_required: true };
+const localPlan = { fingerprint: "f".repeat(64), server: "local", flow: [] };
 
 afterEach(() => {
   cleanup();
@@ -103,6 +111,7 @@ interface HarnessOptions {
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
   snapshotRows?: SnapshotRow[];
+  localText?: { status: () => unknown; apply: () => Promise<Response> };
 }
 
 function installHarness(options: HarnessOptions) {
@@ -153,6 +162,7 @@ function installHarness(options: HarnessOptions) {
   });
   let baseCalls = 0;
   let legacyCalls = 0;
+  const localSetups: unknown[] = [];
   const nodeCalls = new Map<number, number>();
   const rerankPending = new Promise<Response>((resolve) => {
     rerankResolve = resolve;
@@ -273,13 +283,15 @@ function installHarness(options: HarnessOptions) {
         },
       );
     }
-    if (url === "/api/v1/processing/local/status")
-      return json({
-        active: false,
-        provider: "",
-        download_bytes: 290_000_000,
-        restart_required: false,
-      });
+    if (options.localText && url === "/api/v1/processing/local/status") {
+      const status = options.localText.status();
+      return status instanceof Response ? status : json(status);
+    }
+    if (options.localText && url === "/api/v1/processing/local/plans") return json(localPlan);
+    if (options.localText && url === "/api/v1/processing/local/setup") {
+      localSetups.push(JSON.parse(String(init?.body)));
+      return options.localText.apply();
+    }
     if (url.startsWith("/api/v1/audit/status?")) return json({ enabled: false, scopes: [] });
     if (url.startsWith("/api/v1/nodes/") && url.includes("/tags?"))
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
@@ -295,6 +307,7 @@ function installHarness(options: HarnessOptions) {
     resolveLegacyFailure: (response: Response) => legacyFailureResolve?.(response),
     resolveChildren: (response: Response) => childrenResolve?.(response),
     legacyCalls: () => legacyCalls,
+    localSetups,
   };
 }
 
@@ -861,8 +874,13 @@ it.each([
       harness.resolveLegacy(
         json({ hits: [{ node: file, path: file.path, match: "content" }], limit: 1000 }),
       );
-    expect(await screen.findByText(/Search by meaning is off/)).toBeTruthy();
+    const note = await screen.findByText(/Search by meaning is off/);
     expect(screen.getByText("/late.txt")).toBeTruthy();
+    await fireEvent.click(within(note).getByRole("button", { name: "Turn on" }));
+    const drawer = await screen.findByRole("dialog", { name: "System" });
+    expect(
+      within(drawer).getByRole("tab", { name: "Search by meaning", selected: true }),
+    ).toBeTruthy();
   },
 );
 
@@ -1123,7 +1141,6 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   await submitSearch("fallback");
   await screen.findByText("/fallback.txt");
   await screen.findByText(/Natural-language search unavailable/);
-  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
   expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
   expect(harness.postBodies).toHaveLength(1);
@@ -1134,27 +1151,104 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   expect(failure).not.toHaveBeenCalled();
 });
 
-it("offers search by meaning above names-and-text results and opens its tab", async () => {
+function searchWithMeaningOff(localText: HarnessOptions["localText"]) {
   const file = node(2, "notes.txt", baseVersion);
-  installHarness({
+  return installHarness({
     profiles: [],
     files: [file],
     baseReport: report("lexical", []),
     tagSearch: { hits: [{ node: file, path: file.path, match: "content" }], limit: 1000 },
+    localText,
   });
-  render(App);
-  await screen.findAllByText("notes.txt");
-  await submitSearch("notes");
+}
+
+async function openSearchByMeaning(): Promise<HTMLElement> {
   const note = await screen.findByText(/Search by meaning is off/);
   await fireEvent.click(within(note).getByRole("button", { name: "Turn on" }));
-  const drawer = await screen.findByRole("dialog", { name: "System" });
-  expect(
-    within(drawer).getByRole("tab", { name: "Search by meaning", selected: true }),
-  ).toBeTruthy();
+  return screen.findByRole("dialog", { name: "System" });
+}
+
+async function closeSystem(): Promise<void> {
+  await fireEvent.click(screen.getByRole("button", { name: "Close System" }));
+}
+
+async function turnOnAndClose(): Promise<void> {
+  render(App);
+  await submitSearch("notes");
+  const drawer = await openSearchByMeaning();
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+  expect(await within(drawer).findByText("Turning on")).toBeTruthy();
+  await closeSystem();
+}
+
+it("keeps setup running across drawer visits and the off hint until restart", async () => {
+  let status: unknown = localOff;
+  let applied: (response: Response) => void = () => {};
+  const harness = searchWithMeaningOff({
+    status: () => status,
+    apply: () => new Promise((resolve) => (applied = resolve)),
+  });
+  await turnOnAndClose();
+  expect(harness.localSetups).toEqual([
+    { server: "auto", plan_fingerprint: localPlan.fingerprint, consent: true },
+  ]);
+  let drawer = await openSearchByMeaning();
+  expect(await within(drawer).findByText("Turning on")).toBeTruthy();
+  await closeSystem();
+
+  status = localSaved;
+  applied(json(localPlan));
+  await submitSearch("notes again");
+  drawer = await openSearchByMeaning();
+  expect(await within(drawer).findByText("Restart required")).toBeTruthy();
+  expect(within(drawer).getByText(/to finish\./).textContent).toBe(
+    "Run docbank daemon restart to finish.",
+  );
+  expect(within(drawer).queryByRole("button", { name: "Turn on" })).toBeNull();
+  expect(harness.localSetups).toHaveLength(1);
+});
+
+it.each([
+  ["On", { ...localOff, active: true, provider: "local", download_bytes: 0 }],
+  ["Restart required", localSaved],
+])("shows a failed setup on return until status reads %s", async (text, fixed) => {
+  let status: unknown = localOff;
+  let applied: (response: Response) => void = () => {};
+  searchWithMeaningOff({
+    status: () => status,
+    apply: () => new Promise((resolve) => (applied = resolve)),
+  });
+  await turnOnAndClose();
+  applied(new Response(JSON.stringify({ detail: "Download failed" }), { status: 502 }));
+  let drawer = await openSearchByMeaning();
+  expect((await within(drawer).findByRole("alert")).textContent).toBe("Download failed");
   expect(
     await within(drawer).findByText("Downloads 290 MB once, shared by all Kenn apps"),
   ).toBeTruthy();
+  await closeSystem();
+
+  status = fixed;
+  drawer = await openSearchByMeaning();
+  expect(await within(drawer).findByText(text)).toBeTruthy();
+  expect(within(drawer).queryByRole("alert")).toBeNull();
 });
+
+it.each(["reading status", "turning on"])(
+  "hands a rejected session to sign-in while %s",
+  async (step) => {
+    searchWithMeaningOff({
+      status: () => (step === "reading status" ? new Response("{}", { status: 401 }) : localOff),
+      apply: () => Promise.resolve(new Response("{}", { status: 401 })),
+    });
+    render(App);
+    await submitSearch("notes");
+    const drawer = await openSearchByMeaning();
+    if (step === "turning on")
+      await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+    expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "System" })).toBeNull();
+  },
+);
 
 it("reports a failed legacy GET fallback after a processing failure", async () => {
   const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});

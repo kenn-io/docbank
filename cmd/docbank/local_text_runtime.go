@@ -131,21 +131,18 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	return cfg, nil
 }
 
-func localTextStatus(ctx context.Context, cfg config.Config, service *processing.Service, restartPending bool) (api.LocalTextStatus, error) {
+func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending bool) (api.LocalTextStatus, error) {
 	status := api.LocalTextStatus{RestartRequired: restartPending}
 	for _, profile := range service.Profiles() {
 		if len(profile.QueryEmbeddingBindings) == 0 {
 			continue
 		}
-		binding, err := cfg.EmbeddingProfile(profile.QueryEmbeddingBindings[0])
-		if err != nil {
-			return status, err
-		}
+		binding := profiles[profile.Name].EmbeddingDisclosures[profile.QueryEmbeddingBindings[0]]
 		status.Active, status.Provider = true, "configured"
-		if binding.Runtime != nil {
-			if binding.Runtime.Managed {
+		if endpoint, err := url.Parse(binding.Endpoint); err == nil {
+			if endpoint.Scheme == "managed" {
 				status.Provider = "local"
-			} else if endpoint, err := url.Parse(binding.Runtime.Endpoint); err == nil && endpoint.Port() == "11434" {
+			} else if endpoint.Port() == "11434" {
 				status.Provider = "ollama"
 			}
 		}

@@ -330,7 +330,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		choice = config.LocalTextConfig{}
 	}
 	baseConfig := cfg
-	localTextConfig := cfg
 	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
 		candidate, err := localTextCandidate(baseConfig, mode, name)
 		if err != nil {
@@ -350,9 +349,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 		if err == nil {
 			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
-			if err == nil {
-				localTextConfig = candidate
-			}
 		}
 		if err != nil {
 			logger.Warn("restore local text selection; indexing remains inactive", "profile", choice.Profile, "error", err)
@@ -719,7 +715,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, LocalText: localText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
-			return localTextStatus(ctx, localTextConfig, processingService, restartPending.Load())
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,

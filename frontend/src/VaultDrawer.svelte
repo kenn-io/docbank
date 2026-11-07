@@ -1,13 +1,17 @@
 <script module lang="ts">
-  // Setup outlives the drawer, so reopening it shows a running download or its failure.
-  let setup = $state<{ session: string; pending: boolean; error?: string }>();
+  import type { LocalTextStatus } from "./generated/docbank.js";
+
+  export type SearchByMeaningSetup = {
+    status?: LocalTextStatus;
+    readError: string;
+    pending: boolean;
+    error: string;
+  };
 </script>
 
 <script lang="ts">
   import { setContext, untrack } from "svelte";
   import { Button, SearchByMeaningRow, Spinner, type SearchByMeaningState } from "@kenn-io/kit-ui";
-  import * as generated from "./generated/docbank.js";
-  import { APIError } from "./api-transport.js";
   import DrawerShell from "./DrawerShell.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
@@ -19,13 +23,19 @@
   let {
     session,
     initialTab = "storage",
+    searchByMeaning,
     onclose,
     onauthfailure,
+    onreadsearchbymeaning,
+    onturnonsearchbymeaning,
   }: {
     session: string;
     initialTab?: string;
+    searchByMeaning: SearchByMeaningSetup;
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
+    onreadsearchbymeaning: () => () => void;
+    onturnonsearchbymeaning: () => void;
   } = $props();
   let tab = $state(untrack(() => initialTab));
   let switched = false;
@@ -49,63 +59,15 @@
     tab = value;
   }
 
-  let meaning = $state<generated.LocalTextStatus>();
-  let readError = $state<string>();
-  let reads = $state(0);
-  const current = $derived(setup?.session === session ? setup : undefined);
-  const pending = $derived(!!current?.pending);
-  const meaningRow = $derived(rowState(meaning, pending));
+  const meaning = $derived(searchByMeaning.status);
+  const meaningRow = $derived(rowState(meaning, searchByMeaning.pending));
 
   $effect(() => {
-    if (tab !== "searchByMeaning" || pending) return;
-    void reads;
-    const controller = new AbortController();
-    void readStatus(session, controller.signal);
-    return () => controller.abort();
+    if (tab === "searchByMeaning") return untrack(onreadsearchbymeaning);
   });
 
-  async function readStatus(current: string, signal: AbortSignal): Promise<void> {
-    readError = undefined;
-    try {
-      const next = await generated.getLocalTextStatus({ session: current, signal });
-      if (!signal.aborted) meaning = next;
-    } catch (cause) {
-      if (signal.aborted) return;
-      if (!authFailed(cause)) readError = cause instanceof Error ? cause.message : String(cause);
-    }
-  }
-
-  // Clicking Turn on is the consent, so the reviewed plan is applied without another prompt.
-  async function turnOn(): Promise<void> {
-    const current = session;
-    setup = { session: current, pending: true };
-    meaning = undefined;
-    let error: string | undefined;
-    try {
-      const plan = await generated.planLocalText({ server: "auto" }, { session: current });
-      await generated.applyLocalText(
-        { server: "auto", plan_fingerprint: plan.fingerprint, consent: true },
-        { session: current },
-      );
-    } catch (cause) {
-      if (authFailed(cause)) {
-        setup = undefined;
-        return;
-      }
-      error = cause instanceof Error ? cause.message : String(cause);
-    }
-    setup = { session: current, pending: false, error };
-  }
-
-  function authFailed(cause: unknown): boolean {
-    if (!(cause instanceof APIError && cause.status === 401)) return false;
-    onauthfailure(cause);
-    onclose();
-    return true;
-  }
-
   function rowState(
-    status: generated.LocalTextStatus | undefined,
+    status: LocalTextStatus | undefined,
     pending: boolean,
   ): SearchByMeaningState | undefined {
     if (pending) return { kind: "downloading", doneBytes: 0, totalBytes: 0 };
@@ -140,18 +102,18 @@
             itemNoun="documents"
             labels={meaning?.restart_required ? { on: "Restart required" } : { keepsIndex: "" }}
             readonly={meaningRow.kind === "ollama"}
-            onturnon={turnOn}
+            onturnon={onturnonsearchbymeaning}
             onusebuiltin={() => {}}
           />
         </div>
-      {:else if !readError}
+      {:else if !searchByMeaning.readError}
         <p class="loading"><Spinner size={16} /> Reading search status…</p>
       {/if}
-      {#if readError}
-        <p class="error" role="alert">{readError}</p>
-        <Button size="sm" onclick={() => void reads++}>Try again</Button>
-      {:else if current?.error && meaning && !meaning.active && !meaning.restart_required}
-        <p class="error" role="alert">{current.error}</p>
+      {#if searchByMeaning.readError}
+        <p class="error" role="alert">{searchByMeaning.readError}</p>
+        <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
+      {:else if searchByMeaning.error}
+        <p class="error" role="alert">{searchByMeaning.error}</p>
       {:else if meaning?.restart_required}
         <p>Run <code>docbank daemon restart</code> to finish.</p>
       {/if}

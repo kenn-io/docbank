@@ -430,8 +430,15 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 }
 
 func localEmbeddingOrigin(ctx context.Context, confirm func(context.Context, int64) (bool, error)) (string, error) {
+	return localEmbeddingOriginWithRuntime(ctx, confirm, embedlocal.Endpoint, embedlocal.Install)
+}
+
+func localEmbeddingOriginWithRuntime(ctx context.Context, confirm func(context.Context, int64) (bool, error),
+	endpoint func(context.Context, embedlocal.Options) (string, error),
+	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
+) (string, error) {
 	opts := embedlocal.Options{SkipOllama: true}
-	origin, err := embedlocal.Endpoint(ctx, opts)
+	origin, err := endpoint(ctx, opts)
 	if err == nil {
 		return strings.TrimSuffix(origin, "/v1"), nil
 	}
@@ -443,12 +450,12 @@ func localEmbeddingOrigin(ctx context.Context, confirm func(context.Context, int
 		return "", fmt.Errorf("find local embeddings directory: %w", err)
 	}
 	// A nil Confirm allows installed-file reuse without approving a download.
-	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: confirm})
+	installation, err := install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: confirm})
 	if err != nil {
 		return "", fmt.Errorf("reuse local embeddings installation: %w", err)
 	}
 	opts.DataDir, opts.Executable = installation.DataDir, installation.Executable
-	origin, err = embedlocal.Endpoint(ctx, opts)
+	origin, err = endpoint(ctx, opts)
 	if err != nil {
 		return "", fmt.Errorf("start local embeddings: %w", err)
 	}
