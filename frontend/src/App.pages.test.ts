@@ -121,13 +121,13 @@ it.each([
   ["Recoverable trash", "Trash", "/trash"],
 ])("navigates to %s and restores it with browser history", async (label, title, path) => {
   start();
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   const button = await screen.findByRole("button", { name: label });
   await fireEvent.click(button);
   const main = await screen.findByRole("main", { name: title });
   expect(screen.getAllByRole("main")).toHaveLength(1);
   expect(within(main).getByRole("heading", { name: title, level: 1 })).toBeTruthy();
-  expect(screen.queryByText("Empty folder")).toBeNull();
+  expect(screen.queryByText("No documents yet")).toBeNull();
   expect(button.getAttribute("aria-current")).toBe("page");
   expect(location.pathname).toBe(path);
   expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
@@ -137,7 +137,7 @@ it.each([
   expect(screen.queryByRole("button", { name: "Close navigation" })).toBeNull();
   history.back();
   await waitFor(() => expect(location.pathname).toBe("/"));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   history.forward();
   await waitFor(() => expect(location.pathname).toBe(path));
   expect(await screen.findByRole("main", { name: title })).toBeTruthy();
@@ -160,7 +160,7 @@ it.each([
   ["Recoverable trash", "/trash", "/api/v1/trash?"],
 ])("keeps %s at %s when %s returns 401", async (label, path, endpoint) => {
   const fetch = start();
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   const original = fetch.getMockImplementation()!;
   fetch.mockImplementation(async (input, init) => {
     if (String(input).startsWith(endpoint))
@@ -176,7 +176,7 @@ it.each([
 
 it("retains unfinished Advanced input and execution settings across Imports navigation", async () => {
   start();
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.click(
     await screen.findByRole("combobox", { name: "Processing profile: Default" }),
@@ -191,7 +191,7 @@ it("retains unfinished Advanced input and execution settings across Imports navi
   await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
   await screen.findByRole("main", { name: "Imports" });
   await fireEvent.click(screen.getByRole("button", { name: "All files" }));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
   expect(screen.getByRole("combobox", { name: "Processing profile: archive" })).toBeTruthy();

@@ -238,7 +238,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   });
   expect(tagSelector.hasAttribute("disabled")).toBe(true);
   resolveRoot(json(root));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   expect(tagSelector.hasAttribute("disabled")).toBe(false);
 
   await fireEvent.click(
@@ -255,7 +255,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   resolveInitialTagBrowse(
     json({
       items: [{ node: taxReport, path: "/Reports/quarterly-tax-report.txt" }],
@@ -274,7 +274,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(await screen.findByText("tag catalog temporarily unavailable")).toBeTruthy();
   expect(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeTruthy();
-  expect(screen.getByText("Empty folder")).toBeTruthy();
+  expect(screen.getByText("No documents yet")).toBeTruthy();
 
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
@@ -288,7 +288,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
 
   await fireEvent.input(input, { target: { value: "quarterly" } });
   await fireEvent.submit(input.closest("form")!);
@@ -340,6 +340,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   await fireEvent.dblClick(screen.getByRole("cell", { name: "/Archive" }));
   expect(await screen.findByText("Empty folder")).toBeTruthy();
+  expect(screen.queryByText("Add files or a folder to start your vault.")).toBeNull();
   const searchCalls = fetchMock.mock.calls.filter(([url]) =>
     String(url).startsWith("/api/v1/search?"),
   ).length;
@@ -2331,6 +2332,22 @@ it("retries failed folder metadata when reselecting it", async () => {
     ).toBe(false),
   );
   expect(screen.queryByText("Folder tags unavailable")).toBeNull();
+});
+
+it("offers the existing Add menu from an empty vault root", async () => {
+  prepareKeyboardApp();
+  installKeyboardBackend("success", true);
+  render(App);
+
+  const title = await screen.findByText("No documents yet");
+  const emptyState = within(title.closest<HTMLElement>(".kit-empty-state")!);
+  expect(emptyState.getByText("Add files or a folder to start your vault.")).toBeTruthy();
+  await fireEvent.click(emptyState.getByRole("button", { name: "Add" }));
+  const menu = within(await screen.findByRole("menu", { name: "Add documents" }));
+  expect(menu.getByRole("menuitem", { name: "Upload files" })).toBeTruthy();
+  expect(menu.getByRole("menuitem", { name: "Upload folder" })).toBeTruthy();
+  expect(menu.getByRole("menuitem", { name: "Import mailbox" })).toBeTruthy();
+  expect(menu.getByRole("menuitem", { name: "Import load files" })).toBeTruthy();
 });
 
 it("loads and edits tag bindings in an empty vault", async () => {
