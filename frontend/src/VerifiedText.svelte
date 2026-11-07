@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import { Button, FindBar, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
@@ -13,7 +13,7 @@
     type RenditionTextResolution,
   } from "./renditionText.js";
   import type { SelectedSource } from "./selectedSource.js";
-  import { markText } from "./textMarks.js";
+  import { markText, nextTextMatch } from "./textMarks.js";
 
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
   let {
@@ -24,6 +24,9 @@
     processingRevision = 0,
     profileName = "",
     observed,
+    searchContext = false,
+    fallback,
+    alternative,
     queryTerms = [],
     queryHighlightError = "",
     highlightSets = [],
@@ -37,6 +40,9 @@
     processingRevision?: number;
     profileName?: string;
     observed?: RenditionObservation;
+    searchContext?: boolean;
+    fallback?: Snippet;
+    alternative?: Snippet;
     queryTerms?: string[];
     queryHighlightError?: string;
     highlightSets?: HighlightChoice[];
@@ -167,14 +173,38 @@
     };
   });
 
-  function moveMatch(delta: number): void {
-    if (findMatches.length === 0) return;
-    activeMatch = (activeMatch + delta + findMatches.length) % findMatches.length;
+  const searchMatches = $derived(searchContext && !find ? marked.matches : []);
+  // A new query or Find input starts at the first match, even if text loads later.
+  $effect(() => {
+    void marked;
+    activeMatch = 0;
+  });
+  $effect(() => {
+    const index = activeMatch;
+    const matches = find ? findMatches : searchMatches;
+    const enabled = active;
+    const box = textBox;
+    void marked;
+    let current = true;
     void tick().then(() => {
-      textBox
-        ?.querySelector<HTMLElement>(`mark[data-match-index="${activeMatch}"]`)
-        ?.scrollIntoView({ block: "center" });
+      if (!current || !enabled || !matches.length || !box) return;
+      const match = box.querySelector<HTMLElement>(`mark[data-match-index="${index}"]`);
+      if (!match) return;
+      // Keep scrolling inside the text; do not move the results or the inspector.
+      const top =
+        box.scrollTop +
+        match.getBoundingClientRect().top -
+        box.getBoundingClientRect().top -
+        (box.clientHeight - match.offsetHeight) / 2;
+      box.scrollTo?.({ top: Math.max(0, top) });
     });
+    return () => {
+      current = false;
+    };
+  });
+  function moveMatch(delta: -1 | 1): void {
+    const count = find ? findMatches.length : searchMatches.length;
+    activeMatch = nextTextMatch(activeMatch, delta, count);
   }
 
   function stateMessage(state: Exclude<RenditionTextResolution["state"], "ready">): string {
@@ -233,6 +263,7 @@
           ><ShieldCheckIcon size={14} aria-label="Verified" /></AppTooltip
         ></span
       >
+      {#if text && alternative}{@render alternative()}{/if}
     </div>
   {/if}
   {#if queryHighlightError}<p class="notice" role="status">
@@ -243,6 +274,32 @@
   {:else if error}
     <p class="notice" role="alert">{error}</p>
   {:else if text}
+    {#if searchContext}
+      <p class="text-origin">{originalFallback ? "Original text" : "Extracted text"}</p>
+      {#if !find && searchMatches.length}
+        <nav class="search-matches" aria-label="Search matches">
+          <Button
+            size="sm"
+            surface="soft"
+            onclick={() => moveMatch(-1)}
+            ariaLabel="Previous search match">Previous match</Button
+          >
+          <span aria-live="polite">Search match {activeMatch + 1} of {searchMatches.length}</span>
+          <Button
+            size="sm"
+            surface="soft"
+            onclick={() => moveMatch(1)}
+            ariaLabel="Next search match">Next match</Button
+          >
+        </nav>
+      {:else if !find && !queryHighlightError}
+        <p class="notice" role="status">
+          {queryTerms.length
+            ? "No literal search matches in this text. The result may match metadata or use different word forms."
+            : "No literal query highlights are available for this search. Read the context below."}
+        </p>
+      {/if}
+    {/if}
     {#if originalFallback && resolution && ["failed", "historical_unavailable"].includes(resolution.state)}
       <p class="notice" role="status">
         {stateMessage(resolution.state as Exclude<RenditionTextResolution["state"], "ready">)}
@@ -251,7 +308,7 @@
     <pre
       bind:this={textBox}
       aria-label={`Verified text of ${source.name}`}>{#each marked.segments as segment}{#if segment.match}<mark
-            class:active={!!find && segment.match.index === activeMatch}
+            class:active={(!!find || searchContext) && segment.match.index === activeMatch}
             data-match-index={segment.match.index}
             data-source={segment.match.source}
             style={`--mark-color:${segment.match.color}`}>{segment.text}</mark
@@ -267,18 +324,40 @@
       >
     </p>
   {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required"}
+    {#if resolution.state === "profile_required"}<p class="setup">
+        {stateMessage(resolution.state)}
+      </p>{/if}
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
-      </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
+      </div>{:else if resolution.state === "unprocessed"}<p class="setup">
+        This version hasn't been processed.
+      </p>{/if}
   {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
+  {#if !loading && !text && fallback}{@render fallback()}{/if}
 </div>
 
 <style>
   .verified-text {
-    display: grid;
-    gap: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    height: 100%;
+    min-height: 0;
+  }
+  .text-origin {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .search-matches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
   }
   .text-controls {
     display: flex;
@@ -308,6 +387,8 @@
     min-height: 96px;
   }
   pre {
+    flex: 1;
+    min-height: 100px;
     max-height: 420px;
     overflow: auto;
     margin: 0;

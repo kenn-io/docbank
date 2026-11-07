@@ -221,7 +221,7 @@ test("DB17 real PDF text and fifty-step snapshot navigation", async ({ page }) =
   await editor.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.getByRole("cell", { name: "/01-evidence.pdf", exact: true })).toBeVisible();
   await page.getByRole("cell", { name: "/01-evidence.pdf", exact: true }).click();
-  await page.getByRole("tab", { name: "Text" }).click();
+  await expect(page.getByRole("tab", { name: "Preview" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByLabel("Verified text of 01-evidence.pdf")).toContainText(
     "Extracted alpha evidence from a real synthetic PDF",
   );

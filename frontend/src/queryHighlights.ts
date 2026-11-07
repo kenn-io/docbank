@@ -1,5 +1,6 @@
 import * as generated from "./generated/docbank.js";
-import { canonicalQuery } from "./query.js";
+import { canonicalQuery, parseQuery } from "./query.js";
+import { previewQuery, type QueryPreview } from "./queryPreview.js";
 import type { SnapshotPage } from "./snapshots.js";
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -40,11 +41,11 @@ function unicode(value: unknown, field: string): string {
 
 export async function readQueryHighlights(
   session: string,
-  snapshot: SnapshotPage,
+  acceptedQuery: Pick<SnapshotPage, "query" | "query_fingerprint" | "dependencies"> | QueryPreview,
   signal: AbortSignal,
 ): Promise<string[]> {
   const raw = object(
-    await generated.previewQueryHighlights(JSON.parse(canonicalQuery(snapshot.query)), {
+    await generated.previewQueryHighlights(JSON.parse(canonicalQuery(acceptedQuery.query)), {
       session,
       signal,
     }),
@@ -57,21 +58,21 @@ export async function readQueryHighlights(
   if (
     typeof raw.query_fingerprint !== "string" ||
     !fingerprint.test(raw.query_fingerprint) ||
-    raw.query_fingerprint !== snapshot.query_fingerprint
+    raw.query_fingerprint !== acceptedQuery.query_fingerprint
   ) {
-    malformed("fingerprint does not match the accepted snapshot");
+    malformed("fingerprint does not match the accepted query");
   }
   if (
     !Array.isArray(raw.dependencies) ||
     raw.dependencies.length > 256 ||
-    raw.dependencies.length !== snapshot.dependencies.length
+    raw.dependencies.length !== acceptedQuery.dependencies.length
   ) {
-    malformed("dependencies do not match the accepted snapshot");
+    malformed("dependencies do not match the accepted query");
   }
   raw.dependencies.forEach((value, index) => {
     const dependency = object(value, `dependencies[${index}]`);
     exactKeys(dependency, ["kind", "id", "revision"], [], `dependencies[${index}]`);
-    const accepted = snapshot.dependencies[index];
+    const accepted = acceptedQuery.dependencies[index];
     if (
       typeof dependency.kind !== "string" ||
       !dependencyKinds.has(dependency.kind) ||
@@ -97,4 +98,14 @@ export async function readQueryHighlights(
     seen.add(term);
     return term;
   });
+}
+
+export async function readSearchQueryHighlights(
+  session: string,
+  text: string,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const query = parseQuery(JSON.stringify({ text, syntax: "simple" }));
+  const preview = await previewQuery(session, query, signal);
+  return readQueryHighlights(session, preview, signal);
 }
