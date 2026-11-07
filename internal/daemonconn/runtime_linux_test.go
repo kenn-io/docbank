@@ -34,13 +34,8 @@ func TestWaitDeadReturnsForUnreapedChild(t *testing.T) {
 	require.NoError(t, stdin.Close())
 
 	// Observe the exit without reaping the child, as in a container without init.
-	var waitErr error
-	require.Eventually(t, func() bool {
-		var info unix.Siginfo
-		waitErr = unix.Waitid(unix.P_PID, cmd.Process.Pid, &info, unix.WEXITED|unix.WNOWAIT|unix.WNOHANG, nil)
-		return waitErr != nil || info.Signo != 0
-	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, waitErr)
+	var info unix.Siginfo
+	require.NoError(t, unix.Waitid(unix.P_PID, cmd.Process.Pid, &info, unix.WEXITED|unix.WNOWAIT, nil))
 
 	synctest.Test(t, func(t *testing.T) {
 		started := time.Now()
