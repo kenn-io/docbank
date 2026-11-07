@@ -10,7 +10,7 @@ import (
 )
 
 func newProcessingFacesCommand() *cobra.Command {
-	return &cobra.Command{Use: "faces", Short: "Turn on local face suggestions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	return &cobra.Command{Use: "faces", Short: "Turn on local face suggestions", Example: "  docbank processing faces", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err

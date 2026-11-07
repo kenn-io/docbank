@@ -499,7 +499,6 @@
     <div class="review-content">
       {#if review.candidate}
         <p class="count">{suggestionCounts(faces)}</p>
-        <p>Remove anyone who doesn't belong, then confirm.</p>
         <ul class="review-grid">
           {#each faces as face, index (face.face_id)}
             <li class="review-face">

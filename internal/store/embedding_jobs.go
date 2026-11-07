@@ -300,7 +300,7 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence
 		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
 		WHERE j.content_version_id=$1 AND j.profile_fingerprint=$2
-		AND (j.input_kind IN ('original_file','image') OR EXISTS (
+		AND (j.input_kind IN ('original_file','image','face') OR EXISTS (
 			SELECT 1 FROM rendition_heads h WHERE h.content_version_id=j.content_version_id
 			AND h.profile_fingerprint=j.profile_fingerprint AND h.attachment_id=g.attachment_id
 		))`

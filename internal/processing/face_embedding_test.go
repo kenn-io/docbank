@@ -32,6 +32,7 @@ type faceEmbeddingFixture struct {
 	unmatched    bool
 	matchAll     bool
 	vectorForBox func(embedclient.FaceBox) []float32
+	onRequest    func()
 }
 
 func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture {
@@ -48,6 +49,9 @@ func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture
 	x.inputs, _, _, err = f.catalog.PhotoFacePersonNames(ctx, f.node.CurrentVersionID)
 	require.NoError(t, err)
 	server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if x.onRequest != nil {
+			x.onRequest()
+		}
 		assert.Equal(t, "/v1/faces", r.URL.Path)
 		var request embedclient.FaceRequest
 		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {

@@ -436,7 +436,6 @@ it("confirms an Is this X? group after removing a face", async () => {
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
   expect(within(dialog).getByText("3 faces · 2 photos")).toBeTruthy();
-  expect(within(dialog).getByText("Remove anyone who doesn't belong, then confirm.")).toBeTruthy();
   await waitFor(() => expect(within(dialog).getAllByRole("img")).toHaveLength(3));
   const regrouped = { ...isAda, candidate_id: "candidate-ada-2", faces: [f1, f3], revision: 1 };
   list.mockResolvedValue({ items: [regrouped], total: 1 });

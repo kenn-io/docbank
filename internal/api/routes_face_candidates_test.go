@@ -74,3 +74,57 @@ func faceMatchingSignature(t *testing.T, s *store.Store) string {
 	require.NoError(t, err)
 	return snapshot.Signature
 }
+
+func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader("synthetic photo"))
+	require.NoError(t, err)
+	visible, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	first, _, err := s.CreatePhotoFace(ctx, visible.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	second, _, err := s.CreatePhotoFace(ctx, visible.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	candidate, err := store.NewFaceCandidate([]store.FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s.Store), []store.PersonMatchCandidate{candidate}))
+	person, err := s.CreatePerson(ctx, "Concealed", "operator")
+	require.NoError(t, err)
+	hidden, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, hidden.CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	browser["Cookie"] = response.Cookies()[0].String()
+	response, body = get(t, ts, "/api/v1/people?query=Concealed&photo_summary=true", browser)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, person.PersonID)
+	response, body = get(t, ts, "/api/v1/people/face-candidates", browser)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.FaceCandidatePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", browser, map[string]string{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	browser["If-Match"] = `"1"`
+	path := "/api/v1/people/face-candidates/" + page.Items[0].CandidateID + "/decision"
+	request := api.FaceCandidateDecisionRequest{Action: "link", PersonID: person.PersonID}
+	response, body = do(t, ts, http.MethodPost, path, browser, request)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, visible.CurrentVersionID)
+	require.NoError(t, err)
+	for _, face := range faces {
+		require.Empty(t, face.AssertionID)
+	}
+	response, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+}

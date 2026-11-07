@@ -35,17 +35,24 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 	return document.RenditionInputOriginalFile
 }
 
-// photoDiscoveryScope discloses that consent for a photo description or image
-// embedding profile queues every eligible photo in the vault, not just the
-// planned one.
+// photoDiscoveryScopes are the consent disclosures for inputs that queue every
+// eligible photo in the vault, not just the planned one. Each text extends the
+// one it broadens, so the greatest applicable text is the broadest. Face
+// embedding reads Hidden photos too.
+var photoDiscoveryScopes = map[string]string{
+	string(document.RenditionInputDerivedUpload): "Granting consent automatically queues eligible photos throughout this vault.",
+	string(document.EmbeddingInputImage):         "Granting consent automatically queues eligible photos throughout this vault.",
+	string(document.EmbeddingInputFace):          "Granting consent automatically queues eligible photos throughout this vault. Faces in Hidden photos are included.",
+}
+
+// photoDiscoveryScope discloses the broadest vault-wide queueing a photo
+// description, image embedding, or face embedding profile's consent grants.
 func photoDiscoveryScope(profile configuredProfile) string {
-	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
-		return binding.InputKind == document.EmbeddingInputImage
-	})
-	if images || profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-		return "Granting consent automatically queues eligible photos throughout this vault."
+	scope := photoDiscoveryScopes[string(profileRenditionInput(profile))]
+	for _, binding := range profile.portable.Embeddings {
+		scope = max(scope, photoDiscoveryScopes[string(binding.InputKind)])
 	}
-	return ""
+	return scope
 }
 
 func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {

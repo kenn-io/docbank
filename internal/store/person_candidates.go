@@ -389,7 +389,9 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		personID := ""
 		switch decision.Action {
 		case "link":
-			personID, err = resolveActiveCandidatePersonTx(ctx, tx, decision.PersonID)
+			if personID, err = resolveActiveCandidatePersonTx(ctx, tx, decision.PersonID); err == nil {
+				err = s.fenceVisiblePeopleTx(ctx, tx, personID)
+			}
 		case "new_person":
 			name := candidate.DisplayName
 			if decision.DisplayName != "" {
@@ -397,14 +399,11 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			}
 			personID, err = createCandidatePersonTx(ctx, tx, name)
 		}
+		if err == nil && personID != "" {
+			err = materializeCandidateAssertionsTx(ctx, tx, personID, occurrences)
+		}
 		if err != nil {
 			return err
-		}
-		if personID != "" {
-			err = materializeCandidateAssertionsTx(ctx, tx, personID, occurrences)
-			if err != nil {
-				return err
-			}
 		}
 		state := personCandidateStateRejected
 		if personID != "" {
