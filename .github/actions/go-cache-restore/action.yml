@@ -44,15 +44,10 @@ runs:
         GROUP: ${{ inputs.group }}
         EXTRA_PATH: ${{ inputs.extra-path }}
         GO_SUM: ${{ hashFiles('go.sum') }}
-        PR_BENCH: ${{ github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache' }}
       run: |
         # One key per group and day: main refreshes it daily instead of freezing on go.sum.
         {
-          if [ "$PR_BENCH" = 'true' ]; then
-            echo "GO_CACHE_KEY=go-round7-prbench-${GROUP}-${GO_SUM}-${GITHUB_SHA}"
-          else
-            echo "GO_CACHE_KEY=go-${GROUP}-${GO_SUM}-$(date -u +%Y-%m-%d)"
-          fi
+          echo "GO_CACHE_KEY=go-${GROUP}-${GO_SUM}-$(date -u +%Y-%m-%d)"
           echo "GO_CACHE_PREFIX=go-${GROUP}-${GO_SUM}-"
           echo "GO_CACHE_GROUP_PREFIX=go-${GROUP}-"
           echo "GO_CACHE_PATHS<<EOF"
@@ -76,24 +71,10 @@ runs:
       shell: bash
       run: echo "GO_CACHE_HIT=${{ steps.restore.outputs.cache-hit }}" >> "$GITHUB_ENV"
 
-    - name: Measure restored cache directories
-      shell: bash
-      run: |
-        labels=(build module extra-path)
-        index=0
-        while IFS= read -r path; do
-          path="${path/#\~/$HOME}"
-          path="${path//\\//}"
-          printf 'Restored %s cache (KiB):\n' "${labels[$index]}"
-          if [ -d "$path" ]; then du -sk "$path"; else echo absent; fi
-          index=$((index + 1))
-        done <<< "$GO_CACHE_PATHS"
-
     - name: Track cache use for the daily save
       if: >-
         inputs.save-owner == 'true'
-        && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
-          || (github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache'))
+        && github.event_name == 'push' && github.ref == 'refs/heads/main'
         && steps.restore.outputs.cache-hit != 'true'
       shell: bash
       env:
@@ -129,5 +110,5 @@ runs:
     - name: Rehydrate module sources
       shell: bash
       run: |
-        # workflowretry: allow Measure one native rehydration attempt in this candidate.
+        # workflowretry: allow Rehydrate module sources from restored downloads.
         go mod download

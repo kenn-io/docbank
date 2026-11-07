@@ -1,6 +1,6 @@
 name: CI
 
-# Temporary cache measurement: run this revision with writes enabled; revert before delivery.
+# PR and merge-group candidates run ci.yml@main on GitHub-hosted runners; ci.yml changes apply after merging to main.
 on:
   pull_request:
   merge_group:
@@ -10,8 +10,8 @@ permissions: read-all
 
 jobs:
   run:
-    cache-mode: write
-    uses: ./.github/workflows/ci.yml
+    cache-mode: read
+    uses: kenn-io/docbank/.github/workflows/ci.yml@main
 
   gate:
     name: CI gate

@@ -37,27 +37,9 @@ runs:
           mv "${modcache}.download" "$modcache/cache"
         fi
 
-    - name: Measure cache directories for saving
-      if: >-
-        ((github.event_name == 'push' && github.ref == 'refs/heads/main')
-          || (github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache'))
-        && env.GO_CACHE_HIT != 'true'
-      shell: bash
-      run: |
-        labels=(build module extra-path)
-        index=0
-        while IFS= read -r path; do
-          path="${path/#\~/$HOME}"
-          path="${path//\\//}"
-          printf 'Saved %s cache (KiB):\n' "${labels[$index]}"
-          if [ -d "$path" ]; then du -sk "$path"; else echo absent; fi
-          index=$((index + 1))
-        done <<< "$GO_CACHE_PATHS"
-
     - name: Save caches
       if: >-
-        ((github.event_name == 'push' && github.ref == 'refs/heads/main')
-          || (github.event_name == 'pull_request' && github.head_ref == 'pr/round7-go-cache'))
+        github.event_name == 'push' && github.ref == 'refs/heads/main'
         && env.GO_CACHE_HIT != 'true'
       uses: actions/cache/save@v6.1.0
       with:
