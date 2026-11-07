@@ -98,15 +98,8 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID s
 
 // ReplaceFaceSuggestions preserves rejected evidence and supersedes open groups
 // whose membership changed. Publishing and queue admission share one transaction.
-func (s *Store) ReplaceFaceSuggestions(ctx context.Context, signature string, candidates []PersonMatchCandidate) error {
+func (s *Store) ReplaceFaceSuggestions(ctx context.Context, candidates []PersonMatchCandidate) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.faceMatchingInputsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if current.Signature != signature {
-			return ErrStaleRevision
-		}
 		wanted := map[string]bool{}
 		for i := range candidates {
 			c, err := normalizePersonCandidate(candidates[i])
@@ -133,11 +126,23 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, signature string, ca
 		}
 		for _, c := range candidates {
 			opened, retained, err := s.retainNormalizedPersonCandidate(ctx, tx, c, false)
+			if errors.Is(err, ErrPersonRetired) || errors.Is(err, ErrNotFound) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
 			if !retained {
 				break
+			}
+			if opened.State == "linked" {
+				var named bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_candidate_faces e JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE e.candidate_id=$1 AND f.assertion_id IS NOT NULL)`, opened.CandidateID).Scan(&named); err != nil {
+					return err
+				}
+				if named {
+					continue
+				}
 			}
 			if opened.State == "superseded" || opened.State == "linked" {
 				_, full, err := openPersonCandidateCount(ctx, tx)

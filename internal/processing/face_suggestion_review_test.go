@@ -103,8 +103,7 @@ func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 			require.NoError(t, x.f.blobs.Remove(item.Set.VectorSet.PayloadBlobHash))
 		}
 	}
-	// Restore metadata into a fresh catalog so no decoded payload cache can hide
-	// the missing immutable blob, matching a restart with one unavailable set.
+	// Restart with one unavailable artifact while retaining the healthy set.
 	var backup bytes.Buffer
 	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &backup))
 	target, err := store.Open(ctx, filepath.Join(t.TempDir(), "restored.db"))
@@ -210,7 +209,7 @@ func TestFaceSuggestionBatchesFinishAcrossWrites(t *testing.T) {
 	require.EqualValues(t, 499, total, "unrelated writes must let the original pass finish in four batches")
 }
 
-func TestFaceSuggestionBatchesDiscardChangedInputs(t *testing.T) {
+func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	t.Parallel()
 	x, omitted := newFaceSuggestionBatchFixture(t)
 	ctx := t.Context()
@@ -220,12 +219,18 @@ func TestFaceSuggestionBatchesDiscardChangedInputs(t *testing.T) {
 	require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: "dismiss"})
 	require.NoError(t, err)
-	for range 4 {
+	for range 3 {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
 	_, total, err := x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
-	require.EqualValues(t, 498, total, "changed inputs must restart the pass and omit the dismissed face pair")
+	require.EqualValues(t, 498, total, "current reads must hide the dismissed pair before catch-up")
+	for range 4 {
+		require.NoError(t, service.rebuildFaceSuggestions(ctx))
+	}
+	retired, _, err := x.f.catalog.PersonCandidates(ctx, "superseded", 24, 0)
+	require.NoError(t, err)
+	require.Len(t, retired, 1, "catch-up must supersede the snapshot's dismissed pair")
 }
 
 func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
@@ -272,5 +277,57 @@ func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
 		_, total, err = target.FaceCandidates(t.Context(), 24, 0)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, total, "restored payload must become a suggestion without a catalog write")
+	})
+}
+
+func TestFaceSuggestionBatchesPublishDuringRelevantWrites(t *testing.T) {
+	t.Parallel()
+	x, _ := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
+	for batch := range 4 {
+		if batch > 0 {
+			_, err := x.f.catalog.DecidePhotoFace(ctx, x.f.node.CurrentVersionID, store.PhotoFaceDecisionRequest{FaceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", batch*2-1), Revision: 1, Action: "dismiss"})
+			require.NoError(t, err)
+		}
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	_, total, err := x.f.catalog.FaceCandidates(ctx, 1, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 496, total, "a pass must publish while relevant changes continue")
+}
+
+func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
+	t.Parallel()
+	x, _ := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
+	face := x.inputs[0]
+	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = x.f.catalog.DecidePhotoFace(ctx, face.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: "name", PersonID: person.PersonID})
+	require.NoError(t, err)
+	for range 4 {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	for i, name := range []string{"Beth", "Cora"} {
+		person, err = x.f.catalog.UpdatePerson(ctx, person.PersonID, person.Revision, name)
+		require.NoError(t, err)
+		if i == 0 {
+			require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+		}
+	}
+	current, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	// Both renames change inputs without changing candidate identities. The
+	// first publication therefore makes no write that could wake a stale lane.
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		finished := make(chan error, 1)
+		go func() { finished <- x.service.FaceSuggestionBackfill(ctx, nil) }()
+		defer func() { cancel(); require.ErrorIs(t, <-finished, context.Canceled) }()
+		require.Eventually(t, func() bool {
+			x.service.faceSuggestionsMu.Lock()
+			defer x.service.faceSuggestionsMu.Unlock()
+			return x.service.faceSuggestionsSignature == current.Signature
+		}, 5*time.Second, 10*time.Millisecond, "the lane must publish the final input snapshot without another write")
 	})
 }

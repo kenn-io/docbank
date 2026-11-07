@@ -21,7 +21,7 @@ func seedFaceCandidate(t *testing.T, s *store.Store, node store.Node) {
 	require.NoError(t, err)
 	candidate, err := store.NewFaceCandidate([]store.FaceSuggestionFace{{PhotoFace: first}, {PhotoFace: second}}, "", "")
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(t.Context(), faceMatchingSignature(t, s), []store.PersonMatchCandidate{candidate}))
+	require.NoError(t, s.ReplaceFaceSuggestions(t.Context(), []store.PersonMatchCandidate{candidate}))
 }
 
 func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
@@ -77,13 +77,6 @@ func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	response, body = get(t, ts, "/api/v1/people/face-candidates?limit=251", browser)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-}
-
-func faceMatchingSignature(t *testing.T, s *store.Store) string {
-	t.Helper()
-	snapshot, err := s.FaceMatchingInputs(t.Context())
-	require.NoError(t, err)
-	return snapshot.Signature
 }
 
 func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {

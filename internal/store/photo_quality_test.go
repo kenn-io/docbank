@@ -164,7 +164,7 @@ func TestPhotoQualityGroupRejectionThenDismissInvalidatesFaces(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	pair := faceCandidatePair(t, s)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{pair.group}))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{pair.group}))
 	groups, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, groups, 1)

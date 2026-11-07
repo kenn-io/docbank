@@ -318,8 +318,7 @@ func TestFacePeopleRankingObeysHiddenScope(t *testing.T) {
 	require.Equal(t, beth.PersonID, rows[0].PersonID, "both people stay visible, but Hidden evidence must stop affecting rank")
 }
 
-// Counting the real blob boundary catches repeated payload decoding across
-// picker searches without replacing the ranking or matching implementation.
+// Count payload opens at the real blob boundary without replacing ranking.
 type facePayloadReads struct {
 	store.RenditionBlobReader
 
@@ -331,7 +330,7 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 
-func TestFacePickerReusesPayloadAcrossNameQueries(t *testing.T) {
+func TestFacePickerReadsPayloadForEachNameQuery(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
@@ -352,7 +351,7 @@ func TestFacePickerReusesPayloadAcrossNameQueries(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, people, 1)
 	}
-	require.Equal(t, 1, reader.opens)
+	require.Equal(t, 4, reader.opens)
 }
 
 func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
@@ -383,12 +382,12 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 	require.NoError(t, err)
 	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
 	require.NoError(t, err)
-	require.Equal(t, 3, reader.opens, "grouping adds the unrelated photo's uncached payload")
+	require.Equal(t, 5, reader.opens, "grouping reads all three payloads")
 	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
 	require.NoError(t, err)
 	_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
 	require.NoError(t, err)
-	require.Equal(t, 3, reader.opens, "picker subsets must preserve grouping's referenced payloads")
+	require.Equal(t, 10, reader.opens, "each operation reads only its own payloads")
 }
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {

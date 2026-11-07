@@ -27,7 +27,6 @@ type faceSuggestionGroup struct {
 
 type faceSuggestionPass struct {
 	signature                      string
-	revision                       uint64
 	incomplete                     bool
 	vectors                        []faceVector
 	centroids                      []store.FaceCentroid
@@ -148,27 +147,22 @@ func (p *faceSuggestionPass) candidates() ([]store.PersonMatchCandidate, error) 
 func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	service.faceSuggestionsMu.Lock()
 	defer service.faceSuggestionsMu.Unlock()
-	revision := service.catalog.WriteRevision()
 	pass := service.faceSuggestionsPending
-	if pass == nil || pass.revision != revision {
+	if pass == nil {
 		snapshot, err := service.catalog.FaceMatchingInputs(ctx)
 		if err != nil {
 			return err
 		}
 		if snapshot.Signature == service.faceSuggestionsSignature {
-			service.faceSuggestionsPending = nil
 			return nil
 		}
-		if pass == nil || pass.signature != snapshot.Signature {
-			vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
-			if unavailable != nil && !errors.Is(unavailable, store.ErrVectorSetUnavailable) {
-				return unavailable
-			}
-			pass = newFaceSuggestionPass(vectors)
-			pass.signature, pass.incomplete = snapshot.Signature, unavailable != nil
-			service.faceSuggestionsPending = pass
+		vectors, unavailable := service.catalog.FaceMatchingVectors(ctx, service.blobs, snapshot, true)
+		if unavailable != nil && !errors.Is(unavailable, store.ErrVectorSetUnavailable) {
+			return unavailable
 		}
-		pass.revision = revision
+		pass = newFaceSuggestionPass(vectors)
+		pass.signature, pass.incomplete = snapshot.Signature, unavailable != nil
+		service.faceSuggestionsPending = pass
 	}
 	done, err := pass.advance(ctx, faceSuggestionComparisonBatch)
 	if err != nil || !done {
@@ -179,7 +173,7 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.signature, candidates); err != nil {
+	if err := service.catalog.ReplaceFaceSuggestions(ctx, candidates); err != nil {
 		return err
 	}
 	if pass.incomplete {
@@ -192,7 +186,7 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	return nil
 }
 func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog.Logger) error {
-	settled := ^uint64(0)
+	settled, revision := ^uint64(0), uint64(0)
 	lane := Backfill[string]{Name: "face-suggestions", Page: 1, IdleDelay: time.Second, WriteRevision: service.catalog.WriteRevision, Logger: logger, Mutate: service.gate.MutateContext,
 		List: func(_ context.Context, after string, _ int) ([]string, error) {
 			service.faceSuggestionsMu.Lock()
@@ -204,7 +198,11 @@ func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog
 			return []string{"faces"}, nil
 		}, Key: func(s string) string { return s },
 		Process: func(ctx context.Context, _ string) error {
-			revision := service.catalog.WriteRevision()
+			service.faceSuggestionsMu.Lock()
+			if service.faceSuggestionsPending == nil {
+				revision = service.catalog.WriteRevision()
+			}
+			service.faceSuggestionsMu.Unlock()
 			err := service.rebuildFaceSuggestions(ctx)
 			service.faceSuggestionsMu.Lock()
 			if err == nil && service.faceSuggestionsPending == nil {

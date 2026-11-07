@@ -13,7 +13,6 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store/schemaformat"
 	"go.kenn.io/docbank/internal/waitlock"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -42,8 +41,6 @@ type Store struct {
 	photoEvents            photoEventFeed
 	vectorSourceMu         sync.Mutex
 	vectorSourceMemos      map[string]vectorSourceMemo
-	faceVectorsMu          sync.Mutex
-	faceVectors            map[string]document.VectorSetV1
 	photoStackVectorsMu    sync.Mutex
 	photoStackVectors      map[string]photoStackOpenedGeneration
 	photoHiddenNow         func() time.Time
@@ -277,9 +274,6 @@ func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 func (s *Store) Close() error {
 	s.closePhotoEvents()
 	err := errors.Join(s.db.Close(), s.writeDB.Close())
-	s.faceVectorsMu.Lock()
-	s.faceVectors = nil
-	s.faceVectorsMu.Unlock()
 	s.photoStackVectorsMu.Lock()
 	s.photoStackVectors = nil
 	s.photoStackVectorsMu.Unlock()

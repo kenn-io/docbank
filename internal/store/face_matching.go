@@ -10,14 +10,12 @@ import (
 	"slices"
 	"strings"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
 type FaceMatchingSnapshot struct {
-	Signature        string
-	Sets             []FaceSuggestionSet
-	ReferencedSetIDs []string
+	Signature string
+	Sets      []FaceSuggestionSet
 }
 type FaceVector struct {
 	Face   FaceSuggestionFace
@@ -62,30 +60,12 @@ func (s *Store) faceRankingInputsTx(ctx context.Context, tx *sql.Tx, faceID stri
 	if err != nil {
 		return FaceMatchingSnapshot{}, err
 	}
-	references, err := stringColumnTx(ctx, tx, "face payload references", `SELECT embedding_set_id FROM embedding_heads WHERE input_kind='face'`)
-	return FaceMatchingSnapshot{Sets: sets, ReferencedSetIDs: references}, err
+	return FaceMatchingSnapshot{Sets: sets}, nil
 }
 
-// FaceMatchingVectors keeps only currently referenced immutable payloads. Hidden
-// membership is projected for each caller, after its source authorization.
+// FaceMatchingVectors decodes immutable payloads for the current operation.
+// Hidden membership is projected after the caller's source authorization.
 func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobReader, snapshot FaceMatchingSnapshot, includeHidden bool) ([]FaceVector, error) {
-	s.faceVectorsMu.Lock()
-	live := make(map[string]bool, len(snapshot.Sets))
-	for _, item := range snapshot.Sets {
-		live[item.Set.ID] = true
-	}
-	// A ranking projection must preserve payloads still referenced by grouping.
-	for _, id := range snapshot.ReferencedSetIDs {
-		live[id] = true
-	}
-	cache := make(map[string]document.VectorSetV1, len(live))
-	for id, decoded := range s.faceVectors {
-		if live[id] {
-			cache[id] = decoded
-		}
-	}
-	s.faceVectors = cache
-	s.faceVectorsMu.Unlock()
 	var vectors []FaceVector
 	var unavailable error
 	seen := map[string]bool{}
@@ -96,24 +76,17 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		if !includeHidden && len(item.Faces) > 0 && item.Faces[0].Hidden {
 			continue
 		}
-		// Only this call writes cache; its writes lock against another call's pruning read.
-		decoded, ok := cache[item.Set.ID]
-		if !ok {
-			data, err := s.ReadVectorIndexVectorSet(ctx, reader, VectorIndexMember{EmbeddingSetID: item.Set.ID, VectorSetID: item.Set.VectorSet.ID, PayloadBlobHash: item.Set.VectorSet.PayloadBlobHash, PayloadSize: item.Set.VectorSet.PayloadSize})
-			if errors.Is(err, ErrVectorSetUnavailable) {
-				unavailable = fmt.Errorf("%w", cmp.Or(unavailable, err))
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			decoded, err = ValidateReusableEmbeddingPayload(item.Set, data)
-			if err != nil {
-				return nil, err
-			}
-			s.faceVectorsMu.Lock()
-			cache[item.Set.ID] = decoded
-			s.faceVectorsMu.Unlock()
+		data, err := s.ReadVectorIndexVectorSet(ctx, reader, VectorIndexMember{EmbeddingSetID: item.Set.ID, VectorSetID: item.Set.VectorSet.ID, PayloadBlobHash: item.Set.VectorSet.PayloadBlobHash, PayloadSize: item.Set.VectorSet.PayloadSize})
+		if errors.Is(err, ErrVectorSetUnavailable) {
+			unavailable = fmt.Errorf("%w", cmp.Or(unavailable, err))
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		decoded, err := ValidateReusableEmbeddingPayload(item.Set, data)
+		if err != nil {
+			return nil, err
 		}
 		faces := make(map[string]FaceSuggestionFace, len(item.Faces))
 		for _, face := range item.Faces {
