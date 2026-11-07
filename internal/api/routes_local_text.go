@@ -8,6 +8,14 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
+type LocalTextStatus struct {
+	Active          bool   `json:"active"`
+	Provider        string `json:"provider" enum:",local,ollama,configured"`
+	DownloadBytes   int64  `json:"download_bytes"`
+	Installing      bool   `json:"installing"`
+	RestartRequired bool   `json:"restart_required"`
+}
+
 type LocalTextPlanRequest struct {
 	Server string `json:"server" enum:"auto,local"`
 }
@@ -39,6 +47,19 @@ func fromLocalTextPlan(p processing.LocalTextPlan) LocalTextPlan {
 }
 
 func registerLocalTextRoutes(api huma.API, d Deps) {
+	type statusOutput struct{ Body LocalTextStatus }
+	huma.Register(api, huma.Operation{OperationID: "getLocalTextStatus", Method: http.MethodGet,
+		Path: "/api/v1/processing/local/status", Summary: "Read search by meaning setup status"},
+		func(ctx context.Context, _ *struct{}) (*statusOutput, error) {
+			if d.LocalTextStatus == nil {
+				return nil, processingUnavailable()
+			}
+			status, err := d.LocalTextStatus(ctx)
+			if err != nil {
+				return nil, fromProcessingError(err)
+			}
+			return &statusOutput{Body: status}, nil
+		})
 	type planInput struct{ Body LocalTextPlanRequest }
 	type output struct{ Body LocalTextPlan }
 	huma.Register(api, huma.Operation{OperationID: "planLocalText", Method: http.MethodPost,

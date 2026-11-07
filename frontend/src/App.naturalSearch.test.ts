@@ -273,6 +273,14 @@ function installHarness(options: HarnessOptions) {
         },
       );
     }
+    if (url === "/api/v1/processing/local/status")
+      return json({
+        active: false,
+        provider: "",
+        download_bytes: 290_000_000,
+        installing: false,
+        restart_required: false,
+      });
     if (url.startsWith("/api/v1/audit/status?")) return json({ enabled: false, scopes: [] });
     if (url.startsWith("/api/v1/nodes/") && url.includes("/tags?"))
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
@@ -1085,6 +1093,7 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
   await submitSearch("fallback");
   await screen.findByText("/fallback.txt");
   await screen.findByText(/Natural-language search unavailable/);
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
   expect(screen.getByRole("combobox", { name: "Search syntax: Plain words" })).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Rerank results" })).toBeNull();
   expect(harness.postBodies).toHaveLength(1);
@@ -1093,6 +1102,28 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
       .length,
   ).toBe(1);
   expect(failure).not.toHaveBeenCalled();
+});
+
+it("offers search by meaning above names-and-text results and opens its tab", async () => {
+  const file = node(2, "notes.txt", baseVersion);
+  installHarness({
+    profiles: [],
+    files: [file],
+    baseReport: report("lexical", []),
+    tagSearch: { hits: [{ node: file, path: file.path, match: "content" }], limit: 1000 },
+  });
+  render(App);
+  await screen.findAllByText("notes.txt");
+  await submitSearch("notes");
+  const note = await screen.findByText(/Search by meaning is off/);
+  await fireEvent.click(within(note).getByRole("button", { name: "Turn on" }));
+  const drawer = await screen.findByRole("dialog", { name: "System" });
+  expect(
+    within(drawer).getByRole("tab", { name: "Search by meaning", selected: true }),
+  ).toBeTruthy();
+  expect(
+    await within(drawer).findByText("Downloads 290 MB once, shared by all Kenn apps"),
+  ).toBeTruthy();
 });
 
 it("reports a failed legacy GET fallback after a processing failure", async () => {
@@ -1191,15 +1222,20 @@ it("ignores an aborted natural search completion", async () => {
   );
 });
 
-it("shows why natural search controls could not load", async () => {
+it("shows why natural search controls could not load instead of the off hint", async () => {
+  const file = node(2, "report.txt", baseVersion);
   installHarness({
     profiles: [],
     profilesStatus: 503,
-    files: [],
+    files: [file],
     baseReport: report("lexical", []),
+    tagSearch: { hits: [{ node: file, path: file.path, match: "content" }], limit: 1000 },
   });
   render(App);
   expect(await screen.findByText(/Natural-language search unavailable.*503/)).toBeTruthy();
+  await submitSearch("report");
+  await screen.findByText("/report.txt");
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
 });
 
 it.each([500, 401])(

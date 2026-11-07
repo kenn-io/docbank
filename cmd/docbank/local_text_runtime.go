@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/embedlocal"
 )
 
 func readLocalText(root string) (config.LocalTextConfig, error) {
@@ -96,14 +99,7 @@ func localTextCandidate(cfg config.Config, mode, name string) (config.Config, er
 }
 
 func localTextStartup(ctx context.Context, managed bool, _ string) error {
-	if !managed {
-		return nil
-	}
-	_, err := localEmbeddingOrigin(ctx)
-	if err != nil {
-		return fmt.Errorf("embeddings server is not ready; run docbank processing local to install and start it: %w", err)
-	}
-	return nil
+	return installLocalTextRuntime(ctx, managed, func(context.Context, int64) (bool, error) { return true, nil }, embedlocal.Endpoint, embedlocal.Install)
 }
 
 func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.ProfileConfig, candidate config.Config, name string, selected processing.ProfileConfig) (config.Config, error) {
@@ -129,4 +125,36 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	cfg.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
 	cfg.ProcessingProfiles[name] = candidate.ProcessingProfiles[name]
 	return cfg, nil
+}
+
+func localTextStatus(ctx context.Context, root string, active config.LocalTextConfig, cfg config.Config, service *processing.Service) (api.LocalTextStatus, error) {
+	saved, err := readLocalText(root)
+	if err != nil {
+		return api.LocalTextStatus{}, err
+	}
+	status := api.LocalTextStatus{RestartRequired: saved.Profile != "" && saved != active}
+	for _, profile := range service.Profiles() {
+		if len(profile.QueryEmbeddingBindings) == 0 {
+			continue
+		}
+		binding, err := cfg.EmbeddingProfile(profile.QueryEmbeddingBindings[0])
+		if err != nil {
+			return status, err
+		}
+		status.Active, status.Provider = true, "configured"
+		if binding.Runtime != nil {
+			if binding.Runtime.Managed {
+				status.Provider = "local"
+			} else if endpoint, err := url.Parse(binding.Runtime.Endpoint); err == nil && endpoint.Port() == "11434" {
+				status.Provider = "ollama"
+			}
+		}
+		return status, nil
+	}
+	files, err := embedlocal.Inspect(ctx, embedlocal.Options{SkipOllama: true})
+	if err != nil {
+		return status, fmt.Errorf("inspect local embeddings: %w", err)
+	}
+	status.DownloadBytes, status.Installing = files.DownloadBytes, files.Installing
+	return status, nil
 }

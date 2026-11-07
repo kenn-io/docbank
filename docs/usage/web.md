@@ -852,6 +852,8 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
+Open **System → Search by meaning** to enable text search by meaning. Choose **Turn on**, run `docbank daemon restart` when prompted, and reopen the web app. Indexing covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
 count, each row shows the name with its folder beneath, and the **Match** column

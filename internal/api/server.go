@@ -58,6 +58,7 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
+	LocalTextStatus       func(context.Context) (LocalTextStatus, error)
 	LocalText             *processing.LocalTextSetup
 	Store                 *store.Store
 	Blobs                 *blob.Store

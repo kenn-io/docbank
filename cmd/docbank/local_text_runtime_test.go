@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -224,9 +225,30 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 					})
 				}
 			}()
-			require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}))
+			setupStop, _ := startServeReady(t)
+			connection, err := daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "auto"}})
+			require.NoError(t, err)
+			profileFingerprint = plan.ProfileFingerprint
+			_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "auto", PlanFingerprint: plan.Fingerprint, Consent: true}})
+			require.NoError(t, err)
+			status, err := connection.API().GetLocalTextStatus(t.Context())
+			require.NoError(t, err)
+			require.True(t, status.RestartRequired)
+			require.False(t, status.Active)
+			require.NoError(t, connection.Close())
+			setupStop()
+			waitForDaemonStop(t, root)
 			stop, daemon := startServeReady(t)
 			defer stop()
+			connection, err = daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			status, err = connection.API().GetLocalTextStatus(t.Context())
+			require.NoError(t, err)
+			require.True(t, status.Active)
+			require.False(t, status.RestartRequired)
+			require.NoError(t, connection.Close())
 			if result.lateImport {
 				waitForDaemon(t, root)
 				source := filepath.Join(t.TempDir(), "new.txt")
@@ -267,13 +289,20 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, source.ManifestChecksum, generation.SourceManifestChecksum, "completed embeddings become search-visible")
 			require.Positive(t, generation.RowCount)
+			connection, err = daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			results, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: config.LocalTextProfile, Query: "synthetic", Mode: "hybrid", Limit: 10, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+			require.NoError(t, err)
+			require.NotEmpty(t, results.Results)
+			require.Equal(t, version, results.Results[0].ContentVersionID)
+			require.NoError(t, connection.Close())
 			stop()
 			waitForDaemonStop(t, root)
 			jobs, err := catalog.EmbeddingJobsForVersionProfile(t.Context(), version, profileFingerprint)
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
 			require.Equal(t, "completed", jobs[0].State)
-			require.Equal(t, int64(1), calls.Load())
+			require.Equal(t, int64(2), calls.Load())
 		})
 	}
 }
@@ -384,4 +413,42 @@ func TestLocalTextCandidateRejections(t *testing.T) {
 	cfg = localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "revision-header", "DOCBANK_TEST_REVISION_KEY")
 	_, err = localTextCandidate(cfg, "local", "archive")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
+}
+
+func TestLocalTextStatusProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, tc := range []struct{ name, endpoint, provider string }{
+		{"off", "", ""},
+		{"ollama", "http://127.0.0.1:11434", "ollama"},
+		{"configured", "http://127.0.0.1:12345", "configured"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layout := home.Layout{Root: t.TempDir()}
+			require.NoError(t, layout.Ensure())
+			catalog, err := store.Open(t.Context(), layout.DBPath())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, blobs.Close()) }()
+			cfg := config.Default()
+			if tc.endpoint != "" {
+				cfg = localTextSourceConfig(t, tc.endpoint, "synthetic-revision", "prefix-free", "DOCBANK_TEST_STATUS_KEY")
+			}
+			bundle, err := configureEmbeddingRuntimeBundle(cfg)
+			require.NoError(t, err)
+			profiles, err := executableProcessingProfiles(cfg, bundle)
+			require.NoError(t, err)
+			service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
+			require.NoError(t, err)
+			defer service.Stop()
+			status, err := localTextStatus(t.Context(), layout.Root, config.LocalTextConfig{}, cfg, service)
+			require.NoError(t, err)
+			require.Equal(t, tc.provider, status.Provider)
+			require.Equal(t, tc.provider != "", status.Active)
+			if tc.provider == "" {
+				require.Positive(t, status.DownloadBytes)
+			}
+		})
+	}
 }

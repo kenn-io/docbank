@@ -42,6 +42,7 @@
     MenuItem,
     MenuTrigger,
     Modal,
+    SearchByMeaningHint,
     SearchInput,
     FormField,
     SelectDropdown,
@@ -241,6 +242,7 @@
           | "trash"
           | "tagCatalog"
           | "telemetry"
+          | "searchByMeaning"
           | "photoImport";
       }
     | {
@@ -274,6 +276,7 @@
     upload: "upload",
     mailbox: "mailbox",
     loadFile: "load_file",
+    searchByMeaning: null,
     photoImport: null,
   };
 
@@ -1168,6 +1171,9 @@
   let naturalRerank = $state(false);
   let naturalSearchNote = $state("");
   let naturalProfilesError = $state("");
+  let naturalProfilesLoaded = $state(false);
+  // Shown as the shared Turn on hint rather than as text.
+  const searchByMeaningOff = "Search by meaning is off";
   let naturalRerankPending = $state(false);
   let naturalProfileDefaultPending = $state<{ request: number; session: string } | null>(null);
   let profileGeneration = 0;
@@ -1641,6 +1647,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = profiles;
       naturalProfilesError = "";
+      naturalProfilesLoaded = true;
       const selected = selectNaturalSearchProfile(profiles);
       const defaultMode: NaturalSearchMode = selected ? "auto" : "names";
       if (snapshotActive) {
@@ -1666,6 +1673,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfileDefaultPending = null;
       naturalProfiles = [];
+      naturalProfilesLoaded = false;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else
         naturalProfilesError = naturalSearchFallbackNote(
@@ -1931,6 +1939,7 @@
     activeQuery = "";
     activeTagID = "";
     naturalProfiles = [];
+    naturalProfilesLoaded = false;
     naturalSearchMode = "names";
     naturalRerank = false;
     submittedSearchQuery = "";
@@ -2135,6 +2144,7 @@
           refreshing,
           session,
           controller.signal,
+          !profile && naturalProfilesLoaded ? searchByMeaningOff : "",
         );
         accepted = !!outcome;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -4734,7 +4744,11 @@
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
               {/if}
-              {#if naturalSearchNote}
+              {#if naturalSearchNote === searchByMeaningOff}
+                <div class="banner search-note" role="status" aria-live="polite">
+                  <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
+                </div>
+              {:else if naturalSearchNote}
                 <div class="banner search-note" role="status" aria-live="polite">
                   {naturalSearchNote}
                 </div>
@@ -5282,7 +5296,7 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry"].includes(panel.kind)}
+      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry", "searchByMeaning"].includes(panel.kind)}
         <VaultDrawer
           session={webSession}
           initialTab={panel.kind}
