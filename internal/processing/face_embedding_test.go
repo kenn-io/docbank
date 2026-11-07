@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/docbank/document/localface"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/packstore"
 )
@@ -316,24 +318,32 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 
 func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 	t.Parallel()
-	for _, separate := range []bool{false, true} {
-		t.Run(fmt.Sprintf("separate photos=%t", separate), func(t *testing.T) {
+	for _, mode := range []string{"same photo", "separate", "named source"} {
+		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			x := newFaceEmbeddingFixture(t, false)
 			x.matchAll = true
 			ctx := t.Context()
-			face, personID, expectedReads := x.inputs[1], "", 1
-			if separate {
+			face, personID, expectedReads, expectedPeople := x.inputs[1], "", 1, 1
+			if mode != "same photo" {
 				person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
 				require.NoError(t, err)
 				personID = person.PersonID
-				named := x.f.addPhoto(t, "named.jpg", 701)
-				_, _, err = x.f.catalog.CreatePhotoFace(ctx, named, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, personID)
+				zoe, err := x.f.catalog.CreatePerson(ctx, "Zoe", "operator")
 				require.NoError(t, err)
-				unrelated := x.f.addPhoto(t, "unnamed.jpg", 702)
+				for i, id := range []string{personID, personID, zoe.PersonID} {
+					named := x.f.addPhoto(t, fmt.Sprintf("named-%d.jpg", i), 701+i)
+					_, _, err = x.f.catalog.CreatePhotoFace(ctx, named, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, id)
+					require.NoError(t, err)
+				}
+				if mode == "named source" {
+					_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[1].ContentVersionID, store.PhotoFaceDecisionRequest{Action: "name", FaceID: x.inputs[1].FaceID, Revision: 1, PersonID: zoe.PersonID})
+					require.NoError(t, err)
+				}
+				unrelated := x.f.addPhoto(t, "unnamed.jpg", 704)
 				_, _, err = x.f.catalog.CreatePhotoFace(ctx, unrelated, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
 				require.NoError(t, err)
-				face, expectedReads = x.inputs[0], 2
+				face, expectedReads, expectedPeople = x.inputs[0], 4, 2
 			} else {
 				named := x.inputs[0]
 				_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
@@ -342,35 +352,50 @@ func TestFacePickerLoadsSourceAndNamedEvidenceOnly(t *testing.T) {
 			x.f.grant(t, x.service, config.LocalFacesProfile)
 			count, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
-			if separate {
-				require.Equal(t, 3, count)
+			if mode != "same photo" {
+				require.Equal(t, 5, count)
 			}
 			reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
 			options := store.PeopleSearchOptions{FaceID: face.FaceID, FaceReader: reader, RecentFirst: true}
-			people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+			visibleOnly := mode == "named source"
+			people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
 			require.NoError(t, err)
-			require.Len(t, people, 1)
+			require.Len(t, people, expectedPeople)
 			require.Equal(t, expectedReads, reader.opens)
-			if !separate {
+			if mode == "same photo" {
 				for _, query := range []string{"A", "Ad", "Ada"} {
-					people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
+					people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, visibleOnly, options)
 					require.NoError(t, err)
 					require.Len(t, people, 1)
 				}
 				require.Equal(t, 4, reader.opens)
 				return
 			}
-			require.Equal(t, personID, people[0].PersonID)
+			reader.opens = 0
+			matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, visibleOnly, options)
+			require.NoError(t, err)
+			require.Len(t, matches, 1)
+			require.Equal(t, personID, matches[0].PersonID)
+			require.Contains(t, matches[0].RecentRank, "#")
+			for _, person := range people {
+				if person.PersonID == personID {
+					before, _, _ := strings.Cut(person.RecentRank, "#")
+					after, _, _ := strings.Cut(matches[0].RecentRank, "#")
+					require.Equal(t, before, after)
+				}
+			}
+			require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
+			reader.opens = 0
 			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
 			require.NoError(t, err)
 			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
 			require.NoError(t, err)
-			require.Equal(t, 5, reader.opens, "grouping reads all three payloads")
-			_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+			require.Equal(t, 5, reader.opens, "grouping reads all five payloads")
+			_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
 			require.NoError(t, err)
 			_, err = x.f.catalog.FaceMatchingVectors(ctx, reader, snapshot, true)
 			require.NoError(t, err)
-			require.Equal(t, 10, reader.opens, "each operation reads only its own payloads")
+			require.Equal(t, 14, reader.opens, "each operation reads only its own payloads")
 		})
 	}
 }
@@ -560,6 +585,50 @@ func TestFaceAggregateStatusIncludesLiveJobs(t *testing.T) {
 			} else {
 				assert.Equal(t, "completed", after.State)
 				assert.Equal(t, 1, after.CompletedBindings)
+			}
+		})
+	}
+}
+
+func TestFacePickerBatchPreservesStoredAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, damage string
+		fails        bool
+	}{
+		{"trashed photo", `UPDATE nodes SET trashed_at='2026-01-02T00:00:00Z' WHERE kind='file'`, false},
+		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`, false},
+		{"invalid generation", `UPDATE embedding_input_generations SET chunk_policy_fingerprint='` + workerHash("invalid policy") + `'`, true},
+		{"input count", `UPDATE embedding_input_generations SET input_count=input_count+1`, true},
+		{"vector manifest", `UPDATE embedding_vector_sets SET manifest_checksum='` + workerHash("invalid manifest") + `'`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			x := newFaceEmbeddingFixture(t, false)
+			ctx := t.Context()
+			x.f.grant(t, x.service, config.LocalFacesProfile)
+			_, err := x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			before, err := x.f.catalog.FaceMatchingInputs(ctx)
+			require.NoError(t, err)
+			require.Len(t, before.Sets, 1)
+			db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			for _, table := range []string{"embedding_input_generations", "embedding_vector_sets"} {
+				_, err = db.ExecContext(ctx, "DROP TRIGGER "+table+"_immutable_update")
+				require.NoError(t, err)
+			}
+			for statement := range strings.SplitSeq(tc.damage, ";") {
+				_, err = db.ExecContext(ctx, statement)
+				require.NoError(t, err)
+			}
+			after, err := x.f.catalog.FaceMatchingInputs(ctx)
+			if tc.fails {
+				require.Error(t, err, "corrupt stored authority must remain an error")
+			} else {
+				require.NoError(t, err)
+				require.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
 			}
 		})
 	}

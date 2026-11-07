@@ -25,7 +25,7 @@ func (s *Store) peopleForFaceTx(ctx context.Context, tx *sql.Tx, options PeopleS
 	if err := s.facePhotoQuery(ctx, tx, version); err != nil {
 		return nil, err
 	}
-	snapshot, err := s.faceRankingInputsTx(ctx, tx, options.FaceID)
+	snapshot, err := s.faceRankingInputsTx(ctx, tx, options.FaceID, candidates, args)
 	if err != nil {
 		return nil, err
 	}

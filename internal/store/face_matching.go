@@ -35,7 +35,7 @@ func (s *Store) FaceMatchingInputs(ctx context.Context) (FaceMatchingSnapshot, e
 	return result, err
 }
 func (s *Store) faceMatchingInputsTx(ctx context.Context, tx *sql.Tx) (FaceMatchingSnapshot, error) {
-	sets, err := s.faceSuggestionInputsTx(ctx, tx, "")
+	sets, err := s.faceSuggestionInputsTx(ctx, tx, "", "", nil)
 	if err != nil {
 		return FaceMatchingSnapshot{}, err
 	}
@@ -55,8 +55,8 @@ func (s *Store) faceMatchingInputsTx(ctx context.Context, tx *sql.Tx) (FaceMatch
 
 // faceRankingInputsTx keeps the source and every named contribution in the
 // current read snapshot. Unnamed photos cannot change a person's centroid.
-func (s *Store) faceRankingInputsTx(ctx context.Context, tx *sql.Tx, faceID string) (FaceMatchingSnapshot, error) {
-	sets, err := s.faceSuggestionInputsTx(ctx, tx, faceID)
+func (s *Store) faceRankingInputsTx(ctx context.Context, tx *sql.Tx, faceID, candidates string, args []any) (FaceMatchingSnapshot, error) {
+	sets, err := s.faceSuggestionInputsTx(ctx, tx, faceID, candidates, args)
 	if err != nil {
 		return FaceMatchingSnapshot{}, err
 	}
