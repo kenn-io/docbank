@@ -13,6 +13,11 @@ import {
   ada,
   candidate,
   candidateFace,
+  f1,
+  f2,
+  isAda,
+  unnamed,
+  decided,
   grace,
   person,
   personMergeReceipt,
@@ -549,24 +554,6 @@ it("recovers a stale confirmed merge after refreshing the cards", async () => {
   expect(people.selected).toEqual([]);
   expect(people.items).toEqual([renamed, currentGrace]);
   people.dispose();
-});
-
-const f1 = candidateFace("face-1", { photo_recorded_at: "2026-01-01T00:00:00Z" });
-const f2 = candidateFace("face-2", { photo_recorded_at: "2026-02-01T00:00:00Z" });
-const f3 = candidateFace("face-3", {
-  photo_node_id: 2,
-  photo_recorded_at: "2026-03-01T00:00:00Z",
-});
-const isAda = candidate("candidate-ada", [f1, f2, f3], {
-  display_name: "Ada",
-  suggested_person_id: ada.person_id,
-  revision: 2,
-});
-const unnamed = candidate("candidate-who", [f1, f2]);
-const decided = (row: ReturnType<typeof candidate>) => ({
-  candidate_id: row.candidate_id,
-  revision: row.revision + 1,
-  state: "accepted",
 });
 
 it("loads suggestions once with the cards, shows more by offset, and conceals them", async () => {

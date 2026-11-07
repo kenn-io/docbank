@@ -658,7 +658,7 @@ func personCandidateByIDTx(ctx context.Context, tx *sql.Tx, candidateID string) 
 	candidate, err := scanPersonCandidate(tx.QueryRowContext(ctx, `SELECT candidate_id,actor_key,display_name,
 		COALESCE(suggested_person_id,''),reason,evidence_json,evidence_sha256,revision,occurrence_count,
 		state,COALESCE(decided_person_id,''),created_at,COALESCE(decided_at,'')
-		FROM person_match_candidates WHERE candidate_id=?`, candidateID))
+		FROM person_match_candidates WHERE candidate_id=$1`, candidateID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PersonMatchCandidate{}, ErrNotFound
 	}

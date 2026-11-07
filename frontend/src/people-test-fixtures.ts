@@ -78,7 +78,7 @@ export const candidateFace = (
   created_at: "2026-01-01T00:00:00Z",
   dismissed: false,
   photo_node_id: 1,
- hidden:false,
+  hidden: false,
   preview: {
     asset_id: `asset-${id}`,
     content_version_id: `version-${id}`,
@@ -99,4 +99,22 @@ export const candidate = (
   revision: 1,
   faces,
   ...overrides,
+});
+
+export const f1 = candidateFace("face-1", { photo_recorded_at: "2026-01-01T00:00:00Z" });
+export const f2 = candidateFace("face-2", { photo_recorded_at: "2026-02-01T00:00:00Z" });
+export const f3 = candidateFace("face-3", {
+  photo_node_id: 2,
+  photo_recorded_at: "2026-03-01T00:00:00Z",
+});
+export const isAda = candidate("candidate-ada", [f1, f2, f3], {
+  display_name: "Ada",
+  suggested_person_id: ada.person_id,
+  revision: 2,
+});
+export const unnamed = candidate("candidate-who", [f1, f2], { revision: 4 });
+export const decided = (row: ReturnType<typeof candidate>) => ({
+  candidate_id: row.candidate_id,
+  revision: row.revision + 1,
+  state: "accepted",
 });
