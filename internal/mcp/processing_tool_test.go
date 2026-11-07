@@ -337,7 +337,7 @@ type sdkCallResult struct {
 
 type processingToolHarness struct {
 	t               *testing.T
-	planFingerprint string
+	plan            api.ProcessingPlan
 	startHandler    func(*testing.T, http.ResponseWriter, *http.Request)
 	serverInstance  *httptest.Server
 	ensures, closes atomic.Int32
@@ -349,7 +349,7 @@ func newProcessingToolHarness(t *testing.T, planFingerprint string,
 	startHandler func(*testing.T, http.ResponseWriter, *http.Request),
 ) *processingToolHarness {
 	t.Helper()
-	harness := &processingToolHarness{t: t, planFingerprint: planFingerprint, startHandler: startHandler}
+	harness := &processingToolHarness{t: t, plan: syntheticProcessingPlan(planFingerprint), startHandler: startHandler}
 	harness.serverInstance = httptest.NewServer(http.HandlerFunc(harness.serveHTTP))
 	t.Cleanup(harness.serverInstance.Close)
 	return harness
@@ -359,7 +359,7 @@ func (harness *processingToolHarness) serveHTTP(response http.ResponseWriter, re
 	assert.Equal(harness.t, "synthetic-key", request.Header.Get("X-Api-Key"))
 	switch {
 	case request.Method == http.MethodPost && request.URL.Path == "/api/v1/processing/plans":
-		writeDaemonJSON(harness.t, response, syntheticProcessingPlan(harness.planFingerprint))
+		writeDaemonJSON(harness.t, response, harness.plan)
 	case request.Method == http.MethodPost && request.URL.Path == "/api/v1/processing/jobs":
 		harness.startCalls.Add(1)
 		if harness.startHandler == nil {
@@ -461,6 +461,40 @@ func invokeProcessingTool(
 	}
 	_, output := startProcessingSchemas()
 	return executeProcessingTool(ctx, lease, plans, mustResolveSchema(output), raw)
+}
+
+func TestFaceProcessingPlanCanBeReviewedAndStarted(t *testing.T) {
+	harness := newProcessingToolHarness(t, testProcessingPlanFingerprint,
+		func(t *testing.T, response http.ResponseWriter, request *http.Request) {
+			t.Helper()
+			input := decodeStartProcessingRequest(t, request)
+			require.Equal(t, api.ProcessingSelector{NodeID: testProcessingNodeID, ContentVersionID: testVersionID, Profile: "local-faces"}, input.Selector)
+			require.Equal(t, testProcessingPlanFingerprint, input.PlanFingerprint)
+			require.False(t, input.Consent)
+			response.Header().Set("Content-Type", "application/x-ndjson")
+			require.NoError(t, json.MarshalWrite(response, api.ProcessingJobEvent{Sequence: 1, Type: "job", Job: syntheticProcessingJob()}))
+		})
+	harness.plan.Selector.Profile = "local-faces"
+	harness.plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "local-faces", TrustBoundary: "local_process", InputClasses: []string{"face"}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "local", UltimateProcessor: "local", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
+	server := harness.server(t)
+	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+		"name": "get_processing_plan", "arguments": map[string]any{
+			"node_id": testProcessingNodeID, "content_version_id": testVersionID, "profile": "local-faces",
+		},
+	})))
+	require.NotContains(t, result, "isError")
+	output := objectField(t, result, "structuredContent")
+	flow, ok := output["flow"].([]any)
+	require.True(t, ok)
+	require.Len(t, flow, 1)
+	hop, ok := flow[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"face"}, hop["input_classes"])
+
+	started := callProcessingTool(t, server, testProcessingPlanFingerprint)
+	require.NotContains(t, started, "isError")
+	require.Equal(t, testProcessingJobID, objectField(t, started, "structuredContent")["job_id"])
+	require.EqualValues(t, 1, harness.startCalls.Load())
 }
 
 func TestProcessingPlanSchemaAcceptsImageInputClass(t *testing.T) {
