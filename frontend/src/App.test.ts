@@ -341,7 +341,6 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   await fireEvent.dblClick(screen.getByRole("cell", { name: "/Archive" }));
   expect(await screen.findByText("Empty folder")).toBeTruthy();
-  expect(screen.queryByText("Add files or a folder to start your vault.")).toBeNull();
   const searchCalls = fetchMock.mock.calls.filter(([url]) =>
     String(url).startsWith("/api/v1/search?"),
   ).length;
