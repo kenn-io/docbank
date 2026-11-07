@@ -50,6 +50,12 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
+	if v == "" {
+		if bin := os.Getenv("DOCBANK_TEST_CLI_BINARY"); bin != "" {
+			// The parent owns this binary until the subprocess exits.
+			return bin
+		}
+	}
 	docbankBuildMu.Lock()
 	defer docbankBuildMu.Unlock()
 	build, ok := docbankBuilds[v]

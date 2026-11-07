@@ -34,7 +34,7 @@ import (
 
 // The PDF worker measures whole-process RSS. Give each verification test its
 // own process so unrelated CLI tests cannot consume its qualified memory budget.
-func runRedactionVerificationInSubprocess(t *testing.T) bool {
+func runRedactionVerificationInSubprocess(t *testing.T, env ...string) bool {
 	t.Helper()
 	const child = "DOCBANK_TEST_REDACTION_VERIFICATION"
 	if os.Getenv(child) == t.Name() {
@@ -46,6 +46,7 @@ func runRedactionVerificationInSubprocess(t *testing.T) bool {
 	require.NoError(t, err)
 	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=5m", "-test.short="+strconv.FormatBool(testing.Short()))
 	cmd.Env = append(os.Environ(), child+"="+t.Name())
+	cmd.Env = append(cmd.Env, env...)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	t.Log(string(output))
