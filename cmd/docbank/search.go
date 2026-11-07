@@ -589,7 +589,7 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 
 func documentValidityReason(result api.DocumentSearchResult) string {
 	if reason := result.Validity.Reason(); reason != "" {
-		return " (" + reason + ")"
+		return " (" + searchAgentText(reason) + ")"
 	}
 	return ""
 }

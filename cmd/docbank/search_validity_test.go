@@ -19,6 +19,13 @@ func TestSearchValidityCLIReasons(t *testing.T) {
 	require.Contains(t, out.String(), "/old.txt (superseded by /new.txt)")
 	require.Contains(t, out.String(), "/expired.txt (expired)")
 	require.Contains(t, out.String(), "/future.txt (not yet effective)")
+	hostile := api.DocumentSearchReport{Results: []api.DocumentSearchResult{
+		{NodeID: 1, Rank: 1, Path: "/old.txt", Validity: &api.DocumentResultValidity{State: "superseded", SupersededBy: []api.DocumentValiditySuccessor{{NodeID: 2, Path: "/new\n99\t/x\x1b[31m.txt"}}}},
+	}}
+	cmd, out = processingTestCommand()
+	require.NoError(t, writeDocumentSearchReport(cmd, hostile, false, true, nil))
+	require.Contains(t, out.String(), "/old.txt (superseded by /new 99 /x.txt)")
+	require.NotContains(t, out.String(), "\x1b")
 	cmd, out = processingTestCommand()
 	require.NoError(t, writeDocumentSearchAgent(cmd, "lease", report, nil))
 	require.Contains(t, out.String(), "validity=superseded")
