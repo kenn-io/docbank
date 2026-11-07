@@ -77,7 +77,7 @@ export const candidateFace = (
   revision: 3,
   created_at: "2026-01-01T00:00:00Z",
   dismissed: false,
-  photo_node_id: 1,
+  photo_node_id: Number(id.slice(5)) + 1,
   hidden: false,
   preview: {
     asset_id: `asset-${id}`,
@@ -101,8 +101,13 @@ export const candidate = (
   ...overrides,
 });
 
-export const f1 = candidateFace("face-1", { photo_recorded_at: "2026-01-01T00:00:00Z" });
-export const f2 = candidateFace("face-2", { photo_recorded_at: "2026-02-01T00:00:00Z" });
+export const f1 = candidateFace("face-1", { photo_node_id: 1 });
+export const f2 = candidateFace("face-2", {
+  photo_node_id: f1.photo_node_id,
+  content_version_id: f1.content_version_id,
+  preview: f1.preview,
+  photo_recorded_at: f1.photo_recorded_at,
+});
 export const f3 = candidateFace("face-3", {
   photo_node_id: 2,
   photo_recorded_at: "2026-03-01T00:00:00Z",
@@ -113,8 +118,11 @@ export const isAda = candidate("candidate-ada", [f1, f2, f3], {
   revision: 2,
 });
 export const unnamed = candidate("candidate-who", [f1, f2], { revision: 4 });
-export const decided = (row: ReturnType<typeof candidate>) => ({
+export const decided = (
+  row: ReturnType<typeof candidate>,
+  state: "linked" | "rejected" = "linked",
+) => ({
   candidate_id: row.candidate_id,
   revision: row.revision + 1,
-  state: "accepted",
+  state,
 });

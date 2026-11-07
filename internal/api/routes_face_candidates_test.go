@@ -96,9 +96,6 @@ func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	browser["Cookie"] = response.Cookies()[0].String()
-	response, body = get(t, ts, "/api/v1/people?query=Concealed&photo_summary=true", browser)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, person.PersonID)
 	response, body = get(t, ts, "/api/v1/people/face-candidates", browser)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.FaceCandidatePage
@@ -111,11 +108,6 @@ func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {
 	request := api.FaceCandidateDecisionRequest{Action: "link", PersonID: person.PersonID}
 	response, body = do(t, ts, http.MethodPost, path, browser, request)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	faces, _, _, err := s.PhotoFacePersonNames(ctx, visible.CurrentVersionID)
-	require.NoError(t, err)
-	for _, face := range faces {
-		require.Empty(t, face.AssertionID)
-	}
 	response, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }

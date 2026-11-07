@@ -253,6 +253,22 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, survivor.PersonID, rows[0].SuggestedPersonID)
 	require.Equal(t, survivor.DisplayName, rows[0].DisplayName)
+	// The candidate remains visible while its selected target exists only in Hidden.
+	_, err = s.MarkPersonInPhoto(ctx, visible.CurrentVersionID, survivor.PersonID, "")
+	require.NoError(t, err)
+	concealed, err := s.CreatePerson(unlocked, "Concealed target", "operator")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(unlocked, hidden.CurrentVersionID, concealed.PersonID, "")
+	require.NoError(t, err)
+	decision := CandidateDecision{CandidateID: rows[0].CandidateID, ExpectedRevision: rows[0].Revision, Action: "link", PersonID: concealed.PersonID, FaceOnly: true}
+	_, err = s.DecidePersonCandidate(WithVisiblePeopleOnly(ctx), decision)
+	require.ErrorIs(t, err, ErrNotFound)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, visible.CurrentVersionID)
+	require.NoError(t, err)
+	require.Empty(t, faces[0].AssertionID, "the failed link must preserve the unnamed face")
+	linked, err := s.DecidePersonCandidate(unlocked, decision)
+	require.NoError(t, err)
+	require.Equal(t, concealed.PersonID, linked.DecidedPersonID)
 }
 
 func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {

@@ -760,9 +760,6 @@ func TestSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
 				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 			}
-			if kind == "person" {
-				return
-			}
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 			require.NoError(t, err)
