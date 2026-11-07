@@ -52,9 +52,15 @@
     lookup = new AbortController(),
     disposed = false;
   let listing = $state(false);
+  let nextSequence = $state<number>();
   const namespace = $derived(namespaces.find((n) => n.namespace_id === selected));
   const labels = $derived(
     namespace ? numberedLabels(namespace, Number(start), inputs.review.resolved.page_count) : [],
+  );
+  const hasRoom = $derived(
+    namespace &&
+      nextSequence !== undefined &&
+      nextSequence + inputs.review.resolved.page_count <= 10 ** namespace.padding,
   );
   const busy = $derived(phase === "reserving" || phase === "publishing");
   $effect(() => {
@@ -75,6 +81,7 @@
     selected = id;
     start = "";
     cursorReady = false;
+    nextSequence = undefined;
     error = "";
     loading = true;
     try {
@@ -82,6 +89,7 @@
       if (signal.aborted || disposed || selected !== id) return;
       const i = namespaces.findIndex((n) => n.namespace_id === id);
       if (i >= 0) namespaces = namespaces.map((n, j) => (j === i ? detail.namespace : n));
+      nextSequence = detail.next_sequence;
       start = String(detail.next_sequence);
       cursorReady = true;
     } catch (cause) {
@@ -129,7 +137,7 @@
     }
   }
   function begin() {
-    if (!namespace || !cursorReady || !consent || !labels.length || frozen) return;
+    if (!namespace || !cursorReady || !hasRoom || !consent || !labels.length || frozen) return;
     frozen = structuredClone({
       ...$state.snapshot(inputs),
       namespace: $state.snapshot(namespace),
@@ -283,7 +291,10 @@
           >Refresh next number</Button
         >
         {#if cursorReady}
-          {#if labels.length}<p><strong>{labels[0]}–{labels.at(-1)}</strong></p>
+          {#if !hasRoom}<p class="error">
+              This namespace cannot fit {inputs.review.resolved.page_count} pages. Choose another namespace.
+            </p>
+          {:else if labels.length}<p><strong>{labels[0]}–{labels.at(-1)}</strong></p>
           {:else}<p class="error">
               This range does not fit. Choose another first number or namespace.
             </p>{/if}
@@ -334,7 +345,7 @@
       <Button
         tone="info"
         surface="solid"
-        disabled={loading || !cursorReady || !consent || !labels.length}
+        disabled={loading || !cursorReady || !hasRoom || !consent || !labels.length}
         onclick={() => (confirm = true)}>Review numbering</Button
       >
     {/if}

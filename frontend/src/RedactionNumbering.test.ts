@@ -161,7 +161,13 @@ it("keeps an explicit override until a conflict is deliberately refreshed and co
   ).toBe(true);
   next = 1000000;
   await fireEvent.click(screen.getByRole("button", { name: "Refresh next number" }));
-  await screen.findByText("This range does not fit. Choose another first number or namespace.");
+  await screen.findByText("This namespace cannot fit 2 pages. Choose another namespace.");
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Keep the unredacted original indefinitely" }),
+  );
+  await fireEvent.input(screen.getByRole("textbox", { name: "First number" }), {
+    target: { value: "1" },
+  });
   expect(
     (screen.getByRole("button", { name: "Review numbering" }) as HTMLButtonElement).disabled,
   ).toBe(true);

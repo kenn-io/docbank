@@ -95,6 +95,22 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
         ),
       ) as NumberedReservation;
     await reserveAt(1);
+    const exhausted = JSON.parse(
+      await run("bates", "namespaces", "--create", "--prefix", "FULL", "--padding", "1", "--json"),
+    );
+    await run(
+      "redaction",
+      "reserve",
+      prepPath,
+      masksPath,
+      reviewPath,
+      "--namespace",
+      exhausted.namespace_id,
+      "--start",
+      "8",
+      "--retain-original",
+      "--json",
+    );
     await page.goto(await run("web", "--no-browser"));
     await page.getByRole("cell", { name: "two-pages.pdf", exact: true }).click();
     await page.getByRole("button", { name: "Redact PDF", exact: true }).click();
@@ -128,6 +144,26 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     }
     await drawer.getByRole("button", { name: "Number and keep PDF", exact: true }).click();
     const first = drawer.getByRole("textbox", { name: "First number", exact: true });
+    const picker = drawer.getByRole("combobox", { name: /^Numbering namespace/ });
+    await expect(picker).toBeEnabled();
+    await picker.click();
+    await page.getByRole("option", { name: "FULL0", exact: true }).click();
+    await expect(first).toHaveValue("10");
+    await drawer
+      .getByRole("checkbox", { name: "Keep the unredacted original indefinitely" })
+      .check();
+    await first.fill("1");
+    await expect(
+      drawer.getByRole("button", { name: "Review numbering", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      drawer.getByText("This namespace cannot fit 2 pages. Choose another namespace."),
+    ).toBeVisible();
+    await drawer
+      .getByRole("checkbox", { name: "Keep the unredacted original indefinitely" })
+      .uncheck();
+    await picker.click();
+    await page.getByRole("option", { name: "QUAL000000", exact: true }).click();
     await expect(first).toHaveValue("3");
     await expect(drawer.getByText("QUAL000003–QUAL000004", { exact: true })).toBeVisible();
     const reviewNumbering = drawer.getByRole("button", { name: "Review numbering", exact: true });

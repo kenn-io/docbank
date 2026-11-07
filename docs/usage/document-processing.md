@@ -316,7 +316,8 @@ PDF**. Select a namespace, or create one with a prefix, suffix and digit count.
 The first-number field starts at that namespace's next sequence. You can change
 it or choose **Refresh next number** before confirming. This is a suggestion:
 other reservations can advance the cursor, and label formats can collide.
-A conflict requires another explicit choice and confirmation.
+A conflict requires another explicit choice and confirmation. A namespace that cannot
+fit all pages stays unavailable even if you enter an earlier first number.
 
 Check the displayed range, opt in to keeping the unredacted original indefinitely,
 and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
