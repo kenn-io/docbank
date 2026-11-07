@@ -61,8 +61,15 @@ func (s *Store) discoveryDependencies() discoveryDeps {
 // scoped filename/path matches from one bounded supplemental read snapshot.
 func (s *Store) SearchDiscoveryPage(
 	ctx context.Context, query string, limit int, opts SearchOptions,
-) ([]SearchHit, bool, FuzzyReceipt, error) {
-	return s.searchDiscoveryPage(ctx, query, limit, opts, s.discoveryDependencies())
+) (hits []SearchHit, truncated bool, receipt FuzzyReceipt, err error) {
+	hits, truncated, receipt, err = s.searchDiscoveryPage(ctx, query, limit, opts, s.discoveryDependencies())
+	if err == nil {
+		err = s.attachPublishedSearchIdentities(ctx, hits, opts.PublishedNotes)
+		if err != nil {
+			hits = nil
+		}
+	}
+	return hits, truncated, receipt, err
 }
 
 func (s *Store) searchDiscoveryPage(

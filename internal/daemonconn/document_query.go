@@ -23,7 +23,7 @@ func (c *Connection) ListDocuments(
 	if err := validateDocumentQuery(query); err != nil {
 		return api.DocumentPage{}, err
 	}
-	params := apiclient.ListDocumentsQuery{}
+	params := apiclient.ListDocumentsQuery{PublishedNotes: query.PublishedNotes}
 	if query.SourcePresent {
 		params.SourcePresent = new(true)
 	}
@@ -116,6 +116,9 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 	if err != nil {
 		return err
 	}
+	if (page.PublishedNotes == nil) != (query.PublishedNotes == nil) || (page.PublishedNotes != nil && page.PublishedNotes.Publication != query.PublishedNotes.Publication) {
+		return errors.New("document catalog response does not bind its publication")
+	}
 	if page.SourcePresent != normalized.SourcePresent ||
 		page.PathPrefix != normalized.PathPrefix || page.Sort != string(normalized.Sort) ||
 		page.Direction != string(normalized.Direction) || page.PageSize != normalized.PageSize ||
@@ -128,6 +131,9 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 	}
 	seen := make(map[int64]struct{}, len(page.Items))
 	for index, item := range page.Items {
+		if err := validatePublishedNoteIdentity(item.PublishedNote, query.PublishedNotes, item.NodeID, item.ContentVersionID, "", item.Size); err != nil {
+			return err
+		}
 		if err := validateDocumentSummary(item, index); err != nil ||
 			!clientDocumentPathWithinPrefix(item.Path, page.PathPrefix) {
 			return fmt.Errorf("document catalog response item %d has invalid identity", index)
@@ -141,6 +147,9 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 }
 
 func validateDocumentSummary(item api.DocumentSummary, index int) error {
+	if err := validatePublishedNoteIdentity(item.PublishedNote, nil, item.NodeID, item.ContentVersionID, "", item.Size); err != nil {
+		return err
+	}
 	if item.NodeID <= 0 || !validUUIDv4(item.ContentVersionID) || item.Size < 0 ||
 		!strings.HasPrefix(item.Path, "/") || pathpkg.Base(item.Path) != item.Name {
 		return fmt.Errorf("document summary response item %d has invalid identity", index)
@@ -160,8 +169,13 @@ func validateDocumentSummary(item api.DocumentSummary, index int) error {
 
 func normalizeClientDocumentQuery(query api.DocumentQuery) (store.DocumentCatalogQuery, error) {
 	return store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
-		SourcePresent: query.SourcePresent,
-		PathPrefix:    query.PathPrefix, Sort: store.DocumentCatalogSort(query.Sort),
+		PublishedNotes: func() *store.PublishedNoteSelector {
+			if query.PublishedNotes == nil {
+				return nil
+			}
+			return &store.PublishedNoteSelector{Publication: query.PublishedNotes.Publication}
+		}(), SourcePresent: query.SourcePresent,
+		PathPrefix: query.PathPrefix, Sort: store.DocumentCatalogSort(query.Sort),
 		Direction: store.DocumentCatalogDirection(query.Direction), PageSize: query.PageSize,
 	})
 }

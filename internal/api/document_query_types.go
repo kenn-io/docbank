@@ -3,12 +3,13 @@ package api
 // DocumentQuery is the typed daemon catalog request. Empty values select the
 // store-owned defaults; Cursor is always opaque to clients.
 type DocumentQuery struct {
-	SourcePresent bool   `json:"source_present,omitzero"`
-	PathPrefix    string `json:"path_prefix,omitzero"`
-	Sort          string `json:"sort,omitzero" enum:"path,name,modified_at,size,media_type"`
-	Direction     string `json:"direction,omitzero" enum:"asc,desc"`
-	PageSize      int    `json:"page_size,omitzero" minimum:"1" maximum:"250"`
-	Cursor        string `json:"cursor,omitzero"`
+	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitzero"`
+	SourcePresent  bool                   `json:"source_present,omitzero"`
+	PathPrefix     string                 `json:"path_prefix,omitzero"`
+	Sort           string                 `json:"sort,omitzero" enum:"path,name,modified_at,size,media_type"`
+	Direction      string                 `json:"direction,omitzero" enum:"asc,desc"`
+	PageSize       int                    `json:"page_size,omitzero" minimum:"1" maximum:"250"`
+	Cursor         string                 `json:"cursor,omitzero"`
 }
 
 type DocumentRenditionIdentity struct {
@@ -18,6 +19,7 @@ type DocumentRenditionIdentity struct {
 }
 
 type DocumentSummary struct {
+	PublishedNote         *PublishedNoteIdentity      `json:"published_note,omitzero"`
 	NodeID                int64                       `json:"node_id" minimum:"1"`
 	ContentVersionID      string                      `json:"content_version_id" format:"uuid"`
 	Path                  string                      `json:"path"`
@@ -48,12 +50,13 @@ type DocumentSummaryResolveResponse struct {
 }
 
 type DocumentPage struct {
-	SourcePresent  bool              `json:"source_present,omitzero"`
-	PathPrefix     string            `json:"path_prefix"`
-	Sort           string            `json:"sort" enum:"path,name,modified_at,size,media_type"`
-	Direction      string            `json:"direction" enum:"asc,desc"`
-	PageSize       int               `json:"page_size" minimum:"1" maximum:"250"`
-	Items          []DocumentSummary `json:"items" maxItems:"250"`
-	NextCursor     string            `json:"next_cursor,omitzero"`
-	PreviousCursor string            `json:"previous_cursor,omitzero"`
+	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitzero"`
+	SourcePresent  bool                   `json:"source_present,omitzero"`
+	PathPrefix     string                 `json:"path_prefix"`
+	Sort           string                 `json:"sort" enum:"path,name,modified_at,size,media_type"`
+	Direction      string                 `json:"direction" enum:"asc,desc"`
+	PageSize       int                    `json:"page_size" minimum:"1" maximum:"250"`
+	Items          []DocumentSummary      `json:"items" maxItems:"250"`
+	NextCursor     string                 `json:"next_cursor,omitzero"`
+	PreviousCursor string                 `json:"previous_cursor,omitzero"`
 }

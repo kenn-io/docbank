@@ -375,6 +375,7 @@ type DocumentSearchTrace struct {
 }
 
 type DocumentSearchResult struct {
+	PublishedNote    *PublishedNoteIdentity      `json:"published_note,omitzero"`
 	VaultUID         string                      `json:"vault_uid" format:"uuid"`
 	NodeID           int64                       `json:"node_id" minimum:"1"`
 	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
@@ -918,9 +919,10 @@ type ContentReversionReceipt struct {
 
 // SearchHit pairs a matched node with its display path.
 type SearchHit struct {
-	Node  Node   `json:"node"`
-	Path  string `json:"path"`
-	Match string `json:"match" enum:"name,content,filter,fuzzy_name,fuzzy_path"`
+	PublishedNote *PublishedNoteIdentity `json:"published_note,omitzero"`
+	Node          Node                   `json:"node"`
+	Path          string                 `json:"path"`
+	Match         string                 `json:"match" enum:"name,content,filter,fuzzy_name,fuzzy_path"`
 }
 
 // FuzzyReceipt describes coverage of supplemental ASCII filename/path discovery.
@@ -938,17 +940,18 @@ type SearchTextCoverage struct {
 
 // SearchReport is one bounded search result page.
 type SearchReport struct {
-	Fuzzy          *FuzzyReceipt `json:"fuzzy,omitzero"`
-	Hits           []SearchHit   `json:"hits"`
-	Limit          int           `json:"limit"`
-	Truncated      bool          `json:"truncated"`
-	PDFFilter      string        `json:"pdf_filter,omitzero"`
-	SourcePresent  bool          `json:"source_present,omitzero"`
-	TagID          string        `json:"tag_id,omitzero"`
-	MIMEType       string        `json:"mime_type,omitzero"`
-	UnderNodeID    int64         `json:"under_node_id,omitzero"`
-	ModifiedSince  string        `json:"modified_since,omitzero"`
-	ModifiedBefore string        `json:"modified_before,omitzero"`
+	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitzero"`
+	Fuzzy          *FuzzyReceipt          `json:"fuzzy,omitzero"`
+	Hits           []SearchHit            `json:"hits"`
+	Limit          int                    `json:"limit"`
+	Truncated      bool                   `json:"truncated"`
+	PDFFilter      string                 `json:"pdf_filter,omitzero"`
+	SourcePresent  bool                   `json:"source_present,omitzero"`
+	TagID          string                 `json:"tag_id,omitzero"`
+	MIMEType       string                 `json:"mime_type,omitzero"`
+	UnderNodeID    int64                  `json:"under_node_id,omitzero"`
+	ModifiedSince  string                 `json:"modified_since,omitzero"`
+	ModifiedBefore string                 `json:"modified_before,omitzero"`
 }
 
 // IngestFailure records one source path that failed to import.

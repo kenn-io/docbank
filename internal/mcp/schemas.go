@@ -591,6 +591,7 @@ func documentSummarySchema() schema {
 		"modified_at":             dateTimeSchema(),
 		"latest_processing_state": stringSchema(64),
 		"active_renditions":       arraySchema(renditionIdentitySchema(), 64),
+		"published_note":          publishedNoteIdentitySchema(),
 	}, "node_id", "content_version_id", "path", "name", "media_type", "size", "modified_at", "active_renditions")
 }
 
@@ -600,6 +601,7 @@ func fenceInputProperties() schema {
 			"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true,
 		},
 		"filters": objectSchema(schema{
+			"published_notes": publishedNoteSelectorSchema(),
 			"source_present":  booleanSchema(),
 			"tag_id":          uuidSchema(),
 			"mime_type":       stringSchema(255),
@@ -648,14 +650,16 @@ func listChangesSchemas() (schema, schema) {
 
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"source_present": booleanSchema(),
-		"path_prefix":    schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
-		"sort":           enumSchema("path", "name", "modified_at", "size", "media_type"),
-		"direction":      enumSchema("asc", "desc"),
-		"page_size":      integerSchema(1, 250),
-		"cursor":         cursorSchema(),
+		"published_notes": publishedNoteSelectorSchema(),
+		"source_present":  booleanSchema(),
+		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
+		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
+		"direction":       enumSchema("asc", "desc"),
+		"page_size":       integerSchema(1, 250),
+		"cursor":          cursorSchema(),
 	})
 	output := rootObjectSchema(withPrivateCache(schema{
+		"published_notes": publishedNoteSelectorSchema(),
 		"source_present":  booleanSchema(),
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
@@ -692,6 +696,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
 	input["else"] = schema{"required": []string{"filters"}}
 	result := objectSchema(schema{
+		"published_note":     publishedNoteIdentitySchema(),
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
 		"rank":               integerSchema(1, 100),
@@ -1058,4 +1063,13 @@ func promotePhotoNodeSchemas() (schema, schema) {
 
 func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
+}
+
+func publishedNoteSelectorSchema() schema {
+	return objectSchema(schema{"publication": stringSchema(64)})
+}
+func publishedNoteIdentitySchema() schema {
+	return objectSchema(schema{
+		"vault_id": uuidSchema(), "publication": stringSchema(64), "source_ref": stringSchema(4096), "node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "hash": schema{"type": "string", "pattern": "^[0-9a-f]{64}$"}, "size": integerSchema(0, 0), "source_revision": integerSchema(1, 0), "namespace_revision": integerSchema(1, 0),
+	}, "vault_id", "publication", "source_ref", "node_id", "content_version_id", "hash", "size", "source_revision", "namespace_revision")
 }

@@ -74,14 +74,15 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		OperationID: "listDocuments", Method: http.MethodGet, Path: "/api/v1/documents",
 		Summary: "List current live documents with authenticated keyset pagination",
 	}, func(ctx context.Context, input *struct {
-		PathPrefix    string `query:"path_prefix" default:"/"`
-		Sort          string `query:"sort" default:"path" enum:"path,name,modified_at,size,media_type"`
-		Direction     string `query:"direction" default:"asc" enum:"asc,desc"`
-		PageSize      int    `query:"page_size" default:"50" minimum:"1" maximum:"250"`
-		Cursor        string `query:"cursor"`
-		SourcePresent bool   `query:"source_present"`
+		PublishedNotes publishedNoteParameter `query:"published_notes,deepObject"`
+		PathPrefix     string                 `query:"path_prefix" default:"/"`
+		Sort           string                 `query:"sort" default:"path" enum:"path,name,modified_at,size,media_type"`
+		Direction      string                 `query:"direction" default:"asc" enum:"asc,desc"`
+		PageSize       int                    `query:"page_size" default:"50" minimum:"1" maximum:"250"`
+		Cursor         string                 `query:"cursor"`
+		SourcePresent  bool                   `query:"source_present"`
 	}) (*response, error) {
-		page, err := service.ListDocuments(ctx, DocumentQuery{PathPrefix: input.PathPrefix,
+		page, err := service.ListDocuments(ctx, DocumentQuery{PublishedNotes: input.PublishedNotes.selector(), PathPrefix: input.PathPrefix,
 			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor, SourcePresent: input.SourcePresent})
 		if err != nil {
 			return nil, err
@@ -108,7 +109,7 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 func (service *documentQueryService) toDocumentPage(
 	page store.DocumentCatalogPage,
 ) (DocumentPage, error) {
-	wire := DocumentPage{SourcePresent: page.Query.SourcePresent,
+	wire := DocumentPage{PublishedNotes: publishedNoteWireSelector(page.Query.PublishedNotes), SourcePresent: page.Query.SourcePresent,
 		PathPrefix: page.Query.PathPrefix, Sort: string(page.Query.Sort),
 		Direction: string(page.Query.Direction), PageSize: page.Query.PageSize,
 		Items: documentSummariesFromStore(page.Items)}
@@ -139,7 +140,7 @@ func (service *documentQueryService) toDocumentPage(
 func documentSummariesFromStore(items []store.DocumentSummary) []DocumentSummary {
 	wire := make([]DocumentSummary, len(items))
 	for index, item := range items {
-		wireItem := DocumentSummary{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID,
+		wireItem := DocumentSummary{PublishedNote: publishedNoteWireIdentity(item.PublishedNote), NodeID: item.NodeID, ContentVersionID: item.ContentVersionID,
 			Path: item.Path, Name: item.Name, MediaType: item.MediaType, Size: item.Size,
 			ModifiedAt: item.ModifiedAt, LatestProcessingState: item.LatestProcessingState,
 			ActiveRenditions: make([]DocumentRenditionIdentity, len(item.ActiveRenditions))}
@@ -155,8 +156,16 @@ func documentSummariesFromStore(items []store.DocumentSummary) []DocumentSummary
 }
 
 func documentCursorQueryHash(query store.DocumentCatalogQuery) [sha256.Size]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("%q %s %s %d %t",
-		query.PathPrefix, query.Sort, query.Direction, query.PageSize, query.SourcePresent)))
+	encoded, _ := json.Marshal(struct {
+		Path           string
+		Sort           store.DocumentCatalogSort
+		Direction      store.DocumentCatalogDirection
+		PageSize       int
+		SourcePresent  bool
+		PublishedNotes *store.PublishedNoteSelector
+		Revision       string
+	}{query.PathPrefix, query.Sort, query.Direction, query.PageSize, query.SourcePresent, query.PublishedNotes, query.PublishedNotesRevision})
+	return sha256.Sum256(encoded)
 }
 
 func (service *documentQueryService) encodeCursors(
@@ -284,10 +293,14 @@ func (service *documentQueryService) verifyCursorEnvelope(raw string) ([]byte, e
 
 func (service *documentQueryService) ListDocuments(ctx context.Context, input DocumentQuery) (DocumentPage, error) {
 	query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
-		SourcePresent: input.SourcePresent,
-		PathPrefix:    input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
+		PublishedNotes: publishedNoteStoreSelector(input.PublishedNotes), SourcePresent: input.SourcePresent,
+		PathPrefix: input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
 		Direction: store.DocumentCatalogDirection(input.Direction), PageSize: input.PageSize,
 	})
+	if err != nil {
+		return DocumentPage{}, FromStoreError(err)
+	}
+	query.PublishedNotesRevision, err = service.store.PublishedNotesRevision(ctx, query.PublishedNotes)
 	if err != nil {
 		return DocumentPage{}, FromStoreError(err)
 	}

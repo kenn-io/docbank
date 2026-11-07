@@ -682,7 +682,7 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 		result.Degradations[index] = string(degradation)
 	}
 	for index, item := range report.Results {
-		converted := DocumentSearchResult{VaultUID: item.Document.VaultID, NodeID: item.Document.NodeID,
+		converted := DocumentSearchResult{PublishedNote: publishedNoteWireIdentity(item.PublishedNote), VaultUID: item.Document.VaultID, NodeID: item.Document.NodeID,
 			ContentVersionID: item.Document.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
@@ -907,7 +907,7 @@ func searchFilterOptions(filters *DocumentSourceFenceFilters) store.SearchOption
 	if filters == nil {
 		return store.SearchOptions{}
 	}
-	return store.SearchOptions{SourcePresent: filters.SourcePresent, TagID: filters.TagID,
+	return store.SearchOptions{PublishedNotes: publishedNoteStoreSelector(filters.PublishedNotes), SourcePresent: filters.SourcePresent, TagID: filters.TagID,
 		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID,
 		ModifiedSince: filters.ModifiedSince, ModifiedBefore: filters.ModifiedBefore}
 }

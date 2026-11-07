@@ -100,6 +100,7 @@ type Contribution struct {
 }
 
 type Result struct {
+	PublishedNote *store.PublishedNoteIdentity
 	Document      DocumentIdentity
 	Rank          int
 	Score         float64

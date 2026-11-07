@@ -335,12 +335,13 @@ func getVaultInfo(ctx context.Context, session documentReadSession, raw []byte) 
 }
 
 type listDocumentsInput struct {
-	SourcePresent bool   `json:"source_present"`
-	PathPrefix    string `json:"path_prefix"`
-	Sort          string `json:"sort"`
-	Direction     string `json:"direction"`
-	PageSize      int    `json:"page_size"`
-	Cursor        string `json:"cursor"`
+	PublishedNotes *api.PublishedNoteSelector `json:"published_notes"`
+	SourcePresent  bool                       `json:"source_present"`
+	PathPrefix     string                     `json:"path_prefix"`
+	Sort           string                     `json:"sort"`
+	Direction      string                     `json:"direction"`
+	PageSize       int                        `json:"page_size"`
+	Cursor         string                     `json:"cursor"`
 }
 
 type listDocumentsOutput struct {
@@ -360,7 +361,7 @@ func listDocuments(
 		vaultID string
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
-		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PathPrefix: input.PathPrefix,
+		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: input.PublishedNotes, PathPrefix: input.PathPrefix,
 			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor, SourcePresent: input.SourcePresent})
 		if callErr != nil {
 			return response{}, callErr
@@ -392,14 +393,15 @@ type searchDocumentsInput struct {
 }
 
 type searchResultOutput struct {
-	NodeID           int64    `json:"node_id"`
-	ContentVersionID string   `json:"content_version_id"`
-	Rank             int      `json:"rank"`
-	Score            float64  `json:"score"`
-	RerankRelevance  *float64 `json:"rerank_relevance,omitempty"`
-	Path             string   `json:"path"`
-	Excerpt          string   `json:"excerpt,omitempty"`
-	EvidenceIDs      []string `json:"evidence_ids"`
+	PublishedNote    *api.PublishedNoteIdentity `json:"published_note,omitempty"`
+	NodeID           int64                      `json:"node_id"`
+	ContentVersionID string                     `json:"content_version_id"`
+	Rank             int                        `json:"rank"`
+	Score            float64                    `json:"score"`
+	RerankRelevance  *float64                   `json:"rerank_relevance,omitempty"`
+	Path             string                     `json:"path"`
+	Excerpt          string                     `json:"excerpt,omitempty"`
+	EvidenceIDs      []string                   `json:"evidence_ids"`
 }
 
 type searchCoverageOutput struct {
@@ -550,7 +552,7 @@ func searchDocuments(
 		if err != nil {
 			return searchDocumentsOutput{}, nil, err
 		}
-		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
+		output.Results[index] = searchResultOutput{PublishedNote: item.PublishedNote, NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence,
 			RerankRelevance: searchRerankRelevance(item, index, output.Reranking)}

@@ -160,7 +160,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	}
 	// Query encoding leaves lexical candidates in flight while the catalog can
 	// change. Fence the complete report, including its unembedded lexical hits.
-	if searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
+	if query.Scope.PublishedNotes != nil || searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -219,15 +219,16 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		nodeID  int64
 		version string
 	}
-	set := make(map[documentKey]string, len(revalidation.Candidates))
+	set := make(map[documentKey]store.RevalidatedSearchCandidate, len(revalidation.Candidates))
 	for _, candidate := range revalidation.Candidates {
-		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = candidate.Path
+		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = candidate
 	}
 	results := report.Results[:0]
 	for _, result := range report.Results {
-		if currentPath, ok := set[documentKey{nodeID: result.Document.NodeID,
+		if current, ok := set[documentKey{nodeID: result.Document.NodeID,
 			version: result.Document.ContentVersionID}]; ok {
-			result.Path = currentPath
+			result.Path = current.Path
+			result.PublishedNote = current.PublishedNote
 			results = append(results, result)
 		}
 	}

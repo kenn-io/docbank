@@ -36,7 +36,7 @@ func normalizePublishedNoteSelector(selector *PublishedNoteSelector) (*Published
 	}
 	if selector.Publication != "" {
 		if err := ValidatePushName(selector.Publication); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: published note selector: %w", ErrInvalidDocumentQuery, err)
 		}
 	}
 	copy := *selector

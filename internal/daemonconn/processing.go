@@ -598,6 +598,13 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
 	for index, result := range report.Results {
+		var selector *api.PublishedNoteSelector
+		if request.Scope != nil && request.Scope.Filters != nil {
+			selector = request.Scope.Filters.PublishedNotes
+		}
+		if err := validatePublishedNoteIdentity(result.PublishedNote, selector, result.NodeID, result.ContentVersionID, result.VaultUID, -1); err != nil {
+			return fmt.Errorf("result %d: %w", index, err)
+		}
 		if (request.Scope == nil && result.VaultUID != request.Fence.VaultUID) || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}

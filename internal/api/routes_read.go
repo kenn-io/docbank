@@ -416,13 +416,14 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Summary:     "Count files waiting for searchable text",
 		Description: "Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.",
 	}, func(ctx context.Context, in *struct {
-		PDFFilter      string `query:"pdf_filter" maxLength:"16384"`
-		SourcePresent  bool   `query:"source_present"`
-		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
-		MIMEType       string `query:"mime_type" maxLength:"255"`
-		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
-		ModifiedSince  string `query:"modified_since" maxLength:"64"`
-		ModifiedBefore string `query:"modified_before" maxLength:"64"`
+		PDFFilter      string                 `query:"pdf_filter" maxLength:"16384"`
+		SourcePresent  bool                   `query:"source_present"`
+		PublishedNotes publishedNoteParameter `query:"published_notes,deepObject"`
+		TagID          string                 `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		MIMEType       string                 `query:"mime_type" maxLength:"255"`
+		UnderNodeID    int64                  `query:"under_node_id" minimum:"1"`
+		ModifiedSince  string                 `query:"modified_since" maxLength:"64"`
+		ModifiedBefore string                 `query:"modified_before" maxLength:"64"`
 	}) (*textCoverageOutput, error) {
 		mimeType, err := store.NormalizeSearchMIMEType(in.MIMEType)
 		if err != nil {
@@ -432,7 +433,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
-		opts := searchFilterOptions(&DocumentSourceFenceFilters{SourcePresent: in.SourcePresent, TagID: in.TagID,
+		opts := searchFilterOptions(&DocumentSourceFenceFilters{PublishedNotes: in.PublishedNotes.selector(), SourcePresent: in.SourcePresent, TagID: in.TagID,
 			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, ModifiedSince: since, ModifiedBefore: before})
 		opts.PDFFilter = in.PDFFilter
 		coverage, err := d.Store.SearchTextCoverage(ctx, opts)
@@ -462,16 +463,17 @@ func registerReadRoutes(api huma.API, d Deps) {
 			"hits and includes a coverage receipt; it requires a nonblank query, and text " +
 			"outside the supplemental syntax reports not_run.",
 	}, func(ctx context.Context, in *struct {
-		Q              string `query:"q"`
-		Fuzzy          bool   `query:"fuzzy"`
-		SourcePresent  bool   `query:"source_present"`
-		PDFFilter      string `query:"pdf_filter" maxLength:"16384"`
-		Limit          int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
-		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
-		MIMEType       string `query:"mime_type" maxLength:"255"`
-		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
-		ModifiedSince  string `query:"modified_since" maxLength:"64"`
-		ModifiedBefore string `query:"modified_before" maxLength:"64"`
+		Q              string                 `query:"q"`
+		Fuzzy          bool                   `query:"fuzzy"`
+		SourcePresent  bool                   `query:"source_present"`
+		PublishedNotes publishedNoteParameter `query:"published_notes,deepObject"`
+		PDFFilter      string                 `query:"pdf_filter" maxLength:"16384"`
+		Limit          int                    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
+		TagID          string                 `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		MIMEType       string                 `query:"mime_type" maxLength:"255"`
+		UnderNodeID    int64                  `query:"under_node_id" minimum:"1"`
+		ModifiedSince  string                 `query:"modified_since" maxLength:"64"`
+		ModifiedBefore string                 `query:"modified_before" maxLength:"64"`
 	}) (*searchOutput, error) {
 		mimeType, err := store.NormalizeSearchMIMEType(in.MIMEType)
 		if err != nil {
@@ -484,7 +486,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		opts := store.SearchOptions{
-			PDFFilter:     in.PDFFilter,
+			PublishedNotes: publishedNoteStoreSelector(in.PublishedNotes.selector()), PDFFilter: in.PDFFilter,
 			SourcePresent: in.SourcePresent,
 			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
@@ -507,13 +509,13 @@ func registerReadRoutes(api huma.API, d Deps) {
 		}
 		out := &searchOutput{Body: SearchReport{
 			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
-			PDFFilter:     in.PDFFilter,
+			PublishedNotes: in.PublishedNotes.selector(), PDFFilter: in.PDFFilter,
 			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}
 		for _, h := range hits {
 			out.Body.Hits = append(out.Body.Hits, SearchHit{
-				Node: fromStoreNode(h.Node), Path: h.Path, Match: h.Match,
+				PublishedNote: publishedNoteWireIdentity(h.PublishedNote), Node: fromStoreNode(h.Node), Path: h.Path, Match: h.Match,
 			})
 		}
 		return out, nil
