@@ -38,10 +38,11 @@ hosted: plan shows what leaves the machine, and build needs --consent.
 Typical flow: processing profiles -> processing plan <path-or-id> --profile P
 -> processing build <path-or-id> --profile P --plan-fingerprint F --consent
 -> rendition window <path-or-id> --version V --profile P.`,
-	GroupID: groupSearch,
-	Use:     "processing",
-	Short:   "Preview and run document processing",
-	Args:    cobra.NoArgs,
+	GroupID:     groupSearch,
+	Use:         "processing",
+	Short:       "Preview and run document processing",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
