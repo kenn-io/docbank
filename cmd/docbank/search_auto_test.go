@@ -76,6 +76,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "auth discovery", profileError: "unauthorized", limit: 50, wantError: true},
+		{name: "missing selection stops retries", profiles: profiles, limit: 50, searchError: "not_found", wantSearch: 1, wantReason: "not_found"},
 		{name: "auth search", profiles: profiles, limit: 50, searchError: "unauthorized", wantSearch: 1, wantError: true},
 	}
 	for _, tc := range cases {
@@ -127,6 +128,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusServiceUnavailable
 		case "processing_consent_required":
 			status = http.StatusPreconditionRequired
+		case "not_found":
+			status = http.StatusNotFound
 		case "index_unavailable":
 			status = http.StatusConflict
 		}

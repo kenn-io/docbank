@@ -25,7 +25,11 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 		{name: "semantic retries", mode: "semantic", want: []string{"z-local-text:first:semantic", "z-local-text:second:semantic"}, wantProfile: "z-local-text", actual: "semantic"},
 		{name: "semantic consent before index failure", mode: "semantic", failures: true, firstFailure: "processing_consent_required", want: []string{"z-local-text:first:semantic", "z-local-text:second:semantic"}, code: "consent_required", guidance: "consent"},
 		{name: "semantic index before consent failure", mode: "semantic", failure: "processing_consent_required", firstFailure: "stale_index", want: []string{"z-local-text:first:semantic", "z-local-text:second:semantic"}, code: "semantic_unavailable", guidance: "stale_index"},
-		{name: "exhausted auto uses default", mode: "auto", failures: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid", "a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "processing_failed"},
+		{name: "exhausted auto uses default", mode: "auto", failures: true, want: []string{"z-local-text:first:hybrid", "z-local-text:second:hybrid", "a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "check the daemon log"},
+		{name: "provider failure guidance", mode: "hybrid", profile: "z-local-text", binding: "second", failure: "processing_failed", want: []string{"z-local-text:second:hybrid", "z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical", guidance: "check the daemon log"},
+		{name: "semantic unavailable guidance", mode: "hybrid", profile: "z-local-text", binding: "second", failure: "semantic_unavailable", want: []string{"z-local-text:second:hybrid", "z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical", guidance: "configure a text-query embedding binding"},
+		{name: "semantic provider failure guidance", mode: "semantic", profile: "z-local-text", binding: "second", failure: "processing_failed", want: []string{"z-local-text:second:semantic"}, code: "semantic_unavailable", guidance: "check the daemon log"},
+		{name: "semantic exhausted unavailable guidance", mode: "semantic", profile: "z-local-text", binding: "second", failure: "semantic_unavailable", want: []string{"z-local-text:second:semantic"}, code: "semantic_unavailable", guidance: "configure a text-query embedding binding"},
 		{name: "hybrid captions", mode: "hybrid", profile: "a-captions", want: []string{"a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical", guidance: "z-local-text"},
 		{name: "explicit auto captions", mode: "auto", profile: "a-captions", want: []string{"a-captions::lexical"}, wantProfile: "a-captions", actual: "lexical"},
 		{name: "explicit auto query binding", mode: "auto", profile: "z-local-text", binding: "second", want: []string{"z-local-text:second:lexical"}, wantProfile: "z-local-text", actual: "lexical"},
@@ -126,6 +130,8 @@ func TestSearchDocumentsProfileCandidates(t *testing.T) {
 			}
 			if tc.failure != "" {
 				require.Contains(t, output["skipped_reasons"], tc.failure)
+			}
+			if tc.failure == "stale_index" {
 				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing plan <path-or-id> --profile <profile>")
 				require.Contains(t, fmt.Sprint(output["skipped_reasons"]), "docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent")
 			}
@@ -167,4 +173,114 @@ func TestSearchDocumentsAvailableProfilesFitErrorBudget(t *testing.T) {
 	encoded, err := json.Marshal(output)
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(encoded), 1024)
+}
+
+func TestSearchDocumentsRerankingGuidance(t *testing.T) {
+	for _, mode := range []string{"hybrid", "auto", "semantic"} {
+		for _, alternative := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/alternative=%t", mode, alternative), func(t *testing.T) {
+				profiles := []api.ProcessingProfileSummary{
+					{Name: "a-captions", Fingerprint: strings.Repeat("a", 64), RerankingAvailable: true},
+					{Name: "b-text", Fingerprint: strings.Repeat("b", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}},
+				}
+				if alternative {
+					profiles = append(profiles, api.ProcessingProfileSummary{Name: "z-rerank-text", Fingerprint: strings.Repeat("c", 64), RerankingAvailable: true, EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}})
+				}
+				var attempts []string
+				daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/v1/processing/profiles":
+						writeDaemonJSON(t, w, profiles)
+					case "/api/v1/search":
+						var request api.DocumentSearchRequest
+						if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+							return
+						}
+						assert.True(t, request.Rerank)
+						assert.Equal(t, "refund", request.Query)
+						attempts = append(attempts, request.Profile+":"+request.Mode)
+						if request.Mode == "semantic" {
+							w.WriteHeader(http.StatusUnprocessableEntity)
+							_, _ = fmt.Fprint(w, `{"status":422,"code":"semantic_unavailable"}`)
+							return
+						}
+						writeDaemonJSON(t, w, api.DocumentSearchReport{RequestedMode: request.Mode, ActualMode: request.Mode, Coverage: api.DocumentSearchCoverage{State: "complete"}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}})
+					default:
+						t.Errorf("unexpected request %s", r.URL.Path)
+						http.NotFound(w, r)
+					}
+				}))
+				t.Cleanup(daemon.Close)
+				server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+				args := map[string]any{"query": "refund", "mode": mode, "rerank": true, "filters": map[string]any{}}
+				if mode != "auto" {
+					args["profile"] = "a-captions"
+				}
+				output := exportCall(t, server, "search_documents", args)
+				if mode == "auto" && alternative {
+					require.Equal(t, []string{"z-rerank-text:hybrid"}, attempts)
+					require.Equal(t, "z-rerank-text", output["profile"])
+					require.Empty(t, output["skipped_reasons"])
+					return
+				}
+				guidance := fmt.Sprint(output["skipped_reasons"])
+				if mode == "semantic" {
+					require.Equal(t, []string{"a-captions:semantic"}, attempts)
+					require.Equal(t, "semantic_unavailable", output["code"])
+					guidance = fmt.Sprint(output["message"])
+				} else {
+					require.Equal(t, []string{"a-captions:lexical"}, attempts)
+					require.Equal(t, "lexical", output["actual_mode"])
+				}
+				require.NotContains(t, guidance, `Try profile "b-text"`)
+				if alternative {
+					require.Contains(t, guidance, `Try profile "z-rerank-text"`)
+				} else {
+					require.Contains(t, guidance, "configure")
+					require.Contains(t, guidance, "reranking")
+				}
+			})
+		}
+	}
+}
+
+func TestSearchDocumentsUnknownBindingValidation(t *testing.T) {
+	for _, embeddings := range []bool{false, true} {
+		t.Run(fmt.Sprintf("embeddings=%t", embeddings), func(t *testing.T) {
+			profile := api.ProcessingProfileSummary{Name: "text", Fingerprint: strings.Repeat("a", 64)}
+			if embeddings {
+				profile.EmbeddingBindings, profile.QueryEmbeddingBindings = []string{"query"}, []string{"query"}
+			}
+			calls := 0
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/processing/profiles":
+					writeDaemonJSON(t, w, []api.ProcessingProfileSummary{profile})
+				case "/api/v1/search":
+					calls++
+					var request api.DocumentSearchRequest
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+						return
+					}
+					assert.Equal(t, "text", request.Profile)
+					assert.Equal(t, "missing", request.BindingID)
+					assert.Equal(t, "hybrid", request.Mode)
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = fmt.Fprint(w, `{"status":404,"code":"not_found"}`)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+			output := exportCall(t, server, "search_documents", map[string]any{"query": "refund", "mode": "hybrid", "profile": "text", "binding_id": "missing", "filters": map[string]any{}})
+			require.Equal(t, "not_found", output["code"])
+			if embeddings {
+				require.Equal(t, 1, calls, "the API owns validation for profiles with embeddings")
+			} else {
+				require.Zero(t, calls)
+			}
+		})
+	}
 }

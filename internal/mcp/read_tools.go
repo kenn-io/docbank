@@ -461,7 +461,7 @@ func searchDocuments(
 			}
 			return documentSearchResponse{}, err
 		}
-		if input.BindingID != "" && !slices.Contains(selected.EmbeddingBindings, input.BindingID) {
+		if input.BindingID != "" && len(selected.EmbeddingBindings) == 0 {
 			return documentSearchResponse{problem: &searchProfileError{code: "not_found", message: domainErrorMessage("not_found")}}, nil
 		}
 		run := func(profile, binding, mode string) (documentSearchResponse, error) {
@@ -492,7 +492,7 @@ func searchDocuments(
 				if code, _ := stableDomainError(err); code == "consent_required" {
 					return documentSearchResponse{}, err
 				}
-				guidance := semanticSearchGuidance(selected.Name, profiles, attempt.failure)
+				guidance := semanticSearchGuidance(selected.Name, profiles, attempt.failure, input.Rerank)
 				if nonQueryBinding && len(selected.QueryEmbeddingBindings) > 0 {
 					guidance = fmt.Sprintf("Binding %q cannot search document text by meaning. Try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0])
 				}
@@ -516,7 +516,7 @@ func searchDocuments(
 						result.report.Degradations = append(result.report.Degradations, guidance)
 					}
 				} else if len(selected.QueryEmbeddingBindings) == 0 {
-					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, ""))
+					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, "", input.Rerank))
 				} else if nonQueryBinding {
 					result.report.Degradations = append(result.report.Degradations, fmt.Sprintf("Binding %q cannot search document text by meaning. Returned keyword results; try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0]))
 				}
@@ -1030,6 +1030,10 @@ func resolveSearchSummaries(ctx context.Context, c documentClient, results []api
 func searchFailureGuidance(code string) string {
 	var guidance string
 	switch code {
+	case "processing_failed":
+		return "Document search failed; check the daemon log and provider configuration before retrying."
+	case "semantic_unavailable":
+		return "Ask the operator to configure a text-query embedding binding for this profile."
 	case "processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
 		guidance = domainErrorMessage("consent_required")
 	case "index_unavailable", "stale_index":
@@ -1040,15 +1044,19 @@ func searchFailureGuidance(code string) string {
 	return guidance + " Review docbank processing plan <path-or-id> --profile <profile>, then run docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent."
 }
 
-func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary, failure string) string {
+func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary, failure string, rerank bool) string {
 	if failure != "" {
-		return "Search by meaning failed: " + failure + "."
+		return "Search by meaning failed: " + failure + ". " + searchFailureGuidance(failure)
 	}
 	message := fmt.Sprintf("Profile %q has no available search by meaning.", name)
-	for _, profile := range profiles {
-		if profile.Name != name && len(profile.QueryEmbeddingBindings) > 0 {
-			return message + fmt.Sprintf(" Try profile %q.", profile.Name)
+	_, candidates, _ := selectAnswerSearch(profiles, answerInput{Rerank: rerank})
+	for _, candidate := range candidates {
+		if candidate.Profile != name {
+			return message + fmt.Sprintf(" Try profile %q.", candidate.Profile)
 		}
+	}
+	if rerank {
+		return message + " Ask the operator to configure a profile with text-query embeddings and reranking."
 	}
 	return message + " Run docbank processing local to add it."
 }
