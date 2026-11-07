@@ -11,5 +11,5 @@ func openWebBrowser(_ context.Context, rawURL string) error {
 	if err := validateWebLaunchURL(rawURL); err != nil {
 		return err
 	}
-	return errors.New("opening a browser is unsupported on this platform; use --no-browser")
+	return errors.New("opening a browser is unsupported on this platform")
 }

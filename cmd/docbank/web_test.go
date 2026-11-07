@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -77,6 +78,19 @@ func TestRunWebNoBrowserExplicitlyPrintsAuthenticatedURL(t *testing.T) {
 	assert.Contains(t, out.String(), "#web_session=read-only-session")
 	assert.Contains(t, out.String(), "web_upload_secret=")
 	assert.NotContains(t, out.String(), "private key")
+}
+
+func TestRunWebBrowserFailureSuggestsNoBrowser(t *testing.T) {
+	c, _ := webSessionClient(t, "browser-session")
+	var out bytes.Buffer
+	err := runWeb(t.Context(), &out, t.TempDir(), c, false, func(context.Context, string) error {
+		return &exec.Error{Name: "browser-opener", Err: exec.ErrNotFound}
+	})
+	require.ErrorContains(t, err, "opening Docbank web application")
+	hinted, ok := errors.AsType[*hintedError](err)
+	require.True(t, ok)
+	assert.Contains(t, hinted.hint, "docbank web --no-browser")
+	assert.Contains(t, hinted.hint, "browser credentials")
 }
 
 func TestValidateWebLaunchURLRejectsCredentialsAndRemoteURLs(t *testing.T) {
