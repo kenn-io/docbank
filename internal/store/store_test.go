@@ -135,7 +135,7 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestOpenRollsBackSchemaGroupsOnError(t *testing.T) { //nolint:paralleltest // swaps the package-level schemaSQL
+func TestOpenSchemaFailureLeavesNoTables(t *testing.T) { //nolint:paralleltest // swaps the package-level schemaSQL
 	originalSchema := schemaSQL
 	t.Cleanup(func() { schemaSQL = originalSchema })
 	schemaSQL += "\n\nINSERT INTO missing_schema_table VALUES (1);"
