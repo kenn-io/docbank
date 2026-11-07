@@ -957,6 +957,25 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	assert.NotContains(t, searchBody, outside.CurrentVersionID)
 }
 
+func TestDocumentSearchRejectsUnknownBinding(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	node := createFileWithContent(t, ts, catalog, "/search.txt", "synthetic search content\n")
+	for _, mode := range []string{"lexical", "auto", "hybrid", "semantic"} {
+		t.Run(mode, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+				"query": "synthetic", "mode": mode, "profile": "private", "binding_id": "missing",
+				"fence": map[string]any{"vault_uid": catalog.VaultID(),
+					"content_version_ids": []string{node.CurrentVersionID}},
+			})
+			assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(body), &problem))
+			assert.Equal(t, "not_found", problem.Code)
+		})
+	}
+}
+
 func TestDocumentSearchRejectsWhitespaceQuery(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))

@@ -226,8 +226,12 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-range daemons must be replaced before reading content windows")
 	rec.Metadata[metaProtocolVersion] = "121" // Before preserving existing Nomic indexes.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "setup must replace daemons that create a separate local index")
-	rec.Metadata[metaProtocolVersion] = "122" // Before supersession declaration routes.
+	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
+	rec.Metadata[metaProtocolVersion] = "123" // Before supersession declaration routes.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without supersession routes must be replaced")
+	rec.Metadata[metaProtocolVersion] = "124" // Before document validity in search.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without document validity search must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")

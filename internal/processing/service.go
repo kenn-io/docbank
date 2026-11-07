@@ -52,6 +52,7 @@ const (
 var (
 	ErrForeignVault              = errors.New("processing source fence belongs to another vault")
 	ErrProfileNotConfigured      = errors.New("processing profile is not configured")
+	ErrSemanticUnavailable       = errors.New("semantic retrieval is not configured")
 	ErrPlanChanged               = errors.New("processing plan changed after preview")
 	ErrConsentRequired           = errors.New("processing consent is required")
 	ErrConsentSaved              = errors.New("processing consent was saved")
@@ -1640,7 +1641,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
 	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
+		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -1738,13 +1739,16 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
 		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
+			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				return preparedSearch{}, ErrSemanticUnavailable
+			}
 			request.BindingID = binding.Name
 			searcherConfig.Encoders = service.embeddings
 			authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
@@ -1753,7 +1757,7 @@ func (service *Service) prepareSearch(
 				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 		}
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
-		return preparedSearch{}, errors.New("semantic retrieval is not configured")
+		return preparedSearch{}, ErrSemanticUnavailable
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {
@@ -2087,13 +2091,25 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
+// selectDocumentSearchBinding returns the text-query binding for a search.
+// Semantic mode reports ErrSemanticUnavailable when the profile has no
+// text-query binding to default to or the named binding only accepts images;
+// an unknown binding name is store.ErrNotFound in every mode.
 func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
-	name string,
+	name string, mode retrieval.Mode,
 ) (document.EmbeddingBindingV1, error) {
+	imageOnly := false
 	for _, binding := range profile.Embeddings {
-		if binding.InputKind != document.EmbeddingInputImage && (name == "" || binding.Name == name) {
+		if name != "" && binding.Name != name {
+			continue
+		}
+		if binding.InputKind != document.EmbeddingInputImage {
 			return binding, nil
 		}
+		imageOnly = true
+	}
+	if mode == retrieval.ModeSemantic && (name == "" || imageOnly) {
+		return document.EmbeddingBindingV1{}, ErrSemanticUnavailable
 	}
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }

@@ -13,6 +13,7 @@ import (
 )
 
 type documentClient interface {
+	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
 	VaultInfo(ctx context.Context) (api.VaultInfo, error)
 	VaultID(ctx context.Context) (string, error)
 	ListDocuments(ctx context.Context, request api.DocumentQuery) (api.DocumentPage, error)
