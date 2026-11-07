@@ -53,6 +53,7 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
+    type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -1374,6 +1375,7 @@
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
   const showingResults = $derived(activeQuery !== "" || tagBrowse);
+  const emptyRoot = $derived(!showingResults && directory?.path === "/");
   const columns = $derived(
     snapshotActive
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
@@ -3784,6 +3786,26 @@
   />
 {/snippet}
 
+{#snippet emptyAddMenu()}
+  {@render addMenu("start")}
+{/snippet}
+
+{#snippet addMenu(align: MenuAlign)}
+  <DocumentAddMenu
+    {align}
+    disabledReason={!directory || loading
+      ? "Waiting for the folder to load"
+      : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
+    onselect={(choice) => {
+      if (!directory || loading || !uploadChannel || uploadChannelError) return;
+      activePanel =
+        choice === "files" || choice === "folder"
+          ? { kind: "upload", target: directory, picker: choice }
+          : { kind: choice, target: directory };
+    }}
+  />
+{/snippet}
+
 <svelte:window
   onpopstate={syncPhotoLocation}
   onhashchange={syncPhotoLocation}
@@ -4715,18 +4737,7 @@
                     <RefreshCwIcon size="14" aria-hidden="true" />
                   </IconAction>
                   {#if !showingResults}
-                    <DocumentAddMenu
-                      disabledReason={!directory || loading
-                        ? "Waiting for the folder to load"
-                        : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
-                      onselect={(choice) => {
-                        if (!directory || loading || !uploadChannel || uploadChannelError) return;
-                        activePanel =
-                          choice === "files" || choice === "folder"
-                            ? { kind: "upload", target: directory, picker: choice }
-                            : { kind: choice, target: directory };
-                      }}
-                    />
+                    {@render addMenu("end")}
                   {/if}
                 </div>
               </div>
@@ -4770,10 +4781,15 @@
                     ? "No matching documents"
                     : tagBrowse
                       ? "No documents with this tag"
-                      : "Empty folder"}
+                      : emptyRoot
+                        ? "No documents yet"
+                        : "Empty folder"}
                   description={tagBrowse && taggedTrashed > 0
                     ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                    : undefined}
+                    : emptyRoot
+                      ? "Add files or a folder to start your vault."
+                      : undefined}
+                  children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}

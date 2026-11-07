@@ -3655,7 +3655,7 @@ it("refreshes a retained Documents person search after clearing a face in Photos
   });
   render(App);
   const search = await screen.findByRole("searchbox", { name: "Search documents" });
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   await fireEvent.input(search, { target: { value: "person:Ada" } });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() => expect(searches).toBe(1));
