@@ -14,12 +14,8 @@ import (
 )
 
 func TestRedactionVerifyRejectsFIFO(t *testing.T) {
-	binary := buildDocbank(t)
-	if runRedactionVerificationInSubprocess(t, "DOCBANK_TEST_CLI_BINARY="+binary) {
-		return
-	}
 	f := newRedactionVerifyFixture(t)
-	f.archive(t, "valid")
+	binary := buildDocbank(t)
 	fifo := filepath.Join(t.TempDir(), "input.fifo")
 	require.NoError(t, syscall.Mkfifo(fifo, 0600))
 	for _, test := range []struct {
