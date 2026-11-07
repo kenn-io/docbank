@@ -32,6 +32,8 @@ type publicationPublisher struct {
 	report     Report
 	status     api.NotePublicationStatus
 	failed     bool
+	completed  bool
+	wait       func(context.Context, time.Duration) error
 }
 
 func runPublication(ctx context.Context, c *daemonconn.Connection, opts Options) (Report, error) {
@@ -74,10 +76,16 @@ func (p *publicationPublisher) beforeScan(ctx context.Context, scan ingest.Folde
 	p.localScan = scan
 	p.failed = false
 	p.seen = nil
-	remote, err := p.connection.BeginNotePublicationScan(ctx, api.NotePublicationBeginRequest{Name: p.opts.Folder.Name, Destination: p.opts.Folder.Destination, PolicyFingerprint: p.policy, OperationID: uuid.NewV4().String()})
-	if err != nil {
+	request := api.NotePublicationBeginRequest{Name: p.opts.Folder.Name, Destination: p.opts.Folder.Destination, PolicyFingerprint: p.policy, OperationID: uuid.NewV4().String()}
+	var remote api.NotePublicationScan
+	if err := p.retry(ctx, func() error {
+		var err error
+		remote, err = p.connection.BeginNotePublicationScan(ctx, request)
+		return err
+	}, nil); err != nil {
 		return err
 	}
+	p.completed = false
 	p.scan = remote
 	return p.refreshSources(ctx)
 }
@@ -85,11 +93,15 @@ func (p *publicationPublisher) refreshSources(ctx context.Context) error {
 	sources := make(map[string]api.NotePublicationSource)
 	after := ""
 	for {
-		page, err := p.connection.NotePublicationSources(ctx, api.NotePublicationSourcesRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, After: after, Limit: 1000})
-		if err != nil {
+		var page api.NotePublicationSourcesPage
+		if err := p.retry(ctx, func() error {
+			var err error
+			page, err = p.connection.NotePublicationSources(ctx, api.NotePublicationSourcesRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, After: after, Limit: 1000})
+			return err
+		}, nil); err != nil {
 			return err
 		}
-		if page.Scan.ScanID != p.scan.ScanID || page.Scan.DatabaseEpoch != p.scan.DatabaseEpoch || page.Scan.Epoch != p.scan.Epoch || page.Scan.PolicyFingerprint != p.policy {
+		if page.Scan != p.scan {
 			return errors.New("publication cursor changed scan identity")
 		}
 		for _, v := range page.Items {
@@ -106,7 +118,7 @@ func (p *publicationPublisher) observePresent(ctx context.Context, v ingest.Fold
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	source, known := p.sources[v.Ref]
-	if !known || source.Recovery != nil || source.Conflict != "" || source.Availability != "retained" || v.Digest == "" || v.Digest != source.Identity.Hash || v.Info.Size() != source.Identity.Size || p.localScan.FullVerification {
+	if !known || !v.Processed || source.Recovery != nil || source.Conflict != "" || source.Availability != "retained" || v.Digest == "" || v.Digest != source.Identity.Hash || v.Info.Size() != source.Identity.Size || p.localScan.FullVerification {
 		return true, nil
 	}
 	if !v.Stable {
@@ -143,7 +155,24 @@ func (p *publicationPublisher) flushSeen(ctx context.Context) error {
 	if len(p.seen) == 0 {
 		return nil
 	}
-	ack, err := p.connection.AcknowledgePublishedNotes(ctx, api.NotePublicationSeenRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, Bindings: p.seen})
+	var ack api.NotePublicationAck
+	err := p.retry(ctx, func() error {
+		var err error
+		ack, err = p.connection.AcknowledgePublishedNotes(ctx, api.NotePublicationSeenRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, Bindings: p.seen})
+		return err
+	}, func(_ error) error {
+		if err := p.refreshSources(ctx); err != nil {
+			return err
+		}
+		for i, old := range p.seen {
+			current, ok := p.sources[old.SourceRef]
+			if !ok || current.Conflict != "" || current.Availability != "retained" || !samePublicationContent(current.Identity, old) {
+				return errPublicationBindingChanged
+			}
+			p.seen[i] = current.Identity
+		}
+		return nil
+	})
 	if err != nil {
 		p.failed = true
 		return err
@@ -199,12 +228,47 @@ func (p *publicationPublisher) publish(ctx context.Context, file ingest.FolderFi
 	if known {
 		revision = source.Identity.SourceRevision
 	}
-	receipt, err := p.connection.UploadPublishedNote(ctx, api.NotePublicationUploadRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, SourceRef: file.Ref, FileName: path.Base(file.Ref), ParentPath: path.Join(p.opts.Folder.Destination, path.Dir(file.Ref)), ModifiedAt: file.Info.ModTime().UTC().Format(time.RFC3339Nano), OperationID: uuid.NewV4().String(), Hash: digest, Size: file.Info.Size(), ExpectedSourceRevision: revision}, contextReader{ctx: ctx, reader: file.File})
+	request := api.NotePublicationUploadRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, SourceRef: file.Ref, FileName: path.Base(file.Ref), ParentPath: path.Join(p.opts.Folder.Destination, path.Dir(file.Ref)), ModifiedAt: file.Info.ModTime().UTC().Format(time.RFC3339Nano), OperationID: uuid.NewV4().String(), Hash: digest, Size: file.Info.Size(), ExpectedSourceRevision: revision}
+	var receipt api.NotePublicationReceipt
+	err = p.retry(ctx, func() error {
+		if _, err := file.File.Seek(0, io.SeekStart); err != nil {
+			return &ingest.SourceAccessError{Err: err}
+		}
+		var err error
+		receipt, err = p.connection.UploadPublishedNote(ctx, request, contextReader{ctx: ctx, reader: file.File})
+		return err
+	}, func(cause error) error {
+		current, err := p.recoverUncertain(ctx, file.Ref, request)
+		if err != nil {
+			return err
+		}
+		if err := file.Unchanged(); err != nil {
+			return err
+		}
+		if _, err := file.File.Seek(0, io.SeekStart); err != nil {
+			return &ingest.SourceAccessError{Err: err}
+		}
+		now, err := file.Digest(ctx)
+		if err != nil {
+			return err
+		}
+		if now != request.Hash {
+			return ingest.ErrSourceChanged
+		}
+		if code, _ := daemonconn.ProblemCode(cause); code == "publication_source_stale" {
+			request.ExpectedSourceRevision = current.Identity.SourceRevision
+			request.OperationID = uuid.NewV4().String()
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 	if receipt.Scan.DatabaseEpoch != p.scan.DatabaseEpoch || receipt.Scan.Epoch != p.scan.Epoch || receipt.Scan.PolicyFingerprint != p.policy {
 		return errors.New("publication upload changed scan identity")
+	}
+	if current, ok := p.sources[file.Ref]; ok && current.Identity.SourceRevision > receipt.Source.Identity.SourceRevision {
+		return errPublicationBindingChanged
 	}
 	p.sources[file.Ref] = receipt.Source
 	switch receipt.Outcome {
@@ -234,12 +298,21 @@ func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.Fold
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !result.Complete || p.failed {
+		if p.opts.Watch {
+			return nil
+		}
 		return errPublicationIncomplete
 	}
 	if err := p.flushSeen(ctx); err != nil {
 		return err
 	}
-	status, err := p.connection.CompleteNotePublicationScan(ctx, api.NotePublicationCompleteRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, PolicyFingerprint: p.policy, InventoryComplete: true})
+	var status api.NotePublicationStatus
+	request := api.NotePublicationCompleteRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, PolicyFingerprint: p.policy, InventoryComplete: true}
+	err := p.retry(ctx, func() error {
+		var err error
+		status, err = p.connection.CompleteNotePublicationScan(ctx, request)
+		return err
+	}, func(error) error { return p.refreshSources(ctx) })
 	if err != nil {
 		return err
 	}
@@ -247,6 +320,7 @@ func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.Fold
 		return errors.New("publication completion does not confirm the inventory")
 	}
 	p.status = status
+	p.completed = true
 	return nil
 }
 
@@ -268,4 +342,105 @@ func publicationSeenFits(r api.NotePublicationSeenRequest) (bool, error) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+var errPublicationBindingChanged = errors.New("publication source binding changed during reconciliation")
+
+func samePublicationContent(a, b api.PublishedNoteIdentity) bool {
+	a.NamespaceRevision, b.NamespaceRevision = 0, 0
+	a.SourceRevision, b.SourceRevision = 0, 0
+	return a == b
+}
+func publicationStopsRun(err error) bool {
+	if stopsRun(err) || errors.Is(err, daemonconn.ErrNotePublicationUnavailable) {
+		return true
+	}
+	code, _ := daemonconn.ProblemCode(err)
+	switch code {
+	case "publication_scan_superseded", "publication_scan_sealed", "publication_operation_mismatch":
+		return true
+	}
+	return false
+}
+func publicationRetryable(err error) bool {
+	code, _ := daemonconn.ProblemCode(err)
+	return !publicationStopsRun(err) && (retryable(err) || code == "publication_source_stale")
+}
+func publicationWait(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// retry owns one active operation. A retry never starts another traversal or
+// creates another Begin; only a proved reconnect callback may replace its socket.
+func (p *publicationPublisher) retry(ctx context.Context, action func() error, beforeReplay func(error) error) error {
+	return p.retryOperation(ctx, action, beforeReplay, true)
+}
+func (p *publicationPublisher) retryOperation(ctx context.Context, action func() error, beforeReplay func(error) error, allowReconnect bool) error {
+	wait := p.wait
+	if wait == nil {
+		wait = publicationWait
+	}
+	for recoveries := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := action()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil || !publicationRetryable(err) {
+			return err
+		}
+		if recoveries == 3 {
+			if !p.opts.Watch {
+				return err
+			}
+			if err := wait(ctx, p.opts.Folder.ScanInterval.Std()); err != nil {
+				return err
+			}
+			// The attempt after waiting starts a fresh burst.
+			recoveries = -1
+		}
+		recoveries++
+		if allowReconnect && daemonconn.IsTransportError(err) && p.opts.Reconnect != nil {
+			var connection *daemonconn.Connection
+			reconnectErr := p.retryOperation(ctx, func() error {
+				var err error
+				connection, err = p.opts.Reconnect(ctx)
+				if err == nil && connection == nil {
+					return errors.New("publication reconnect returned no proved connection")
+				}
+				return err
+			}, nil, false)
+			if reconnectErr != nil {
+				return errors.Join(err, reconnectErr)
+			}
+			p.connection = connection
+		}
+		if beforeReplay != nil {
+			if err := beforeReplay(err); err != nil {
+				return err
+			}
+		}
+	}
+}
+func (p *publicationPublisher) recoverUncertain(ctx context.Context, ref string, _ api.NotePublicationUploadRequest) (api.NotePublicationSource, error) {
+	if err := p.refreshSources(ctx); err != nil {
+		return api.NotePublicationSource{}, err
+	}
+	source := p.sources[ref]
+	if source.Conflict != "" && source.Recovery == nil {
+		return source, fmt.Errorf("publication source conflict: %s", source.Conflict)
+	}
+	if source.Availability == "unavailable" {
+		return source, errors.New("published note source is unavailable")
+	}
+	return source, nil
 }
