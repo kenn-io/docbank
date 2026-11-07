@@ -148,7 +148,7 @@ func TestFaceConfirmedGroupReturnsAfterRetraction(t *testing.T) {
 
 func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"new person", "existing", "dismiss"} {
+	for _, mode := range []string{"new person", "existing", "reject"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -170,19 +170,19 @@ func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
 				action = "link"
 				name = ""
 			}
-			if mode == "dismiss" {
+			if mode == "reject" {
 				action = "reject"
 				name = ""
 			}
 			if mode == "new person" {
 				_, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: 99, Action: action, PersonID: person, DisplayName: name, FaceOnly: true})
-				require.ErrorIs(t, err, ErrStaleRevision)
+				require.ErrorIs(t, err, ErrStaleRevision, "new-person confirmation must fence stale reviews")
 			}
 			decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: action, PersonID: person, DisplayName: name, FaceOnly: true})
 			require.NoError(t, err)
 			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
-			if mode == "dismiss" {
+			if mode == "reject" {
 				require.Empty(t, assertions)
 				for _, f := range faces {
 					require.False(t, f.Dismissed)

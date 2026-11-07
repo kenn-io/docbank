@@ -210,6 +210,9 @@ func TestFaceSuggestionBatchesFinishAcrossWritesAndDiscardChangedInputs(t *testi
 	for range 4 {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
+	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 498, total, "changed inputs must restart the pass and omit the dismissed face pair")
 }
 
 func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
