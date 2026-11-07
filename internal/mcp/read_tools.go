@@ -500,6 +500,9 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		return documentSearchResponse{}, callErr
 	}
 	if len(report.Results) == 0 {
+		if daemon, ok := c.(daemonDocumentClient); ok {
+			daemon.RecordMiss(ctx, api.DocumentSearchMiss(input.Query, input.Profile, request, report))
+		}
 		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
 	}
 	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)

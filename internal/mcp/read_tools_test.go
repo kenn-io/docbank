@@ -443,8 +443,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			wantCode: "processing_profile_unavailable", wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			searchCalls := 0
-			infoCalls := 0
+			searchCalls, infoCalls, missCalls := 0, 0, 0
 			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/v1/info":
@@ -479,6 +478,9 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 					}
 					writeDaemonJSON(t, response, report)
+				case "/api/v1/miss-log":
+					missCalls++
+					response.WriteHeader(http.StatusNoContent)
 				default:
 					http.NotFound(response, request)
 				}
@@ -495,6 +497,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 			assert.Equal(t, 1, searchCalls)
 			assert.Zero(t, infoCalls)
 			if test.wantError {
+				assert.Zero(t, missCalls)
 				require.Error(t, err)
 				facts, ok := daemonProblemFacts(err)
 				require.True(t, ok)
@@ -503,6 +506,7 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assert.Equal(t, 1, missCalls)
 			output := structuredMap(t, result.StructuredContent)
 			assert.Equal(t, []any{}, output["results"])
 			assert.NotContains(t, output, "vault_id")
@@ -516,39 +520,57 @@ func TestSearchReadScopedEmptySearchSkipsVaultInfo(t *testing.T) {
 	}
 }
 
-func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.T) {
-	resolveCalls := 0
-	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api/v1/processing/source-fences/resolve":
-			writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
-				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
-				FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
-		case "/api/v1/search":
-			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
-				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
-				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
-		case "/api/v1/documents/resolve":
-			resolveCalls++
-			t.Fatal("zero-hit search must not resolve document summaries")
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-		return daemonconn.New(daemon.URL, ""), nil
-	}, func(*daemonconn.Connection) error { return nil })
+func TestSearchReadEmptyResultRecordsMissWithoutDocumentResolution(t *testing.T) {
+	for _, tool := range []string{"search_documents", "find_conflicts"} {
+		t.Run(tool, func(t *testing.T) {
+			resolveCalls := 0
+			missCalls := 0
+			var receipt map[string]any
+			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/api/v1/processing/source-fences/resolve":
+					writeDaemonJSON(t, response, api.DocumentSourceFenceResolution{Fence: api.ResolvedDocumentSourceFence{
+						VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
+						FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
+				case "/api/v1/search":
+					writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+						Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
+						Degradations: []string{}, Results: []api.DocumentSearchResult{}})
+				case "/api/v1/miss-log":
+					missCalls++
+					assert.NoError(t, json.UnmarshalRead(request.Body, &receipt))
+					response.WriteHeader(http.StatusNoContent)
+				case "/api/v1/documents/resolve":
+					resolveCalls++
+					t.Fatal("zero-hit search must not resolve document summaries")
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, ""), nil
+			}, func(*daemonconn.Connection) error { return nil })
 
-	result, err := invokeReadTool(t.Context(), lease, "search_documents", map[string]any{
-		"query": "synthetic", "mode": "lexical", "limit": 1, "profile": "local",
-		"content_version_ids": []string{testVersionID},
-	})
-	require.NoError(t, err)
-	assert.Zero(t, resolveCalls)
-	assert.Empty(t, resourceLinkURIs(result))
-	assert.Equal(t, []any{}, structuredMap(t, result.StructuredContent)["results"])
-	assert.Equal(t, testVaultID, structuredMap(t, result.StructuredContent)["vault_id"])
+			args := map[string]any{"query": "synthetic", "profile": "local", "content_version_ids": []string{testVersionID}}
+			if tool == "search_documents" {
+				args["mode"], args["limit"], args["binding_id"] = "lexical", 1, "synthetic-binding"
+			}
+			result, err := invokeReadTool(t.Context(), lease, tool, args)
+			require.NoError(t, err)
+			assert.Zero(t, resolveCalls)
+			assert.Equal(t, 1, missCalls)
+			output := structuredMap(t, result.StructuredContent)
+			if tool == "search_documents" {
+				assert.Equal(t, "synthetic-binding", receipt["binding_id"])
+				assert.Equal(t, []any{}, output["results"])
+			} else {
+				assert.Equal(t, []any{}, output["passages"])
+			}
+			assert.Empty(t, resourceLinkURIs(result))
+			assert.Equal(t, testVaultID, output["vault_id"])
+		})
+	}
 }
 
 func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *testing.T) {

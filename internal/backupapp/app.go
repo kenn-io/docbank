@@ -215,7 +215,7 @@ func (a *App) PackFileExtension() string { return packstore.PackExt }
 func (a *App) Version() string           { return a.version }
 func (a *App) ExcludedPaths() []string {
 	return []string{
-		"config.toml", "lane-controls.json", "logs/", "vault.lock", "launch.lock", "daemon.*.json",
+		"config.toml", "lane-controls.json", "logs/", "miss-log/", "vault.lock", "launch.lock", "daemon.*.json",
 		"web-launch/", "web-downloads/", "web-photo-imports/", "blobs/tmp/",
 	}
 }

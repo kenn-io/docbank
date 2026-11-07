@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { recordMiss } from "./generated/docbank.js";
   import { reportFailure, reportSearch } from "./action-events.js";
   import { untrack } from "svelte";
   import { SearchInput, SelectDropdown } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import { searchSyntaxOptions } from "./searchSyntax.js";
-  import { photoSearchSort } from "./photoSearch.js";
+  import { isFilterSet, photoSearchSort } from "./photoSearch.js";
 
   let { photos }: { photos: Photos } = $props();
   let search = $state(untrack(() => photos.query.text));
@@ -26,29 +27,49 @@
   });
   function submit(explicit = false) {
     const text = search.trim();
+    const session = photos.session;
+    const hidden = photos.hidden;
+    const submitted = {
+      ...photos.query,
+      text: search,
+      syntax,
+      mode,
+      sort: photoSearchSort({ text: search, syntax, mode }),
+    };
     const pending = photos.setQuery(
-      {
-        ...photos.query,
-        text: search,
-        syntax,
-        mode,
-        sort: photoSearchSort({ text: search, syntax, mode }),
-      },
+      submitted,
       explicit
         ? (cause) => {
             if (text) reportFailure(photos.session, "search", cause);
           }
         : undefined,
     );
+    const ran = photos.query;
     void pending?.then((outcome) => {
-      if (!explicit || !text || !outcome) return;
-      if (outcome.accepted)
-        return reportSearch(
-          photos.session,
-          photos.fallbackReason || mode === "lexical" ? "text" : mode,
-          outcome.empty,
-        );
-      reportFailure(photos.session, "search", outcome.cause);
+      if (!explicit || !outcome) return;
+      if (!text && !Object.values(submitted.filters).some(isFilterSet)) return;
+      if (outcome.accepted) {
+        const fallbackReason = photos.fallbackReason;
+        const actualMode = fallbackReason ? "lexical" : ran.mode;
+        const searchType = actualMode === "lexical" ? "text" : actualMode;
+        if (text) reportSearch(session, searchType, outcome.empty);
+        if (outcome.empty && !hidden) {
+          void recordMiss(
+            {
+              query: text,
+              requested_mode: ran.mode,
+              actual_mode: actualMode,
+              filters: { ...ran.filters, syntax: ran.syntax, corpus: "photos", hidden },
+              degradations: fallbackReason ? [fallbackReason] : [],
+              coverage: { coverage_incomplete: photos.coverageIncomplete },
+              truncated: photos.truncated,
+            },
+            { session, signal: AbortSignal.timeout(1000) },
+          ).catch(() => {});
+        }
+        return;
+      }
+      if (text) reportFailure(photos.session, "search", outcome.cause);
     });
     return pending;
   }

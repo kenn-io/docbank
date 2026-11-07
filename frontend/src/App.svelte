@@ -6,7 +6,7 @@
   import ExportMenu from "./ExportMenu.svelte";
   import { reportAction, reportFailure, reportSearch } from "./action-events.js";
   import PhotoSearch from "./PhotoSearch.svelte";
-  import { photoSearchSort } from "./photoSearch.js";
+  import { isFilterSet, photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
@@ -2090,12 +2090,18 @@
     }
   }
 
+  function recordMiss(receipt: generated.MissLogRequest, session = webSession): void {
+    void generated
+      .recordMiss(receipt, { session, signal: AbortSignal.timeout(1000) })
+      .catch(() => {});
+  }
+
   async function runSearch(
     preferredSelectedID = selectedID,
     queryOverride?: string,
     submitted = false,
     requestedSort?: Query["sort"],
-  ): Promise<{ type: string; empty: boolean } | undefined> {
+  ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
@@ -2205,9 +2211,23 @@
             : "";
       loading = false;
       searchPending = false;
+      const receiptFor = (report: DocumentSearchReport): generated.MissLogRequest => ({
+        query,
+        profile: profile.name,
+        ...(baseRequest.binding_id ? { binding_id: baseRequest.binding_id } : {}),
+        requested_mode: report.requested_mode as generated.MissLogRequestRequestedMode,
+        actual_mode: report.actual_mode as generated.MissLogRequestActualMode,
+        ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
+        document_count: report.coverage.scoped_documents,
+        coverage: { ...report.coverage },
+        truncated: report.truncated || nameReport.truncated,
+        degradations: report.degradations,
+        ...(report.reranking ? { reranking: { ...report.reranking } } : {}),
+      });
       // The base results are accepted, so the search counts however reranking ends.
-      let outcome = {
+      let outcome: { type: string; empty: boolean; receipt: generated.MissLogRequest } = {
         type: baseReport.actual_mode,
+        receipt: receiptFor(baseReport),
         empty: baseRows.length === 0 && nameRows.length === 0,
       };
       if (baseReport.results.length === 0 || !naturalSearchRerank(profile, mode, naturalRerank))
@@ -2227,6 +2247,7 @@
           !naturalRerank
         )
           return outcome;
+        if (reranked.reranking) outcome.receipt.reranking = { ...reranked.reranking };
         if (reranked.reranking?.outcome !== "applied") {
           naturalSearchNote = rerankingNote(
             reranked.reranking?.outcome ?? "failed",
@@ -2262,9 +2283,15 @@
         naturalSearchNote = rerankingNote("applied");
         outcome = {
           type: reranked.actual_mode,
+          receipt: receiptFor(reranked),
           empty: rerankedRows.length === 0 && nameRows.length === 0,
         };
       } catch (cause) {
+        outcome.receipt.reranking = {
+          outcome: "failed",
+          candidate_count: 0,
+          cause: cause instanceof Error ? cause.message : String(cause),
+        };
         if (cause instanceof APIError && cause.status === 401) {
           handleFailure(cause);
           return;
@@ -2294,6 +2321,7 @@
         naturalRerank = false;
         naturalRerankPending = false;
         try {
+          const mapped = naturalSearchRequest(mode, profile);
           const outcome = await runLegacySearch(
             query,
             requestedTagID,
@@ -2303,7 +2331,12 @@
             session,
             controller.signal,
             note,
+            mapped?.mode ?? "lexical",
           );
+          if (outcome) {
+            outcome.receipt.profile = profile.name;
+            outcome.receipt.binding_id = mapped?.binding_id;
+          }
           accepted = !!outcome;
           if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
@@ -2350,7 +2383,8 @@
     session: string,
     signal: AbortSignal,
     note = "",
-  ): Promise<{ type: string; empty: boolean } | undefined> {
+    requestedMode: generated.MissLogRequest["requested_mode"] = "lexical",
+  ): Promise<{ type: string; empty: boolean; receipt: generated.MissLogRequest } | undefined> {
     const report = await generated.search(
       { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
       { session, signal },
@@ -2373,7 +2407,18 @@
     );
     naturalSearchNote = note;
     loading = false;
-    return { type: "text", empty: nextRows.length === 0 };
+    return {
+      type: "text",
+      empty: nextRows.length === 0,
+      receipt: {
+        query,
+        requested_mode: requestedMode,
+        actual_mode: "lexical",
+        ...(note ? { degradations: [note] } : {}),
+        ...(requestedTagID ? { filters: { tag_id: requestedTagID } } : {}),
+        truncated: report.truncated,
+      },
+    };
   }
 
   function applySearchRows(
@@ -2573,7 +2618,10 @@
     queryBarOpen = false;
     naturalSearchMode = naturalProfile ? "auto" : "names";
     const outcome = await runSearch(undefined, undefined, true, sortOnly);
-    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    if (outcome) {
+      reportSearch(webSession, outcome.type, outcome.empty);
+      if (outcome.empty) recordMiss(outcome.receipt);
+    }
   }
 
   // Whether the draft is the plain-words search plus an order, which the ranked search can run.
@@ -2600,7 +2648,10 @@
     searchQuery = query.text;
     naturalSearchMode = "auto";
     const outcome = await runSearch(undefined, undefined, true, query.sort);
-    if (outcome) reportSearch(webSession, outcome.type, outcome.empty);
+    if (outcome) {
+      reportSearch(webSession, outcome.type, outcome.empty);
+      if (outcome.empty) recordMiss(outcome.receipt);
+    }
   }
 
   function applyResultSort(sort: Query["sort"]): void {
@@ -3036,7 +3087,7 @@
   async function runSnapshot(
     query: Query,
     options: SnapshotOptions,
-  ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
+  ): ReturnType<SnapshotWorkspace["run"]> {
     invalidateTagHotkeyMutation();
     generation += 1;
     searchPending = false;
@@ -3050,6 +3101,7 @@
     query: Query,
     options: SnapshotOptions,
     preserveDraft = false,
+    recordEmpty = !!query.text.trim() || Object.values(query.filters).some(isFilterSet),
   ): Promise<void> {
     const revision = queryDraftRevision;
     if (!preserveDraft) keepQueryDraft(query);
@@ -3063,6 +3115,7 @@
         queryDraftFromDefinition = false;
       }
       reportSearch(webSession, outcome.type, outcome.empty);
+      if (recordEmpty && !preserveDraft && outcome.empty) recordMiss(outcome.receipt);
     }
   }
 
@@ -3767,7 +3820,7 @@
       leavePage();
       onclose();
       querySettingsApplied = true;
-      void submitSnapshot(query, snapshot.state.options ?? {});
+      void submitSnapshot(query, snapshot.state.options ?? {}, false, false);
     }}
     {onclose}
     onauthfailure={handleFailure}

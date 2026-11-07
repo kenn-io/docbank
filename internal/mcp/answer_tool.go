@@ -212,6 +212,14 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				return response{}, err
 			}
 		}
+		if daemon, ok := c.(daemonDocumentClient); ok && len(report.Results) == 0 {
+			receipt := api.DocumentSearchMiss(input.Question, selected.Name, api.DocumentSearchRequest{BindingID: binding,
+				Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}}, report)
+			if failure != "" {
+				receipt.RequestedMode, receipt.Degradations = "hybrid", slices.Concat(receipt.Degradations, []string{failure})
+			}
+			daemon.RecordMiss(ctx, receipt)
+		}
 		docs, err := resolveSearchSummaries(ctx, c, report.Results)
 		if err != nil {
 			return response{}, err

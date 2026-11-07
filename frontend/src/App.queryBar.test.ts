@@ -213,7 +213,9 @@ it("keeps a saved plain-words search's filters when the search text changes", as
       const body = JSON.parse(String(init?.body));
       searches.push(body.query);
       return new Response(
-        JSON.stringify(await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), [])),
+        JSON.stringify(
+          await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), [], { page_size: 100 }),
+        ),
       );
     }
     if (url.includes("saved-queries"))
@@ -229,6 +231,7 @@ it("keeps a saved plain-words search's filters when the search text changes", as
   await fireEvent.click(await screen.findByRole("button", { name: "Searches" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Run Invoices" }));
   await waitFor(() => expect(searches).toHaveLength(1));
+  await screen.findByText("No matching documents");
   const search = await screen.findByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "receipts" } });
   await fireEvent.submit(search.closest("form")!);

@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
-import { parseQuery } from "./query.js";
+import { canonicalQuery, parseQuery } from "./query.js";
 import type { SnapshotRow } from "./snapshots.js";
 import type { Node } from "./generated/docbank.js";
 
@@ -96,12 +96,14 @@ interface HarnessOptions {
   legacyPending?: boolean;
   childrenPending?: boolean;
   rerankReport?: unknown;
+  rerankStatus?: number;
   rerankPending?: boolean;
   // A pending rerank rejects on abort, as fetch does, instead of resolving later.
   rerankAbortable?: boolean;
   rerankNode?: ReturnType<typeof node>;
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
+  onBaseSearch?: () => void;
   snapshotRows?: SnapshotRow[];
 }
 
@@ -130,6 +132,7 @@ function installHarness(options: HarnessOptions) {
     path: "/",
   };
   const postBodies: Record<string, unknown>[] = [];
+  const misses: Record<string, unknown>[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -160,6 +163,10 @@ function installHarness(options: HarnessOptions) {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url === "/api/v1/miss-log" && method === "POST") {
+      misses.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({
@@ -201,7 +208,7 @@ function installHarness(options: HarnessOptions) {
       const body = JSON.parse(String(init?.body));
       return json(
         await snapshotEnvelope(parseQuery(JSON.stringify(body.query)), options.snapshotRows ?? [], {
-          page_size: body.page_size,
+          page_size: body.page_size ?? 100,
           facets: (body.facets ?? []).map((dimension: string) => ({
             dimension,
             available: true,
@@ -239,9 +246,15 @@ function installHarness(options: HarnessOptions) {
     if (url === "/api/v1/search" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       postBodies.push(body);
+      if (!body.rerank) options.onBaseSearch?.();
       if (options.baseSearchStatus)
         return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
+        if (options.rerankStatus)
+          return Response.json(
+            { detail: "synthetic rerank failure" },
+            { status: options.rerankStatus },
+          );
         if (options.rerankPending && options.rerankAbortable)
           return new Promise<Response>((_, reject) =>
             init?.signal?.addEventListener("abort", () =>
@@ -264,8 +277,10 @@ function installHarness(options: HarnessOptions) {
       if (options.legacyPending && legacyCalls === 1) return legacyPending;
       if (options.legacySearchStatus)
         return new Response("legacy search failure", { status: options.legacySearchStatus });
+      const tagSearch =
+        typeof options.tagSearch === "function" ? options.tagSearch() : options.tagSearch;
       return json(
-        options.tagSearch ?? {
+        tagSearch ?? {
           hits: [],
           limit: 1000,
           truncated: false,
@@ -280,6 +295,7 @@ function installHarness(options: HarnessOptions) {
   });
   return {
     fetchMock,
+    misses,
     postBodies,
     resolveRerank: (response: Response) => rerankResolve?.(response),
     resolveBase: (response: Response) => baseResolve?.(response),
@@ -306,6 +322,92 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.input(input, { target: { value } });
   await fireEvent.submit(input.closest("form")!);
 }
+
+it.each([
+  { name: "base name truncation", rerank: false, truncated: true, state: "complete", scoped: 2 },
+  { name: "reranked name truncation", rerank: true, truncated: true, state: "complete", scoped: 2 },
+  { name: "complete reranked scope", rerank: true, truncated: false, state: "complete", scoped: 1 },
+  {
+    name: "incomplete reranked scope",
+    rerank: true,
+    truncated: false,
+    state: "incomplete",
+    scoped: 2,
+  },
+  {
+    name: "failed reranking with stale base results",
+    rerank: true,
+    rerankStatus: 500,
+    truncated: false,
+    state: "complete",
+    scoped: 2,
+  },
+])(
+  "records the accepted empty natural search receipt: $name",
+  async ({ rerank, rerankStatus, truncated, state, scoped }) => {
+    const baseCandidate = node(4, "stale-base.txt", baseVersion);
+    const rerankedCandidate = node(5, "stale-reranked.txt", rerankedVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [node(2, "existing.txt", baseVersion)],
+      baseReport: report("hybrid", rerank ? [result(baseCandidate, 1, "stale base excerpt")] : []),
+      rerankStatus,
+      rerankReport: {
+        ...report("hybrid", [result(rerankedCandidate, 1, "stale reranked excerpt")], {
+          outcome: "applied",
+          candidate_count: 1,
+        }),
+        coverage: {
+          binding_required: true,
+          scoped_documents: scoped,
+          complete_documents: state === "complete" ? scoped : 0,
+          state,
+        },
+      },
+      tagSearch: {
+        hits: truncated
+          ? Array.from({ length: 1000 }, (_, index) => {
+              const file = node(index + 6, `content-${index}.txt`, baseVersion);
+              return { node: file, path: file.path, match: "content" };
+            })
+          : [],
+        limit: 1000,
+        truncated,
+      },
+    });
+    render(App);
+    await screen.findAllByText("existing.txt");
+    if (rerank)
+      await fireEvent.click(await screen.findByRole("checkbox", { name: "Rerank results" }));
+    await submitSearch("missing");
+    await waitFor(() => expect(harness.misses).toHaveLength(1));
+    expect(screen.getByText(truncated ? "0+ results" : "0 results")).toBeTruthy();
+    expect(harness.misses[0]).toMatchObject({
+      query: "missing",
+      truncated,
+      coverage: { scoped_documents: scoped, state },
+      document_count: scoped,
+      ...(rerankStatus
+        ? {
+            reranking: {
+              outcome: "failed",
+              cause: expect.stringContaining("synthetic rerank failure"),
+            },
+          }
+        : rerank
+          ? { reranking: { outcome: "applied" } }
+          : {}),
+    });
+  },
+);
 
 it.each([
   [true, false],
@@ -358,6 +460,8 @@ it.each([
     render(App);
     await screen.findByRole("button", { name: "Open" });
     await submitSearch("invoices");
+    if (embeddings) await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+    else await waitFor(() => expect(harness.legacyCalls()).toBe(1));
     expect(await screen.findByRole("cell", { name: "/invoices" })).toBeTruthy();
     if (embeddings && liveFiles) {
       await screen.findByText("invoice excerpt");
@@ -376,14 +480,50 @@ it.each([
   },
 );
 
+it("rechecks name matches after processing can make a file stale", async () => {
+  const file = node(2, "retired.txt", baseVersion);
+  const liveFiles: (ReturnType<typeof node> | Node)[] = [file];
+  const emptyReport = report("hybrid", []);
+  emptyReport.coverage.scoped_documents = 0;
+  emptyReport.coverage.complete_documents = 0;
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: false,
+      },
+    ],
+    files: liveFiles,
+    baseReport: emptyReport,
+    tagSearch: () => ({
+      hits: liveFiles.map((node) => ({ node, path: node.path, match: "name" })),
+      limit: 1000,
+      truncated: false,
+    }),
+    onBaseSearch: () => liveFiles.splice(0),
+  });
+  render(App);
+  await screen.findAllByText("retired.txt");
+  await screen.findByRole("button", { name: "Move to trash" });
+  await submitSearch("retired");
+  await screen.findByText("No documents match the current filter.");
+
+  await waitFor(() => expect(harness.misses).toHaveLength(1));
+  expect(screen.queryByRole("cell", { name: file.path })).toBeNull();
+});
+
 it("keeps names and text on GET without a processing profile", async () => {
   const file = node(2, "existing.txt", baseVersion);
-  const { fetchMock } = installHarness({
+  const filtered = node(3, "filtered.txt", rerankedVersion);
+  const harness = installHarness({
     profiles: [],
     files: [file],
     baseReport: report("lexical", [result(file, 1, "unused")]),
     tagSearch: {
-      hits: [{ node: file, path: file.path, match: "content" }],
+      hits: [{ node: filtered, path: filtered.path, match: "content" }],
       limit: 1000,
       truncated: false,
       tag_id: tagID,
@@ -397,20 +537,20 @@ it("keeps names and text on GET without a processing profile", async () => {
   );
   await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
   await submitSearch("existing");
-  await screen.findByText("/existing.txt");
+  await screen.findByText("/filtered.txt");
   expect(
-    fetchMock.mock.calls.some(
+    harness.fetchMock.mock.calls.some(
       ([input, init]) =>
         String(input).startsWith("/api/v1/search?") && (init?.method ?? "GET") === "GET",
     ),
   ).toBe(true);
-  const searchURL = fetchMock.mock.calls
+  const searchURL = harness.fetchMock.mock.calls
     .map(([input]) => String(input))
     .find((input) => input.startsWith("/api/v1/search?"));
   expect(searchURL).toContain("limit=1000");
   expect(searchURL).toContain(`tag_id=${tagID}`);
   expect(
-    fetchMock.mock.calls.some(
+    harness.fetchMock.mock.calls.some(
       ([input, init]) => String(input) === "/api/v1/search" && init?.method === "POST",
     ),
   ).toBe(false);
@@ -1186,9 +1326,9 @@ it("ignores an aborted natural search completion", async () => {
     String(input).startsWith("/api/v1/search?"),
   );
   expect(nameRequests).toHaveLength(1);
-  expect(new URL(String(nameRequests[0][0]), "https://example.com").searchParams.get("q")).toBe(
-    "new query",
-  );
+  expect(
+    nameRequests.map(([url]) => new URL(String(url), "https://example.com").searchParams.get("q")),
+  ).toEqual(["new query"]);
 });
 
 it("shows why natural search controls could not load", async () => {
@@ -1518,7 +1658,7 @@ it.each(["unrun edit", "failed search"])(
 
 it("filtered search walkthrough reaches accepted results", async () => {
   const file = node(2, "report.txt", baseVersion);
-  const harness = installHarness({
+  const options: HarnessOptions = {
     profiles: [
       {
         name: "private",
@@ -1547,8 +1687,10 @@ it("filtered search walkthrough reaches accepted results", async () => {
       },
     ],
     baseReport: report("hybrid", [result(file, 1, "report excerpt")]),
-  });
+  };
+  const harness = installHarness(options);
   render(App);
+  await screen.findAllByText("report.txt");
   await submitSearch("annual report");
   await screen.findByText("report excerpt");
   expect(screen.queryByText("Filters search names and text only.")).toBeNull();
@@ -1871,5 +2013,104 @@ it.each(["names", "meaning", "frozen"])(
       );
       await fireEvent.keyDown(window, { key: "Escape" });
     }
+  },
+);
+
+it.each(["plain", "tag-filtered", "fallback", "filtered", "saved"])(
+  "records an empty %s submission once",
+  async (kind) => {
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+        },
+      ],
+      files: [node(2, "existing.txt", baseVersion)],
+      baseReport: report("hybrid", []),
+      ...(kind === "fallback"
+        ? { baseSearchStatus: 500, tagSearch: { hits: [], limit: 1000, truncated: false } }
+        : {}),
+      ...(kind === "tag-filtered"
+        ? { tagSearch: { hits: [], limit: 1000, truncated: false, tag_id: tagID } }
+        : {}),
+    });
+    const reportSearch = vi.spyOn(actions, "reportSearch").mockImplementation(() => {});
+    if (kind === "saved") {
+      const payload = parseQuery(JSON.stringify({ text: "missing", filters: { size_min: 20 } }));
+      const saved = {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Missing documents",
+        description: "",
+        kind: "query",
+        payload,
+        revision: 1,
+        fingerprint: `sha256:${createHash("sha256").update(canonicalQuery(payload)).digest("hex")}`,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      };
+      const fetch = harness.fetchMock.getMockImplementation()!;
+      harness.fetchMock.mockImplementation(async (input, init) =>
+        String(input).includes("saved-queries")
+          ? Response.json({ items: [saved], total: 1, limit: 100, offset: 0 })
+          : fetch(input, init),
+      );
+    }
+    render(App);
+    await screen.findAllByText("existing.txt");
+    if (kind === "saved") {
+      await fireEvent.click(screen.getByRole("button", { name: "Searches" }));
+      await fireEvent.click(await screen.findByRole("button", { name: "Run Missing documents" }));
+      await screen.findByText("No matching documents");
+      await waitFor(() => expect(reportSearch).toHaveBeenCalledWith("short-lived", "text", true));
+      expect(harness.misses).toHaveLength(0);
+    }
+    if (kind === "tag-filtered") {
+      await fireEvent.click(
+        await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+      );
+      await fireEvent.click(screen.getByRole("option", { name: "reviewed (1)" }));
+    }
+    if (kind === "filtered") {
+      await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+        target: { value: "missing" },
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+      await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+        target: { value: '{"size_min":20}' },
+      });
+      await screen.findByRole("status", { name: "Query valid" });
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    } else {
+      await submitSearch("missing");
+    }
+    await waitFor(() => expect(harness.misses).toHaveLength(1));
+    if (kind !== "filtered" && kind !== "saved") {
+      expect(harness.misses[0]).toMatchObject({
+        query: "missing",
+        ...(kind === "fallback"
+          ? {
+              requested_mode: "hybrid",
+              actual_mode: "lexical",
+              profile: "private",
+              binding_id: "embed",
+              degradations: [screen.getByText(/Natural-language search unavailable/).textContent],
+            }
+          : { binding_id: "embed", actual_mode: "hybrid", document_count: 2 }),
+      });
+    }
+    if (kind === "tag-filtered") {
+      expect(harness.postBodies[0]?.scope).toEqual({
+        kind: "all_live",
+        filters: { tag_id: tagID },
+      });
+      expect(harness.misses[0]).toMatchObject({ filters: { tag_id: tagID } });
+    }
+    if (kind === "fallback" || kind === "filtered" || kind === "saved") return;
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+    expect(harness.misses).toHaveLength(1);
   },
 );

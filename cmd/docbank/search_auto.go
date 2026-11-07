@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 )
 
 // Processing search requests accept at most this many results and query
@@ -22,9 +23,10 @@ const (
 // attempt fell back to lexical search. An empty reason means hybrid search was
 // not attempted. err keeps a failure that has no stable daemon problem code.
 type automaticSearchOutcome struct {
-	report *api.DocumentSearchReport
-	reason string
-	err    error
+	report  *api.DocumentSearchReport
+	receipt misslog.Request
+	reason  string
+	err     error
 }
 
 // automaticSearchJSON adds folder name matches to the hybrid report, because
@@ -49,7 +51,12 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		if code, _ := daemonconn.ProblemCode(err); code == "processing_unavailable" {
 			return automaticSearchOutcome{}, nil
 		}
-		return automaticSearchFallback(ctx, err)
+		outcome, fallbackErr := automaticSearchFallback(ctx, err)
+		if fallbackErr == nil && outcome.reason != "" {
+			outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: searchModeLexical,
+				Degradations: []string{outcome.reason}}
+		}
+		return outcome, fallbackErr
 	}
 	candidates := daemonconn.AutomaticSearchCandidates(*profiles)
 	if len(candidates) == 0 {
@@ -57,15 +64,19 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	}
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
-		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+		request := api.DocumentSearchRequest{Query: query, Mode: "hybrid", Profile: candidate.Profile,
+			BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}}
+		report, searchErr := c.SearchDocuments(ctx, request)
 		if searchErr == nil {
-			return automaticSearchOutcome{report: &report}, nil
+			receipt := api.DocumentSearchMiss(query, candidate.Profile, request, report)
+			return automaticSearchOutcome{report: &report, receipt: receipt}, nil
 		}
 		outcome, err := automaticSearchFallback(ctx, searchErr)
 		if err != nil {
 			return automaticSearchOutcome{}, err
 		}
+		outcome.receipt = misslog.Request{Query: query, RequestedMode: "hybrid", ActualMode: searchModeLexical,
+			Profile: candidate.Profile, BindingID: candidate.Binding, Degradations: []string{outcome.reason}}
 		if first.reason == "" {
 			first = outcome
 		}

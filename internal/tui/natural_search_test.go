@@ -53,8 +53,65 @@ func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
 	assert.Empty(t, model.rows)
 	assert.Equal(t, []actionCall{{event: "search_run", searchType: "lexical"}, {event: "search_empty", searchType: "lexical"}}, fake.actions)
 	assert.Zero(t, model.reportSearchID)
+	require.Len(t, fake.misses, 1)
+	require.Equal(t, "missing", fake.misses[0].Query)
 	_, cmd = model.applyNaturalSearchBase(base)
 	assert.Nil(t, cmd)
+}
+
+func TestEmptyNaturalSearchReportsAfterRerank(t *testing.T) {
+	for _, outcome := range []string{"replaced pending", "failed"} {
+		t.Run(outcome, func(t *testing.T) {
+			fake := newFakeBackend()
+			fake.profiles[0].RerankingAvailable = true
+			readme := fake.nodes["/README.txt"]
+			readme.TrashedAt = "2026-10-20T12:00:00Z"
+			fake.nodes["/README.txt"] = readme
+			fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "stale base excerpt")
+			fake.naturalSearch.RequestedMode = "hybrid"
+			fake.naturalSearch.ActualMode = "hybrid"
+			fake.naturalRerankSearch = fake.naturalSearch
+			fake.naturalRerankSearch.Results = []api.DocumentSearchResult{}
+			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+			model, err := New(t.Context(), fake)
+			require.NoError(t, err)
+			model.naturalProfiles = fake.profiles
+			model.naturalMode = naturalHybrid
+			model.naturalRerank = true
+			model.requestID, model.reportSearchID = 7, 7
+			model.naturalSearchID = 3
+			base := model.loadNaturalSearch("missing", model.requestID)()
+			model, rerank := updateModel(t, model, base)
+			require.NotNil(t, rerank)
+			assert.Empty(t, fake.actions)
+			if outcome == "replaced pending" {
+				model.requestID, model.reportSearchID = 8, 8
+				model.naturalSearchID = 4
+				base = model.loadNaturalSearch("another", model.requestID)()
+				model, rerank = updateModel(t, model, base)
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				rerank = batch[0]
+			} else {
+				if outcome == "failed" {
+					fake.err = errors.New("synthetic rerank failure")
+				}
+				batch, ok := rerank().(tea.BatchMsg)
+				require.True(t, ok)
+				model, rerank = updateModel(t, model, batch[0]())
+			}
+			runModelCommand(t, model, rerank)
+			want := []actionCall{{event: "search_run", searchType: "hybrid"}, {event: "search_empty", searchType: "hybrid"}}
+			assert.Equal(t, want, fake.actions)
+			require.Len(t, fake.misses, 1)
+			require.Equal(t, "missing", fake.misses[0].Query)
+			require.Equal(t, "semantic", fake.misses[0].BindingID)
+			if outcome == "failed" {
+				assert.Equal(t, "failed", fake.misses[0].Reranking["outcome"])
+				assert.Contains(t, fake.misses[0].Reranking["cause"], "synthetic rerank failure")
+			}
+		})
+	}
 }
 
 func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
@@ -74,6 +131,7 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 				want = []actionCall{{event: "search_run", searchType: "lexical"}}
 			}
 			fake.naturalRerankSearch.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 1}
+			fake.naturalRerankSearch.Coverage = api.DocumentSearchCoverage{ScopedDocuments: 7, State: "incomplete"}
 			model, err := New(t.Context(), fake)
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
@@ -97,6 +155,15 @@ func TestNaturalSearchReportsFinalRerankedEmptiness(t *testing.T) {
 			runModelCommand(t, model, cmd)
 			assert.Len(t, model.rows, wantRows)
 			assert.Equal(t, want, fake.actions)
+			if baseEmpty {
+				assert.Empty(t, fake.misses)
+			} else {
+				require.Len(t, fake.misses, 1)
+				receipt := fake.misses[0]
+				assert.Equal(t, "report", receipt.Query)
+				assert.Empty(t, receipt.BindingID)
+				assert.Equal(t, new(7), receipt.DocumentCount)
+			}
 		})
 	}
 }
@@ -279,6 +346,36 @@ func TestNaturalSearchWhyLinesScrollWithRows(t *testing.T) {
 	assert.NotContains(t, rendered, "/one.txt")
 	assert.Contains(t, rendered, "/two.txt")
 	assert.Contains(t, rendered, "/three.txt")
+}
+
+func TestNaturalSearchScopeFailureKeepsMissContext(t *testing.T) {
+	fake := newFakeBackend()
+	fake.profiles[0].Name = "private"
+	fake.search = api.SearchReport{}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.naturalMode, model.naturalProfiles = naturalHybrid, fake.profiles
+	model.searching = true
+	model.searchInput.SetValue("missing")
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	fake.err = errors.New("source scope exceeds 4096 current live content versions; narrow the source scope")
+	base := model.loadNaturalSearch("missing", model.requestID)()
+	fake.err = nil
+	model, fallback := updateModel(t, model, base)
+	require.NotNil(t, fallback)
+	model, cmd := updateModel(t, model, fallback())
+	runModelCommand(t, model, cmd)
+	require.Len(t, fake.misses, 1)
+	receipt := fake.misses[0]
+	assert.Nil(t, receipt.DocumentCount)
+	assert.Nil(t, receipt.Coverage)
+	assert.Equal(t, "missing", receipt.Query)
+	assert.Equal(t, "hybrid", receipt.RequestedMode)
+	assert.Equal(t, "lexical", receipt.ActualMode)
+	assert.Equal(t, "private", receipt.Profile)
+	assert.Equal(t, "semantic", receipt.BindingID)
+	require.Len(t, receipt.Degradations, 1)
+	assert.Contains(t, receipt.Degradations[0], "source scope exceeds 4096")
 }
 
 func TestNaturalSearchFallbackKeepsCause(t *testing.T) {

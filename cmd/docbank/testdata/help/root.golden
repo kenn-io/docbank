@@ -53,6 +53,7 @@ Documents:
 
 Search and text:
   formats  Report per-format capability coverage
+  miss-log  Manage private search misses through the daemon
   processing  Preview and run document processing
   rendition  Read retained document renditions
   report  Export search counts and review saved evidence

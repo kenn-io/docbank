@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
@@ -26,7 +27,7 @@ type automaticSearchCase struct {
 	profiles                        []api.ProcessingProfileSummary
 	profileError, searchError       string
 	malformed, cold, mixed          bool
-	empty                           bool
+	empty, emptyDocuments           bool
 	folderFirst, wantTruncated      bool
 	wantResults, wantFolders        int
 	jsonCLI, humanCLI, agentCLI     bool
@@ -35,7 +36,7 @@ type automaticSearchCase struct {
 	skipped, wantHybrid, wantDetail bool
 	wantReason                      string
 	wantError                       bool
-	wantSearch                      int
+	wantMiss, wantSearch            int
 }
 
 func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
@@ -52,7 +53,8 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
 		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantSearch: 1, wantHybrid: true, wantTruncated: true},
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
-		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true},
+		{name: "human empty scope", profiles: profiles, limit: 50, humanCLI: true, empty: true, wantSearch: 1, wantHybrid: true, wantMiss: 1},
+		{name: "empty hybrid preserves lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, emptyDocuments: true, wantSearch: 1, wantHybrid: true, wantMiss: 1, wantTruncated: true},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantSearch: 1, wantHybrid: true},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
@@ -83,9 +85,19 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 			if tc.query == "" {
 				tc.query = "query words"
 			}
-			var profileCalls, searchCalls int
+			var profileCalls, searchCalls, missCalls int
 			var record kitdaemon.RuntimeRecord
-			server := httptest.NewServer(automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls))
+			handler := automaticSearchDaemon(t, tc, &record, &profileCalls, &searchCalls)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/miss-log" {
+					missCalls++
+					var request misslog.Request
+					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+					assert.Equal(t, tc.query, request.Query)
+					assert.Equal(t, tc.wantTruncated, request.Truncated)
+				}
+				handler(w, r)
+			}))
 			defer server.Close()
 			if tc.jsonCLI || tc.humanCLI || tc.agentCLI {
 				runAutomaticSearchCLI(t, tc, server.URL, &record)
@@ -109,6 +121,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 			}
 			assert.Equal(t, !tc.skipped, profileCalls == 1, "profile discovery")
 			assert.Equal(t, tc.wantSearch, searchCalls)
+			assert.Equal(t, tc.wantMiss, missCalls)
 		})
 	}
 }
@@ -144,6 +157,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
 		case "GET /api/v1/search/text-coverage":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
+		case "POST /api/v1/miss-log":
+			w.WriteHeader(http.StatusNoContent)
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
@@ -202,8 +217,9 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, tc.searchError)
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
-			case tc.empty:
-				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}))
+			case tc.empty || tc.emptyDocuments:
+				coverage := api.DocumentSearchCoverage{State: "complete", BindingRequired: true}
+				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: coverage, Results: []api.DocumentSearchResult{}}))
 			default:
 				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}

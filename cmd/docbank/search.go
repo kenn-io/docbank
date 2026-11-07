@@ -12,12 +12,14 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const (
 	defaultSearchLimit = 50
 	maxSearchLimit     = 1000
+	searchModeLexical  = "lexical"
 )
 
 var (
@@ -228,14 +230,42 @@ See docs/usage/search.md.`,
 		if automatic.report != nil {
 			empty = len(automatic.report.Results) == 0 && !slices.ContainsFunc(rep.Hits, func(hit api.SearchHit) bool { return hit.Node.Kind == "dir" })
 		}
+		var coverage api.SearchTextCoverage
+		var coverageErr error
 		defer func() {
 			if retErr == nil {
 				reportSearch(cmd, c, searchType, empty, searchAgent)
+				if empty {
+					filters := misslog.ReceiptScope(rep)
+					for _, key := range []string{"hits", "limit", "truncated", "fuzzy"} {
+						delete(filters, key)
+					}
+					receipt := misslog.Request{Query: query, RequestedMode: searchModeLexical, ActualMode: searchModeLexical, Truncated: rep.Truncated,
+						Filters: filters}
+					if rep.Fuzzy != nil {
+						receipt.Coverage = map[string]any{"fuzzy": rep.Fuzzy}
+						if rep.Fuzzy.Status != store.FuzzyStatusNotRun {
+							receipt.ActualMode = "fuzzy"
+						}
+						receipt.RequestedMode = "fuzzy"
+					}
+					if automatic.report != nil || automatic.receipt.Query != "" {
+						receipt = automatic.receipt
+						receipt.Truncated = receipt.Truncated || rep.Truncated
+					}
+					if coverageErr == nil && strings.TrimSpace(query) != "" {
+						if receipt.Coverage == nil {
+							receipt.Coverage = make(map[string]any)
+						}
+						receipt.Coverage["text"] = coverage
+					}
+					c.RecordMiss(cmd.Context(), receipt)
+				}
 			}
 		}()
 		var hints []searchHint
 		if empty && strings.TrimSpace(query) != "" {
-			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			coverage, coverageErr = c.SearchTextCoverage(cmd.Context(), opts)
 			if coverageErr != nil {
 				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
 			}
@@ -430,21 +460,24 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return usageError(err)
 	}
 	info, err := c.API().VaultIdentity(cmd.Context())
-
 	if err != nil {
 		return err
 	}
-	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
+	searchRequest := api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
-	})
+	}
+	report, err := c.SearchDocuments(cmd.Context(), searchRequest)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if retErr == nil {
 			reportSearch(cmd, c, report.ActualMode, len(report.Results) == 0, searchAgent)
+			if len(report.Results) == 0 {
+				c.RecordMiss(cmd.Context(), api.DocumentSearchMiss(query, options.Profile, searchRequest, report))
+			}
 		}
 	}()
 	if options.JSON {

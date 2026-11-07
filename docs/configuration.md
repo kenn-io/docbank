@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-03
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -50,6 +50,7 @@ The directory layout is created on first use:
 │   ├── <aa>/<sha256>.zst # managed compressed loose representation
 │   └── tmp/             # staging for in-flight writes
 ├── email-pdf-spool/     # isolated email PDF input/output staging
+├── miss-log/            # Optional private empty-search receipts
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
@@ -1521,3 +1522,34 @@ max_zoom = 19
 ```
 
 The URL must have a fixed HTTPS origin and all three placeholders in its path. The host must be a hostname, an IPv4 address or a bracketed IPv6 address. Attribution is plain text. Docbank connects directly to the configured host and ignores proxy settings. The daemon fetches tiles for signed-in browsers, so the URL and any key in it stay on the server and the web page carries only the provider's host name. The provider sees the daemon host's IP address and the viewed map areas, with no Referer. Docbank refuses redirects, accepts only responses up to 2 MiB whose bytes identify them as PNG, JPEG, GIF or WebP, and gives up after 10 seconds. The daemon does not cache tiles. Tiles carry a one-hour private cache lifetime that varies by browser session, except under key login, where responses are never cached. Provider failures log only a status code or error class, never the URL. Choose a provider that permits this; the [public OpenStreetMap tile service requires a Referer](https://operations.osmfoundation.org/policies/tiles/) and is incompatible with this policy.
+
+## Private search miss log
+
+The operator can enable a local log of searches that return no hits. It is off
+by default. On a shared daemon, enabling it lets the operator read every
+caller's recorded queries. Records live in the vault's `miss-log/` directory, under
+its operator's control.
+
+```toml
+[miss_log]
+enabled = false
+retention_days = 90
+max_records = 5000
+```
+
+`retention_days` accepts 1–365 days, and `max_records` accepts 1–100000 records, whether recording is enabled or disabled. Zero selects the default of 90 days or 5000 records. Negative values and values above these limits are rejected.
+
+The CLI, web app, TUI, and daemon-backed MCP report submitted searches that show no results, including searches with no documents in scope and web searches with advanced syntax or filters. MCP reports empty `search_documents`, `find_conflicts`, and `answer_question` searches. The daemon stores receipts reported by the client that showed the empty result. Name and folder matches count as results. Errors, refreshes, Run again, re-freezes, reranking requests, and in-document finds create no record. Running a saved search or opening a photo smart set, with or without query text, records nothing. Hidden photo searches, bare search API calls, and embedded library calls create no record.
+
+Receipts preserve the query, time, vault, requested and actual modes, profile, search options, fence fingerprint or live filters, coverage the client had, truncation, degradations, and reranking. They replace explicit asset ID lists with an `asset_count` and an order-independent SHA-256 `asset_fingerprint`, including in nested filters. They omit document excerpts and source ID lists. Requests with a blank query and no filters left after this conversion create no record. The request body is capped at 64 KiB. Larger requests are refused. A failed write leaves the search available and logs a fixed diagnostic.
+
+Use `docbank miss-log list`, `delete <id>`, or `purge` to manage records through the daemon. These operations require the master API credential. List responses use `Cache-Control: no-store`. Browser sessions and MCP have no history management tools. Management remains available when recording is disabled. Lists exclude records older than `retention_days`, including on idle daemons. Startup and writes prune records by age and count. Disabling recording stops new receipts; existing receipts remain subject to retention and record limits.
+
+A daemon refuses to list receipts written by a newer version and leaves them on disk until retention removes them or the operator deletes them.
+
+The log is excluded from anonymous telemetry, logical backups, portable bundle
+metadata, imports, and federation. Backups carry no miss records, and an overwrite restore leaves the target's own records in place.
+Filesystem snapshots and copies of the vault directory can contain them. Deleting records is not secure erasure: snapshots and external copies can retain old bytes.
+Live GET filters describe the search at that time; they are not immutable replay
+scopes. An unlabeled miss does not establish that the answer is absent from the
+vault.

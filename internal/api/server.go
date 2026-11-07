@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
@@ -59,6 +60,7 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
 	LocalText             *processing.LocalTextSetup
+	MissLog               *misslog.Service
 	Store                 *store.Store
 	Blobs                 *blob.Store
 	VaultRoot             string // live vault root; backup restore must remain disjoint
@@ -130,6 +132,10 @@ func NewServer(d Deps) *Server {
 	}
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
+	}
+	if d.MissLog == nil && d.Store != nil {
+		// The miss log belongs to the server lifetime rather than a request.
+		d.MissLog = misslog.New(context.Background(), d.VaultRoot, d.Store.VaultID(), d.Cfg.MissLog, d.Logger)
 	}
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
@@ -209,6 +215,7 @@ func NewServer(d Deps) *Server {
 
 	s.webSessions.login = newWebLoginPolicy(d)
 
+	registerMissLogRoutes(humaAPI, d)
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
 	registerPeopleRebuildRoutes(humaAPI, d, g)

@@ -305,6 +305,7 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			fingerprint, err := processing.SourceFenceFingerprint(processing.SourceFence{VaultUID: fence.VaultUID, ContentVersionIDs: fence.ContentVersionIDs})
 			require.NoError(t, err)
 			var attempts []string
+			var misses []map[string]any
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
@@ -340,6 +341,14 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 						report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 					}
 					writeDaemonJSON(t, w, report)
+				case "/api/v1/miss-log":
+					var miss map[string]any
+					if err := json.UnmarshalRead(r.Body, &miss); err != nil {
+						t.Error(err)
+						return
+					}
+					misses = append(misses, miss)
+					w.WriteHeader(http.StatusNoContent)
 				default:
 					t.Errorf("unexpected request: %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -358,7 +367,15 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			require.Equal(t, tc.wantAttempts, attempts)
 			if tc.wantProfile == "" {
 				require.Equal(t, tc.wantFailure, output["code"])
+				require.Empty(t, misses)
 				return
+			}
+			require.Len(t, misses, 1)
+			require.Equal(t, tc.wantProfile, misses[0]["profile"])
+			if tc.wantBinding == "" {
+				require.Empty(t, misses[0]["binding_id"])
+			} else {
+				require.Equal(t, tc.wantBinding, misses[0]["binding_id"])
 			}
 			receipt := schemaMap(t, output["receipt"])
 			profile := schemaMap(t, receipt["profile"])
@@ -378,6 +395,9 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 			}
 			if tc.wantFailure != "" {
 				require.Equal(t, tc.wantFailure, output["semantic_failure"])
+				require.Equal(t, "hybrid", misses[0]["requested_mode"])
+				require.Equal(t, "lexical", misses[0]["actual_mode"])
+				require.Contains(t, misses[0]["degradations"], tc.wantFailure)
 			}
 		})
 	}
