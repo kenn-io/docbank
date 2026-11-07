@@ -3,7 +3,7 @@ package document
 import "fmt"
 
 const (
-	xImageDrawVersion = "x-image-draw-v0.45.0"
+	xImageDrawVersion = "x-image-draw-v0.47.0"
 	// VisualPreviewMaxEdgePixels bounds the large built-in preview.
 	VisualPreviewMaxEdgePixels = 4096
 	// VisualPreviewMaxSourcePixels bounds decoded source images and photo exports.
@@ -13,7 +13,7 @@ const (
 	// VisualPreviewProcessorDescriptor names every byte-producing choice. Bump
 	// its revision when any of them changes.
 	VisualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+" +
-		xImageDrawVersion + ":max-edge=%d:quality=%d:alpha=white:v10"
+		xImageDrawVersion + ":max-edge=%d:quality=%d:alpha=white:v11"
 )
 
 // BuiltInVisualPreviewRecipe returns a canonical built-in size recipe.

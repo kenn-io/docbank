@@ -24,7 +24,7 @@ func TestLocalTextSetupPreservesAudioCeiling(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DOCBANK_TEST_DOCLING_KEY", daemonASRProviderKey)
 	provider := newDaemonDoclingServer(t)
-	local := httptest.NewServer(kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version}))
+	local := httptest.NewServer(withTextModelInventory(t, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})))
 	t.Cleanup(local.Close)
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)

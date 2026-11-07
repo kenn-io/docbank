@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-07
 title: Cite documents in Kata
 description: Quote verified document passages into Kata issues and reopen their evidence with current source status.
 ---

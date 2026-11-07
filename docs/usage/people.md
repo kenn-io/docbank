@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-22
+last_edited: 2026-11-07
 title: People
 description: Browse people and their photos, rename or merge people, and manage canonical records through the API and CLI.
 ---
@@ -79,6 +79,85 @@ Split needs the ID of each custodian assignment it moves. The only listing of
 assignment IDs is per package: `GET /api/v1/packages/by-id/{package_id}/custodians`
 or `list_package_custodians` in MCP. Split by assignment therefore works only
 for package custodian claims.
+
+## Link a Msgvault vCard identity
+
+An API-key client can link an explicitly chosen Docbank person to a stable
+Msgvault vCard UID. The identity includes the Msgvault archive UID, so the same
+vCard UID in another archive is a separate identity. Display names are optional
+snapshots and never select or merge people.
+
+Read the Docbank person's revision, then send
+`PUT /api/v1/people/by-id/{person_id}/external-identities` with that revision
+in `If-Match` and this body:
+
+```json
+{"system":"msgvault","archive_id":"example-archive","uid":"example-vcard-uid","uid_state":"current"}
+```
+
+The response contains the saved identity and the updated revision in `ETag`.
+Optional `display_name_snapshot` and `last_seen_revision` record the external
+profile observed by the caller. A conflicting identity returns 409; a stale
+Docbank revision returns 412. Set `uid_state` to `unlinked` with the current
+revision to withdraw the link without removing its history.
+
+`GET /api/v1/people/resolve-external?system=msgvault&archive_id=example-archive&uid=example-vcard-uid`
+returns the canonical Docbank person and the requested/resolved external UIDs.
+Stored UID aliases and Docbank person merges are followed; unlinked and missing
+identities return 404. Browser sessions cannot use these routes. Existing
+backup and restore preserve the links.
+
+## Compare a face with named references
+
+An API-key client can request a local comparison against up to 16 faces you
+have already named. This gives resemblance evidence for review. It does not
+name the target face, change a person, or save a vector.
+
+Prepare grid previews for the target and reference photos first. They must be
+current, included Library display images. Hidden, excluded, replaced and
+non-display sources cannot be compared. Boxes use the EXIF-oriented preview
+before the rotation chosen in the editor.
+
+Send `POST /api/v1/photos/versions/{content_version_id}/face-similarity`:
+
+```json
+{
+  "face_id": "00000000-0000-4000-8000-000000000001",
+  "allow_local_face_recognition": true,
+  "references": [{
+    "content_version_id": "00000000-0000-4000-8000-000000000002",
+    "face_id": "00000000-0000-4000-8000-000000000003"
+  }]
+}
+```
+
+Run `docbank photos faces setup-local` as the daemon's operating-system user
+to install AuraFace-v1 and its detector and start Kit's shared server. The
+command prints the download size before fetching files. Running it approves
+the download.
+An incompatible running server is reported without an automatic restart.
+Kit's face-capable local server and assets must be running before comparison.
+The operation uses Kit's face-model discovery and sends no photo to a remote
+provider. It does not download models or start or restart a server. A missing capability
+returns `503 face_model_unavailable`; a missing or ineligible grid preview
+returns `409 face_preview_unavailable`. The request is bounded to 50 seconds
+and may be cancelled by the client.
+
+The response includes the target's `face_revision`, preview checksum, model,
+model revision and alignment recipe. `suggestions` groups usable reference
+faces by person and keeps the smallest Euclidean distance, sorted ascending.
+Each suggestion carries `state: "suggested"`, the person and revision, the
+reference face/version and its preview checksum. Distance is resemblance,
+not a calibrated probability or proof of identity. No acceptance threshold is
+applied. A null target vector returns `state: "unavailable"`; null reference
+vectors supply no suggestion. Rejected people are excluded and dismissed
+targets return no suggestions. A concurrent edit invalidates the comparison.
+
+Review the target and reference before using the existing `face-decisions`
+route to `name` the target with its returned revision, or `reject` the person.
+Naming creates the confirmed depicted-person assertion used by photo queries.
+The decision route supplies replay and undo receipts. Automatic background
+matching and a persistent similarity queue remain separate work.
 
 ## Edit people
 

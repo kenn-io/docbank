@@ -60,6 +60,7 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		return PersonExternalIdentity{}, ErrInvalidPerson
 	}
 	now := nowRFC3339()
+	var saved PersonExternalIdentity
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		if err := fencePersonTx(ctx, tx, identity.PersonID, revision); err != nil {
 			return err
@@ -99,21 +100,27 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, identity.PersonID); err != nil {
 			return err
 		}
-		return advancePersonBindingEpochTx(ctx, tx)
+		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
+			return err
+		}
+		// Read the response under the same revision fence as the write. A
+		// post-commit read could observe another link, unlink or person merge.
+		items, err := personExternalIdentitiesTx(ctx, tx, identity.PersonID)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			if item.System == identity.System && item.ArchiveID == identity.ArchiveID && item.UID == identity.UID {
+				saved = item
+				return nil
+			}
+		}
+		return ErrNotFound
 	})
 	if err != nil {
 		return PersonExternalIdentity{}, err
 	}
-	items, err := s.PersonExternalIdentities(ctx, identity.PersonID)
-	if err != nil {
-		return PersonExternalIdentity{}, err
-	}
-	for _, item := range items {
-		if item.System == identity.System && item.ArchiveID == identity.ArchiveID && item.UID == identity.UID {
-			return item, nil
-		}
-	}
-	return PersonExternalIdentity{}, ErrNotFound
+	return saved, nil
 }
 
 func (s *Store) UnlinkExternalIdentity(ctx context.Context, system, archiveID, uid string, revision int64) error {

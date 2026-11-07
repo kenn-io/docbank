@@ -140,7 +140,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 			var once sync.Once
 			var calls atomic.Int64
 			ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(withTextModelInventory(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/embeddings" {
 					ping.ServeHTTP(w, r)
 					return
@@ -166,7 +166,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": data}))
-			}))
+			})))
 			defer server.Close()
 			defer releaseRequest()
 			dir, err := embedlocal.DefaultDir()
@@ -296,7 +296,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	}))
 	defer attacker.Close()
 	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	owner := httptest.NewServer(withTextModelInventory(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/embeddings" {
 			ping.ServeHTTP(w, r)
 			return
@@ -308,7 +308,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 		ownerText = append(ownerText, request.Input...)
 		w.Header().Set("Content-Type", "application/json")
 		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": "nomic-embed-text", "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": append([]float32{1}, make([]float32, 767)...)}, {"object": "embedding", "index": 1, "embedding": append([]float32{1}, make([]float32, 767)...)}}}))
-	}))
+	})))
 	defer owner.Close()
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)
@@ -354,7 +354,7 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	server := httptest.NewServer(ping)
+	server := httptest.NewServer(withTextModelInventory(t, ping))
 	defer server.Close()
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)

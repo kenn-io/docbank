@@ -7169,6 +7169,90 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    ExternalPersonLinkRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ExternalPersonLinkRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_id:
+          maxLength: 128
+          minLength: 1
+          type: string
+        display_name_snapshot:
+          maxLength: 200
+          type: string
+        last_seen_revision:
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        system:
+          enum:
+            - msgvault
+          type: string
+        uid:
+          maxLength: 256
+          minLength: 1
+          type: string
+        uid_state:
+          enum:
+            - current
+            - unlinked
+          type: string
+      required:
+        - system
+        - archive_id
+        - uid
+        - uid_state
+      type: object
+      x-go-type: api.ExternalPersonLinkRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    ExternalPersonResolution:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ExternalPersonResolution.json
+          format: uri
+          readOnly: true
+          type: string
+        archive_id:
+          type: string
+        forwarded:
+          type: boolean
+        person_id:
+          format: uuid
+          type: string
+        requested_uid:
+          type: string
+        resolved_uid:
+          type: string
+        system:
+          type: string
+        uid_state:
+          type: string
+      required:
+        - person_id
+        - system
+        - archive_id
+        - requested_uid
+        - resolved_uid
+        - uid_state
+        - forwarded
+      type: object
+      x-go-type: api.ExternalPersonResolution
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     FaceBox:
       additionalProperties: false
       properties:
@@ -7194,6 +7278,130 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    FaceReference:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        face_id:
+          format: uuid
+          type: string
+      required:
+        - content_version_id
+        - face_id
+      type: object
+      x-go-type: processing.FaceReference
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    FaceSimilarityRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FaceSimilarityRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        allow_local_face_recognition:
+          type: boolean
+        face_id:
+          format: uuid
+          type: string
+        references:
+          items:
+            $ref: "#/components/schemas/FaceReference"
+          maxItems: 16
+          minItems: 1
+          type: array
+      required:
+        - face_id
+        - allow_local_face_recognition
+        - references
+      type: object
+      x-go-type: api.FaceSimilarityRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FaceSimilarityResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FaceSimilarityResult.json
+          format: uri
+          readOnly: true
+          type: string
+        face_revision:
+          format: int64
+          type: integer
+        model:
+          type: string
+        model_revision:
+          type: string
+        preview_checksum:
+          type: string
+        recipe:
+          type: string
+        state:
+          type: string
+        suggestions:
+          items:
+            $ref: "#/components/schemas/FaceSimilaritySuggestion"
+          maxItems: 16
+          type: array
+        target:
+          $ref: "#/components/schemas/FaceReference"
+      required:
+        - target
+        - face_revision
+        - state
+        - model
+        - model_revision
+        - recipe
+        - preview_checksum
+        - suggestions
+      type: object
+      x-go-type: processing.FaceSimilarityResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    FaceSimilaritySuggestion:
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        distance:
+          format: double
+          type: number
+        person_id:
+          format: uuid
+          type: string
+        person_revision:
+          format: int64
+          type: integer
+        preview_checksum:
+          type: string
+        reference:
+          $ref: "#/components/schemas/FaceReference"
+        state:
+          type: string
+      required:
+        - state
+        - person_id
+        - person_revision
+        - display_name
+        - distance
+        - reference
+        - preview_checksum
+      type: object
+      x-go-type: processing.FaceSimilaritySuggestion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     Filters:
       additionalProperties: false
       properties:
@@ -12586,6 +12794,13 @@ components:
     PersonExternalIdentity:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PersonExternalIdentity.json
+          format: uri
+          readOnly: true
+          type: string
         archive_id:
           type: string
         display_name_snapshot:
@@ -28276,6 +28491,44 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Rename one canonical person
+  /api/v1/people/by-id/{person_id}/external-identities:
+    put:
+      operationId: linkPersonExternalIdentity
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExternalPersonLinkRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonExternalIdentity"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Link or unlink a stable vCard identity on an explicitly selected person
   /api/v1/people/by-id/{person_id}/merge:
     post:
       operationId: mergePerson
@@ -28452,6 +28705,48 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read person attribution rebuild progress
+  /api/v1/people/resolve-external:
+    get:
+      operationId: resolveExternalPerson
+      parameters:
+        - explode: false
+          in: query
+          name: system
+          required: true
+          schema:
+            enum:
+              - msgvault
+            type: string
+        - explode: false
+          in: query
+          name: archive_id
+          required: true
+          schema:
+            maxLength: 128
+            minLength: 1
+            type: string
+        - explode: false
+          in: query
+          name: uid
+          required: true
+          schema:
+            maxLength: 256
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExternalPersonResolution"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve an archive-scoped stable person UID
   /api/v1/photos/albums:
     get:
       operationId: listPhotoAlbums
@@ -30053,6 +30348,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Name, retract, reject, dismiss, or choose a key face
+  /api/v1/photos/versions/{content_version_id}/face-similarity:
+    post:
+      operationId: comparePhotoFace
+      parameters:
+        - in: path
+          name: content_version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaceSimilarityRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceSimilarityResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Compare one face with reviewed reference faces without assigning an identity
   /api/v1/photos/versions/{content_version_id}/faces:
     get:
       operationId: listPhotoFaces
