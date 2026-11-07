@@ -140,7 +140,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install pinned documentation tools
         run: |
@@ -235,7 +235,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Check and build web application
         run: make frontend-test
@@ -295,7 +295,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install pinned Chromium
         run: |
@@ -368,7 +368,7 @@ jobs:
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Check Huma API contract
         run: |
@@ -663,7 +663,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
         if: matrix.goarch == 'arm64'
 
       - name: Download ARM64 C compiler
