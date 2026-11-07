@@ -22,7 +22,7 @@ func registerFaceSimilarityRoutes(api huma.API, d Deps) {
 		OperationID: "comparePhotoFace", Method: http.MethodPost,
 		Path:        "/api/v1/photos/versions/{content_version_id}/face-similarity",
 		Summary:     "Compare one face with reviewed reference faces without assigning an identity",
-		Middlewares: huma.Middlewares{noStoreMediaReceipt},
+		Middlewares: huma.Middlewares{noStoreMediaReceipt}, BodyReadTimeout: requestTimeout,
 	}, func(ctx context.Context, in *struct {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             FaceSimilarityRequest

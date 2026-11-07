@@ -87,11 +87,19 @@ func TestFaceSimilarityRefusesUnreviewedOrHiddenEvidence(t *testing.T) {
 	}
 	_, err = CompareFaces(ctx, f.catalog, f.blobs, loader, FaceReference{f.node.CurrentVersionID, target.FaceID}, []FaceReference{{f.node.CurrentVersionID, ref.FaceID}})
 	require.ErrorIs(t, err, store.ErrInvalidPhotoFace)
+	person, err := f.catalog.CreatePerson(ctx, "Synthetic Reference", "operator")
+	require.NoError(t, err)
+	_, err = f.catalog.DecidePhotoFace(ctx, f.node.CurrentVersionID, store.PhotoFaceDecisionRequest{
+		FaceID: ref.FaceID, PersonID: person.PersonID, Action: "name", Revision: ref.Revision,
+	})
+	require.NoError(t, err)
 	require.NoError(t, f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	_, err = f.catalog.SetPhotoAssetHidden(ctx, f.asset.ID, f.asset.Revision, true)
+	asset, err := f.catalog.PhotoAssetForNode(ctx, f.node.ID)
+	require.NoError(t, err)
+	_, err = f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	_, err = CompareFaces(ctx, f.catalog, f.blobs, loader, FaceReference{f.node.CurrentVersionID, target.FaceID}, []FaceReference{{f.node.CurrentVersionID, ref.FaceID}})
-	require.Error(t, err)
+	require.ErrorIs(t, err, store.ErrHiddenLocked)
 }
 
 func TestFaceSimilarityNullInvalidAndConcurrentEvidence(t *testing.T) {
