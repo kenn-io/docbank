@@ -3,6 +3,7 @@ import {
   preparePhotoPreview,
   readPhotoPreview,
   type PersonFacePreview,
+  type ReadPhotoPreviewParams,
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
@@ -25,14 +26,13 @@ export function previewObjectURL(
   onload: (url: string) => void,
   onfailure: (cause: unknown) => void,
   reload = false,
-  personID?: string,
-  faceID?: string,
+  grant?: ReadPhotoPreviewParams,
 ) {
   const controller = new AbortController();
   let current = true;
   let url = "";
   void cache
-    .get(assetID, generationID, controller.signal, reload, personID, faceID)
+    .get(assetID, generationID, controller.signal, reload, grant)
     .then((blob) => {
       if (current) {
         url = URL.createObjectURL(blob);
@@ -60,13 +60,14 @@ export async function faceCrop(
   signal: AbortSignal,
   track: (release: () => void) => void,
 ) {
+  const grant = person.id ? { person_id: person.id } : { face_id: person.faceID };
   let generation = face.generation_id;
   if (!generation) {
     const slot = await preparePhotoPreview(
       face.asset_id,
       {
         content_version_id: face.content_version_id,
-        ...(person.id ? { person_id: person.id } : { face_id: person.faceID }),
+        ...grant,
         size: "grid",
         hidden: person.hidden,
       },
@@ -91,8 +92,7 @@ export async function faceCrop(
         (url) => finish(() => resolve(url)),
         (cause) => finish(() => reject(cause)),
         false,
-        person.id,
-        person.id ? undefined : person.faceID,
+        grant,
       ),
     );
   });
@@ -155,22 +155,16 @@ export class PhotoPreviewCache {
     generationID: string,
     caller?: AbortSignal,
     reload = false,
-    personID?: string,
-    faceID?: string,
+    grant?: ReadPhotoPreviewParams,
   ): Promise<Blob> {
     const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
     return this.read(
       assetID,
       generationID,
-      getReadPhotoPreviewUrl(
-        assetID,
-        generationID,
-        personID ? { person_id: personID } : faceID ? { face_id: faceID } : undefined,
-      ),
+      getReadPhotoPreviewUrl(assetID, generationID, grant),
       signal,
       reload,
-      personID,
-      faceID,
+      grant,
     ).catch((cause) => {
       if (
         !signal.aborted &&
@@ -188,8 +182,7 @@ export class PhotoPreviewCache {
     path: string,
     signal: AbortSignal,
     reload: boolean,
-    personID?: string,
-    faceID?: string,
+    grant?: ReadPhotoPreviewParams,
   ): Promise<Blob> {
     signal.throwIfAborted();
     let onabort: () => void;
@@ -222,7 +215,7 @@ export class PhotoPreviewCache {
         const response = await readPhotoPreview(
           assetID,
           generationID,
-          personID ? { person_id: personID } : faceID ? { face_id: faceID } : undefined,
+          grant,
           undefined,
           {
             session: this.session,

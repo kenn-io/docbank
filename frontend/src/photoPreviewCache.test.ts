@@ -384,7 +384,6 @@ it.each([
     ...(id ? { person_id: id } : { face_id: "candidate-face" }),
   });
   expect(get.mock.calls[0]!.slice(0, 2)).toEqual(["asset", "grid"]);
-  expect(get.mock.calls[0]![4]).toBe(id);
-  expect(get.mock.calls[0]![5]).toBe(id ? undefined : "candidate-face");
+  expect(get.mock.calls[0]![4]).toEqual(id ? { person_id: id } : { face_id: "candidate-face" });
   for (const release of releases) release();
 });

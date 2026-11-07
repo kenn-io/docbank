@@ -196,7 +196,7 @@ it("keeps portraits through in-place updates and releases them when cards clear"
   const get = vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
   await waitFor(() => expect(screen.getByRole("img", { name: "Face of Ada" })).toBeTruthy());
-  expect(get.mock.calls[0]![4]).toBe(ada.person_id);
+  expect(get.mock.calls[0]![4]).toEqual({ person_id: ada.person_id });
   // An in-place card update with the same face keeps its portrait.
   await act(() => (people.items = [{ ...people.items[0]!, display_name: "Ada L", revision: 3 }]));
   expect(screen.getByRole("img", { name: "Face of Ada L" })).toBeTruthy();

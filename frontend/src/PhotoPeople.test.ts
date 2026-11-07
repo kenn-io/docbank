@@ -437,8 +437,7 @@ it.each(["distinct", "tied-whole", "tied-empty", "empty", "image500", "switch"])
               "grid-current",
               expect.anything(),
               false,
-              id,
-              undefined,
+              { person_id: id },
             );
           }
         }
