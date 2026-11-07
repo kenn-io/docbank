@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 
 func newPushCmd() *cobra.Command {
 	var target, name, dest, keyFile string
-	var watch, captureOnChange bool
+	var watch, captureOnChange, markdownBrain bool
 	var excludes []string
 	var settle, age, interval time.Duration
 	cmd := &cobra.Command{
@@ -33,7 +34,11 @@ archived documents.
 
 The API key comes from DOCBANK_API_KEY or --api-key-file. Each connection must
 prove it holds that key before push sends the key or any file. Rejected files
-are reported and skipped, and then the exit code is nonzero.`,
+are reported and skipped, and then the exit code is nonzero.
+
+--markdown-brain publishes only .md/.markdown files as a managed current view.
+Completed inventories retire removed paths from that view while keeping history.
+Managed watch defaults to a two-second settle window and five-second polling.`,
 		Example: `  docbank push ~/documents --to http://127.0.0.1:7778 --name laptop --dest /documents
   docbank push ~/documents --to http://127.0.0.1:7778 --name laptop --dest /documents --watch`,
 		GroupID: groupSources,
@@ -41,6 +46,21 @@ are reported and skipped, and then the exit code is nonzero.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if captureOnChange && !watch {
 				return errors.New("--capture-on-change requires --watch")
+			}
+			if markdownBrain {
+				if !cmd.Flags().Changed("settle-time") {
+					if err := cmd.Flags().Set("settle-time", "2s"); err != nil {
+						return err
+					}
+				}
+				if !cmd.Flags().Changed("scan-interval") {
+					if err := cmd.Flags().Set("scan-interval", "5s"); err != nil {
+						return err
+					}
+				}
+			}
+			if settle <= 0 || interval <= 0 || age < 0 {
+				return errors.New("settle time and scan interval must be positive; minimum age must not be negative")
 			}
 			key, err := readPushKey(keyFile)
 			if err != nil {
@@ -51,6 +71,7 @@ are reported and skipped, and then the exit code is nonzero.`,
 				return fmt.Errorf("--to: %w", err)
 			}
 			return runPush(cmd, connection, push.Options{
+				Publication: markdownBrain,
 				Folder: config.WatchConfig{
 					Name: name, Source: args[0], Destination: dest, SettleTime: config.Duration(settle),
 					MinimumAge: config.Duration(age), ScanInterval: config.Duration(interval), Exclude: excludes,
@@ -64,6 +85,7 @@ are reported and skipped, and then the exit code is nonzero.`,
 	cmd.Flags().StringVar(&name, "name", "", "stable push name (lowercase letters, digits, -, _, .)")
 	cmd.Flags().StringVar(&dest, "dest", "", "absolute virtual destination")
 	cmd.Flags().StringVar(&keyFile, "api-key-file", "", "read API key from a file instead of DOCBANK_API_KEY")
+	cmd.Flags().BoolVar(&markdownBrain, "markdown-brain", false, "publish current Markdown membership with retained archive history")
 	cmd.Flags().BoolVar(&watch, "watch", false, "keep scanning with watched-inbox stability rules")
 	cmd.Flags().BoolVar(&captureOnChange, "capture-on-change", false, "read observable changes promptly in watch mode")
 	cmd.Flags().StringArrayVar(&excludes, "exclude", nil, "literal basename or source-relative path to exclude (repeatable)")
@@ -98,17 +120,30 @@ func readPushKey(keyFile string) (string, error) {
 func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	opts.Progress = func(ref, outcome string) error {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {
-			return fmt.Errorf("writing push progress: %w", err)
+	if opts.Publication {
+		statusCallback := opts.Status
+		opts.Progress, opts.Failure = nil, nil
+		opts.Status = func(ctx context.Context, s push.PublicationStatus) error {
+			if statusCallback != nil {
+				if err := statusCallback(ctx, s); err != nil {
+					return err
+				}
+			}
+			return writePublicationStatus(cmd.OutOrStdout(), s)
 		}
-		return nil
-	}
-	opts.Failure = func(ref string, err error) error {
-		if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "failed %s: %v\n", strconv.QuoteToASCII(ref), err); writeErr != nil {
-			return fmt.Errorf("writing push failure: %w", writeErr)
+	} else {
+		opts.Progress = func(ref, outcome string) error {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {
+				return fmt.Errorf("writing push progress: %w", err)
+			}
+			return nil
 		}
-		return nil
+		opts.Failure = func(ref string, err error) error {
+			if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "failed %s: %v\n", strconv.QuoteToASCII(ref), err); writeErr != nil {
+				return fmt.Errorf("writing push failure: %w", writeErr)
+			}
+			return nil
+		}
 	}
 	report, runErr := push.Run(ctx, connection, opts)
 	interrupted := ctx.Err() != nil && cmd.Context().Err() == nil
@@ -118,13 +153,60 @@ func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Op
 			runErr = fmt.Errorf("%w: %d failed", push.ErrFilesFailed, report.Failed)
 		}
 	}
+	var finalErr error
+	if opts.Publication {
+		if report.Publication != nil {
+			finalErr = writePublicationStatus(cmd.OutOrStdout(), *report.Publication)
+		}
+		if runErr != nil {
+			if errors.Is(runErr, daemonconn.ErrNotePublicationUnavailable) {
+				runErr = daemonconn.ErrNotePublicationUnavailable
+			} else {
+				runErr = errors.New("managed publication stopped; inspect scan status for bounded reasons")
+			}
+		}
+	}
+	label := ""
+	if opts.Publication {
+		label = "uploads: "
+	}
 	_, outputErr := fmt.Fprintf(cmd.OutOrStdout(),
-		"added %d, updated %d, unchanged %d, failed %d\n",
-		report.Added, report.Updated, report.Skipped, report.Failed)
+		"%sadded %d, updated %d, unchanged %d, failed %d\n",
+		label, report.Added, report.Updated, report.Skipped, report.Failed)
 	if outputErr != nil {
 		outputErr = fmt.Errorf("writing push summary: %w", outputErr)
 	}
-	return errors.Join(runErr, outputErr)
+	return errors.Join(runErr, outputErr, finalErr)
+}
+
+// A confirmed completion is an observation after commit. A failed write here
+// reports an output error; it cannot retract the daemon's inventory receipt.
+func writePublicationStatus(w io.Writer, s push.PublicationStatus) error {
+	if _, err := fmt.Fprintf(w, "inventory %s: observed %d, accepted %d, unchanged %d, failed %d; polling-degraded %t; verification-due %s, lag %s\n", s.Event, s.Observed, s.Accepted, s.Unchanged, s.Failed, s.Degraded, publicationTime(s.VerificationDueAt), s.VerificationLag); err != nil {
+		return fmt.Errorf("writing publication status: %w", err)
+	}
+	if s.Current != nil {
+		if _, err := fmt.Fprintf(w, "current: present %d, absent %d, unknown %d, conflicts %d, unavailable %d; incomplete %t; last-complete %s\n", s.Current.Present, s.Current.Absent, s.Current.Unknown, s.Current.Conflicts, s.Current.Unavailable, s.Current.Incomplete, s.Current.LastCompleteAt); err != nil {
+			return fmt.Errorf("writing publication current status: %w", err)
+		}
+	}
+	for _, failure := range s.Errors {
+		if _, err := fmt.Fprintf(w, "reason %s %s\n", failure.Code, strconv.QuoteToASCII(failure.SourceRef)); err != nil {
+			return fmt.Errorf("writing publication reason: %w", err)
+		}
+	}
+	if s.ErrorsOmitted > 0 {
+		if _, err := fmt.Fprintf(w, "reasons omitted %d\n", s.ErrorsOmitted); err != nil {
+			return fmt.Errorf("writing publication reason count: %w", err)
+		}
+	}
+	return nil
+}
+func publicationTime(t time.Time) string {
+	if t.IsZero() {
+		return "pending"
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 func init() { rootCmd.AddCommand(newPushCmd()) }

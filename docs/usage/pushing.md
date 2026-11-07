@@ -1,7 +1,7 @@
 ---
 title: Push a folder to another daemon
 description: Archive a local folder through a keyed daemon, resume by content hash, and continue an existing watch.
-last_edited: 2026-10-25
+last_edited: 2026-11-07
 ---
 
 # Push a folder to another daemon
@@ -9,6 +9,83 @@ last_edited: 2026-10-25
 Use `docbank push` to archive a local working folder through a keyed daemon.
 The client reads your files and uploads verified bytes. It never changes or
 deletes local files. The daemon does not need a filesystem copy of the folder.
+
+## Publish current Markdown notes
+
+Add `--markdown-brain` to publish a local Markdown folder as a managed current
+view. Keep editing the files in your ordinary editor. The client reads them
+without changing them:
+
+```bash
+docbank push ~/notes \
+  --to http://127.0.0.1:7778 \
+  --api-key-file ~/.config/docbank/archive.key \
+  --name research \
+  --dest /notes \
+  --markdown-brain --watch
+```
+
+Managed mode admits regular files ending in `.md` or `.markdown`, with ASCII
+case ignored. It excludes the literal basenames `.git`, `.hg`, `.svn`,
+`.obsidian`, and `.trash`. Repeat `--exclude` for additional literal basenames
+or source-relative paths. Globs are not supported. Other editor directories
+are included unless explicitly excluded. Attachments are outside this scope.
+
+The publication name and relative path identify each note. Equal bytes at
+different paths remain separate notes. A rename creates a new source identity
+and marks the old path absent after a complete inventory. Removal or a new
+exclusion also marks that path absent. Reappearance reuses its retained source
+identity. Absence removes the note from current source membership; it does not
+purge its archived document or immutable versions.
+
+A completed scan must acknowledge every included stable file and finish a
+readable inventory. An unreadable subtree, unsettled or replaced file, canceled
+scan, failed receipt, or unresolved conflict keeps the inventory incomplete.
+Such a scan may accept independently verified positive changes, but cannot
+retire other notes. Watch retries transient failures with bounded immediate
+attempts followed by the polling interval. An uncertain request retains its
+operation identity. Restarting reconciles against daemon cursors rather than
+a local acknowledgement file. An older daemon without managed publication
+routes returns an error; the client does not fall back to archival push.
+
+Managed watch defaults to a two-second settle window and five-second polling.
+Explicit positive `--settle-time` and `--scan-interval` values take precedence.
+Notifications accelerate observation; polling continues when notifications
+are unavailable. A full byte-verification pass becomes due every 60 seconds
+after the previous successful pass. A long or incomplete pass can remain
+overdue. The schedule is not a deadline guarantee. Modification time detects
+possible changes; verified hashes determine accepted bytes. This converges on
+the latest stable local state and does not capture every editor save.
+
+If someone changes the archive head separately, the publisher reports a
+conflict and does not silently replace it or acknowledge the old source hash.
+An exact accept-local recovery grant can authorize a fresh stable upload for
+that observed archive head, even when the local digest still equals the
+previously accepted source. That upload creates a new immutable version and
+preserves the intervening archive version. Another archive edit cancels the
+grant. A pruned or otherwise unavailable source cannot be reminted as a new
+note by the publisher.
+
+Progress separates per-scan `observed`, `accepted`, `unchanged`, and `failed`
+counts from cumulative upload totals. `current` is one server snapshot with
+its own `last-complete` freshness and `incomplete` flag. Retry, conflict,
+polling degradation, and verification due/lag are independent of byte-upload
+success. Uploading a note does not mean its search index or graph is ready.
+Diagnostic examples contain only bounded reason codes and relative source
+references; excess examples are counted.
+
+The client reports `completing` before requesting a completed inventory, so a
+failed status callback or output write at that point prevents completion.
+After the daemon confirms completion, the client returns that exact snapshot
+and prints `inventory complete`. A failure printing this final observation is
+an output error and cannot undo the committed inventory. A watch may report
+its buffered completed snapshot before beginning the next scan. The Go
+publisher returns the latest confirmed snapshot in `Report.Publication`,
+separately from its fallible precommit `Options.Status` callback.
+
+Without `--markdown-brain`, push keeps the archival behavior described below:
+all admitted regular files are eligible, local deletions leave archives alone,
+and watch retains its 30-second settle default.
 
 ## Connect and push
 

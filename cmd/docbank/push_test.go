@@ -4,16 +4,21 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/push"
 )
 
 func TestPushCommandValidatesBeforeContactingDaemon(t *testing.T) {
@@ -120,3 +125,89 @@ func TestPushCaptureOnChangeRejectsBeforeCredentialLookup(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	require.ErrorContains(t, cmd.Execute(), "--capture-on-change requires --watch")
 }
+
+func TestPushMarkdownBrainDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("DOCBANK_API_KEY", "synthetic-key")
+	for _, tc := range []struct {
+		name             string
+		flags            []string
+		settle, interval time.Duration
+		invalid          bool
+	}{
+		{"archive", nil, 30 * time.Second, 5 * time.Second, false},
+		{"managed", []string{"--markdown-brain"}, 2 * time.Second, 5 * time.Second, false},
+		{"explicit", []string{"--markdown-brain", "--settle-time", "9s", "--scan-interval", "11s"}, 9 * time.Second, 11 * time.Second, false},
+		{"zero settle", []string{"--markdown-brain", "--settle-time", "0s"}, 0, 0, true},
+		{"negative interval", []string{"--markdown-brain", "--scan-interval", "-1s"}, 0, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(keyChallenge("synthetic-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })))
+			defer server.Close()
+			cmd := newPushCmd()
+			cmd.SilenceErrors = true
+			cmd.SilenceUsage = true
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			args := []string{t.TempDir(), "--to", server.URL, "--name", "research", "--dest", "/notes"}
+			cmd.SetArgs(append(args, tc.flags...))
+			err := cmd.Execute()
+			require.Error(t, err)
+			if tc.invalid {
+				require.ErrorContains(t, err, "must be positive")
+				return
+			}
+			settle, _ := cmd.Flags().GetDuration("settle-time")
+			interval, _ := cmd.Flags().GetDuration("scan-interval")
+			require.Equal(t, tc.settle, settle)
+			require.Equal(t, tc.interval, interval)
+		})
+	}
+}
+func TestPushMarkdownBrainCapabilityFailureDoesNotFallback(t *testing.T) {
+	t.Setenv("DOCBANK_API_KEY", "synthetic-key")
+	archival := 0
+	managed := 0
+	server := httptest.NewServer(keyChallenge("synthetic-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/note-publications") {
+			managed++
+		} else {
+			archival++
+		}
+		w.WriteHeader(404)
+	})))
+	defer server.Close()
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), []byte("# synthetic"), 0600))
+	cmd := newPushCmd()
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	var out, diagnostic bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&diagnostic)
+	cmd.SetArgs([]string{root, "--to", server.URL, "--name", "research", "--dest", "/notes", "--markdown-brain"})
+	err := cmd.Execute()
+	require.ErrorContains(t, err, "managed note publication")
+	require.Equal(t, 1, managed)
+	require.Zero(t, archival)
+	require.NotContains(t, out.String()+diagnostic.String(), "synthetic-key")
+	require.NotContains(t, out.String()+diagnostic.String(), root)
+}
+
+func TestPushMarkdownBrainStatusOutput(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	s := push.PublicationStatus{Event: "conflict", Observed: 5, Accepted: 2, Unchanged: 1, Failed: 2, Degraded: true, VerificationLag: 3 * time.Second, Current: &api.NotePublicationStatus{Present: 7, Absent: 8, Incomplete: true, Conflicts: 2, LastCompleteAt: "2026-11-07T00:00:00Z"}, Errors: []push.PublicationFailure{{Code: "published_source_diverged", SourceRef: "a.md"}}, ErrorsOmitted: 9}
+	require.NoError(t, writePublicationStatus(&out, s))
+	text := out.String()
+	for _, want := range []string{"inventory conflict: observed 5, accepted 2, unchanged 1, failed 2", "polling-degraded true", "lag 3s", "current: present 7, absent 8", "incomplete true", "last-complete 2026-11-07T00:00:00Z", "published_source_diverged \"a.md\"", "reasons omitted 9"} {
+		require.Contains(t, text, want)
+	}
+	require.NotContains(t, text, "indexed")
+	require.NotContains(t, text, "graph-ready")
+	sentinel := errors.New("synthetic output stopped")
+	require.ErrorIs(t, writePublicationStatus(publicationFailWriter{err: sentinel}, s), sentinel)
+}
+
+type publicationFailWriter struct{ err error }
+
+func (w publicationFailWriter) Write([]byte) (int, error) { return 0, w.err }

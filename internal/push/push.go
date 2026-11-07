@@ -34,20 +34,24 @@ type Options struct {
 	Publication bool
 	// Reconnect reacquires a proved local daemon after a transport failure.
 	Reconnect func(context.Context) (*daemonconn.Connection, error)
-	Folder    config.WatchConfig
-	Watch     bool
-	Progress  func(ref, outcome string) error
-	Failure   func(ref string, err error) error
+	// Status may stop managed publishing before commit. Confirmed completion is returned in Report.Publication.
+	Status   func(context.Context, PublicationStatus) error
+	Folder   config.WatchConfig
+	Watch    bool
+	Progress func(ref, outcome string) error
+	Failure  func(ref string, err error) error
 }
 
 // Report counts only independently acknowledged file outcomes, plus the files
 // the run skipped after a rejection. Failed runs return their partial report
 // and an error; callers may safely run again.
 type Report struct {
-	Added   int
-	Updated int
-	Skipped int
-	Failed  int
+	// Publication is the latest confirmed complete snapshot; nil for archival or no completed scan.
+	Publication *PublicationStatus
+	Added       int
+	Updated     int
+	Skipped     int
+	Failed      int
 }
 
 // Run executes a folder push without discovering or starting a local daemon.
