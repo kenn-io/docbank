@@ -49,7 +49,7 @@ runs:
         # One key per group and day: main refreshes it daily instead of freezing on go.sum.
         {
           if [ "$PR_BENCH" = 'true' ]; then
-            echo "GO_CACHE_KEY=go-round7-prbench-${GROUP}-${GO_SUM}"
+            echo "GO_CACHE_KEY=go-round7-prbench-${GROUP}-${GO_SUM}-${GITHUB_SHA}"
           else
             echo "GO_CACHE_KEY=go-${GROUP}-${GO_SUM}-$(date -u +%Y-%m-%d)"
           fi
