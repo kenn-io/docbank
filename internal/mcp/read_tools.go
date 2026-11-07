@@ -380,6 +380,7 @@ func listDocuments(
 }
 
 type searchDocumentsInput struct {
+	AsOf              string                          `json:"as_of"`
 	Query             string                          `json:"query"`
 	Mode              string                          `json:"mode"`
 	Limit             int                             `json:"limit"`
@@ -392,14 +393,15 @@ type searchDocumentsInput struct {
 }
 
 type searchResultOutput struct {
-	NodeID           int64    `json:"node_id"`
-	ContentVersionID string   `json:"content_version_id"`
-	Rank             int      `json:"rank"`
-	Score            float64  `json:"score"`
-	RerankRelevance  *float64 `json:"rerank_relevance,omitempty"`
-	Path             string   `json:"path"`
-	Excerpt          string   `json:"excerpt,omitempty"`
-	EvidenceIDs      []string `json:"evidence_ids"`
+	Validity         *api.DocumentResultValidity `json:"validity,omitzero"`
+	NodeID           int64                       `json:"node_id"`
+	ContentVersionID string                      `json:"content_version_id"`
+	Rank             int                         `json:"rank"`
+	Score            float64                     `json:"score"`
+	RerankRelevance  *float64                    `json:"rerank_relevance,omitempty"`
+	Path             string                      `json:"path"`
+	Excerpt          string                      `json:"excerpt,omitempty"`
+	EvidenceIDs      []string                    `json:"evidence_ids"`
 }
 
 type searchCoverageOutput struct {
@@ -417,10 +419,11 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
+	AsOf               string                              `json:"as_of,omitzero"`
 	VaultID            string                              `json:"vault_id,omitzero"`
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
-	ObservedScopeCount int                                 `json:"observed_scope_count,omitzero"`
+	ObservedScopeCount *int                                `json:"observed_scope_count,omitzero"`
 	Profile            string                              `json:"profile"`
 	RequestedMode      string                              `json:"requested_mode"`
 	ActualMode         string                              `json:"actual_mode"`
@@ -531,7 +534,7 @@ func searchDocuments(
 	if result.problem != nil {
 		return searchDocumentsOutput{}, nil, result.problem
 	}
-	output := searchDocumentsOutput{VaultID: result.vaultID, Profile: result.profile,
+	output := searchDocumentsOutput{AsOf: result.report.AsOf, VaultID: result.vaultID, Profile: result.profile,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
 			ScopedDocuments:   result.report.Coverage.ScopedDocuments,
@@ -543,17 +546,17 @@ func searchDocuments(
 		output.Fence = &sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)}
 		output.FenceFingerprint = result.resolution.FenceFingerprint
-		output.ObservedScopeCount = result.resolution.ObservedScopeCount
+		output.ObservedScopeCount = &result.resolution.ObservedScopeCount
 	}
 	for index, item := range result.report.Results {
 		evidence, err := encodeSearchEvidenceIDs(item.Evidence)
 		if err != nil {
 			return searchDocumentsOutput{}, nil, err
 		}
-		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
+		output.Results[index] = searchResultOutput{Validity: item.Validity, NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence,
-			RerankRelevance: searchRerankRelevance(item, index, output.Reranking)}
+			RerankRelevance: item.RerankRelevance}
 	}
 	return output, documentResourceLinks(result.vaultID, result.documents), nil
 }
@@ -568,7 +571,7 @@ type documentSearchResponse struct {
 }
 
 func runDocumentSearch(ctx context.Context, c documentClient, input searchDocumentsInput, contentFirst bool, resolved *api.DocumentSourceFenceResolution) (documentSearchResponse, error) {
-	request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
+	request := api.DocumentSearchRequest{AsOf: input.AsOf, Query: input.Query, Mode: input.Mode, Limit: input.Limit,
 		Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: contentFirst}
 	var resolution api.DocumentSourceFenceResolution
 	var report api.DocumentSearchReport
@@ -599,14 +602,6 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		return documentSearchResponse{}, callErr
 	}
 	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
-}
-
-// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
-func searchRerankRelevance(item api.DocumentSearchResult, index int, reranking *api.DocumentSearchRerankingReceipt) *float64 {
-	if reranking != nil && reranking.Outcome == "applied" && index < reranking.CandidateCount {
-		return &item.Score
-	}
-	return nil
 }
 
 func encodeSearchEvidenceIDs(evidence []api.DocumentEvidenceReference) ([]string, error) {
@@ -1010,6 +1005,7 @@ func searchResolvedDocuments(ctx context.Context, c documentClient, req api.Docu
 		reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
 	}
 	return api.DocumentSearchReport{
+		AsOf:      req.AsOf,
 		Reranking: reranking, RequestedMode: effectiveSearchMode(req.Mode), ActualMode: effectiveEmptySearchMode(req.Mode),
 		Coverage:     api.DocumentSearchCoverage{State: "complete"},
 		Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},

@@ -21,6 +21,7 @@ import (
 )
 
 type automaticSearchCase struct {
+	asOf                            string
 	name                            string
 	query                           string
 	profiles                        []api.ProcessingProfileSummary
@@ -35,6 +36,7 @@ type automaticSearchCase struct {
 	skipped, wantHybrid, wantDetail bool
 	wantReason                      string
 	wantError                       bool
+	wantCLIError                    string
 	wantSearch                      int
 }
 
@@ -46,6 +48,9 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	cases := []automaticSearchCase{
 		{name: "PDF evidence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{PDFFilter: "pdf_encrypted:true"}, skipped: true},
 		{name: "source presence stays lexical", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{SourcePresent: true}, skipped: true},
+		{name: "date reaches automatic request", asOf: "2025-01-01", profiles: profiles, limit: 50, humanCLI: true, wantSearch: 1, wantHybrid: true},
+		{name: "no automatic profile", asOf: "2025-01-01", limit: 1, humanCLI: true, wantCLIError: "--as-of requires"},
+		{name: "dated all bindings fail", asOf: "2025-01-01", profiles: profiles, limit: 50, searchError: "processing_failed", wantSearch: 3, wantError: true},
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
@@ -92,7 +97,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 				runAutomaticSearchCLI(t, tc, server.URL, &record)
 			} else {
 				cmd, _ := processingTestCommand()
-				outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New(server.URL, "key"), tc.query, tc.limit, tc.opts)
+				outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New(server.URL, "key"), tc.query, tc.limit, tc.opts, tc.asOf)
 				if tc.wantError {
 					require.Error(t, err)
 					assert.Equal(t, automaticSearchOutcome{}, outcome)
@@ -148,6 +153,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		case "GET /api/v1/search/text-coverage":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case "GET /api/v1/search":
+			assert.Empty(t, tc.wantCLIError, "usage errors must stop before lexical search")
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
 			matches := []api.SearchHit{
@@ -183,6 +189,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			var body api.DocumentSearchRequest
 			assert.NoError(t, json.Unmarshal(raw, &body))
 			assert.Equal(t, tc.query, body.Query)
+			assert.Equal(t, tc.asOf, body.AsOf)
 			assert.Equal(t, "hybrid", body.Mode)
 			expectedProfile, expectedBinding := "alpha", "a"
 			if *searchCalls == 2 {
@@ -231,6 +238,9 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	rootCmd.SetErr(&stderr)
 	args := append([]string{"search"}, strings.Split(tc.query, " ")...)
 	args = append(args, "--limit", strconv.Itoa(tc.limit))
+	if tc.asOf != "" {
+		args = append(args, "--as-of", tc.asOf)
+	}
 	switch {
 	case tc.jsonCLI:
 		args = append(args, "--json")
@@ -239,7 +249,12 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	}
 	rootCmd.SetArgs(args)
 	defer rootCmd.SetArgs(nil)
-	require.NoError(t, rootCmd.ExecuteContext(context.Background()))
+	err = rootCmd.ExecuteContext(context.Background())
+	if tc.wantCLIError != "" {
+		require.ErrorContains(t, err, tc.wantCLIError)
+		return
+	}
+	require.NoError(t, err)
 	switch {
 	case tc.empty:
 		assert.Equal(t, "mode: hybrid\ncoverage: complete (0/0 source document(s) complete)\nno matches in the search scope\n", stdout.String())
@@ -302,13 +317,13 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 
 func TestAutomaticSearchTransportAndCancellation(t *testing.T) {
 	cmd, _ := processingTestCommand()
-	outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{})
+	outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{}, "")
 	require.NoError(t, err, "a hybrid transport failure falls back; the lexical search then reports it")
 	assert.Equal(t, "semantic_search_failed", outcome.reason)
 	require.Error(t, outcome.err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = tryAutomaticSearch(ctx, daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{})
+	_, err = tryAutomaticSearch(ctx, daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{}, "")
 	require.ErrorIs(t, err, context.Canceled)
 }
 

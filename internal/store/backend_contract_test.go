@@ -590,6 +590,10 @@ var backendSuites = []backendSuite{
 			checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newPostgresQueryStore)
 		}},
 	}},
+	{name: "search-validity", postgres: "native reads", scope: "Reads direct in-scope validity; declaration writes remain SQLite-only.", scenarios: []backendScenario{
+		{"SearchValidity", checkSearchValiditySQLite, checkSearchValidityPostgres},
+		{"SearchValiditySnapshot", nil, checkSearchValiditySnapshotPostgres},
+	}},
 	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; includes native image preparation; excludes ranked search.", scenarios: []backendScenario{
 		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
@@ -970,7 +974,7 @@ var backendSuites = []backendSuite{
 		{"AuditEnrollmentChangedPreview", nil, checkAuditEnrollmentChangedPreviewPostgres},
 		{"AuditEnrollmentPhotoReceipt", nil, checkAuditEnrollmentPhotoReceiptPostgres},
 	}},
-	{name: "documents", postgres: "native operations", scope: "Ordinary and audited creation, replacement, revert and moves; physical and photo effects.", scenarios: []backendScenario{
+	{name: "documents", postgres: "native operations", scope: "Ordinary and audited creation, replacement, revert and moves; retained validity metadata validation; physical and photo effects.", scenarios: []backendScenario{
 		{"DocumentWrites", func(t *testing.T) {
 			t.Helper()
 			checkDocumentWrites(t, newTestStore)
@@ -979,6 +983,7 @@ var backendSuites = []backendSuite{
 			checkDocumentWrites(t, newPostgresQueryStore)
 		}},
 		{"DocumentNegativeSize", nil, checkDocumentNegativeSizePostgres},
+		{"SupersessionMetadataGraphValidation", nil, checkSupersessionMetadataGraphValidationPostgres},
 		{"DocumentPhotoMaintenance", nil, checkDocumentPhotoMaintenancePostgres},
 		{"DocumentSidecarWork", nil, checkDocumentSidecarWorkPostgres},
 		{"DocumentTextSuppression", nil, checkDocumentTextSuppressionPostgres},

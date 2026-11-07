@@ -22,3 +22,12 @@ it("adds a matched excerpt only when given one", () => {
   const withExcerpt = render(ResultName, { name: "a.txt", folder: "/x", excerpt: "net 30 terms" });
   expect(withExcerpt.container.querySelector(".excerpt")?.textContent).toBe("net 30 terms");
 });
+
+it("only uses a validity tooltip when it adds information", () => {
+  const sameReason = render(ResultName, {
+    name: "lease-2024.pdf",
+    validityReason: "expired",
+  });
+  const reason = sameReason.container.querySelector(".validity-reason");
+  expect(reason?.getAttribute("title")).toBeNull();
+});

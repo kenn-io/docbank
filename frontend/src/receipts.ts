@@ -449,7 +449,7 @@ export function validateDocumentSearchReport(
     const receipt = reranking as Record<string, unknown>;
     if (
       !nonnegativeInteger(receipt.candidate_count) ||
-      Number(receipt.candidate_count) > resultValues.length ||
+      Number(receipt.candidate_count) > maxRetrievalCandidateLimit ||
       typeof receipt.outcome !== "string" ||
       (receipt.cause !== undefined && typeof receipt.cause !== "string")
     )

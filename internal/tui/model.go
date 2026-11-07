@@ -115,6 +115,7 @@ type row struct {
 	rank        int
 	excerpt     string
 	evidence    []string
+	validity    string
 	naturalMode string
 }
 
@@ -2216,7 +2217,7 @@ func hydrateNaturalRows(ctx context.Context, backend Backend, report api.Documen
 			}
 		}
 		rows = append(rows, row{node: node, path: pathValue, rank: rank,
-			excerpt: result.Excerpt, evidence: kinds, naturalMode: mode})
+			excerpt: result.Excerpt, evidence: kinds, validity: result.Validity.Reason(), naturalMode: mode})
 	}
 	return rows, nil
 }

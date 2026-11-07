@@ -548,6 +548,24 @@ See [Push a folder to another daemon](usage/pushing.md) for connection setup,
 source identity, version retention, import collections, traversal limits, and
 switching from a daemon-owned watch without re-uploading unchanged files.
 
+## docbank document validity
+
+```text
+docbank document supersede <path-or-id> --replaces <path-or-id> [--note <text>] [--remove]
+docbank document effective <path-or-id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--clear]
+docbank document validity <path-or-id> [--as-of YYYY-MM-DD] [--json]
+```
+
+Declare or remove a replacement, set or clear an inclusive effective window,
+and inspect a document's standing on a date. Select nodes by absolute virtual
+path or `id:<positive-decimal>`. `--remove` cannot be combined with `--note`;
+`--clear` cannot be combined with `--from` or `--to`. Without `--clear`, provide
+at least one date. Omit `--note` to keep an existing note, or pass
+`--note ""` to clear it. To remove a link or clear a window on a trashed file, select that file by ID; paths resolve only live nodes. Declaring a link requires both files to be live. `supersede` guards the predecessor's revision and names the predecessor in its receipt. Plain `validity` output includes
+each link's nonempty note after its node ID. `validity --json` prints the full
+validity response.
+See [Document validity](usage/organizing.md#document-validity).
+
 ## docbank document provenance
 
 ```
@@ -1181,8 +1199,10 @@ OK search count=1 query="renewal terms" mode=lexical degraded=false truncated=fa
 ### Processing search
 
 ```
-docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--explain] [--agent | --json]
+docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--as-of YYYY-MM-DD] [--explain] [--agent | --json]
 ```
+
+`--as-of YYYY-MM-DD` evaluates document validity on that date; omission uses today. Processing search ranks documents in force first before applying the result limit and shows reasons in the PATH column. Only live replacements within the search scope count. Automatic hybrid search accepts the same flag and returns an error if it cannot honor it. See [Search by effective date](usage/search.md#search-by-effective-date) for candidate bounds and ordinary lexical behavior.
 
 Searches retained processing results for the source versions you list. That set
 is the source fence: results come only from those versions. `--mode`, an

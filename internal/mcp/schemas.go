@@ -225,7 +225,7 @@ func findPeopleSchemas() (schema, schema) {
 func personSchemaProperties() schema {
 	return schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
-		"state": stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
+		schemaStateField: stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
 	}
 }
@@ -677,6 +677,24 @@ func searchCoverageSchema() schema {
 	}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
 }
 
+func calendarDateSchema() schema {
+	return schema{"type": "string", "format": "date", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+}
+
+func searchResultValiditySchema() schema {
+	successor := objectSchema(schema{
+		"node_id":        integerSchema(1, 0),
+		"path":           schema{"type": "string", "minLength": 2, "maxLength": maxPathCharacters, "pattern": "^/"},
+		"effective_from": calendarDateSchema(),
+	}, "node_id", "path")
+	return objectSchema(schema{
+		"state":          enumSchema("current", "superseded", "expired", "not_yet_effective"),
+		"superseded_by":  arraySchema(successor, 16),
+		"effective_from": calendarDateSchema(),
+		"effective_to":   calendarDateSchema(),
+	}, "state", "superseded_by")
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
@@ -685,6 +703,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
+	properties["as_of"] = calendarDateSchema()
 	properties["rerank"] = booleanSchema()
 	input := rootObjectSchema(properties, "query")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
@@ -692,6 +711,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
 	input["else"] = schema{"required": []string{"filters"}}
 	result := objectSchema(schema{
+		"validity":           searchResultValiditySchema(),
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
 		"rank":               integerSchema(1, 100),
@@ -702,6 +722,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
+		"as_of":                calendarDateSchema(),
 		"profile":              stringSchema(128),
 		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
