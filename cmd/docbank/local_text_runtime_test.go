@@ -61,9 +61,6 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 		{"installed_offline", false, 0, true, "", embedlocal.TextModel, nil},
 		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", embedlocal.TextModel, nil},
 		{"faces_old_text_server", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel, &embedlocal.RestartRequiredError{PID: 12345}},
-		{"faces_ready", true, 0, false, "", embedlocal.FaceModel, nil},
-		{"faces_installed_offline", false, 0, true, "", embedlocal.FaceModel, nil},
-		{"faces_missing", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}

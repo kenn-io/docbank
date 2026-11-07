@@ -355,6 +355,15 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				if assigned && decision.FaceOnly && decision.Action != faceDecisionReject {
 					continue
 				}
+				check := s.facePhotoQuery
+				if decision.FaceOnly {
+					check = s.currentFacePhotoQuery
+				}
+				if e := check(ctx, tx, occurrence.ContentVersionID); decision.FaceOnly && errors.Is(e, ErrNotFound) {
+					continue
+				} else if e != nil {
+					return e
+				}
 				activeOccurrences = append(activeOccurrences, occurrence)
 			}
 			occurrences = activeOccurrences
@@ -362,13 +371,6 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				return ErrNotFound
 			}
 			for _, o := range occurrences {
-				check := s.facePhotoQuery
-				if decision.FaceOnly {
-					check = s.currentFacePhotoQuery
-				}
-				if e := check(ctx, tx, o.ContentVersionID); e != nil {
-					return e
-				}
 				if e := requireFaceOccurrenceTx(ctx, tx, o); e != nil {
 					return e
 				}
