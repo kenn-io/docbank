@@ -478,6 +478,7 @@ func TestPhotoMetadataMatchDensity(t *testing.T) {
 
 type photoMetadataCountingQuerier struct {
 	rowQuerier
+
 	calls int
 }
 
