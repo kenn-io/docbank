@@ -377,7 +377,7 @@ export const suggestionTitle = (candidate: FaceCandidate) =>
   candidate.suggested_person_id ? `Is this ${candidate.display_name}?` : "Who is this?";
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 export const suggestionCounts = (faces: readonly FaceSuggestionFace[]) =>
-  `${plural(faces.length, "face")} · ${plural(new Set(faces.map((face) => face.photo_node_id)).size, "photo")}`;
+  `${plural(faces.length, "face")} · ${plural(new Set(faces.map((face) => face.preview.asset_id)).size, "photo")}`;
 
 // A review follows one group through face removals. removed holds the faces
 // taken out in this sheet, so a reread that still lists one cannot restore it;

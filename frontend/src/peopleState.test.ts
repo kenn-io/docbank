@@ -589,6 +589,11 @@ it("counts faces and photos and titles both questions", () => {
   expect(suggestionTitle(unnamed)).toBe("Who is this?");
   expect(suggestionCounts(isAda.faces)).toBe("3 faces · 2 photos");
   expect(suggestionCounts([f1])).toBe("1 face · 1 photo");
+  const pairedMember = candidateFace("face-raw", {
+    content_version_id: "version-raw",
+    preview: { ...f1.preview, content_version_id: "version-raw" },
+  });
+  expect(suggestionCounts([f1, pairedMember])).toBe("2 faces · 1 photo");
 });
 
 it("closes a review after a persisted face rejection", async () => {

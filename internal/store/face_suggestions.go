@@ -16,7 +16,6 @@ type FaceSuggestionFace struct {
 
 	PersonID        string             `json:"person_id,omitzero"`
 	PersonName      string             `json:"person_name,omitzero"`
-	PhotoNodeID     int64              `json:"photo_node_id"`
 	PhotoRecordedAt string             `json:"photo_recorded_at"`
 	Preview         *PersonFacePreview `json:"preview"`
 	Hidden          bool               `json:"hidden"`
@@ -58,14 +57,14 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID s
 		return nil, err
 	}
 	metadata := map[string]FaceSuggestionFace{}
-	rows, err = tx.QueryContext(ctx, `SELECT f.face_id,v.node_id,v.recorded_at,COALESCE(p.person_id,''),COALESCE(p.display_name,''),a.hidden_at IS NOT NULL FROM photo_faces f JOIN content_versions v ON v.version_id=f.content_version_id JOIN photo_files member ON member.node_id=v.node_id JOIN photo_assets a ON a.asset_id=member.asset_id LEFT JOIN person_document_assertions assertion ON assertion.assertion_id=f.assertion_id AND assertion.action='assert' LEFT JOIN persons p ON p.person_id=assertion.person_id AND p.state<>'retired' WHERE f.content_version_id IN (`+versions+`) ORDER BY f.face_id`, args...)
+	rows, err = tx.QueryContext(ctx, `SELECT f.face_id,v.recorded_at,COALESCE(p.person_id,''),COALESCE(p.display_name,''),a.hidden_at IS NOT NULL FROM photo_faces f JOIN content_versions v ON v.version_id=f.content_version_id JOIN photo_files member ON member.node_id=v.node_id JOIN photo_assets a ON a.asset_id=member.asset_id LEFT JOIN person_document_assertions assertion ON assertion.assertion_id=f.assertion_id AND assertion.action='assert' LEFT JOIN persons p ON p.person_id=assertion.person_id AND p.state<>'retired' WHERE f.content_version_id IN (`+versions+`) ORDER BY f.face_id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	for rows.Next() {
 		var face FaceSuggestionFace
-		if err := rows.Scan(&face.FaceID, &face.PhotoNodeID, &face.PhotoRecordedAt, &face.PersonID, &face.PersonName, &face.Hidden); err != nil {
+		if err := rows.Scan(&face.FaceID, &face.PhotoRecordedAt, &face.PersonID, &face.PersonName, &face.Hidden); err != nil {
 			return nil, err
 		}
 		metadata[face.FaceID] = face
@@ -243,7 +242,7 @@ func (s *Store) FaceCandidates(ctx context.Context, limit, offset int) ([]FaceCa
 					continue
 				}
 				face := FaceSuggestionFace{PhotoFace: f, Preview: &PersonFacePreview{ContentVersionID: o.ContentVersionID, Box: new(f.Box)}}
-				if err := tx.QueryRowContext(ctx, `SELECT cv.node_id,cv.recorded_at,pf.asset_id,pf.rotation,(a.hidden_at IS NOT NULL) FROM content_versions cv JOIN photo_files pf ON pf.node_id=cv.node_id JOIN photo_assets a ON a.asset_id=pf.asset_id WHERE cv.version_id=$1`, o.ContentVersionID).Scan(&face.PhotoNodeID, &face.PhotoRecordedAt, &face.Preview.AssetID, &face.Preview.Rotation, &face.Hidden); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT cv.recorded_at,pf.asset_id,pf.rotation,(a.hidden_at IS NOT NULL) FROM content_versions cv JOIN photo_files pf ON pf.node_id=cv.node_id JOIN photo_assets a ON a.asset_id=pf.asset_id WHERE cv.version_id=$1`, o.ContentVersionID).Scan(&face.PhotoRecordedAt, &face.Preview.AssetID, &face.Preview.Rotation, &face.Hidden); err != nil {
 					return err
 				}
 				preview, err := visualPreviewGenerationByRecipeTx(ctx, tx, o.ContentVersionID, quality.GridRecipe)

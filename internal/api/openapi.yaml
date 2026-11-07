@@ -7360,9 +7360,6 @@ components:
           type: string
         person_name:
           type: string
-        photo_node_id:
-          format: int64
-          type: integer
         photo_recorded_at:
           type: string
         preview:
@@ -7385,7 +7382,6 @@ components:
             - boolean
             - "null"
       required:
-        - photo_node_id
         - photo_recorded_at
         - preview
         - hidden

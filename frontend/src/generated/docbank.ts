@@ -3325,7 +3325,6 @@ export interface FaceSuggestionFace {
   hidden: boolean;
   person_id?: string;
   person_name?: string;
-  photo_node_id: number;
   photo_recorded_at: string;
   preview: PersonFacePreview;
   /** @maxItems 1000 */
