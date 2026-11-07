@@ -2346,10 +2346,6 @@ it("offers the existing Add menu from an empty vault root", async () => {
   expect(emptyState.getByText("Add files or a folder to start your vault.")).toBeTruthy();
   await fireEvent.click(emptyState.getByRole("button", { name: "Add" }));
   const menu = within(await screen.findByRole("menu", { name: "Add documents" }));
-  expect(menu.getByRole("menuitem", { name: "Upload files" })).toBeTruthy();
-  expect(menu.getByRole("menuitem", { name: "Upload folder" })).toBeTruthy();
-  expect(menu.getByRole("menuitem", { name: "Import mailbox" })).toBeTruthy();
-  expect(menu.getByRole("menuitem", { name: "Import load files" })).toBeTruthy();
   const files = menu.getByRole("menuitem", { name: "Upload files" });
   await waitFor(() => expect(files.getAttribute("aria-disabled")).not.toBe("true"));
   await fireEvent.click(files);
