@@ -159,6 +159,7 @@ type Service struct {
 
 	faceSuggestionsMu        sync.Mutex
 	faceSuggestionsSignature string
+	faceSuggestionsPending   *faceSuggestionPass
 }
 
 type mediaOriginObservation struct {

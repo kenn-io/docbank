@@ -181,6 +181,7 @@ func (s *Store) FaceCandidates(ctx context.Context, limit, offset int) ([]FaceCa
 			locked = 1
 		}
 		args := []any{1, locked, locked}
+		visible += ` AND EXISTS(SELECT 1 FROM person_candidate_faces e JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id JOIN content_versions cv ON cv.version_id=f.content_version_id JOIN nodes n ON n.id=cv.node_id JOIN photo_files pf ON pf.node_id=n.id JOIN photo_assets a ON a.asset_id=pf.asset_id WHERE e.candidate_id=person_match_candidates.candidate_id AND f.assertion_id IS NULL AND a.kind='photo' AND a.excluded_at IS NULL AND ` + currentPhotoSourcePredicate("pf", "n", "f.content_version_id") + `)`
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open' AND reason='face_match' AND `+visible, args...).Scan(&total); err != nil {
 			return err
 		}

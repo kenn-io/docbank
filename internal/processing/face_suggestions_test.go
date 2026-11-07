@@ -1,11 +1,13 @@
 package processing
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
@@ -23,7 +25,7 @@ func TestFaceSuggestionsMatchClusterAndMask(t *testing.T) {
 	b := face("00000000-0000-4000-8000-000000000002", []float32{.8, .6})
 	c := face("00000000-0000-4000-8000-000000000003", []float32{-1, 0})
 	d := face("00000000-0000-4000-8000-000000000004", []float32{-.8, -.6})
-	suggestions, err := buildFaceSuggestions([]faceVector{d, c, b, a})
+	suggestions, err := buildFaceSuggestions(t.Context(), []faceVector{d, c, b, a})
 	require.NoError(t, err)
 	require.Len(t, suggestions, 2)
 	require.Equal(t, a.Face.PersonID, suggestions[0].SuggestedPersonID)
@@ -32,7 +34,7 @@ func TestFaceSuggestionsMatchClusterAndMask(t *testing.T) {
 	require.EqualValues(t, 2, suggestions[1].OccurrenceCount)
 	b.Face.RejectedPersonIDs = []string{a.Face.PersonID}
 	c.Face.Dismissed = true
-	suggestions, err = buildFaceSuggestions([]faceVector{a, b, c, d})
+	suggestions, err = buildFaceSuggestions(t.Context(), []faceVector{a, b, c, d})
 	require.NoError(t, err)
 	require.Empty(t, suggestions)
 }
@@ -43,7 +45,7 @@ func TestFaceSuggestionEvidenceSplitRetainsLastPair(t *testing.T) {
 	for i := range 49 {
 		vectors = append(vectors, faceVector{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), ContentVersionID: "00000000-0000-4000-8000-000000000100"}}, Space: "model", Values: []float32{1, 0}})
 	}
-	suggestions, err := buildFaceSuggestions(vectors)
+	suggestions, err := buildFaceSuggestions(t.Context(), vectors)
 	require.NoError(t, err)
 	require.Len(t, suggestions, 2)
 	require.EqualValues(t, 47, suggestions[0].OccurrenceCount)
@@ -57,13 +59,13 @@ func TestFaceSuggestionCentroidAndActiveAssignment(t *testing.T) {
 		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000002", ContentVersionID: id, AssertionID: "named"}, PersonID: id, PersonName: "Ada"}, Space: "model", Values: []float32{.6, -.8}},
 		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000003", ContentVersionID: id}}, Space: "model", Values: []float32{1, 0}},
 	}
-	suggestions, err := buildFaceSuggestions(vectors)
+	suggestions, err := buildFaceSuggestions(t.Context(), vectors)
 	require.NoError(t, err)
 	require.Len(t, suggestions, 1)
 	require.Equal(t, id, suggestions[0].SuggestedPersonID)
 	vectors[0].Face.PersonID = ""
 	vectors[1].Face.PersonID = ""
-	suggestions, err = buildFaceSuggestions(vectors)
+	suggestions, err = buildFaceSuggestions(t.Context(), vectors)
 	require.NoError(t, err)
 	require.Empty(t, suggestions, "retired people's labels must not become centroids")
 }
@@ -89,11 +91,45 @@ func BenchmarkFaceSuggestionsDistinct(b *testing.B) {
 			}
 			b.ResetTimer()
 			for b.Loop() {
-				_, err := buildFaceSuggestions(vectors)
-				if err != nil {
-					b.Fatal(err)
+				pass := newFaceSuggestionPass(vectors)
+				batches := 0
+				var longest time.Duration
+				for {
+					start := time.Now()
+					done, err := pass.advance(b.Context(), faceSuggestionComparisonBatch)
+					longest = max(longest, time.Since(start))
+					batches++
+					if err != nil {
+						b.Fatal(err)
+					}
+					if done {
+						break
+					}
 				}
+				b.ReportMetric(float64(batches), "batches/op")
+				b.ReportMetric(float64(longest.Microseconds())/1000, "max-batch-ms")
 			}
 		})
+	}
+}
+
+func TestFaceSuggestionsHonorCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := buildFaceSuggestions(ctx, []faceVector{{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000001"}}, Space: "model", Values: []float32{1, 0}}})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func buildFaceSuggestions(ctx context.Context, vectors []faceVector) ([]store.PersonMatchCandidate, error) {
+	pass := newFaceSuggestionPass(vectors)
+	for {
+		done, err := pass.advance(ctx, 1)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return pass.candidates()
+		}
 	}
 }
