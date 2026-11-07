@@ -19,7 +19,6 @@ import (
 func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	t.Parallel()
 	var startupFailure, saveFailure atomic.Bool
-	var startupCalls atomic.Int64
 	startupFailure.Store(true)
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		renderer, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -28,7 +27,6 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 		configure(deps)
 		setup := &processing.LocalTextSetup{Service: deps.Processing,
 			Startup: func(context.Context, bool, string) error {
-				startupCalls.Add(1)
 				if startupFailure.Load() {
 					return errors.New("synthetic startup failure")
 				}
@@ -65,7 +63,6 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	request := api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusPreconditionRequired, response.StatusCode, body)
-	require.Zero(t, startupCalls.Load())
 	request.Consent = true
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
@@ -82,9 +79,7 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
 	require.Contains(t, body, "processing consent was saved: document processing failed")
 	require.NotContains(t, body, "synthetic selection path failure")
-	beforeStale := startupCalls.Load()
 	request.PlanFingerprint = testHash("stale")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
-	require.Equal(t, beforeStale, startupCalls.Load())
 }

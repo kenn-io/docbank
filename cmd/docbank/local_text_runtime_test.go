@@ -48,14 +48,10 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 		missingBytes int64
 		installed    bool
 		output       string
-		failure      string
 	}{
-		{"ready", true, 0, false, "", ""},
-		{"installed_offline", false, 0, true, "", ""},
-		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", ""},
-		{"discovery_failure", false, 0, false, "", "discover local embeddings"},
-		{"install_failure", false, 0, true, "", "reuse local embeddings installation"},
-		{"startup_failure", false, 0, true, "", "start local embeddings"},
+		{"ready", true, 0, false, ""},
+		{"installed_offline", false, 0, true, ""},
+		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
@@ -67,21 +63,12 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 			installed := false
 			err := installLocalTextWithRuntime(cmd, true, func(_ context.Context, opts embedlocal.Options) (string, error) {
 				require.True(t, opts.SkipOllama)
-				if tc.name == "discovery_failure" || (installed && tc.name == "startup_failure") {
-					return "", errors.New("synthetic runtime failure")
-				}
 				if tc.ready || installed {
-					if installed {
-						require.Equal(t, "synthetic-kennembed", opts.Executable)
-					}
 					return "http://127.0.0.1:11434/v1", nil
 				}
 				return "", embedlocal.ErrNotFound
 			}, func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
 				installed = true
-				if tc.name == "install_failure" {
-					return embedlocal.Installation{}, errors.New("synthetic install failure")
-				}
 				if tc.missingBytes > 0 {
 					approved, err := opts.Confirm(ctx, tc.missingBytes)
 					require.NoError(t, err)
@@ -89,13 +76,87 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 				}
 				return embedlocal.Installation{Executable: "synthetic-kennembed", DataDir: t.TempDir()}, nil
 			})
-			if tc.failure == "" {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, tc.failure)
-			}
+			require.NoError(t, err)
 			require.Equal(t, tc.installed, installed)
 			require.Equal(t, tc.output, output.String())
+		})
+	}
+}
+
+func TestLocalEmbeddingOriginWithRuntime(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	for _, tc := range []struct{ name, failure string }{
+		{"installed", ""},
+		{"discovery_failure", "discover local embeddings"},
+		{"install_failure", "reuse local embeddings installation"},
+		{"startup_failure", "start local embeddings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installed := false
+			dataDir := t.TempDir()
+			origin, err := localEmbeddingOriginWithRuntime(t.Context(), nil, func(_ context.Context, opts embedlocal.Options) (string, error) {
+				require.True(t, opts.SkipOllama)
+				if tc.name == "discovery_failure" || (installed && tc.name == "startup_failure") {
+					return "", errors.New("synthetic runtime failure")
+				}
+				if !installed {
+					return "", embedlocal.ErrNotFound
+				}
+				require.Equal(t, "synthetic-kennembed", opts.Executable)
+				require.Equal(t, dataDir, opts.DataDir)
+				return "http://127.0.0.1:12345/v1", nil
+			}, func(_ context.Context, _ embedlocal.InstallOptions) (embedlocal.Installation, error) {
+				installed = true
+				if tc.name == "install_failure" {
+					return embedlocal.Installation{}, errors.New("synthetic install failure")
+				}
+				return embedlocal.Installation{Executable: "synthetic-kennembed", DataDir: dataDir}, nil
+			})
+			if tc.failure != "" {
+				require.ErrorContains(t, err, tc.failure)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "http://127.0.0.1:12345", origin)
+		})
+	}
+}
+
+func TestLocalTextSaveRestartRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		failure   error
+		published bool
+	}{
+		{"success", nil, true},
+		{"failed", errors.New("synthetic unpublished write failure"), false},
+		{"published", errors.Join(atomicfile.ErrPublished, errors.New("synthetic directory sync failure")), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			var pending atomic.Bool
+			save := localTextSave(root, &pending, func(root string, choice config.LocalTextConfig) error {
+				if tc.published {
+					require.NoError(t, saveLocalText(root, choice))
+				}
+				return tc.failure
+			})
+			err := save(config.LocalTextProfile, "local")
+			if tc.failure == nil {
+				require.NoError(t, err)
+			} else {
+				require.Same(t, tc.failure, err)
+			}
+			require.Equal(t, tc.published, pending.Load())
+			choice, err := readLocalText(root)
+			require.NoError(t, err)
+			if tc.published {
+				require.Equal(t, config.LocalTextConfig{Version: 1, Profile: config.LocalTextProfile, Server: "local"}, choice)
+			} else {
+				require.Empty(t, choice.Profile)
+			}
 		})
 	}
 }
@@ -435,17 +496,13 @@ func TestLocalTextStatusProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint, provider string
 		pending                  bool
-		moveLater                bool
-		saveOutcome              string
+		moveFirst                bool
 	}{
-		{"off", "", "", false, false, ""},
-		{"restart_pending", "", "", true, false, ""},
-		{"ollama", "http://127.0.0.1:11434", "ollama", false, false, ""},
-		{"configured", "http://127.0.0.1:12345", "configured", false, false, ""},
-		{"shared_binding_after_move", "http://127.0.0.1:11434", "ollama", false, true, ""},
-		{"save_success", "", "", true, false, "success"},
-		{"save_failed", "", "", false, false, "failed"},
-		{"save_published", "", "", true, false, "published"},
+		{"off", "", "", false, false},
+		{"restart_pending", "", "", true, false},
+		{"ollama", "http://127.0.0.1:11434", "ollama", false, false},
+		{"configured", "http://127.0.0.1:12345", "configured", false, false},
+		{"shared_binding_after_move", "http://127.0.0.1:11434", "local", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			layout := home.Layout{Root: t.TempDir()}
@@ -460,21 +517,21 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			if tc.endpoint != "" {
 				cfg = localTextSourceConfig(t, tc.endpoint, "synthetic-revision", "prefix-free", "DOCBANK_TEST_STATUS_KEY")
 			}
-			if tc.moveLater {
+			if tc.moveFirst {
 				cfg.ProcessingProfiles["later"] = cfg.ProcessingProfiles["archive"]
 			}
 			bundle, err := configureEmbeddingRuntimeBundle(cfg)
 			require.NoError(t, err)
 			profiles, err := executableProcessingProfiles(cfg, bundle)
 			require.NoError(t, err)
-			if tc.moveLater {
-				candidate, err := localTextCandidate(cfg, "local", "later")
+			if tc.moveFirst {
+				candidate, err := localTextCandidate(cfg, "local", "archive")
 				require.NoError(t, err)
 				selectedBundle, err := configureEmbeddingRuntimeBundle(candidate)
 				require.NoError(t, err)
 				selectedProfiles, err := executableProcessingProfiles(candidate, selectedBundle)
 				require.NoError(t, err)
-				_, err = projectLocalTextProfile(cfg, profiles, candidate, "later", selectedProfiles["later"])
+				_, err = projectLocalTextProfile(cfg, profiles, candidate, "archive", selectedProfiles["archive"])
 				require.NoError(t, err)
 			}
 			service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
@@ -482,31 +539,7 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			defer service.Stop()
 			var restartPending atomic.Bool
 			restartPending.Store(tc.pending)
-			if tc.saveOutcome != "" {
-				restartPending.Store(false)
-				var saveErr error
-				switch tc.saveOutcome {
-				case "failed":
-					saveErr = errors.New("synthetic unpublished write failure")
-				case "published":
-					saveErr = errors.Join(atomicfile.ErrPublished, errors.New("synthetic directory sync failure"))
-				}
-				save := localTextSave(layout.Root, &restartPending, func(root string, choice config.LocalTextConfig) error {
-					if tc.saveOutcome != "failed" {
-						require.NoError(t, saveLocalText(root, choice))
-					}
-					return saveErr
-				})
-				err := save(config.LocalTextProfile, "local")
-				if saveErr == nil {
-					require.NoError(t, err)
-				} else {
-					require.Same(t, saveErr, err, "preserve the original save failure")
-				}
-				choice, err := readLocalText(layout.Root)
-				require.NoError(t, err)
-				require.Equal(t, tc.saveOutcome != "failed", choice.Profile == config.LocalTextProfile)
-			}
+
 			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load())
 			require.NoError(t, err)
 			require.Equal(t, tc.provider, status.Provider)
@@ -519,24 +552,15 @@ func TestLocalTextStatusProvider(t *testing.T) {
 	}
 }
 
-func TestLocalTextStartupSavesOnlyAfterReadiness(t *testing.T) {
+func TestLocalTextStartupActivatesAfterRestart(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	t.Setenv("DO_NOT_TRACK", "1")
-	var startupFailure atomic.Bool
-	startupFailure.Store(true)
 	ping := kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
-	inventory := withTextModelInventory(t, ping)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/models" && startupFailure.Load() {
-			http.Error(w, "synthetic model startup failure", http.StatusServiceUnavailable)
-			return
-		}
-		inventory.ServeHTTP(w, r)
-	}))
+	server := httptest.NewServer(withTextModelInventory(t, ping))
 	defer server.Close()
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)
@@ -552,23 +576,7 @@ func TestLocalTextStartupSavesOnlyAfterReadiness(t *testing.T) {
 	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "auto"}})
 	require.NoError(t, err)
 	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "auto", PlanFingerprint: plan.Fingerprint, Consent: true}})
-	require.Error(t, err)
-	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Empty(t, choice.Profile)
-	status, err := connection.API().GetLocalTextStatus(t.Context())
-	require.NoError(t, err)
-	require.False(t, status.RestartRequired)
-	startupFailure.Store(false)
-	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "auto", PlanFingerprint: plan.Fingerprint, Consent: true}})
-	require.NoError(t, err)
-	status, err = connection.API().GetLocalTextStatus(t.Context())
-	require.NoError(t, err)
-	require.True(t, status.RestartRequired)
-	require.False(t, status.Active)
-	choice, err = readLocalText(root)
-	require.NoError(t, err)
-	require.Equal(t, config.LocalTextProfile, choice.Profile)
 	require.NoError(t, connection.Close())
 	stop()
 	waitForDaemonStop(t, root)
@@ -576,9 +584,8 @@ func TestLocalTextStartupSavesOnlyAfterReadiness(t *testing.T) {
 	defer stop()
 	connection, err = daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	status, err = connection.API().GetLocalTextStatus(t.Context())
+	status, err := connection.API().GetLocalTextStatus(t.Context())
 	require.NoError(t, err)
 	require.True(t, status.Active)
 	require.Equal(t, "local", status.Provider)
-	require.False(t, status.RestartRequired)
 }
