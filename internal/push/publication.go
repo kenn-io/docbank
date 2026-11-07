@@ -201,8 +201,16 @@ func (p *publicationPublisher) process(ctx context.Context, file ingest.FolderFi
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	err := p.publish(ctx, file)
-	if err != nil {
-		p.failed = true
+	if err == nil {
+		return nil
+	}
+	p.failed = true
+	code, _ := daemonconn.ProblemCode(err)
+	if source, ok := errors.AsType[*publicationSourceError](err); ok {
+		code = source.Code
+	}
+	if ctx.Err() == nil && !publicationStopsRun(err) && (code == "published_source_diverged" || code == "note_source_unavailable") {
+		return p.rejectLocked(file.Ref, err)
 	}
 	return err
 }
@@ -215,8 +223,13 @@ func (p *publicationPublisher) publish(ctx context.Context, file ingest.FolderFi
 		return err
 	}
 	source, known := p.sources[file.Ref]
-	if known && source.Conflict != "" && source.Recovery == nil {
-		return fmt.Errorf("publication source %q conflicts with archive: %s", file.Ref, source.Conflict)
+	if known {
+		if source.Availability == "unavailable" {
+			return &publicationSourceError{Code: "note_source_unavailable"}
+		}
+		if source.Conflict != "" && source.Recovery == nil {
+			return &publicationSourceError{Code: "published_source_diverged"}
+		}
 	}
 	if known && source.Recovery == nil && source.Availability == "retained" && source.Identity.Hash == digest && source.Identity.Size == file.Info.Size() {
 		return p.queueSeen(ctx, source.Identity)
@@ -287,6 +300,9 @@ func (p *publicationPublisher) publish(ctx context.Context, file ingest.FolderFi
 func (p *publicationPublisher) reject(_ context.Context, ref string, err error) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.rejectLocked(ref, err)
+}
+func (p *publicationPublisher) rejectLocked(ref string, err error) error {
 	p.failed = true
 	p.report.Failed++
 	if p.opts.Failure != nil {
@@ -436,11 +452,15 @@ func (p *publicationPublisher) recoverUncertain(ctx context.Context, ref string,
 		return api.NotePublicationSource{}, err
 	}
 	source := p.sources[ref]
-	if source.Conflict != "" && source.Recovery == nil {
-		return source, fmt.Errorf("publication source conflict: %s", source.Conflict)
-	}
 	if source.Availability == "unavailable" {
-		return source, errors.New("published note source is unavailable")
+		return source, &publicationSourceError{Code: "note_source_unavailable"}
+	}
+	if source.Conflict != "" && source.Recovery == nil {
+		return source, &publicationSourceError{Code: "published_source_diverged"}
 	}
 	return source, nil
 }
+
+type publicationSourceError struct{ Code string }
+
+func (e *publicationSourceError) Error() string { return e.Code }
