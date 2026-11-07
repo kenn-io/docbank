@@ -74,11 +74,12 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	byVersion := map[string][]FaceSuggestionFace{}
+	byVersion := map[string][]PhotoFace{}
 	for _, face := range faces {
 		f := metadata[face.FaceID]
 		f.PhotoFace = face
-		byVersion[face.ContentVersionID] = append(byVersion[face.ContentVersionID], f)
+		metadata[face.FaceID] = f
+		byVersion[face.ContentVersionID] = append(byVersion[face.ContentVersionID], face)
 	}
 	encoded, err := json.Marshal(ids)
 	if err != nil {
@@ -180,18 +181,12 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 		if err := validateFaceEmbeddingGeneration(g, r.BindingID); err != nil {
 			return nil, err
 		}
-		current := byVersion[r.ContentVersionID]
-		eligible := len(current) == len(g.Inputs) && a.attached
-		if eligible {
-			for i, face := range current {
-				if g.Inputs[i].ID != face.FaceID || g.Inputs[i].RenderedChecksum != FaceEmbeddingChecksum(g.GenerationChecksum, face.PhotoFace) {
-					eligible = false
-					break
-				}
+		if a.attached {
+			item := FaceSuggestionSet{Set: r}
+			for _, face := range byVersion[r.ContentVersionID] {
+				item.Faces = append(item.Faces, metadata[face.FaceID])
 			}
-		}
-		if eligible {
-			result = append(result, FaceSuggestionSet{Set: r, Faces: current})
+			result = append(result, item)
 		}
 	}
 	versionIDs := make([]string, 0, len(result))
@@ -220,7 +215,7 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 	}
 	return slices.DeleteFunc(result, func(item FaceSuggestionSet) bool {
 		preview, found := previews[item.Set.ContentVersionID]
-		return !found || preview.Checksum != item.Set.InputGeneration.EvidenceFingerprint || preview.Preview.State != document.VisualPreviewReady
+		return !found || !faceEmbeddingPreviewCurrent(item.Set.InputGeneration, byVersion[item.Set.ContentVersionID], preview)
 	}), nil
 }
 

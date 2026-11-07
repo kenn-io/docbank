@@ -464,23 +464,21 @@ func invokeProcessingTool(
 }
 
 func TestProcessingPlanSchemaAcceptsEmbeddingInputClass(t *testing.T) {
-	for _, kind := range []string{"image", "face"} {
+	for _, kind := range []string{"image", "face", "unknown"} {
 		t.Run(kind, func(t *testing.T) {
 			plan := syntheticProcessingPlan(testProcessingPlanFingerprint)
-			plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "image", TrustBoundary: "local_process", InputClasses: []string{kind}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
+			plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: kind, TrustBoundary: "local_process", InputClasses: []string{kind}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
 			validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))["get_processing_plan"].OutputSchema)
 			raw, err := json.Marshal(plan)
 			require.NoError(t, err)
 			var value map[string]any
 			require.NoError(t, json.Unmarshal(raw, &value))
 			value["ttlMs"], value["cacheScope"] = 0, "private"
-			require.NoError(t, validator.Validate(&value))
-			plan.Flow[0].InputClasses = []string{"unknown"}
-			raw, err = json.Marshal(plan)
-			require.NoError(t, err)
-			require.NoError(t, json.Unmarshal(raw, &value))
-			value["ttlMs"], value["cacheScope"] = 0, "private"
-			require.Error(t, validator.Validate(&value))
+			if kind == "unknown" {
+				require.Error(t, validator.Validate(&value))
+			} else {
+				require.NoError(t, validator.Validate(&value))
+			}
 		})
 	}
 }

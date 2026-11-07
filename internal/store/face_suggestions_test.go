@@ -493,8 +493,10 @@ func TestFaceSnapshotPublicationSkipsRetiredTarget(t *testing.T) {
 	pair := faceCandidatePair(t, s)
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	named := pair.group
-	named.SuggestedPersonID = person.PersonID
+	face, _, err := s.CreatePhotoFace(ctx, pair.node.CurrentVersionID, uuid.New().String(), document.FaceBox{Y: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	named, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, person.PersonID, person.DisplayName)
+	require.NoError(t, err)
 	_, err = s.RetirePerson(ctx, person.PersonID, person.Revision)
 	require.NoError(t, err)
 	require.NoError(t, s.ReplaceFaceSuggestions(ctx, []PersonMatchCandidate{named, pair.group}))

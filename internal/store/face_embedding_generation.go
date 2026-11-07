@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"reflect"
 
 	"go.kenn.io/docbank/document"
 )
@@ -47,13 +46,6 @@ func validateFaceEmbeddingPreviewTx(ctx context.Context, tx metadataQuerier, g E
 	if err != nil {
 		return err
 	}
-	refs := make([]EmbeddingInputReference, len(faces))
-	for i, f := range faces {
-		refs[i] = EmbeddingInputReference{ID: f.FaceID, RenderedChecksum: FaceEmbeddingChecksum(g.GenerationChecksum, f)}
-	}
-	if !reflect.DeepEqual(refs, g.Inputs) {
-		return ErrEmbeddingJobFenced
-	}
 	quality, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return err
@@ -62,10 +54,22 @@ func validateFaceEmbeddingPreviewTx(ctx context.Context, tx metadataQuerier, g E
 	if err != nil {
 		return err
 	}
-	if preview.Checksum != g.EvidenceFingerprint || preview.Preview.State != document.VisualPreviewReady {
+	if !faceEmbeddingPreviewCurrent(g, faces, preview) {
 		return ErrEmbeddingJobFenced
 	}
 	return nil
+}
+
+func faceEmbeddingPreviewCurrent(g EmbeddingInputGenerationRecord, faces []PhotoFace, preview VisualPreviewGeneration) bool {
+	if len(faces) != len(g.Inputs) || preview.Checksum != g.EvidenceFingerprint || preview.Preview.State != document.VisualPreviewReady {
+		return false
+	}
+	for i, face := range faces {
+		if g.Inputs[i].ID != face.FaceID || g.Inputs[i].RenderedChecksum != FaceEmbeddingChecksum(g.GenerationChecksum, face) {
+			return false
+		}
+	}
+	return true
 }
 
 func liveFaceEmbeddingSource(ctx context.Context, tx metadataQuerier, version string) error {

@@ -79,7 +79,7 @@ func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 }
 
-func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {
+func TestFaceCandidateLinkHonorsHiddenPeopleScope(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -100,16 +100,11 @@ func TestFaceCandidateLinkFencesTargetAfterHiddenLocks(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", browser, map[string]string{"passcode": "synthetic-passcode"})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	browser["Cookie"] = response.Cookies()[0].String()
-	response, body = get(t, ts, "/api/v1/people/face-candidates", browser)
+	response, body := get(t, ts, "/api/v1/people/face-candidates", browser)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.FaceCandidatePage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Len(t, page.Items, 1)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", browser, map[string]string{})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	browser["If-Match"] = `"1"`
 	path := "/api/v1/people/face-candidates/" + page.Items[0].CandidateID + "/decision"
 	request := api.FaceCandidateDecisionRequest{Action: "link", PersonID: person.PersonID}

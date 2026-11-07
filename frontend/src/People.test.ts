@@ -421,13 +421,18 @@ it("renders retry and show-more controls for suggestions", async () => {
   await cache.dispose();
 });
 
-it("removes a face from an Is this X? group", async () => {
-  const { region, people, done } = await renderSuggestions([isAda]);
+it.each([
+  { label: "Is this Ada?", candidate: isAda, button: "Not Ada: face 2", face: f2 },
+  { label: "Who is this?", candidate: unnamed, button: "Skip face 1", face: f1 },
+])("removes a face from a $label group", async ({ label, candidate, button, face }) => {
+  const { region, people, done } = await renderSuggestions([candidate]);
   const remove = vi.spyOn(people.suggestions, "removeFace").mockResolvedValue(true);
-  await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
-  const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada: face 2" }));
-  expect(remove).toHaveBeenCalledExactlyOnceWith(f2);
+  await fireEvent.click(
+    within(region).getByRole("button", { name: new RegExp(label.replace("?", "\\?")) }),
+  );
+  const dialog = screen.getByRole("dialog", { name: label });
+  await fireEvent.click(within(dialog).getByRole("button", { name: button }));
+  expect(remove).toHaveBeenCalledExactlyOnceWith(face);
   await done();
 });
 
@@ -462,16 +467,6 @@ it("shows a spinner for each review crop until it loads or fails", async () => {
     expect(within(dialog).queryByRole("status", { name: "Loading face" })).toBeNull(),
   );
   expect(dialog.querySelectorAll(".lucide-user")).toHaveLength(1);
-  await done();
-});
-
-it("skips a face from a Who is this? group", async () => {
-  const { region, people, done } = await renderSuggestions([unnamed]);
-  const remove = vi.spyOn(people.suggestions, "removeFace");
-  await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
-  const dialog = screen.getByRole("dialog", { name: "Who is this?" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Skip face 1" }));
-  expect(remove).toHaveBeenCalledExactlyOnceWith(f1);
   await done();
 });
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"image/color"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/localface"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -600,6 +602,8 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 	}{
 		{"trashed photo", `UPDATE nodes SET trashed_at='2026-01-02T00:00:00Z' WHERE kind='file'`, false},
 		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`, false},
+		{"changed box", `UPDATE photo_faces SET width=width+0.01`, false},
+		{"replaced preview", "", false},
 		{"invalid generation", `UPDATE embedding_input_generations SET chunk_policy_fingerprint='` + workerHash("invalid policy") + `'`, true},
 		{"input count", `UPDATE embedding_input_generations SET input_count=input_count+1`, true},
 		{"vector manifest", `UPDATE embedding_vector_sets SET manifest_checksum='` + workerHash("invalid manifest") + `'`, true},
@@ -623,9 +627,25 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 				_, err = db.ExecContext(ctx, "DROP TRIGGER "+table+"_immutable_update")
 				require.NoError(t, err)
 			}
-			for statement := range strings.SplitSeq(tc.damage, ";") {
-				_, err = db.ExecContext(ctx, statement)
+			if tc.name == "replaced preview" {
+				// Regenerate the purged preview while retaining the earlier face vectors.
+				_, err = db.ExecContext(ctx, `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`)
 				require.NoError(t, err)
+				written, err := x.f.blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.JPEG(8, 8, color.Black)))
+				require.NoError(t, err)
+				canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+					ContractVersion: document.VisualPreviewContractV1, SourceSHA256: x.f.written.Hash,
+					Recipe: x.f.recipe, State: document.VisualPreviewReady,
+					Output: &document.VisualPreviewOutputV1{BlobSHA256: written.Hash, Size: written.Size, MediaType: "image/jpeg", Width: 8, Height: 8},
+				})
+				require.NoError(t, err)
+				_, err = x.f.catalog.PublishVisualPreviewGeneration(ctx, x.f.node.CurrentVersionID, canonical, new(processingBlobPhysical(t, written)))
+				require.NoError(t, err)
+			} else {
+				for statement := range strings.SplitSeq(tc.damage, ";") {
+					_, err = db.ExecContext(ctx, statement)
+					require.NoError(t, err)
+				}
 			}
 			reopened, err := store.Open(ctx, x.f.databasePath)
 			require.NoError(t, err)
@@ -638,7 +658,13 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 				assert.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
 			} else {
 				require.NoError(t, err)
-				require.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
+				assert.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
+				set := before.Sets[0].Set
+				err = reopened.PublishEmbeddingHead(ctx, store.EmbeddingHeadRecord{
+					FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},
+					SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: set.ProcessingProfileFingerprint, PublishedAt: set.CreatedAt,
+				})
+				require.Error(t, err, "publication must fence the same stale face or preview evidence")
 			}
 		})
 	}

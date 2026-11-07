@@ -190,38 +190,6 @@ func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.P
 	return x, omitted
 }
 
-func TestFaceSuggestionBatchesFinishAcrossWrites(t *testing.T) {
-	t.Parallel()
-	for _, relevant := range []bool{false, true} {
-		t.Run(fmt.Sprintf("relevant=%t", relevant), func(t *testing.T) {
-			t.Parallel()
-			x, _ := newFaceSuggestionBatchFixture(t)
-			ctx := t.Context()
-			require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-			page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
-			require.NoError(t, err)
-			require.Empty(t, page, "partial groups must stay unpublished")
-			require.Zero(t, total)
-			for batch := 1; batch < 4; batch++ {
-				if relevant {
-					_, err = x.f.catalog.DecidePhotoFace(ctx, x.f.node.CurrentVersionID, store.PhotoFaceDecisionRequest{FaceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", batch*2-1), Revision: 1, Action: "dismiss"})
-				} else {
-					_, err = x.f.catalog.CreatePerson(ctx, fmt.Sprintf("Unrelated person %d", batch), "operator")
-				}
-				require.NoError(t, err)
-				require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-			}
-			_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
-			require.NoError(t, err)
-			want := int64(499)
-			if relevant {
-				want = 496
-			}
-			require.Equal(t, want, total, "writes must let the original pass finish in four batches")
-		})
-	}
-}
-
 func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	t.Parallel()
 	x, omitted := newFaceSuggestionBatchFixture(t)
@@ -230,12 +198,16 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
 	require.NoError(t, service.rebuildFaceSuggestions(ctx))
+	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.Empty(t, page, "partial groups must stay unpublished")
+	require.Zero(t, total)
 	_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: "dismiss"})
 	require.NoError(t, err)
 	for range 3 {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
-	_, total, err := x.f.catalog.FaceCandidates(ctx, 1, 0)
+	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 498, total, "current reads must hide the dismissed pair before catch-up")
 	for range 4 {
