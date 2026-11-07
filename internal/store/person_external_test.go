@@ -315,6 +315,7 @@ func TestActorKeysForPersonForwardsMergedPersonID(t *testing.T) {
 // caller disappearing after the write is durable, before a response readback.
 type externalLinkCancelAfterCommitContext struct {
 	context.Context
+
 	store  *Store
 	before uint64
 	cancel context.CancelFunc
