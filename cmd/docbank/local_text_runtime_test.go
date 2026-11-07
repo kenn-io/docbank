@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/atomicfile"
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/embedlocal"
 )
@@ -435,12 +436,16 @@ func TestLocalTextStatusProvider(t *testing.T) {
 		name, endpoint, provider string
 		pending                  bool
 		moveLater                bool
+		saveOutcome              string
 	}{
-		{"off", "", "", false, false},
-		{"restart_pending", "", "", true, false},
-		{"ollama", "http://127.0.0.1:11434", "ollama", false, false},
-		{"configured", "http://127.0.0.1:12345", "configured", false, false},
-		{"shared_binding_after_move", "http://127.0.0.1:11434", "ollama", false, true},
+		{"off", "", "", false, false, ""},
+		{"restart_pending", "", "", true, false, ""},
+		{"ollama", "http://127.0.0.1:11434", "ollama", false, false, ""},
+		{"configured", "http://127.0.0.1:12345", "configured", false, false, ""},
+		{"shared_binding_after_move", "http://127.0.0.1:11434", "ollama", false, true, ""},
+		{"save_success", "", "", true, false, "success"},
+		{"save_failed", "", "", false, false, "failed"},
+		{"save_published", "", "", true, false, "published"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			layout := home.Layout{Root: t.TempDir()}
@@ -475,7 +480,34 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
 			require.NoError(t, err)
 			defer service.Stop()
-			status, err := localTextStatus(t.Context(), profiles, service, tc.pending)
+			var restartPending atomic.Bool
+			restartPending.Store(tc.pending)
+			if tc.saveOutcome != "" {
+				restartPending.Store(false)
+				var saveErr error
+				switch tc.saveOutcome {
+				case "failed":
+					saveErr = errors.New("synthetic unpublished write failure")
+				case "published":
+					saveErr = errors.Join(atomicfile.ErrPublished, errors.New("synthetic directory sync failure"))
+				}
+				save := localTextSave(layout.Root, &restartPending, func(root string, choice config.LocalTextConfig) error {
+					if tc.saveOutcome != "failed" {
+						require.NoError(t, saveLocalText(root, choice))
+					}
+					return saveErr
+				})
+				err := save(config.LocalTextProfile, "local")
+				if saveErr == nil {
+					require.NoError(t, err)
+				} else {
+					require.Same(t, saveErr, err, "preserve the original save failure")
+				}
+				choice, err := readLocalText(layout.Root)
+				require.NoError(t, err)
+				require.Equal(t, tc.saveOutcome != "failed", choice.Profile == config.LocalTextProfile)
+			}
+			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load())
 			require.NoError(t, err)
 			require.Equal(t, tc.provider, status.Provider)
 			require.Equal(t, tc.pending, status.RestartRequired)

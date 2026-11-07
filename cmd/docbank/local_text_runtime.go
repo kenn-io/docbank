@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -43,6 +44,16 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 		return err
 	}
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
+}
+
+func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error) func(string, string) error {
+	return func(name, mode string) error {
+		err := save(root, config.LocalTextConfig{Profile: name, Server: mode})
+		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
+			restartPending.Store(true)
+		}
+		return err
+	}
 }
 
 // localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.

@@ -154,6 +154,16 @@ it("retries a failed status read", async () => {
   expect(props.onreadsearchbymeaning).toHaveBeenCalledTimes(2);
 });
 
+it("keeps a failed setup visible beside a failed status read", () => {
+  openSearchTab({ status: off, error: "Download failed", readError: "Daemon busy" });
+  expect(screen.getByText(offLine)).toBeTruthy();
+  expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual([
+    "Download failed",
+    "Daemon busy",
+  ]);
+  expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+});
+
 it("reads status on entering the tab and stops when leaving it", async () => {
   mockSystemRequests();
   const props = openSearchTab({});

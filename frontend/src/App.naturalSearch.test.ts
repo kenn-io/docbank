@@ -1233,6 +1233,31 @@ it.each([
   expect(within(drawer).queryByRole("alert")).toBeNull();
 });
 
+it("keeps the last status and a failed setup while the re-read fails", async () => {
+  let status: unknown = localOff;
+  searchWithMeaningOff({
+    status: () => status,
+    apply: () => {
+      status = new Response(JSON.stringify({ detail: "Daemon busy" }), { status: 503 });
+      return Promise.resolve(
+        new Response(JSON.stringify({ detail: "Download failed" }), { status: 502 }),
+      );
+    },
+  });
+  render(App);
+  await submitSearch("notes");
+  const drawer = await openSearchByMeaning();
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+  await within(drawer).findByText("Daemon busy");
+  expect(
+    within(drawer)
+      .getAllByRole("alert")
+      .map((alert) => alert.textContent),
+  ).toEqual(["Download failed", "Daemon busy"]);
+  expect(within(drawer).getByText("Downloads 290 MB once, shared by all Kenn apps")).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Turn on" })).toBeTruthy();
+});
+
 it.each(["reading status", "turning on"])(
   "hands a rejected session to sign-in while %s",
   async (step) => {

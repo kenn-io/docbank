@@ -404,13 +404,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
-		Save: func(name, mode string) error {
-			if err := saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode}); err != nil {
-				return err
-			}
-			restartPending.Store(true)
-			return nil
-		},
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText),
 	}
 	localText.Candidate = func(mode, name string) (*processing.Service, error) {
 		profiles, _, err := candidateProfiles(mode, name)

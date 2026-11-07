@@ -109,11 +109,12 @@
       {:else if !searchByMeaning.readError}
         <p class="loading"><Spinner size={16} /> Reading search status…</p>
       {/if}
+      {#if searchByMeaning.error}
+        <p class="error" role="alert">{searchByMeaning.error}</p>
+      {/if}
       {#if searchByMeaning.readError}
         <p class="error" role="alert">{searchByMeaning.readError}</p>
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
-      {:else if searchByMeaning.error}
-        <p class="error" role="alert">{searchByMeaning.error}</p>
       {:else if meaning?.restart_required}
         <p>Run <code>docbank daemon restart</code> to finish.</p>
       {/if}

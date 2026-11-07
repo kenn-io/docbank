@@ -2011,7 +2011,10 @@
       error = cause instanceof Error ? cause.message : String(cause);
     }
     if (session !== webSession) return;
-    localText = { readError: "", pending: false, error };
+    localText.pending = false;
+    localText.error = error;
+    // A failure keeps the last status on screen until the re-read replaces it.
+    if (!error) localText.status = undefined;
     readLocalTextStatus();
   }
 
@@ -4055,7 +4058,9 @@
         </div>
       {/if}
       <div class="nav-group vault-nav">
-        <AppTooltip text="Disk use, backups, protected folders, and usage reporting" side="right"
+        <AppTooltip
+          text="Disk use, backups, protected folders, usage reporting, and search by meaning"
+          side="right"
           ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
             <ArchiveIcon size="16" aria-hidden="true" />System
           </button></AppTooltip
