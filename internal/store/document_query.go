@@ -43,11 +43,13 @@ const (
 )
 
 type DocumentCatalogQuery struct {
-	SourcePresent bool
-	PathPrefix    string
-	Sort          DocumentCatalogSort
-	Direction     DocumentCatalogDirection
-	PageSize      int
+	PublishedNotes         *PublishedNoteSelector
+	PublishedNotesRevision string
+	SourcePresent          bool
+	PathPrefix             string
+	Sort                   DocumentCatalogSort
+	Direction              DocumentCatalogDirection
+	PageSize               int
 }
 
 // DocumentCatalogPosition is the typed live-keyset boundary authenticated by
@@ -66,6 +68,7 @@ type DocumentRenditionIdentity struct {
 }
 
 type DocumentSummary struct {
+	PublishedNote         *PublishedNoteIdentity
 	NodeID                int64
 	ContentVersionID      string
 	Path                  string
@@ -128,6 +131,14 @@ func (s *Store) ListDocuments(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	stamp, err := publishedNotesRevisionTx(ctx, tx, normalized.PublishedNotes)
+	if err != nil {
+		return DocumentCatalogPage{}, err
+	}
+	if normalized.PublishedNotesRevision != "" && normalized.PublishedNotesRevision != stamp {
+		return DocumentCatalogPage{}, ErrInvalidDocumentCursor
+	}
+	normalized.PublishedNotesRevision = stamp
 	root, err := s.nodeByPath(ctx, tx, normalized.PathPrefix)
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrNotDir) {
 		return DocumentCatalogPage{}, fmt.Errorf("resolving document catalog prefix: %w", err)
@@ -136,6 +147,19 @@ func (s *Store) ListDocuments(
 	page, err := s.queryDocumentCatalogPage(ctx, tx, normalized, boundary, traversal, args)
 	if err != nil {
 		return DocumentCatalogPage{}, err
+	}
+	if normalized.PublishedNotes != nil {
+		ids := make([]DocumentCatalogIdentity, len(page.Items))
+		for i, item := range page.Items {
+			ids[i] = DocumentCatalogIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
+		}
+		bindings, err := s.publishedNoteIdentitiesTx(ctx, tx, normalized.PublishedNotes, ids)
+		if err != nil {
+			return DocumentCatalogPage{}, err
+		}
+		for i := range page.Items {
+			page.Items[i].PublishedNote = &bindings[i]
+		}
 	}
 	page.Query = normalized
 	if len(page.Items) > 0 {
@@ -267,6 +291,11 @@ func (s *Store) ResolveDocumentSummaries(
 }
 
 func normalizeDocumentCatalogQuery(query DocumentCatalogQuery) (DocumentCatalogQuery, error) {
+	selector, err := normalizePublishedNoteSelector(query.PublishedNotes)
+	if err != nil {
+		return DocumentCatalogQuery{}, fmt.Errorf("%w: %w", ErrInvalidDocumentQuery, err)
+	}
+	query.PublishedNotes = selector
 	if query.PathPrefix == "" {
 		query.PathPrefix = "/"
 	}
@@ -378,11 +407,17 @@ func (s *Store) queryDocumentCatalogPage(
 	}
 	firstOrder := documentCatalogOrder(query, DocumentCatalogTraversalNext)
 	lastOrder := documentCatalogOrder(query, DocumentCatalogTraversalPrevious)
-	args = append(slices.Clone(args), boundaryArgs...)
+	predicate, predicateArgs := publishedNoteEligibilitySQL(query.PublishedNotes)
+	cte := documentCatalogCTE
+	if predicate != "" {
+		cte = strings.Replace(cte, "AND (?=0 OR "+sourcePresentSQL+")", "AND (?=0 OR "+sourcePresentSQL+") AND "+predicate, 1)
+	}
+	args = append(slices.Clone(args), predicateArgs...)
+	args = append(args, boundaryArgs...)
 	args = append(args, query.PageSize)
 	// Page and continuation checks share the same recursive traversal. Compare
 	// against the returned edges so deleted or moved cursor rows remain valid.
-	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, page AS (
+	rows, err := tx.QueryContext(ctx, cte+`, page AS (
   SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT ?
  )
  SELECT COALESCE(d.node_id,0),COALESCE(d.content_version_id,''),COALESCE(d.path,''),

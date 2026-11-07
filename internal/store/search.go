@@ -35,9 +35,10 @@ const MaxSearchSourceFenceIDs = 4096
 
 // SearchHit is a search result with its display path.
 type SearchHit struct {
-	Node  Node
-	Path  string
-	Match string
+	PublishedNote *PublishedNoteIdentity
+	Node          Node
+	Path          string
+	Match         string
 }
 
 // ExplainedLexicalCandidate adds stable evidence identity and a bounded
@@ -353,6 +354,7 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	PublishedNotes      *PublishedNoteSelector
 	PDFFilter           string
 	pdfPredicate        compiledQueryFragment
 	SourcePresent       bool
@@ -381,7 +383,7 @@ type SearchSelectedBuild struct {
 // query without the tag or time anchor required for a bounded filter page.
 func SearchNeedsQuery(query string, opts SearchOptions) bool {
 	return ftsQuery(query) == "" && opts.PDFFilter == "" && opts.TagID == "" &&
-		opts.ModifiedSince == "" && opts.ModifiedBefore == ""
+		opts.ModifiedSince == "" && opts.ModifiedBefore == "" && opts.PublishedNotes == nil
 }
 
 // SearchCandidateIdentity identifies one current scoped head for a final
@@ -410,6 +412,7 @@ type SearchCandidateRevalidation struct {
 
 // RevalidatedSearchCandidate includes the current path captured with its evidence.
 type RevalidatedSearchCandidate struct {
+	PublishedNote *PublishedNoteIdentity
 	SearchCandidateIdentity
 
 	Path string
@@ -577,6 +580,19 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			candidate := candidates[position]
 			ids[i] = candidate.NodeID
 			result.Candidates[i].SearchCandidateIdentity = candidate
+		}
+		if normalized.PublishedNotes != nil {
+			bindings := make([]DocumentCatalogIdentity, len(result.Candidates))
+			for i, candidate := range result.Candidates {
+				bindings[i] = DocumentCatalogIdentity{NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID}
+			}
+			notes, err := s.publishedNoteIdentitiesTx(ctx, tx, normalized.PublishedNotes, bindings)
+			if err != nil {
+				return err
+			}
+			for i := range result.Candidates {
+				result.Candidates[i].PublishedNote = &notes[i]
+			}
 		}
 		// A single survivor needs no batch query or position mapping.
 		if len(ids) == 1 {
@@ -2448,7 +2464,15 @@ func (s *Store) SearchPage(ctx context.Context, query string, limit int) ([]Sear
 // matches before content matches.
 func (s *Store) SearchPageWithOptions(
 	ctx context.Context, query string, limit int, opts SearchOptions,
-) ([]SearchHit, bool, error) {
+) (hitsResult []SearchHit, truncatedResult bool, resultErr error) {
+	defer func() {
+		if resultErr == nil {
+			resultErr = s.attachPublishedSearchIdentities(ctx, hitsResult, opts.PublishedNotes)
+			if resultErr != nil {
+				hitsResult = nil
+			}
+		}
+	}()
 	if limit <= 0 {
 		limit = 50
 	}
@@ -2615,6 +2639,11 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
+	selector, err := normalizePublishedNoteSelector(opts.PublishedNotes)
+	if err != nil {
+		return SearchOptions{}, err
+	}
+	opts.PublishedNotes = selector
 	if opts.PDFFilter != "" {
 		predicate, err := compilePDFFilter(ctx, opts.PDFFilter)
 		if err != nil {
@@ -2768,6 +2797,10 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 	}
 	if opts.SourcePresent {
 		clauses = append(clauses, "AND "+sourcePresentSQL)
+	}
+	if predicate, parameters := publishedNoteEligibilitySQL(opts.PublishedNotes); predicate != "" {
+		clauses = append(clauses, "AND "+predicate)
+		args = append(args, parameters...)
 	}
 	if opts.photoFilter.sql != "" {
 		clauses = append(clauses, `AND n.id IN (`+opts.photoFilter.sql+`)`)
