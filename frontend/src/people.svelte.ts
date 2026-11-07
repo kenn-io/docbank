@@ -492,7 +492,10 @@ export class Suggestions {
       signal.throwIfAborted();
       return listFaceCandidates(
         { limit: peoplePageSize, offset },
-        { session: this.people.session, signal },
+        {
+          session: this.people.session,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+        },
       );
     });
   }

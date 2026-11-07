@@ -859,6 +859,69 @@ it("keeps suggestion cards unique when a reopened group shifts the next offset p
   }
 });
 
+it.each(["initial load", "refresh"])(
+  "releases the Hidden lock queue after a stalled %s",
+  async (entry) => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const timeout = new AbortController();
+      setTimeout(() => timeout.abort(new DOMException("Timed out", "TimeoutError")), milliseconds);
+      return timeout.signal;
+    });
+    vi.mocked(api.listFaceCandidates).mockRestore();
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+    let candidateReads = 0;
+    const fetcher = vi.fn((url: string, options: RequestInit) =>
+      url.endsWith("/face-candidates?limit=24&offset=0")
+        ? candidateReads++
+          ? Promise.resolve(Response.json({ items: [unnamed], total: 1 }))
+          : new Promise<Response>((_resolve, reject) => {
+              options.signal!.addEventListener("abort", () => reject(options.signal!.reason), {
+                once: true,
+              });
+            })
+        : Promise.resolve(Response.json({ configured: true })),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const access = new HiddenAccess("session", vi.fn());
+    const people = new People("session", vi.fn(), access);
+    people.suggestions.started = entry === "refresh";
+    if (entry === "refresh") people.suggestions.items = [isAda];
+    const refresh = entry === "refresh" ? people.refresh() : people.load();
+    let locked = false;
+    const lock = access.lock().then((result) => (locked = result));
+    try {
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(locked).toBe(false);
+      expect(fetcher.mock.calls[0]![1].signal!.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(locked).toBe(true);
+      expect(fetcher.mock.calls[0]![1].signal!.aborted).toBe(true);
+      expect(people.items).toEqual([ada]);
+      expect(people.suggestions.loading).toBe(false);
+      expect(people.suggestions.error).toContain("Timed out");
+      expect(people.suggestions.items).toEqual(entry === "refresh" ? [isAda] : []);
+      expect(fetcher.mock.calls.map(([url]) => url.split("?")[0])).toEqual([
+        "/api/v1/people/face-candidates",
+        "/api/v1/photos/hidden/lock",
+      ]);
+      await people.suggestions.retry();
+      expect(people.suggestions.items).toEqual([unnamed]);
+      expect(people.suggestions.error).toBe("");
+      expect(people.suggestions.loading).toBe(false);
+      expect(candidateReads).toBe(2);
+    } finally {
+      people.dispose();
+      access.dispose();
+      await refresh;
+      await lock;
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 it("releases live refresh when face suggestions stall and can retry", async () => {
   vi.mocked(api.listFaceCandidates).mockRestore();
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
