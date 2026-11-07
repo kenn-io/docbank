@@ -2787,9 +2787,9 @@ it("keeps counts through a live refresh until fresh ones replace them", async ()
   rows[2]!(response([photo(2), photo(1)], "next"));
   await vi.waitFor(() => expect(counts).toHaveLength(3));
   expect(photos.facets).toEqual([facet]);
-  counts[2]!(Response.json({ facets: [{ ...facet, total: 4, missing: 4 }] }));
+  counts[2]!(Response.json({ facets: [{ ...facet, total: 2, missing: 2 }] }));
   await refreshing;
-  expect(photos.facets).toEqual([{ ...facet, total: 4, missing: 4 }]);
+  expect(photos.facets).toEqual([{ ...facet, total: 2, missing: 2 }]);
   expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-2", "photo-1"]);
   photos.dispose();
 });
