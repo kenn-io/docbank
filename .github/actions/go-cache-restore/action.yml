@@ -103,6 +103,11 @@ runs:
         if [ -d "$modcache" ]; then
           # Replay restored downloads so only requested modules enter the next archive.
           mv "$modcache" "${modcache}.restored"
+          # Tool builds outside go.sum, such as custom-gcl, verify against these records.
+          mkdir -p "$modcache/cache/download"
+          if [ -d "${modcache}.restored/cache/download/sumdb" ]; then
+            cp -R "${modcache}.restored/cache/download/sumdb" "$modcache/cache/download/"
+          fi
           proxy=$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' "${modcache}.restored/cache/download")
           echo "GOPROXY=$proxy|$(go env GOPROXY)" >> "$GITHUB_ENV"
         fi

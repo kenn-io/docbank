@@ -1883,7 +1883,8 @@ without saving so they cannot evict `main`'s caches from the repository quota.
 Before each daily save, the owning job retains the build and analysis action
 records it used and their referenced outputs, including executable directories.
 Trimming reads Go's v1 action records and rejects unknown record formats.
-The job rebuilds the module cache from restored downloads through a local file proxy, keeping the configured proxy fallback.
+The job rebuilds the module cache from restored downloads through a local file
+proxy, keeping checksum-database records and the configured proxy fallback.
 An exact daily cache hit skips this preparation and trimming.
 
 Windows jobs put `GOCACHE` and `GOMODCACHE` under `D:\a\_temp`. If D: is
