@@ -31,6 +31,8 @@ is nonempty authored title, first root H1 display text, then publisher basename.
 It does not insert a basename or arbitrary frontmatter fields into the artifact.
 
 Root CommonMark ATX/Setext headings expose source Markdown and display text.
+A new ordered list interrupts a paragraph only with start number 1. Other
+numbers can start lists at block boundaries or continue an existing list.
 Code, YAML, raw HTML and headings inside list/quote containers do not create root
 sections. Heading display handles emphasis, exact code runs, admitted link/image
 labels, wiki labels, entities and inline HTML. It collapses display whitespace.

@@ -18,6 +18,7 @@ type sourceBlock struct {
 // its unclosed child block before the next physical line is classified.
 type blockContainer struct {
 	kind   byte // q quote, l list item
+	marker byte // list delimiter; siblings need not start at 1
 	indent int  // list content indentation relative to its parent
 }
 
@@ -52,7 +53,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					if content < len(raw) && (raw[content] == ' ' || raw[content] == '\t') {
 						content++
 					}
-				} else if interrupt, err := blockInterrupt(ctx, raw[content:], b); err != nil {
+				} else if interrupt, err := blockInterrupt(ctx, raw[content:], 0, b); err != nil {
 					return nil, err
 				} else if paragraph && !blank && !interrupt {
 					lazy = true
@@ -80,7 +81,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 						}
 						content++
 					}
-				} else if interrupt, err := blockInterrupt(ctx, raw[content:], b); err != nil {
+				} else if interrupt, err := blockInterrupt(ctx, raw[content:], c.marker, b); err != nil {
 					return nil, err
 				} else if paragraph && !interrupt {
 					lazy = true
@@ -126,8 +127,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					if after < len(raw) && (raw[after] == ' ' || raw[after] == '\t') {
 						after++
 					}
-				} else if markerEnd, ok := listMarker(raw, end); ok {
+				} else if markerEnd, ok := listMarker(raw, end); ok && (!paragraph || listCanInterrupt(raw, end, markerEnd)) {
 					c.kind = 'l'
+					c.marker = raw[markerEnd-1]
 					after = markerEnd
 					padEnd, padding, err := leadingIndent(ctx, raw, after, b)
 					if err != nil {
@@ -329,7 +331,21 @@ func listMarker(raw []byte, start int) (int, bool) {
 	}
 	return end, end == len(raw) || raw[end] == ' ' || raw[end] == '\t'
 }
-func blockInterrupt(ctx context.Context, raw []byte, b *budget) (bool, error) {
+
+// Call only after listMarker validates the bounded (at most nine digits) marker.
+// CommonMark's start number is numeric, so 01. may interrupt just like 1.
+func listCanInterrupt(raw []byte, start, end int) bool {
+	if raw[start] < '0' || raw[start] > '9' {
+		return true
+	}
+	number := 0
+	for _, digit := range raw[start : end-1] {
+		number = number*10 + int(digit-'0')
+	}
+	return number == 1
+}
+
+func blockInterrupt(ctx context.Context, raw []byte, sibling byte, b *budget) (bool, error) {
 	start, indent, err := leadingIndent(ctx, raw, 0, b)
 	if err != nil {
 		return false, err
@@ -352,7 +368,7 @@ func blockInterrupt(ctx context.Context, raw []byte, b *budget) (bool, error) {
 	if level > 0 || thematic || text[0] == '>' {
 		return true, nil
 	}
-	if _, ok := listMarker(text, 0); ok {
+	if end, ok := listMarker(text, 0); ok && (text[end-1] == sibling || listCanInterrupt(text, 0, end)) {
 		return true, nil
 	}
 	if text[0] == '`' || text[0] == '~' {
