@@ -91,6 +91,10 @@ func (s *Store) FaceEmbeddingFaces(ctx context.Context, version string) ([]Photo
 }
 
 func faceEmbeddingMissingTx(ctx context.Context, tx *sql.Tx, version, profile string, binding document.EmbeddingBindingV1, recipe string) (bool, error) {
+	var faces bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE content_version_id=$1)`, version).Scan(&faces); err != nil || !faces {
+		return false, err
+	}
 	preview, err := visualPreviewGenerationByRecipeTx(ctx, tx, version, recipe)
 	if errors.Is(err, ErrNotFound) {
 		return false, nil
