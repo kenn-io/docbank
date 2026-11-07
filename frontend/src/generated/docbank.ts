@@ -3380,6 +3380,14 @@ export interface FaceCandidatePage {
   total: number;
 }
 
+export interface FaceSetupApplyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consent: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  plan_fingerprint: string;
+}
+
 export interface GPSBounds {
   east: string;
   north: string;
@@ -19258,7 +19266,7 @@ export const getApplyFacesUrl = () => {
 /**
  * @summary Enable local face suggestions
  */
-export const applyFaces = async (localTextApplyRequest: NonReadonly<LocalTextApplyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+export const applyFaces = async (faceSetupApplyRequest: NonReadonly<FaceSetupApplyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -19279,7 +19287,7 @@ return sessionJSON<LocalTextPlan>(getApplyFacesUrl(),
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(localTextApplyRequest)
+    body: JSON.stringify(faceSetupApplyRequest)
   }
 );}
 

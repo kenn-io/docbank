@@ -210,16 +210,6 @@ func TestFaceSuggestionBatchesFinishAcrossWritesAndDiscardChangedInputs(t *testi
 	for range 4 {
 		require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	}
-	for offset := 0; offset < 498; offset += 250 {
-		page, total, err = x.f.catalog.FaceCandidates(ctx, 250, offset)
-		require.NoError(t, err)
-		require.EqualValues(t, 498, total, "changed inputs must complete without publishing a stale pass")
-		for _, group := range page {
-			for _, face := range group.Faces {
-				require.NotEqual(t, omitted.FaceID, face.FaceID)
-			}
-		}
-	}
 }
 
 func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {

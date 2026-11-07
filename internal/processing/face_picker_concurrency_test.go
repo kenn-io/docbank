@@ -2,6 +2,7 @@ package processing
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 	"uuid"
@@ -19,9 +20,13 @@ type blockedFacePayload struct {
 
 	hash             string
 	entered, release chan struct{}
+	err              error
 }
 
 func (r *blockedFacePayload) OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error) {
+	if r.err != nil {
+		return nil, 0, r.err
+	}
 	if hash == r.hash {
 		close(r.entered)
 		select {
@@ -69,7 +74,7 @@ func TestFacePickerCachedVectorsRemainAvailableDuringColdRead(t *testing.T) {
 	<-reader.entered
 	go func() {
 		var err error
-		cached, err = x.f.catalog.FaceMatchingVectors(t.Context(), x.f.blobs, warm, true)
+		cached, err = x.f.catalog.FaceMatchingVectors(t.Context(), &blockedFacePayload{err: errors.New("cached payload must not be opened")}, warm, true)
 		warmDone <- err
 	}()
 	completed := false

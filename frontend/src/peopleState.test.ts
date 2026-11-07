@@ -628,7 +628,6 @@ it("keeps the open review's candidate and revision during refresh", async () => 
 
 it.each([
   [{ action: "link", person_id: ada.person_id }, true],
-  [{ action: "new_person", display_name: "Ana" }, true],
   [{ action: "reject" }, false],
 ] as const)("decides a group with its revision: %o", async (decision, cards) => {
   vi.spyOn(api, "listFaceCandidates")

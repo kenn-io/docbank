@@ -28307,7 +28307,7 @@ type GrantProcessingConsentBody = ProcessingConsentRequest
 
 type RevokeProcessingConsentBody = ProcessingConsentRevocationRequest
 
-type ApplyFacesBody = LocalTextApplyRequest
+type ApplyFacesBody = FaceSetupApplyRequest
 
 type StartDocumentProcessingBody = StartProcessingRequest
 
@@ -30946,6 +30946,8 @@ type FaceCandidateDecisionRequest = api.FaceCandidateDecisionRequest
 type FaceCandidateDecisionResult = api.FaceCandidateDecisionResult
 
 type FaceCandidatePage = api.FaceCandidatePage
+
+type FaceSetupApplyRequest = api.FaceSetupApplyRequest
 
 type FaceSuggestionFace = store.FaceSuggestionFace
 

@@ -37,7 +37,7 @@ func newProcessingFacesCommand() *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		_, err = c.API().ApplyFaces(cmd.Context(), &apiclient.ApplyFacesRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: plan.Fingerprint, Consent: true}})
+		_, err = c.API().ApplyFaces(cmd.Context(), &apiclient.ApplyFacesRequestOptions{Body: &api.FaceSetupApplyRequest{PlanFingerprint: plan.Fingerprint, Consent: true}})
 		if err != nil {
 			return err
 		}
