@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"math"
 	"path/filepath"
 	"testing"
@@ -113,7 +114,7 @@ func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 	restored, err := NewService(ctx, ServiceConfig{Catalog: target, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
 	require.NoError(t, err)
 	t.Cleanup(restored.Stop)
-	require.NoError(t, restored.rebuildFaceSuggestions(ctx))
+	require.ErrorIs(t, restored.rebuildFaceSuggestions(ctx), store.ErrVectorSetUnavailable)
 	groups, _, err := target.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
@@ -230,5 +231,52 @@ func TestFaceSuggestionBatchesResumeAndDiscardChangedInputs(t *testing.T) {
 				}
 			}
 		}
+	})
+}
+
+func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	ctx := t.Context()
+	x.f.grant(t, x.service, config.LocalFacesProfile)
+	_, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Sets, 1)
+	hash := snapshot.Sets[0].Set.VectorSet.PayloadBlobHash
+	source, err := x.f.blobs.OpenContext(ctx, hash)
+	require.NoError(t, err)
+	data, err := io.ReadAll(source)
+	require.NoError(t, err)
+	require.NoError(t, source.Close())
+	require.NoError(t, x.f.blobs.Remove(hash))
+	var backup bytes.Buffer
+	require.NoError(t, x.f.catalog.ExportMetadata(ctx, &backup))
+	target, err := store.Open(ctx, filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+	service, err := NewService(ctx, ServiceConfig{Catalog: target, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	synctest.Test(t, func(t *testing.T) {
+		laneContext, cancel := context.WithCancel(t.Context())
+		finished := make(chan error, 1)
+		go func() { finished <- service.FaceSuggestionBackfill(laneContext, nil) }()
+		defer func() { cancel(); require.ErrorIs(t, <-finished, context.Canceled) }()
+		time.Sleep(3 * time.Second)
+		_, total, err := target.FaceCandidates(t.Context(), 24, 0)
+		require.NoError(t, err)
+		require.Zero(t, total)
+		before := target.WriteRevision()
+		_, err = x.f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+		require.NoError(t, err)
+		require.Equal(t, before, target.WriteRevision())
+		time.Sleep(30 * time.Second)
+		_, total, err = target.FaceCandidates(t.Context(), 24, 0)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, total, "restored payload must become a suggestion without a catalog write")
 	})
 }

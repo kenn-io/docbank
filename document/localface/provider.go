@@ -15,8 +15,6 @@ import (
 	"go.kenn.io/kit/embedconfig"
 )
 
-const AdapterContract = "docbank-local-face/v1"
-
 type Provider struct {
 	descriptor document.EmbeddingDescriptor
 	resolve    func(context.Context) (string, error)

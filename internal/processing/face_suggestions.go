@@ -144,7 +144,7 @@ func (p *faceSuggestionPass) candidates() ([]store.PersonMatchCandidate, error) 
 
 // rebuildFaceSuggestions publishes groups from every available vector. Its
 // signature omits payload availability and queue capacity, so a pass that left
-// either short is not cached and the next write revision retries it.
+// either short is not cached.
 func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	service.faceSuggestionsMu.Lock()
 	defer service.faceSuggestionsMu.Unlock()
@@ -182,7 +182,10 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.signature, candidates); err != nil {
 		return err
 	}
-	if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full || pass.incomplete {
+	if pass.incomplete {
+		return store.ErrVectorSetUnavailable
+	}
+	if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full {
 		return err
 	}
 	service.faceSuggestionsSignature = pass.signature
