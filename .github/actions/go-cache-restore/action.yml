@@ -57,7 +57,7 @@ runs:
           echo "GO_CACHE_GROUP_PREFIX=go-${GROUP}-"
           echo "GO_CACHE_PATHS<<EOF"
           go env GOCACHE
-          echo "$(go env GOMODCACHE)/cache/download"
+          go env GOMODCACHE
           if [ -n "$EXTRA_PATH" ]; then echo "$EXTRA_PATH"; fi
           echo "EOF"
         } >> "$GITHUB_ENV"

@@ -1887,13 +1887,12 @@ The job rebuilds the module cache from restored downloads through a local file
 proxy, keeping checksum-database records and the configured proxy fallback.
 An exact daily cache hit skips this preparation and trimming.
 
-The download-only candidate archives `GOMODCACHE/cache/download` instead of
-expanded module sources. Every restore ends with native `go mod download`, so
-source extraction counts toward restore time rather than the first build or
-test step. The path change invalidates existing cache versions. Its seed run
-starts cold, and the first `main` run in each group after adoption compiles
-from cold once. Temporary candidate keys and size probes stay until the seed
-and warm measurements decide whether to keep this candidate.
+Owner saves keep the `GOMODCACHE` archive path and remove expanded module
+sources with `go clean -modcache`, preserving the `cache` subtree.
+Every restore ends with `go mod download` to expand module sources before
+the first build or test step. Existing archives keep restoring under the same
+cache version. Older workflows reading new archives expand modules in their
+first Go step.
 
 Windows jobs put `GOCACHE` and `GOMODCACHE` under `D:\a\_temp`. If D: is
 missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`

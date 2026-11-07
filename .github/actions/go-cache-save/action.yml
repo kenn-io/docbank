@@ -28,6 +28,14 @@ runs:
             find "$path" -mindepth 2 -maxdepth 2 \( -name '*-a' -o -name '*-d' \) ! -newer "$RUNNER_TEMP/go-cache-use" -exec rm -rf -- {} +
           fi
         done <<< "$GO_CACHE_TRIM_PATHS"
+        modcache=$(go env GOMODCACHE | tr '\\' '/')
+        if [ -d "$modcache/cache" ]; then
+          # Archive downloads only; restore expands them with go mod download.
+          mv "$modcache/cache" "${modcache}.download"
+          go clean -modcache
+          mkdir -p "$modcache"
+          mv "${modcache}.download" "$modcache/cache"
+        fi
 
     - name: Measure cache directories for saving
       if: >-
