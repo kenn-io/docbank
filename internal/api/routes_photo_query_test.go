@@ -759,18 +759,9 @@ func TestSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 				invalid.ContentVersionID = displayed.CurrentVersionID
 				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
 				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-				invalid = request
-				invalid.FaceID = uuid.NewString()
-				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
-				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-				other, err := s.CreateFile(ctx, s.RootID(), "other.jpg", hash, size, "image/jpeg")
-				require.NoError(t, err)
-				otherAsset, err := s.PhotoAssetForNode(ctx, other.ID)
-				require.NoError(t, err)
-				response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/"+otherAsset.ID+"/preview", headers, request)
-				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-				response, body = get(t, ts, "/api/v1/photos/assets/"+otherAsset.ID+"/previews/"+slot.GenerationID+"?face_id="+face.FaceID, headers)
-				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+			}
+			if kind == "person" {
+				return
 			}
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)

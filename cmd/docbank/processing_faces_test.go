@@ -9,12 +9,12 @@ import (
 	"go.kenn.io/docbank/internal/api"
 )
 
-func TestFaceSetupPrintsDisclosedScope(t *testing.T) {
+func TestLocalPlanPrintsScope(t *testing.T) {
 	t.Parallel()
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&output)
-	plan := api.LocalTextPlan{Profile: "local-faces", Server: "local", Scope: "Granting consent automatically queues faces in eligible photos throughout this vault, including Hidden photos."}
+	plan := api.LocalTextPlan{Profile: "synthetic-profile", Server: "local", Scope: "Selected synthetic documents"}
 	require.NoError(t, writeLocalTextPlan(cmd, plan))
-	require.Contains(t, output.String(), "including Hidden photos.")
+	require.Contains(t, output.String(), "scope:     Selected synthetic documents")
 }

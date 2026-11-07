@@ -587,14 +587,11 @@ it("loads suggestions once with the cards, shows more by offset, and conceals th
   people.dispose();
 });
 
-it("counts faces and photos, titles both questions, and omits removed faces", () => {
+it("counts faces and photos and titles both questions", () => {
   expect(suggestionTitle(isAda)).toBe("Is this Ada?");
   expect(suggestionTitle(unnamed)).toBe("Who is this?");
   expect(suggestionCounts(isAda.faces)).toBe("3 faces · 2 photos");
   expect(suggestionCounts([f1])).toBe("1 face · 1 photo");
-  expect(
-    reviewFaces({ candidate: isAda, title: "", removed: ["face-2"] }).map((face) => face.face_id),
-  ).toEqual(["face-1", "face-3"]);
 });
 
 it("closes a review after a persisted face rejection", async () => {

@@ -71,7 +71,7 @@ func (s *Store) peopleForFaceTx(ctx context.Context, tx *sql.Tx, options PeopleS
 		return nil, err
 	}
 	distances := map[string]float64{}
-	for _, centroid := range FacePersonCentroids(vectors) {
+	for _, centroid := range FacePersonCentroids(vectors, hiddenErr == nil) {
 		if centroid.Space == space {
 			distances[centroid.Person] = vectorindex.Euclidean(source, centroid.Values)
 		}

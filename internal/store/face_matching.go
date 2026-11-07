@@ -128,10 +128,10 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 	}
 	return vectors, unavailable
 }
-func FacePersonCentroids(vectors []FaceVector) []FaceCentroid {
+func FacePersonCentroids(vectors []FaceVector, includeHidden bool) []FaceCentroid {
 	groups := map[string][]FaceVector{}
 	for _, v := range vectors {
-		if v.Face.PersonID != "" {
+		if v.Face.PersonID != "" && (includeHidden || !v.Face.Hidden) {
 			key := v.Space + "\x00" + v.Face.PersonID
 			groups[key] = append(groups[key], v)
 		}

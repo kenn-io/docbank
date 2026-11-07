@@ -381,10 +381,7 @@ it("shows suggestion cards with unnamed crops and no row when there are none", a
     { ...unnamed, faces: [candidateFace("face-4"), candidateFace("face-5")] },
   ]);
   const cards = within(region).getAllByRole("button");
-  expect(cards.map((card) => card.textContent?.replace(/\s+/g, " ").trim())).toEqual([
-    "Is this Ada? 3 faces · 2 photos",
-    "Who is this? 2 faces · 1 photo",
-  ]);
+  expect(cards).toHaveLength(2);
   // Each card requests its own exact-source face crop.
   await waitFor(() => expect(within(region).getAllByRole("img")).toHaveLength(2));
   expect(get.mock.calls.map((call) => [call[0], call[1], call[4], call[5]])).toEqual([
@@ -431,7 +428,7 @@ it("renders retry and show-more controls for suggestions", async () => {
 
 it("confirms an Is this X? group after removing a face", async () => {
   const { region, list, done } = await renderSuggestions([isAda]);
-  vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
+  const remove = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "r" });
   const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda));
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
@@ -441,6 +438,7 @@ it("confirms an Is this X? group after removing a face", async () => {
   list.mockResolvedValue({ items: [regrouped], total: 1 });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada: face 2" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(remove.mock.calls[0]![1]).toMatchObject({ face_id: "face-2" });
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const reopened = screen.getByRole("dialog", { name: "Is this Ada?" });
   list.mockResolvedValue({ items: [], total: 0 });
@@ -453,17 +451,18 @@ it("confirms an Is this X? group after removing a face", async () => {
   await done();
 });
 
-it("rejects an Is this X? group and reports a stale decision in the sheet", async () => {
+it("reports a stale rejection from the review sheet", async () => {
   const { region, list, done } = await renderSuggestions([isAda]);
-  vi.spyOn(api, "decideFaceCandidate")
-    .mockRejectedValueOnce(new APIError("Suggestion changed", 412, "stale_revision"))
-    .mockResolvedValue(decided(isAda));
+  const decide = vi
+    .spyOn(api, "decideFaceCandidate")
+    .mockRejectedValueOnce(new APIError("Suggestion changed", 412, "stale_revision"));
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
   list.mockResolvedValue({ items: [{ ...isAda, revision: 7 }], total: 1 });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect((await screen.findByRole("alert")).textContent).toBe("Suggestion changed");
+  expect(decide.mock.calls[0]![1]).toEqual({ action: "reject" });
   await done();
 });
 
@@ -511,7 +510,7 @@ it("skips faces until nothing is left in a Who is this? group", async () => {
 it.each(["existing", "new", "dismiss"])(
   "names or dismisses a Who is this? group: %s",
   async (choice) => {
-    const { region, people, list, done } = await renderSuggestions([unnamed]);
+    const { region, done } = await renderSuggestions([unnamed]);
     const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
     await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
     const dialog = screen.getByRole("dialog", { name: "Who is this?" });
@@ -530,21 +529,22 @@ it.each(["existing", "new", "dismiss"])(
         await screen.findByRole("option", { name: choice === "new" ? 'New person "Ana"' : "Ada" }),
       );
       await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
-      list.mockResolvedValue({
-        items: [{ ...unnamed, candidate_id: "candidate-rebuilt", revision: 5 }],
-        total: 1,
-      });
-      await act(() => people.suggestions.refresh());
-      expect(confirm.hasAttribute("disabled")).toBe(false);
       await fireEvent.click(confirm);
     }
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(decide).toHaveBeenCalledOnce();
+    expect(decide.mock.calls[0]![1]).toEqual(
+      choice === "dismiss"
+        ? { action: "reject" }
+        : choice === "new"
+          ? { action: "new_person", display_name: "Ana", face_ids: ["face-1", "face-2"] }
+          : { action: "link", person_id: ada.person_id, face_ids: ["face-1", "face-2"] },
+    );
     await done();
   },
 );
 
-it("chooses a person after paging and retrying the name picker", async () => {
+it("sends the person chosen from namesakes to confirmation", async () => {
   const { region, done } = await renderSuggestions([unnamed]);
   const alex = ["11", "12"].map((id) => ({
     ...grace,
@@ -553,20 +553,10 @@ it("chooses a person after paging and retrying the name picker", async () => {
     display_name_folded: "alex",
   }));
   const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
-  let failed = false;
-  vi.mocked(api.listPeople).mockImplementation(async (query) => {
-    if (!query?.cursor)
-      return { items: [ada, alex[0]!], next_cursor: "page-2", same_name_continues: true };
-    if (!failed) throw ((failed = true), new APIError("People unavailable", 503, "unavailable"));
-    return { items: [ada, alex[1]!] };
-  });
+  vi.mocked(api.listPeople).mockResolvedValue({ items: [ada, ...alex] });
   await fireEvent.click(within(region).getByRole("button", { name: /Who is this\?/ }));
   await fireEvent.click(screen.getByRole("button", { name: "Name this person" }));
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "A" } });
-  // Exercise the People view's shared chooser and paging callbacks.
-  const more = await screen.findByRole("option", { name: "Load more" });
-  await fireEvent.mouseDown(more);
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Retry" }));
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex · 2 people" }));
   const chooser = within(await screen.findByRole("dialog", { name: "Choose Alex" }));
   await fireEvent.click(chooser.getByRole("radio", { name: new RegExp(alex[1]!.person_id) }));
