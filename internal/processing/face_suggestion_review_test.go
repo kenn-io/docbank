@@ -39,14 +39,15 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 	candidate, retained, err := x.f.catalog.OpenPersonCandidate(ctx, tx, store.PersonMatchCandidate{ActorKey: "name_alias:capacity", DisplayName: "Capacity", Reason: "name_only", Evidence: evidence})
 	require.NoError(t, err)
 	require.True(t, retained)
-	// Fill the remaining document-candidate slots, as in the store capacity test.
+	// Fill the queue with the same valid evidence as the candidate above.
 	_, err = tx.ExecContext(ctx, `WITH RECURSIVE seq(n) AS (
 		SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 9999
 	) INSERT INTO person_match_candidates(
 		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
 		occurrence_count,revision,state,decided_person_id,created_at,decided_at
-	) SELECT printf('candidate-%05d',n),printf('name_alias:person-%05d',n),'Synthetic Person',NULL,
-		'name_only','[]',printf('%064d',n),1,1,'open',NULL,?,NULL FROM seq`, time.Now().UTC().Format(time.RFC3339Nano))
+	) SELECT printf('00000000-0000-4000-8000-%012d',n),printf('name_alias:person-%05d',n),printf('person-%05d',n),NULL,
+		reason,evidence_json,evidence_sha256,occurrence_count,revision,state,NULL,created_at,NULL
+		FROM seq CROSS JOIN person_match_candidates WHERE candidate_id=?`, candidate.CandidateID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	_, full, err := x.f.catalog.OpenPersonCandidateCount(ctx)
@@ -143,6 +144,7 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 	service, err := NewService(ctx, ServiceConfig{Catalog: reopened, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
+	require.Zero(t, reopened.WriteRevision(), "the first pass must run at a reopened store's initial revision")
 	_, total, err := reopened.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Zero(t, total, "restart after saving vectors but before publishing groups")
