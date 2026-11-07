@@ -5,6 +5,37 @@ export default defineConfig({
     input: {
       target: "../internal/api/openapi.yaml",
       filters: { mode: "exclude", tags: ["Photo events"], includeUnreferencedSchemas: true },
+      override: {
+        transformer: (spec) => {
+          // Orval interprets a wildcard part type as text. These parts have an
+          // explicit binary schema; let that schema determine their client type.
+          for (const path of Object.values(spec.paths ?? {})) {
+            for (const operation of Object.values(path ?? {})) {
+              if (!operation || typeof operation !== "object" || !("requestBody" in operation)) {
+                continue;
+              }
+              const request = operation.requestBody;
+              if (!request || !("content" in request)) continue;
+              const multipart = request.content?.["multipart/form-data"];
+              const schema = multipart?.schema;
+              if (!schema || !("properties" in schema)) continue;
+              for (const [field, encoding] of Object.entries(multipart.encoding ?? {})) {
+                const property = schema.properties?.[field];
+                if (
+                  encoding.contentType === "*/*" &&
+                  property &&
+                  typeof property === "object" &&
+                  (property.format === "binary" ||
+                    property.contentMediaType === "application/octet-stream")
+                ) {
+                  delete encoding.contentType;
+                }
+              }
+            }
+          }
+          return spec;
+        },
+      },
     },
     output: {
       target: "src/generated/docbank.ts",

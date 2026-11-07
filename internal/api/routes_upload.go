@@ -132,6 +132,7 @@ type uploadPayload struct {
 	expectedSize int64
 	prepare      func(ing *ingest.Ingester, mimeType string, content io.Reader) (*ingest.PreparedUpload, error)
 	commit       func(*ingest.PreparedUpload) error
+	errorMapper  func(error) *Error
 }
 
 // receiveUpload reads one multipart file and runs payload's steps under the
@@ -181,7 +182,11 @@ func receiveUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate, payl
 		})
 	})
 	if opErr != nil {
-		writeError(w, uploadError(opErr))
+		mapError := payload.errorMapper
+		if mapError == nil {
+			mapError = uploadError
+		}
+		writeError(w, mapError(opErr))
 		return false
 	}
 	return true

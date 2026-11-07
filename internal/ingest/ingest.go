@@ -446,6 +446,18 @@ func (p *PreparedUpload) Discard(ctx context.Context) error {
 	return p.ing.cleanupLoose(ctx, p.result.ComputedHash)
 }
 
+// CommitPublishedNote grants managed source authority only after the caller has
+// verified the entire transport envelope. Hash and size come from durable bytes.
+func (p *PreparedUpload) CommitPublishedNote(ctx context.Context, request store.NotePublicationUploadRequest) (receipt store.NotePublicationReceipt, retErr error) {
+	defer func() { retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(ctx, p.result.ComputedHash)) }()
+	if p.push == nil {
+		return receipt, errors.New("publication commit requires a payload prepared for push")
+	}
+	request.Hash, request.Size = p.result.ComputedHash, p.result.ComputedSize
+	request.FileName = p.name
+	return p.ing.Store.AcceptPublishedNote(ctx, request, p.result.physical)
+}
+
 // ReplaceContent streams a remote body into durable authority-free storage,
 // verifies its declared identity, then atomically installs a content_replace
 // head under the caller's node-revision precondition.

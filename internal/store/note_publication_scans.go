@@ -18,6 +18,7 @@ var (
 	ErrPublicationOperationMismatch = errors.New("publication operation payload mismatch")
 	ErrPublishedSourceDiverged      = errors.New("published source archive head diverged")
 	ErrNoteSourceUnavailable        = errors.New("published note source unavailable")
+	ErrInvalidNotePublication       = errors.New("invalid note publication request")
 )
 
 type NotePublicationBeginRequest struct{ Name, Destination, PolicyFingerprint, OperationID string }
@@ -307,7 +308,7 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 			return ErrPublicationOperationMismatch
 		}
 		if request.FileName != path.Base(request.SourceRef) || request.ParentPath != path.Join(scan.Destination, path.Dir(request.SourceRef)) {
-			return errors.New("publication placement does not match source and destination")
+			return ErrInvalidNotePublication
 		}
 		previous, err := s.publishedNoteSourceTx(ctx, tx, request.Name, request.SourceRef)
 		exists := err == nil
