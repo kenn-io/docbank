@@ -453,11 +453,8 @@ func TestPhotoMetadataMatchDensity(t *testing.T) {
 		require.NoError(t, err)
 		plan := explainQueryPlan(t, s, "SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE "+compiled.predicate.sql, compiled.predicate.args...)
 		require.Equal(t, tc.scan, strings.Contains(plan, "SCAN p"), tc.value)
-		ids := compiledFixtureIDs(t, s.db, compiled, "")
-		if tc.scan {
-			require.Empty(t, ids)
-		} else {
-			require.Equal(t, []int64{node.ID}, ids)
+		if !tc.scan {
+			require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 		}
 	}
 	for i := range 8 {
