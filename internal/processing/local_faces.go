@@ -26,7 +26,7 @@ func (setup *FaceSetup) Plan(ctx context.Context) (LocalTextPlan, error) {
 	if err != nil {
 		return LocalTextPlan{}, err
 	}
-	plan := LocalTextPlan{VaultUID: setup.Service.catalog.VaultID(), Profile: config.LocalFacesProfile, ProfileFingerprint: profile.record.Fingerprint, Managed: true, Models: []string{profile.portable.Embeddings[0].Model}, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "faces in this vault and new photos", VectorEffect: "Adds local face suggestions", Server: "local"}
+	plan := LocalTextPlan{VaultUID: setup.Service.catalog.VaultID(), Profile: config.LocalFacesProfile, ProfileFingerprint: profile.record.Fingerprint, Managed: true, Models: []string{profile.portable.Embeddings[0].Model}, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: photoDiscoveryScope(profile), VectorEffect: "Adds local face suggestions", Server: "local"}
 	data, err := json.Marshal(plan, json.Deterministic(true))
 	if err != nil {
 		return plan, err
