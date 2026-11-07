@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestReviewPairedFaceSources(t *testing.T) {
+func TestFaceEmbeddingPublishesPairedRAWMember(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
@@ -56,5 +56,5 @@ func TestReviewPairedFaceSources(t *testing.T) {
 			rawFound = true
 		}
 	}
-	require.True(t, rawFound, "paired RAW face must reach suggestions while JPEG is display")
+	require.True(t, rawFound, "paired RAW must publish a vector set while JPEG is display")
 }

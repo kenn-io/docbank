@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/kit/embedclient"
 )
 
-func TestFaceGenericPlanDisclosesDiscoveryScope(t *testing.T) {
+func TestFacePlanDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	selector := Selector{NodeID: x.f.node.ID, ContentVersionID: x.f.node.CurrentVersionID, Profile: config.LocalFacesProfile}

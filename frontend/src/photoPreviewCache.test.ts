@@ -341,7 +341,10 @@ it.each([
   },
 );
 
-it.each([undefined, "person-a"])("prepares and reads a face crop for person %s", async (id) => {
+it.each([
+  { label: "candidate face", id: undefined },
+  { label: "named person", id: "person-a" },
+])("prepares and reads a crop for $label", async ({ id }) => {
   vi.stubGlobal(
     "Image",
     class {

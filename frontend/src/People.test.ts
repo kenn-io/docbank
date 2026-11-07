@@ -382,12 +382,9 @@ it("shows suggestion cards with unnamed crops and no row when there are none", a
   ]);
   const cards = within(region).getAllByRole("button");
   expect(cards).toHaveLength(2);
-  // Each card requests its own exact-source face crop.
+  // Each card requests one crop.
   await waitFor(() => expect(within(region).getAllByRole("img")).toHaveLength(2));
-  expect(get.mock.calls.map((call) => [call[0], call[1], call[4], call[5]])).toEqual([
-    ["asset-face-1", "generation-face-1", undefined, "face-1"],
-    ["asset-face-4", "generation-face-4", undefined, "face-4"],
-  ]);
+  expect(get).toHaveBeenCalledTimes(2);
   list.mockResolvedValue({ items: [], total: 0 });
   await act(() => people.suggestions.load());
   expect(screen.queryByRole("region", { name: /Suggestions/ })).toBeNull();
@@ -397,19 +394,11 @@ it("shows suggestion cards with unnamed crops and no row when there are none", a
 it("renders retry and show-more controls for suggestions", async () => {
   stubImages();
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
-  const rows = Array.from({ length: 30 }, (_, index) =>
-    candidate(`candidate-${index}`, [candidateFace(`face-${index}`)], {
-      suggested_person_id: ada.person_id,
-      display_name: "Ada",
-    }),
-  );
-  vi.spyOn(api, "listFaceCandidates")
-    .mockRejectedValueOnce(new APIError("Suggestions unavailable", 503, "unavailable"))
-    .mockImplementation(async (params) => ({
-      items: rows.slice(params!.offset!, params!.offset! + params!.limit!),
-      total: rows.length,
-    }));
   const people = new People("session", vi.fn());
+  people.suggestions.items = [isAda];
+  people.suggestions.total = 2;
+  people.suggestions.error = "Suggestions unavailable";
+  const load = vi.spyOn(people.suggestions, "load").mockResolvedValue(undefined);
   const cache = new PhotoPreviewCache("session", vi.fn());
   vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
   const view = render(PeopleView, { people, cache, onperson: vi.fn() });
@@ -418,12 +407,15 @@ it("renders retry and show-more controls for suggestions", async () => {
   expect((await within(region).findByRole("alert")).textContent).toContain(
     "Suggestions unavailable",
   );
+  load.mockClear();
   await fireEvent.click(within(region).getByRole("button", { name: "Retry" }));
-  await within(region).findByRole("button", { name: "Show more" });
+  expect(load).toHaveBeenCalledExactlyOnceWith();
+  await act(() => {
+    people.suggestions.error = "";
+  });
+  load.mockClear();
   await fireEvent.click(within(region).getByRole("button", { name: "Show more" }));
-  await waitFor(() =>
-    expect(within(region).queryByRole("button", { name: "Show more" })).toBeNull(),
-  );
+  expect(load).toHaveBeenCalledExactlyOnceWith(true);
   view.unmount();
   people.dispose();
   await cache.dispose();

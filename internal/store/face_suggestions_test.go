@@ -198,7 +198,7 @@ func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
 		})
 	}
 }
-func TestFaceSuggestionRegroupPreservesRejectedEvidence(t *testing.T) {
+func TestFaceCandidateRegroupIdentityAndRevisionFences(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()

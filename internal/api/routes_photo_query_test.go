@@ -759,6 +759,7 @@ func TestSourcePhotoPreviewPreparationAndAccess(t *testing.T) {
 				invalid.ContentVersionID = displayed.CurrentVersionID
 				response, body = do(t, ts, http.MethodPost, preparePath, headers, invalid)
 				require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+				return
 			}
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)

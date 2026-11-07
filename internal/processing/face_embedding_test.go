@@ -177,7 +177,7 @@ func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 	require.ElementsMatch(t, []string{version, x.f.node.CurrentVersionID}, []string{sets.Sets[0].Set.ContentVersionID, sets.Sets[1].Set.ContentVersionID})
 }
 
-func TestFaceUnmatchedNamingSurvivesUnavailableSiblingVectors(t *testing.T) {
+func TestFaceNamingAndRankingContinuationWithUnavailableVectors(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()

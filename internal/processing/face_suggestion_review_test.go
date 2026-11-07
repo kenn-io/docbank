@@ -164,7 +164,7 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 	})
 }
 
-func TestFaceSuggestionBatchesResumeAndDiscardChangedInputs(t *testing.T) {
+func TestFaceSuggestionBatchesFinishAcrossWritesAndDiscardChangedInputs(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
@@ -189,49 +189,37 @@ func TestFaceSuggestionBatchesResumeAndDiscardChangedInputs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	first := x.service.faceSuggestionsPending
-	require.NotNil(t, first)
 	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, page, "partial groups must stay unpublished")
 	require.Zero(t, total)
-	_, err = x.f.catalog.CreatePerson(ctx, "Unrelated person", "operator")
+	for i := range 3 {
+		_, err = x.f.catalog.CreatePerson(ctx, fmt.Sprintf("Unrelated person %d", i), "operator")
+		require.NoError(t, err)
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	require.Same(t, first, x.service.faceSuggestionsPending, "unrelated writes must preserve progress")
+	require.EqualValues(t, 499, total, "unrelated writes must let the original pass finish in four batches")
+	service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	require.NoError(t, service.rebuildFaceSuggestions(ctx))
 	_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: "dismiss"})
 	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	require.NotNil(t, x.service.faceSuggestionsPending)
-	require.NotSame(t, first, x.service.faceSuggestionsPending, "changed faces must discard stale groups")
-	synctest.Test(t, func(t *testing.T) {
-		laneContext, cancel := context.WithCancel(ctx)
-		finished := make(chan error, 1)
-		go func() { finished <- x.service.FaceSuggestionBackfill(laneContext, nil) }()
-		defer func() {
-			cancel()
-			select {
-			case err := <-finished:
-				require.ErrorIs(t, err, context.Canceled)
-			case <-time.After(5 * time.Second):
-				t.Error("face backfill did not stop")
-			}
-		}()
-		require.Eventually(t, func() bool {
-			_, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
-			return err == nil && total == 498
-		}, 10*time.Second, 10*time.Millisecond, "batches must finish without another write")
-		for offset := 0; offset < 498; offset += 250 {
-			page, total, err = x.f.catalog.FaceCandidates(ctx, 250, offset)
-			require.NoError(t, err)
-			require.EqualValues(t, 498, total)
-			for _, group := range page {
-				for _, face := range group.Faces {
-					require.NotEqual(t, omitted.FaceID, face.FaceID)
-				}
+	for range 4 {
+		require.NoError(t, service.rebuildFaceSuggestions(ctx))
+	}
+	for offset := 0; offset < 498; offset += 250 {
+		page, total, err = x.f.catalog.FaceCandidates(ctx, 250, offset)
+		require.NoError(t, err)
+		require.EqualValues(t, 498, total, "changed inputs must complete without publishing a stale pass")
+		for _, group := range page {
+			for _, face := range group.Faces {
+				require.NotEqual(t, omitted.FaceID, face.FaceID)
 			}
 		}
-	})
+	}
 }
 
 func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
