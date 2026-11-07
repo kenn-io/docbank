@@ -104,9 +104,39 @@ func (source watchSource) digest(ctx context.Context, expected watchFingerprint)
 	return (FolderFile{File: f, Info: info}).Digest(ctx)
 }
 
+// FolderScan identifies one traversal, independently of any daemon scan epoch.
+type FolderScan struct {
+	Number           uint64
+	FullVerification bool
+}
+
+// FolderPresence reports every admitted file, including quiet processed files.
+// Digest is the last verified detector digest, not a new acceptance receipt.
+type FolderPresence struct {
+	Scan              uint64
+	Ref               string
+	Info              fs.FileInfo
+	Digest            string
+	Stable, Processed bool
+}
+
+// FolderScanResult distinguishes complete inventory evidence from a scan that
+// continued after rejecting or deferring a required source.
+type FolderScanResult struct {
+	Scan                        FolderScan
+	Complete                    bool
+	Observed, Failed, Unsettled int64
+}
+
 // FolderScanner shares watched-inbox traversal, exclusions, mount
 // boundaries and stability observations without opening a local vault.
 type FolderScanner struct {
+	// BeforeScan runs before detector shortcuts or file callbacks.
+	BeforeScan func(context.Context, FolderScan) error
+	// ObservePresent may force processing, but cannot bypass stability checks.
+	ObservePresent func(context.Context, FolderPresence) (forceProcess bool, err error)
+	// AfterScan runs after all processors exit and the pinned root is rechecked.
+	AfterScan func(context.Context, FolderScanResult) error
 	// VerifyRoot checks the opened source root before traversal.
 	VerifyRoot func(*os.Root) error
 	// BeforeFile admits a regular file before opening or hashing it.
@@ -119,6 +149,84 @@ type FolderScanner struct {
 	Excluded func(context.Context, string) error
 	watcher  *Watcher
 	scans    uint64
+	once     bool
+	evidence *folderScanEvidence
+}
+
+// Evidence is separate from rejection reporting: a repeated, suppressed error
+// still prevents negative inventory evidence. Workers may report failures
+// concurrently; only the traversal goroutine invokes the public callbacks.
+type folderScanEvidence struct {
+	mu     sync.Mutex
+	result FolderScanResult
+	failed map[string]struct{}
+}
+
+func (s *FolderScanner) beginScan(ctx context.Context) error {
+	s.scans++
+	if s.BeforeScan == nil && s.ObservePresent == nil && s.AfterScan == nil {
+		return nil
+	}
+	s.evidence = &folderScanEvidence{
+		result: FolderScanResult{Scan: FolderScan{Number: s.scans}, Complete: true},
+		failed: make(map[string]struct{}),
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.BeforeScan != nil {
+		return s.BeforeScan(ctx, s.evidence.result.Scan)
+	}
+	return nil
+}
+
+func (s *FolderScanner) failScan(ref string) {
+	if s == nil || s.evidence == nil {
+		return
+	}
+	e := s.evidence
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.result.Complete = false
+	if _, exists := e.failed[ref]; !exists {
+		e.failed[ref] = struct{}{}
+		e.result.Failed++
+	}
+}
+
+func (s *FolderScanner) observePresent(ctx context.Context, presence FolderPresence) (bool, error) {
+	if s == nil || s.evidence == nil {
+		return false, nil
+	}
+	e := s.evidence
+	e.mu.Lock()
+	e.result.Observed++
+	if !presence.Stable {
+		e.result.Unsettled++
+		e.result.Complete = false
+	}
+	e.mu.Unlock()
+	presence.Scan = s.scans
+	if s.ObservePresent != nil {
+		return s.ObservePresent(ctx, presence)
+	}
+	return false, nil
+}
+
+func (s *FolderScanner) finishScan(ctx context.Context, root *watchRoot, scanErr error) (bool, error) {
+	if s.evidence == nil {
+		return true, nil
+	}
+	defer func() { s.evidence = nil }()
+	err := errors.Join(ctx.Err(), root.verify())
+	if scanErr != nil || err != nil {
+		s.failScan("")
+	}
+	result := s.evidence.result // All one-shot workers have joined.
+	if s.AfterScan != nil {
+		err = errors.Join(err, s.AfterScan(ctx, result))
+	}
+	return result.Complete && err == nil, err
 }
 
 // NewFolderScanner creates a read-only client-side scanner. ScanOnce admits
@@ -151,6 +259,7 @@ func NewFolderScanner(
 	}
 	w := &Watcher{config: cfg, excludes: excludes, now: time.Now, logger: slog.Default(), observations: make(map[string]watchObservation), reject: reject}
 	scanner := &FolderScanner{watcher: w}
+	w.folderScanner = scanner
 	w.beforeFile = func(ctx context.Context, ref string) error {
 		if scanner.BeforeFile != nil {
 			return scanner.BeforeFile(ctx, ref)
@@ -270,7 +379,11 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 	s.watcher.immediate = true
 	s.watcher.observations = make(map[string]watchObservation)
 	s.watcher.rejected = make(map[string]struct{})
-	s.scans++
+	s.once = true
+	defer func() { s.once = false; s.evidence = nil }()
+	if err := s.beginScan(ctx); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	process := s.watcher.process
@@ -298,6 +411,9 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 		admitted := *observation
 		workers.Go(func() {
 			err := process(ctx, ref, &admitted, open)
+			if err != nil {
+				s.failScan(ref)
+			}
 			if errors.Is(err, ErrSourceChanged) {
 				err = s.watcher.sourceChanged(ctx, ref, err)
 			}
@@ -317,10 +433,12 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 		cancel(err)
 	}
 	join()
-	if err := context.Cause(ctx); err != nil {
-		return fmt.Errorf("scanning folder: %w", err)
+	err = context.Cause(ctx)
+	_, finishErr := s.finishScan(ctx, root, err)
+	if err != nil {
+		return errors.Join(fmt.Errorf("scanning folder: %w", err), finishErr)
 	}
-	return root.verify()
+	return errors.Join(finishErr, root.verify())
 }
 
 func checkFolderSource(expected watchFingerprint, open localFileOpener) error {
@@ -355,5 +473,5 @@ func (s *FolderScanner) Run(ctx context.Context) error {
 	s.watcher.immediate = false
 	s.watcher.observations = make(map[string]watchObservation)
 	s.watcher.rejected = make(map[string]struct{})
-	return s.watcher.run(ctx, root, func() { s.scans++ })
+	return s.watcher.run(ctx, root, nil)
 }

@@ -296,6 +296,7 @@ type Watcher struct {
 	// AfterImport runs outside the mutation gate after a committed add or update.
 	// Its failure is logged independently of scanner status.
 	AfterImport      func(context.Context, store.Node) error
+	folderScanner    *FolderScanner
 	process          func(context.Context, string, *watchObservation, localFileOpener) error
 	reject           func(context.Context, string, error) error
 	excluded         func(context.Context, string) error
@@ -994,9 +995,20 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 	return err
 }
 
-func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (bool, error) {
+func (w *Watcher) scanWithHints(ctx context.Context, root *watchRoot, hints watchScanHints) (complete bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
+	}
+	if s := w.folderScanner; s != nil && !s.once {
+		if err := s.beginScan(ctx); err != nil {
+			s.evidence = nil
+			return false, err
+		}
+		defer func() {
+			ok, finishErr := s.finishScan(ctx, root, err)
+			complete = complete && ok
+			err = errors.Join(err, finishErr)
+		}()
 	}
 	if w.notifications != nil {
 		w.notifications.BeginScan()
@@ -1253,6 +1265,7 @@ func (w *Watcher) scanDirectory(
 		}
 		info, err := dir.Lstat(entry.Name())
 		if err != nil {
+			w.folderScanner.failScan(rel)
 			if inventory != nil {
 				if retryableWatchCollectionError(err) {
 					w.interruptSettlingTree(rel)
@@ -1273,6 +1286,7 @@ func (w *Watcher) scanDirectory(
 			return fmt.Errorf("checking entry %q: %w", rel, err)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
+			w.folderScanner.failScan(rel)
 			if inventory != nil {
 				if _, known := inventory.knownDirs[rel]; known {
 					w.blockWatchPath(inventory, rel, "became a symlink")
@@ -1292,6 +1306,7 @@ func (w *Watcher) scanDirectory(
 			}
 			child, err := openWatchDirectory(dir, entry.Name())
 			if err != nil {
+				w.folderScanner.failScan(rel)
 				if inventory != nil {
 					if retryableWatchCollectionError(err) {
 						w.interruptSettlingTree(rel)
@@ -1337,6 +1352,7 @@ func (w *Watcher) scanDirectory(
 				return fmt.Errorf("checking directory %q filesystem boundary: %w", rel, mountErr)
 			}
 			if !w.sourceMount.same(childMount) {
+				w.folderScanner.failScan(rel)
 				if inventory != nil {
 					inventory.skipped[rel] = struct{}{}
 					if _, known := inventory.known[rel]; known {
@@ -1356,6 +1372,7 @@ func (w *Watcher) scanDirectory(
 			scanErr := w.scanDirectory(ctx, root, child, rel, seen, hints, inventory)
 			_ = child.Close()
 			if scanErr != nil {
+				w.folderScanner.failScan(rel)
 				if inventory != nil {
 					if retryableWatchCollectionError(scanErr) {
 						w.interruptSettlingTree(rel)
@@ -1381,6 +1398,7 @@ func (w *Watcher) scanDirectory(
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			w.folderScanner.failScan(rel)
 			if inventory != nil {
 				if _, known := inventory.known[rel]; known {
 					w.blockWatchPath(inventory, rel, "became nonregular")
@@ -1401,6 +1419,7 @@ func (w *Watcher) scanDirectory(
 			}
 		}
 		if err := validateSourcePath(rel); err != nil {
+			w.folderScanner.failScan(rel)
 			if w.reject != nil {
 				if err := w.rejectEntry(ctx, rel, err, seen); err != nil {
 					return err
@@ -1427,6 +1446,7 @@ func (w *Watcher) scanDirectory(
 		}
 		state, err := observe(w.process == nil || !w.immediate)
 		if err != nil {
+			w.folderScanner.failScan(rel)
 			if inventory != nil {
 				if retryableWatchCollectionError(err) {
 					w.interruptSettling(rel)
@@ -1462,6 +1482,7 @@ func (w *Watcher) scanDirectory(
 			return fmt.Errorf("checking entry %q: %w", rel, err)
 		}
 		if !w.sourceMount.same(state.mount) {
+			w.folderScanner.failScan(rel)
 			if inventory != nil {
 				inventory.skipped[rel] = struct{}{}
 				if _, known := inventory.known[rel]; known {
@@ -1519,11 +1540,19 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 	var result WatchResult
 	if err == nil {
 		minimumAge := w.config.MinimumAge.Std()
-		if observation.processed {
+		stable := (w.immediate || w.config.CaptureOnChange || observedAt.Sub(observation.stableSince) >= w.config.SettleTime.Std()) &&
+			(minimumAge == 0 || observedAt.Sub(time.Unix(0, fingerprint.modTime)) >= minimumAge)
+		force, observeErr := w.folderScanner.observePresent(ctx, FolderPresence{
+			Ref: rel, Info: state.info, Digest: observation.digest, Stable: stable, Processed: observation.processed,
+		})
+		if observeErr != nil {
+			w.folderScanner.failScan(rel)
+			return observeErr
+		}
+		if observation.processed && !force {
 			return nil
 		}
-		if (!w.immediate && !w.config.CaptureOnChange && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
-			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
+		if !stable {
 			return nil
 		}
 		w.reportWork(ctx)
@@ -1541,6 +1570,9 @@ func (w *Watcher) processObservation(ctx context.Context, source watchSource, st
 				})
 			})
 		}
+	}
+	if err != nil {
+		w.folderScanner.failScan(rel)
 	}
 	if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
 		!errors.Is(err, ErrSourceChanged) &&
