@@ -52,7 +52,7 @@ album index at `/photos/albums`, People at `/photos/people`, or an album at `/ph
 Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
 **Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
-**Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
+**Protected folders**, **Usage reporting**, and **Search by meaning**. On a narrow screen, **Open navigation** reveals the
 same menu.
 
 Folder breadcrumbs let you jump to any parent. Each file has an icon and a
