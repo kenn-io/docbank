@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/document/vision/visiontest"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T) {
@@ -85,4 +87,60 @@ func (p *understandingEmbeddingCapture) Embed(ctx context.Context, inputs []docu
 		p.headings = append(p.headings, input.HeadingPath)
 	}
 	return p.localTextEmbeddingProvider.Embed(ctx, inputs, auth)
+}
+
+func TestImageUnderstandingInvalidRepliesStopAfterThreeAttempts(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion(`{}`))
+	}))
+	defer server.Close()
+	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	require.NoError(t, err)
+	fixture := newPublicationFixture(t)
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(workerProcessingProfile(t, renderer.Descriptor()).CanonicalProfile, &portable))
+	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
+	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
+	portable.Rendition.DiscloseFilename = false
+	portable.Rendition.MaxUnits = 4
+	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactMarkdown}
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: "synthetic-vision"}}}})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.JPEG(32, 24, color.White)))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "invalid-reply.jpg", written.Hash, written.Size, "image/jpeg", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	_, version, profile, err := service.resolve(t.Context(), Selector{Profile: "images", NodeID: node.ID, ContentVersionID: node.CurrentVersionID})
+	require.NoError(t, err)
+	require.NoError(t, service.grantProfileConsent(t.Context(), profile, nil))
+	job, _, err := service.enqueueRendition(t.Context(), node, version, profile, service.renditionConsentRequest(profile), "", false)
+	require.NoError(t, err)
+	// Advance only retry scheduling; provider authorization keeps real time.
+	var retrySkew atomic.Int64
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: service.renditions, Gate: newWorkerTestGate(), Owner: "image-invalid-reply-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return time.Now().UTC().Add(time.Duration(retrySkew.Load())) }})
+	require.NoError(t, err)
+	for attempt := range 3 {
+		processed, err := worker.RunOne(t.Context())
+		require.NoError(t, err)
+		require.True(t, processed)
+		current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, attempt+1, current.ProviderAttempts)
+		if attempt < 2 {
+			assert.Equal(t, store.RenditionJobRetryWait, current.State)
+		} else {
+			assert.Equal(t, store.RenditionJobFailed, current.State)
+			assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
+		}
+		retrySkew.Add(int64(time.Minute))
+	}
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.False(t, processed, "a terminal job must not submit a fourth request")
+	assert.Equal(t, int32(3), calls.Load())
 }
