@@ -46,6 +46,7 @@ type answerFakeClient struct {
 
 	results       []api.DocumentSearchResult
 	report        api.DocumentSearchReport
+	searchReport  func(api.DocumentSearchRequest) (api.DocumentSearchReport, error)
 	requests      []api.DocumentSearchRequest
 	profiles      []api.ProcessingProfileSummary
 	documents     []api.DocumentSummary
@@ -81,6 +82,13 @@ func (f *answerFakeClient) SearchDocuments(ctx context.Context, req api.Document
 	f.requests = append(f.requests, req)
 	report := f.report
 	report.Results = f.results
+	if f.searchReport != nil {
+		var err error
+		report, err = f.searchReport(req)
+		if err != nil {
+			return api.DocumentSearchReport{}, err
+		}
+	}
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		return api.DocumentSearchReport{}, err
@@ -228,15 +236,26 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 }
 
 func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
-	for _, tc := range []struct{ binding, rerank bool }{{true, false}, {false, false}, {true, true}} {
-		t.Run(fmt.Sprintf("binding=%t/rerank=%t", tc.binding, tc.rerank), func(t *testing.T) {
+	for _, tc := range []struct {
+		binding, rerank bool
+		terms           []string
+	}{{true, false, nil}, {false, false, nil}, {true, true, nil}, {true, false, []string{"first", "second"}}} {
+		t.Run(fmt.Sprintf("binding=%t/rerank=%t/terms=%d", tc.binding, tc.rerank, len(tc.terms)), func(t *testing.T) {
 			f := &answerFakeClient{empty: true}
 			if !tc.binding {
 				f.profiles = []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64)}}
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-			out, links, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
-			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
+			args := map[string]any{"question": "example", "rerank": tc.rerank}
+			if len(tc.terms) > 0 {
+				args["terms"] = tc.terms
+			}
+			raw, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, links, err := answerQuestion(t.Context(), session, raw)
+			if err != nil || f.validations != 1+len(tc.terms) || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Receipt.TermsSHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
 			if tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "skipped") {

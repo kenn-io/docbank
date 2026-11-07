@@ -9,8 +9,9 @@ const (
 
 func answerQuestionSchemas() (schema, schema) {
 	input := fenceInputProperties()
-	input["question"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}                                //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
-	input["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+	input["question"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}                                                                                 //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+	input["terms"] = schema{"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": schema{"type": "string", "minLength": 1, "maxLength": 64}} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
+	input["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}                                                  //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 	input["binding_id"] = schema{"type": "string", "minLength": 1, "maxLength": 128}
 	input["limit"] = integerSchema(1, 50)
 	input["rerank"] = booleanSchema()
@@ -25,7 +26,7 @@ func answerQuestionSchemas() (schema, schema) {
 	passage["text_bytes"] = integerSchema(0, 2048)
 	citation := objectSchema(schema{"node_id": integerSchema(1, 0), versionField: uuidSchema()}, "node_id", versionField)
 	receipt := objectSchema(schema{
-		"question_sha256": sha256Schema(), "executed_query_sha256": sha256Schema(), "search_executed": booleanSchema(), "observed_scope_count": integerSchema(0, 0), answerVaultIDField: uuidSchema(), "fence_fingerprint": fenceFingerprintSchema(),
+		"question_sha256": sha256Schema(), "executed_query_sha256": sha256Schema(), "terms_sha256": sha256Schema(), "search_executed": booleanSchema(), "observed_scope_count": integerSchema(0, 0), answerVaultIDField: uuidSchema(), "fence_fingerprint": fenceFingerprintSchema(),
 		"profile": objectSchema(schema{"name": stringSchema(128), "fingerprint": sha256Schema()}, "name", "fingerprint"), "binding_id": stringSchema(128), "vector_space_ids": arraySchema(stringSchema(1024), 3200), "requested_mode": stringSchema(64), "actual_mode": stringSchema(64), "degradations": arraySchema(stringSchema(64), 64), "coverage": searchCoverageSchema(),
 		"reranking":      searchRerankingSchema(),
 		"cited_versions": arraySchema(citation, 50),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"slices"
@@ -24,15 +25,20 @@ func answerContentExcerpt(result api.DocumentSearchResult) bool {
 		return false
 	}
 	for _, evidence := range result.Evidence {
-		if evidence.Kind == "rendition_segment" || evidence.Kind == "content_blob" {
+		if answerContentKind(evidence.Kind) {
 			return true
 		}
 	}
 	return false
 }
 
+func answerContentKind(kind string) bool {
+	return kind == "rendition_segment" || kind == "content_blob"
+}
+
 type answerInput struct {
 	Question          string                          `json:"question"`
+	Terms             []string                        `json:"terms"`
 	ContentVersionIDs []string                        `json:"content_version_ids"`
 	Filters           *api.DocumentSourceFenceFilters `json:"filters"`
 	Profile           string                          `json:"profile"`
@@ -53,6 +59,7 @@ type answerCitation struct {
 type answerReceipt struct {
 	QuestionSHA256      string                              `json:"question_sha256"`
 	ExecutedQuerySHA256 string                              `json:"executed_query_sha256,omitempty"`
+	TermsSHA256         string                              `json:"terms_sha256,omitempty"`
 	SearchExecuted      bool                                `json:"search_executed"`
 	ObservedScopeCount  int                                 `json:"observed_scope_count"`
 	VaultID             string                              `json:"vault_id,omitempty"`
@@ -154,8 +161,10 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		profile   api.ProcessingProfileSummary
 		binding   string
 		report    api.DocumentSearchReport
+		hits      []answerSearchHit
 		failure   string
 		executed  bool
+		truncated bool
 		documents []api.DocumentSummary
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
@@ -183,13 +192,13 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			}
 			return selected
 		}
-		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
-			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
+		run := func(query, profile, binding, mode string, rerank bool) (api.DocumentSearchReport, error) {
+			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: query, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
 		var report api.DocumentSearchReport
 		var binding, failure string
 		for _, candidate := range candidates {
-			report, err = run(candidate.Profile, candidate.Binding, "hybrid")
+			report, err = run(input.Question, candidate.Profile, candidate.Binding, "hybrid", input.Rerank)
 			if err == nil {
 				selected = findProfile(candidate.Profile)
 				binding = candidate.Binding
@@ -207,16 +216,43 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			}
 		}
 		if binding == "" {
-			report, err = run(selected.Name, "", "lexical")
+			report, err = run(input.Question, selected.Name, "", "lexical", input.Rerank)
 			if err != nil {
 				return response{}, err
 			}
 		}
-		docs, err := resolveSearchSummaries(ctx, c, report.Results)
+		hits := answerSearchHits(report)
+		truncated := report.Truncated
+		if len(input.Terms) > 0 {
+			reports := make([]api.DocumentSearchReport, 0, len(input.Terms))
+			for _, term := range input.Terms {
+				termsReport, termsErr := run(term, selected.Name, "", "lexical", false)
+				if termsErr != nil {
+					return response{}, termsErr
+				}
+				reports = append(reports, termsReport)
+				truncated = truncated || termsReport.Truncated
+			}
+			var mergeTruncated bool
+			hits, mergeTruncated = mergeAnswerSearchResults(hits, reports, input.Limit)
+			truncated = truncated || mergeTruncated
+		}
+		uniqueResults := make([]api.DocumentSearchResult, 0, len(hits))
+		seenDocuments := make(map[api.DocumentIdentity]struct{}, len(hits))
+		for _, hit := range hits {
+			item := hit.result
+			identity := api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}
+			if _, exists := seenDocuments[identity]; exists {
+				continue
+			}
+			seenDocuments[identity] = struct{}{}
+			uniqueResults = append(uniqueResults, item)
+		}
+		docs, err := resolveSearchSummaries(ctx, c, uniqueResults)
 		if err != nil {
 			return response{}, err
 		}
-		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs}, nil
+		return response{fence: fence, profile: selected, binding: binding, report: report, hits: hits, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, truncated: truncated, documents: docs}, nil
 	})
 	if err != nil {
 		if code, count := stableDomainError(err); code == "scope_too_large" {
@@ -233,6 +269,14 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	out.Receipt.Profile = &answerProfile{Name: result.profile.Name, Fingerprint: result.profile.Fingerprint}
 	out.Receipt.BindingID = result.binding
 	out.Receipt.SearchExecuted = result.executed
+	if result.executed && len(input.Terms) > 0 {
+		termsHashInput, err := json.Marshal(input.Terms)
+		if err != nil {
+			return answerOutput{}, nil, err
+		}
+		termsHash := sha256.Sum256(termsHashInput)
+		out.Receipt.TermsSHA256 = hex.EncodeToString(termsHash[:])
+	}
 	if result.executed {
 		executedHash := sha256.Sum256([]byte(strings.TrimSpace(input.Question)))
 		out.Receipt.ExecutedQuerySHA256 = hex.EncodeToString(executedHash[:])
@@ -261,15 +305,16 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	if coverage.State != "complete" {
 		out.CoverageReasons = append(out.CoverageReasons, "embeddings_incomplete")
 	}
-	if result.report.Truncated {
+	if result.truncated {
 		out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 	}
-	for index, item := range result.report.Results {
+	for _, hit := range result.hits {
+		item := hit.result
 		ids, err := encodeSearchEvidenceIDs(item.Evidence)
 		if err != nil {
 			return answerOutput{}, nil, err
 		}
-		relevance := searchRerankRelevance(item, index, result.report.Reranking)
+		relevance := hit.relevance
 		if answerContentExcerpt(item) {
 			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: relevance})
 		} else {
@@ -298,7 +343,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if (out.OmittedPassages > 0 || out.OmittedLeads > 0) && !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
 			out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 		}
-		out.Receipt.VectorSpaceIDs = out.Receipt.VectorSpaceIDs[:0]
 		spaces := map[string]bool{}
 		retained := map[answerCitation]bool{}
 		for _, p := range out.Passages {
@@ -307,8 +351,9 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		for _, l := range out.Leads {
 			retained[answerCitation{l.NodeID, l.ContentVersionID}] = true
 		}
-		for _, item := range result.report.Results {
-			if !retained[answerCitation{item.NodeID, item.ContentVersionID}] {
+		for _, hit := range result.hits {
+			item := hit.result
+			if !slices.ContainsFunc(out.Passages, func(p answer.Passage) bool { return p.Rank == item.Rank }) && !slices.ContainsFunc(out.Leads, func(l answer.Lead) bool { return l.Rank == item.Rank }) {
 				continue
 			}
 			for _, evidence := range item.Evidence {
@@ -317,6 +362,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				}
 			}
 		}
+		out.Receipt.VectorSpaceIDs = out.Receipt.VectorSpaceIDs[:0]
 		for space := range spaces {
 			out.Receipt.VectorSpaceIDs = append(out.Receipt.VectorSpaceIDs, space)
 		}
@@ -331,7 +377,8 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			}
 			return cmp.Compare(a.ContentVersionID, b.ContentVersionID)
 		})
-		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.report.Truncated
+		out.Receipt.CitedVersions = slices.Compact(out.Receipt.CitedVersions)
+		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.truncated
 		out.Status = answer.Classify(answer.Evidence{Passages: out.Passages, Leads: out.Leads}, out.CoverageComplete, omitted)
 		links := linksFor(retained)
 		if linkLimit < 0 {
