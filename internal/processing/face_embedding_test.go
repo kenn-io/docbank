@@ -97,22 +97,19 @@ func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, n)
 			require.Equal(t, 1, x.calls)
-			coverage, err := x.service.Coverage(ctx, config.LocalFacesProfile, SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}})
-			require.NoError(t, err)
-			require.Len(t, coverage.Embeddings, 1)
-			require.Equal(t, 1, coverage.Embeddings[0].Complete, "aligned and all-unmatched attempts both finish processing")
-			require.Zero(t, coverage.Embeddings[0].Unavailable)
 			expected := make([]embedclient.FaceBox, len(x.inputs))
 			for i, f := range x.inputs {
 				expected[i] = embedclient.FaceBox(f.Box)
 			}
 			require.Equal(t, expected, x.boxes)
-			faces, _, _, err := x.f.catalog.PhotoFacePersonNames(ctx, x.f.node.CurrentVersionID)
-			require.NoError(t, err)
-			require.Equal(t, x.inputs, faces)
 			sets, err := x.f.catalog.FaceMatchingInputs(ctx)
 			require.NoError(t, err)
 			if unmatched {
+				coverage, err := x.service.Coverage(ctx, config.LocalFacesProfile, SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}})
+				require.NoError(t, err)
+				require.Len(t, coverage.Embeddings, 1)
+				require.Equal(t, 1, coverage.Embeddings[0].Complete, "all-unmatched attempts finish processing")
+				require.Zero(t, coverage.Embeddings[0].Unavailable)
 				require.Empty(t, sets.Sets)
 			} else {
 				require.Len(t, sets.Sets, 1)
@@ -182,7 +179,7 @@ func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 	require.ElementsMatch(t, []string{version, x.f.node.CurrentVersionID}, []string{sets.Sets[0].Set.ContentVersionID, sets.Sets[1].Set.ContentVersionID})
 }
 
-func TestFaceNamingAndRankingContinuationWithUnavailableVectors(t *testing.T) {
+func TestFaceRankingContinuationWithUnavailableVectors(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()

@@ -12,6 +12,7 @@ import (
 
 func TestFaceEmbeddingCrowdFitsDescriptorBudget(t *testing.T) {
 	t.Parallel()
+	// The Linux descriptor limit checks worker preparation; Kit owns request chunking.
 	withFaceDescriptorBudget(t, func() {
 		x := newFaceEmbeddingFixture(t, false)
 		x.matchAll = true
@@ -30,6 +31,6 @@ func TestFaceEmbeddingCrowdFitsDescriptorBudget(t *testing.T) {
 		require.Len(t, sets.Sets, 1)
 		require.Equal(t, 128, sets.Sets[0].Set.VectorSet.RowCount)
 		require.Len(t, x.boxes, 128)
-		require.Equal(t, 16, x.calls, "128 faces must use sixteen eight-box inference requests")
+		require.Equal(t, 16, x.calls)
 	})
 }

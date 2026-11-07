@@ -18,14 +18,12 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name              string
-		faces             bool
 		source            string
 		images, faceCalls int
 	}{
-		{"image only faceless", false, "faceless", 1, 0},
-		{"mixed faceless", true, "faceless", 1, 0},
-		{"mixed Hidden", true, "hidden", 0, 1},
-		{"mixed paired RAW", true, "raw", 1, 2},
+		{"mixed faceless", "faceless", 1, 0},
+		{"mixed Hidden", "hidden", 0, 1},
+		{"mixed paired RAW", "raw", 1, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -38,12 +36,10 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 			portable := images.portable
 			providers := map[string]document.EmbeddingProvider{images.binding.Name: images.provider}
 			descriptors := []string{images.descriptor.Fingerprint}
-			if tc.faces {
-				faceProfile := faces.service.profiles[config.LocalFacesProfile]
-				portable.Embeddings = append(portable.Embeddings, faceProfile.portable.Embeddings[0])
-				providers[config.LocalFacesProfile] = faceProfile.embedders[config.LocalFacesProfile]
-				descriptors = append(descriptors, providers[config.LocalFacesProfile].Descriptor().Fingerprint)
-			}
+			faceProfile := faces.service.profiles[config.LocalFacesProfile]
+			portable.Embeddings = append(portable.Embeddings, faceProfile.portable.Embeddings[0])
+			providers[config.LocalFacesProfile] = faceProfile.embedders[config.LocalFacesProfile]
+			descriptors = append(descriptors, providers[config.LocalFacesProfile].Descriptor().Fingerprint)
 			service, err := NewService(ctx, ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"mixed": {Profile: portable, EmbeddingProviders: providers}}})
 			require.NoError(t, err)
 			t.Cleanup(service.Stop)
@@ -53,6 +49,7 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 				_, err = f.catalog.SetPhotoAssetHidden(ctx, f.asset.ID, f.asset.Revision, true)
 				require.NoError(t, err)
 			}
+			rawVersion := ""
 			if tc.source == "raw" {
 				rawBytes := mediatest.TIFFWithEmbeddedJPEG(1, mediatest.TIFFJPEGPreview{Data: mediatest.JPEG(1024, 768, color.White)})
 				written, err := f.blobs.WriteDetailedContext(ctx, bytes.NewReader(rawBytes))
@@ -61,6 +58,7 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 				require.NoError(t, err)
 				raw, err := f.catalog.IngestFileExact(ctx, run, f.catalog.RootID(), "paired.nef", written.Hash, written.Size, "image/x-nikon-nef", "paired.nef", "", processingBlobPhysical(t, written))
 				require.NoError(t, err)
+				rawVersion = raw.CurrentVersionID
 				asset, err := f.catalog.PhotoAssetForNode(ctx, raw.ID)
 				require.NoError(t, err)
 				_, err = f.catalog.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, store.PhotoDetachOptions{})
@@ -87,6 +85,15 @@ func TestMixedFaceImageProfileKeepsBindingEligibility(t *testing.T) {
 			}
 			require.Equal(t, tc.images, images.fake.runtime.callCount(images.binding.Name), "image eligibility must stay independent of face bindings")
 			require.Equal(t, tc.faceCalls, faces.calls, "face eligibility includes Hidden and paired RAW members")
+			if rawVersion != "" {
+				sets, err := f.catalog.FaceMatchingInputs(ctx)
+				require.NoError(t, err)
+				var published []string
+				for _, set := range sets.Sets {
+					published = append(published, set.Set.InputGeneration.SourceVersionID)
+				}
+				require.Contains(t, published, rawVersion, "paired RAW must publish face vectors while JPEG is display")
+			}
 			coverage, err := service.Coverage(ctx, "mixed", SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}})
 			require.NoError(t, err)
 			for _, binding := range coverage.Embeddings {

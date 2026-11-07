@@ -18,10 +18,10 @@ func TestFaceEmbeddingIdentityLiteral(t *testing.T) {
 	require.NoError(t, validateFaceEmbeddingGeneration(generation, "face"))
 	face.Box.X = .25
 	require.NotEqual(t, checksum, FaceEmbeddingChecksum(fakeHash("a1"), face))
-	require.Error(t, validateFaceEmbeddingGeneration(generation, "other-model"))
+	require.EqualError(t, validateFaceEmbeddingGeneration(generation, "other-model"), "invalid face generation identity")
 	generation.Inputs = append([]EmbeddingInputReference{{ID: "00000000-0000-4000-8000-000000000003", RenderedChecksum: checksum}}, generation.Inputs...)
 	generation.ID = FaceEmbeddingGenerationID(generation, "face")
-	require.Error(t, validateFaceEmbeddingGeneration(generation, "face"))
+	require.EqualError(t, validateFaceEmbeddingGeneration(generation, "face"), "face inputs must have sorted unique face IDs")
 }
 
 func TestFaceVectorSubsetMembership(t *testing.T) {
