@@ -21,19 +21,24 @@ import (
 var errPublicationIncomplete = errors.New("publication inventory is incomplete")
 
 type publicationPublisher struct {
-	mu         sync.Mutex // ScanOnce may observe the next entry while one processor exits.
-	connection *daemonconn.Connection
-	opts       Options
-	policy     string
-	scan       api.NotePublicationScan
-	localScan  ingest.FolderScan
-	sources    map[string]api.NotePublicationSource
-	seen       []api.PublishedNoteIdentity
-	report     Report
-	status     api.NotePublicationStatus
-	failed     bool
-	completed  bool
-	wait       func(context.Context, time.Duration) error
+	mu               sync.Mutex // ScanOnce may observe the next entry while one processor exits.
+	connection       *daemonconn.Connection
+	opts             Options
+	policy           string
+	scan             api.NotePublicationScan
+	localScan        ingest.FolderScan
+	sources          map[string]api.NotePublicationSource
+	seen             []api.PublishedNoteIdentity
+	report           Report
+	status           api.NotePublicationStatus
+	current          *api.NotePublicationStatus
+	progress         PublicationStatus
+	statusErr        error
+	bufferedComplete *PublicationStatus
+	failed           bool
+	completed        bool
+	committing       bool
+	wait             func(context.Context, time.Duration) error
 }
 
 func runPublication(ctx context.Context, c *daemonconn.Connection, opts Options) (Report, error) {
@@ -51,6 +56,7 @@ func runPublication(ctx context.Context, c *daemonconn.Connection, opts Options)
 		return Report{}, err
 	}
 	scanner.VerifyInterval = 60 * time.Second
+	scanner.ScanStatus = p.scanStatus
 	scanner.BeforeScan = p.beforeScan
 	scanner.ObservePresent = p.observePresent
 	scanner.AfterScan = p.afterScan
@@ -73,7 +79,16 @@ func runPublication(ctx context.Context, c *daemonconn.Connection, opts Options)
 func (p *publicationPublisher) beforeScan(ctx context.Context, scan ingest.FolderScan) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.bufferedComplete != nil && p.opts.Status != nil {
+		if err := p.opts.Status(ctx, clonePublicationStatus(*p.bufferedComplete)); err != nil {
+			return err
+		}
+	}
+	p.bufferedComplete = nil
 	p.localScan = scan
+	p.progress = PublicationStatus{}
+	p.statusErr = nil
+	p.scan = api.NotePublicationScan{}
 	p.failed = false
 	p.seen = nil
 	request := api.NotePublicationBeginRequest{Name: p.opts.Folder.Name, Destination: p.opts.Folder.Destination, PolicyFingerprint: p.policy, OperationID: uuid.NewV4().String()}
@@ -87,7 +102,22 @@ func (p *publicationPublisher) beforeScan(ctx context.Context, scan ingest.Folde
 	}
 	p.completed = false
 	p.scan = remote
-	return p.refreshSources(ctx)
+	if err := p.refreshSources(ctx); err != nil {
+		return err
+	}
+	var status api.NotePublicationStatus
+	if err := p.retry(ctx, func() error {
+		var err error
+		status, err = p.connection.NotePublicationStatus(ctx, p.opts.Folder.Name)
+		return err
+	}, nil); err != nil {
+		return err
+	}
+	if status.DatabaseEpoch != p.scan.DatabaseEpoch {
+		return errors.New("publication status changed database epoch")
+	}
+	p.current = &status
+	return p.emit(ctx, "begin")
 }
 func (p *publicationPublisher) refreshSources(ctx context.Context) error {
 	sources := make(map[string]api.NotePublicationSource)
@@ -117,6 +147,10 @@ func (p *publicationPublisher) refreshSources(ctx context.Context) error {
 func (p *publicationPublisher) observePresent(ctx context.Context, v ingest.FolderPresence) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.progress.Observed++
+	if err := p.emit(ctx, "observed"); err != nil {
+		return false, err
+	}
 	source, known := p.sources[v.Ref]
 	if !known || !v.Processed || source.Recovery != nil || source.Conflict != "" || source.Availability != "retained" || v.Digest == "" || v.Digest != source.Identity.Hash || v.Info.Size() != source.Identity.Size || p.localScan.FullVerification {
 		return true, nil
@@ -187,6 +221,10 @@ func (p *publicationPublisher) flushSeen(ctx context.Context) error {
 		source.Presence = "present"
 		p.sources[id.SourceRef] = source
 		p.report.Skipped++
+		p.progress.Unchanged++
+		if err := p.emit(ctx, "unchanged"); err != nil {
+			return err
+		}
 		if p.opts.Progress != nil {
 			if err := p.opts.Progress(id.SourceRef, "skipped"); err != nil {
 				p.failed = true
@@ -204,13 +242,23 @@ func (p *publicationPublisher) process(ctx context.Context, file ingest.FolderFi
 	if err == nil {
 		return nil
 	}
+	if p.statusErr != nil {
+		return p.statusErr
+	}
 	p.failed = true
 	code, _ := daemonconn.ProblemCode(err)
 	if source, ok := errors.AsType[*publicationSourceError](err); ok {
 		code = source.Code
 	}
 	if ctx.Err() == nil && !publicationStopsRun(err) && (code == "published_source_diverged" || code == "note_source_unavailable") {
-		return p.rejectLocked(file.Ref, err)
+		return p.rejectLocked(ctx, file.Ref, err)
+	}
+	if _, local := errors.AsType[*ingest.SourceAccessError](err); local {
+		return err
+	}
+	p.recordFailure(file.Ref, err)
+	if callbackErr := p.emit(ctx, "incomplete"); callbackErr != nil {
+		return errors.Join(err, callbackErr)
 	}
 	return err
 }
@@ -292,19 +340,40 @@ func (p *publicationPublisher) publish(ctx context.Context, file ingest.FolderFi
 	case "skipped":
 		p.report.Skipped++
 	}
+	if receipt.Outcome == "skipped" {
+		p.progress.Unchanged++
+	} else {
+		p.progress.Accepted++
+	}
+	event := "accepted"
+	if receipt.Outcome == "skipped" {
+		event = "unchanged"
+	}
+	if err := p.emit(ctx, event); err != nil {
+		return err
+	}
 	if p.opts.Progress != nil {
 		return p.opts.Progress(file.Ref, receipt.Outcome)
 	}
 	return nil
 }
-func (p *publicationPublisher) reject(_ context.Context, ref string, err error) error {
+func (p *publicationPublisher) reject(ctx context.Context, ref string, err error) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.rejectLocked(ref, err)
+	return p.rejectLocked(ctx, ref, err)
 }
-func (p *publicationPublisher) rejectLocked(ref string, err error) error {
+func (p *publicationPublisher) rejectLocked(ctx context.Context, ref string, err error) error {
 	p.failed = true
 	p.report.Failed++
+	p.progress.Failed++
+	p.recordFailure(ref, err)
+	event := "incomplete"
+	if publicationFailureCode(err) == "published_source_diverged" {
+		event = "conflict"
+	}
+	if callbackErr := p.emit(ctx, event); callbackErr != nil {
+		return callbackErr
+	}
 	if p.opts.Failure != nil {
 		return p.opts.Failure(ref, err)
 	}
@@ -313,7 +382,14 @@ func (p *publicationPublisher) rejectLocked(ref string, err error) error {
 func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.FolderScanResult) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.statusErr != nil {
+		return p.statusErr
+	}
+	p.progress.Failed = max(p.progress.Failed, result.Failed)
 	if !result.Complete || p.failed {
+		if err := p.emit(ctx, "incomplete"); err != nil {
+			return err
+		}
 		if p.opts.Watch {
 			return nil
 		}
@@ -322,6 +398,13 @@ func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.Fold
 	if err := p.flushSeen(ctx); err != nil {
 		return err
 	}
+	if err := p.emit(ctx, "completing"); err != nil {
+		return err
+	}
+	// Once sent, Complete may already be committed even without a receipt.
+	// Resolve it without running another fallible authority gate.
+	p.committing = true
+	defer func() { p.committing = false }()
 	var status api.NotePublicationStatus
 	request := api.NotePublicationCompleteRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, PolicyFingerprint: p.policy, InventoryComplete: true}
 	err := p.retry(ctx, func() error {
@@ -337,6 +420,12 @@ func (p *publicationPublisher) afterScan(ctx context.Context, result ingest.Fold
 	}
 	p.status = status
 	p.completed = true
+	p.current = &status
+	p.progress.Scan, p.progress.Event, p.progress.Current = p.scan, "complete", p.current
+	final := clonePublicationStatus(p.progress)
+	p.report.Publication = &final
+	buffered := clonePublicationStatus(final)
+	p.bufferedComplete = &buffered
 	return nil
 }
 
@@ -413,6 +502,10 @@ func (p *publicationPublisher) retryOperation(ctx context.Context, action func()
 		}
 		if ctx.Err() != nil || !publicationRetryable(err) {
 			return err
+		}
+		p.recordFailure("", err)
+		if callbackErr := p.emit(ctx, "retry"); callbackErr != nil {
+			return callbackErr
 		}
 		if recoveries == 3 {
 			if !p.opts.Watch {
