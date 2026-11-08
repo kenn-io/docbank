@@ -410,3 +410,10 @@ func TestReviewTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
 		require.Empty(t, n.Links, src)
 	}
 }
+
+func TestReviewRepeatedDefinitionsWithTitlesBudget(t *testing.T) {
+	src := strings.Repeat("> [r]: note.md\n>     \"title\"\n", 600) + "\n[use][r]\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}

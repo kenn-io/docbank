@@ -500,7 +500,7 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 	}
 	probe := probes[key]
 	if probe == nil {
-		probe = &definitionProbe{block: first, offset: blocks[first].content.Start + 1}
+		probe = &definitionProbe{block: first, offset: blocks[first].content.Start + 1, anchor: -1}
 		probes[key] = probe
 	}
 	for !probe.closed && probe.block <= last {
@@ -579,8 +579,19 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 			probe.waitEscaped = false
 		}
 	}
-	if first == last {
-		end, err := leadingDefinitionsEnd(ctx, src, blocks[last].content, b)
+	scanFirst := first
+	if probe.anchor >= 0 {
+		scanFirst = probe.anchorBlock
+	}
+	if scanFirst == last {
+		content := blocks[last].content
+		if probe.anchor >= 0 {
+			content.Start = probe.anchor
+		}
+		end, lastStart, err := leadingDefinitionProgress(ctx, src, content, b)
+		if err == nil && lastStart >= 0 {
+			probe.anchor, probe.anchorBlock = lastStart, last
+		}
 		if err == nil && end < blocks[last].content.End && !couldBeDefinition(src[end:blocks[last].content.End]) {
 			nonDefinitions[key] = true
 		} else if err == nil && end < blocks[last].content.End {
@@ -596,9 +607,9 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 		}
 		return end >= blocks[last].content.End, err
 	}
-	start, end := blocks[first].span.Start, blocks[last].span.End
-	rebased := make([]sourceBlock, 0, last-first+1)
-	for _, block := range blocks[first : last+1] {
+	start, end := blocks[scanFirst].span.Start, blocks[last].span.End
+	rebased := make([]sourceBlock, 0, last-scanFirst+1)
+	for _, block := range blocks[scanFirst : last+1] {
 		if err := b.node(ctx, 1); err != nil {
 			return false, err
 		}
@@ -608,12 +619,27 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 		block.content.End -= start
 		rebased = append(rebased, block)
 	}
-	view, joined, _, err := prepareLinkSource(ctx, src[start:end], rebased, b)
+	rebased[0].continuation = false
+	if probe.anchor >= 0 {
+		rebased[0].content.Start = probe.anchor - start
+	}
+	view, joined, offsets, err := prepareLinkSource(ctx, src[start:end], rebased, b)
 	if err != nil {
 		return false, err
 	}
 	content := joined[len(joined)-1].content
-	position, err := leadingDefinitionsEnd(ctx, view, content, b)
+	position, lastStart, err := leadingDefinitionProgress(ctx, view, content, b)
+	if err == nil && lastStart >= 0 {
+		originalStart := originalLinkSpan(Span{lastStart, lastStart}, offsets).Start + start
+		index := scanFirst
+		for index < last && blocks[index].span.End <= originalStart {
+			if err := b.step(ctx, 1); err != nil {
+				return false, err
+			}
+			index++
+		}
+		probe.anchor, probe.anchorBlock = originalStart, index
+	}
 	if err == nil && position < content.End && !couldBeDefinition(view[position:content.End]) {
 		nonDefinitions[key] = true
 	} else if err == nil && position < content.End {
@@ -708,6 +734,7 @@ func invalidDefinitionDestination(ctx context.Context, text []byte, b *budget) (
 type definitionProbe struct {
 	block, offset, bytes  int
 	closed, escaped       bool
+	anchor, anchorBlock   int
 	wait                  byte
 	waitBlock, waitOffset int
 	waitEscaped           bool
@@ -806,24 +833,32 @@ func quoteSpace(ctx context.Context, raw []byte, pos int, b *budget) (int, int, 
 
 // Leading reference definitions belong to the paragraph, not its heading.
 func leadingDefinitionsEnd(ctx context.Context, src []byte, content Span, b *budget) (int, error) {
+	end, _, err := leadingDefinitionProgress(ctx, src, content, b)
+	return end, err
+}
+
+// Retain the last definition's start so a following title can still attach.
+func leadingDefinitionProgress(ctx context.Context, src []byte, content Span, b *budget) (int, int, error) {
 	scanner := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}}
 	pos := content.Start
+	lastStart := -1
 	for pos < content.End {
 		line, next, err := sourceLineAt(ctx, src, pos, b)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		line.End = min(line.End, content.End)
 		end, ok, err := scanner.definition(line, content.End)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if !ok {
 			break
 		}
+		lastStart = pos
 		pos = max(next, definitionNext(src, end))
 	}
-	return pos, nil
+	return pos, lastStart, nil
 }
 
 func leadingIndent(ctx context.Context, raw []byte, start int, b *budget) (end, columns int, err error) {
