@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Remote CI only: synthetic audio -> pinned real Docling ASR -> Go adapter."""
 import importlib.metadata
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,25 @@ with (output / "service.log").open("w") as log:
             "go", "test", "-tags", "fts5", "-count=1", "-v", "-timeout", "8m",
             "./document/docling", "-run", "^TestDoclingASRRealM4AQualification$",
         ], cwd=root, env=env, check=True)
+        source = (output / "asr-spoken.m4a").read_bytes()
+        transcript = (output / "media-transcript.json").read_bytes()
+        probe = subprocess.run([
+            "ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=codec_name,sample_rate,channels:format=duration,format_name",
+            "-of", "json", str(output / "asr-spoken.m4a"),
+        ], check=True, capture_output=True, text=True)
+        report = {
+            "contract": "docbank-asr-qualification/v1",
+            "source": "synthetic asr-spoken.wav transcoded to AAC/M4A",
+            "source_sha256": hashlib.sha256(source).hexdigest(),
+            "artifact_sha256": hashlib.sha256(transcript).hexdigest(),
+            "versions": versions,
+            "decoder": json.loads(probe.stdout),
+            "adapter": "docbank-docling-asr/v2",
+            "document_schema": "1.10.0",
+            "expected_terms": ["telescope", "friday"],
+        }
+        (output / "qualification.json").write_text(json.dumps(report, indent=2) + "\n")
     finally:
         service.terminate()
         try:
