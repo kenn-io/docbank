@@ -27,6 +27,34 @@ import (
 	"hegel.dev/go/hegel"
 )
 
+const (
+	publicationPropertyExamples = 2000
+	publicationPropertyShards   = 8
+)
+
+// Both properties share this cap. Each shard owns at most one live fixture,
+// including shrinking, and returns its slot only after all cleanup has run.
+var publicationPropertySlots = make(chan struct{}, 4)
+
+func testPublicationProperty(t *testing.T, baseSeed int64, body func(*hegel.T)) {
+	t.Helper()
+	for shard := range publicationPropertyShards {
+		seed := baseSeed + 100*int64(shard)
+		t.Run(fmt.Sprintf("seed-%d", seed), func(t *testing.T) {
+			t.Parallel()
+			select {
+			case publicationPropertySlots <- struct{}{}:
+				defer func() { <-publicationPropertySlots }()
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			}
+			hegel.Test(t, body,
+				hegel.WithTestCases(publicationPropertyExamples/publicationPropertyShards),
+				hegel.WithSeed(seed), hegel.WithDatabase(t.TempDir()), hegel.WithStatistics(true))
+		})
+	}
+}
+
 // Each example owns a real HTTP daemon, store and private synthetic source tree.
 // Explicit per-example cleanup also runs during shrinking, bounding open files,
 // retained objects and disk rather than retaining 2,000 fixtures until test end.
@@ -120,7 +148,7 @@ type publicationModelSource struct {
 // The oracle knows local edits, accepted bytes, archive edits and explicit grants.
 // It never derives expected membership or history from publisher/store helpers.
 func TestPublicationConvergenceProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
+	testPublicationProperty(t, 2026110703, func(ht *hegel.T) {
 		commands := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 111)).MinSize(1))
 		if len(commands) > 32 {
 			commands = commands[:32]
@@ -383,14 +411,14 @@ func TestPublicationConvergenceProperty(t *testing.T) {
 		// A final healthy full stable pass may leave only explicitly ungranted
 		// archive conflicts. No prefix silently shrinks retained history.
 		reconcile()
-	}, hegel.WithTestCases(2000), hegel.WithSeed(2026110703), hegel.WithDatabase(t.TempDir()), hegel.WithStatistics(true))
+	})
 }
 
 // This second oracle owns the accepted hash/version, liveness, source revision,
 // scan generation and sealing bit. Reordered messages may return an old receipt,
 // but must never change the current authority or append an extra version.
 func TestPublicationFencingProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
+	testPublicationProperty(t, 2026110704, func(ht *hegel.T) {
 		commands := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 10)).MinSize(1))
 		if len(commands) > 32 {
 			commands = commands[:32]
@@ -574,5 +602,5 @@ func TestPublicationFencingProperty(t *testing.T) {
 			}
 			require.Equal(ht, wantHashes, actualHashes)
 		}
-	}, hegel.WithTestCases(2000), hegel.WithSeed(2026110704), hegel.WithDatabase(t.TempDir()), hegel.WithStatistics(true))
+	})
 }
