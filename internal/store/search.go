@@ -68,6 +68,10 @@ type SearchMediaEvidence struct {
 
 const maxExplainedSearchExcerptRunes = 512
 
+// SearchExcerptRuneLimit is the display bound shared by lexical and selected
+// semantic evidence. At most four UTF-8 bytes per rune keeps receipts <=2048 bytes.
+const SearchExcerptRuneLimit = maxExplainedSearchExcerptRunes
+
 // currentRenditionChunkAuthoritySQL is the shared serving predicate for a
 // rendition-chunk embedding. Every caller supplies embedding_sets as es and
 // embedding_input_generations as eig.

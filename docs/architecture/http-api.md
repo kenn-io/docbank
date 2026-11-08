@@ -863,6 +863,8 @@ Each selected content/build pair has its own result. Its evidence carries
 semantic evidence uses `embedding` with its exact input, generation, embedding
 set and vector-space identities. Semantic evidence has no `segment_id`.
 Its excerpt and optional timing come from the authenticated retained input.
+Displayed excerpts use the shared 512-rune limit (at most 2,048 UTF-8 bytes);
+this display bound leaves retained evidence and its source timing intact.
 Hybrid results can carry both references from the same selected build. When
 lexical evidence contributes the displayed excerpt, use its timing.
 

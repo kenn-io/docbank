@@ -276,7 +276,7 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		require.NoError(t, err)
 		descriptor.CompatibilityID = descriptor.ModelInput.CompatibilityID
 		descriptor.DocumentFormatter, descriptor.QueryFormatter = "identity", "identity"
-		descriptor.Model = "all-MiniLM-L6-v2"
+		descriptor.Model = "all-minilm-l6-v2"
 		descriptor.ModelRevision = fmt.Sprint(metadata["revision"])
 		encoder.descriptor, err = document.NewEmbeddingDescriptor(descriptor)
 		require.NoError(t, err)
