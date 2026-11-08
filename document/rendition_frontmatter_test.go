@@ -188,5 +188,5 @@ func TestOmissionOnlyPDFEnvelope(t *testing.T) {
 	_, _, err = EnvelopeRenditionV1(rendition, envelope)
 	require.Error(t, err)
 	_, _, err = ParseRenditionFrontMatterV1(append(got.Markdown, []byte("unexpected")...))
-	require.Error(t, err)
+	require.ErrorContains(t, err, "body and unit count disagree")
 }

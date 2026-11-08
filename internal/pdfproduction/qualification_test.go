@@ -991,19 +991,27 @@ func TestPDFTextWaitingForLeaseUsesCallerContext(t *testing.T) {
 	})
 }
 
-func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
+func TestPDFTextNormalizesWrappedWords(t *testing.T) {
 	data := redactiontest.PDF(t, []string{"inter-", "national", "shared PDF text"}, "lease handoff")
 	page, err := ReadPDFTextPage(t.Context(), data, 0, 1, 1024)
 	require.NoError(t, err)
 	require.Contains(t, page.Text, "international")
 	require.NotContains(t, page.Text, "\ufffe")
+}
+
+func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
+	data := redactiontest.PDF(t, []string{"shared PDF text"}, "lease handoff")
+	_, err := ReadPDFTextPage(t.Context(), data, 0, 1, 1024)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
 	// Starting a renderer after the page returns must acquire the same backing.
 	engine, err := NewPDFium(QualifiedRecipe())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
 	concrete, ok := engine.(*pdfiumEngine)
 	require.True(t, ok)
-	err = concrete.withInstance(t.Context(), func(instance pdfium.Pdfium) error {
+	err = concrete.withInstance(ctx, func(instance pdfium.Pdfium) error {
 		doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
 		if err != nil {
 			return fmt.Errorf("open renderer PDF: %w", err)

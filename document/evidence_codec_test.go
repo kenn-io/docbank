@@ -814,10 +814,15 @@ func TestSourceEvidenceV1AllowsBlankUnits(t *testing.T) {
 	normalized, err := document.NormalizeEvidenceV1(source, policy)
 	require.NoError(t, err)
 	assert.Empty(t, normalized.Units[0].Text)
-	source = document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Family: "pdf", UnitKind: document.EvidenceUnitPage, Completeness: document.EvidencePartial,
+}
+
+func TestSourceEvidenceV1OmissionOnlyPDF(t *testing.T) {
+	policy, err := document.NewEvidencePolicy(1)
+	require.NoError(t, err)
+	source := document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Family: "pdf", UnitKind: document.EvidenceUnitPage, Completeness: document.EvidencePartial,
 		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}}},
 	}
-	normalized, err = document.NormalizeEvidenceV1(source, policy)
+	normalized, err := document.NormalizeEvidenceV1(source, policy)
 	require.NoError(t, err)
 	for _, change := range []func(*document.SourceEvidenceV1){
 		func(s *document.SourceEvidenceV1) { s.Family = "ebook" },

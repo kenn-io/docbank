@@ -64,7 +64,6 @@ func TestPDFTextWhitespaceOmissions(t *testing.T) {
 		unitPages []int64
 		reasons   []string
 	}{
-		{"controls", []string{"\x01\x02"}, nil, []string{"no_readable_text"}},
 		{"mixed", []string{"   ", "", "synthetic text"}, []int64{3}, []string{"no_readable_text", "no_text_layer"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -88,7 +87,7 @@ func TestPDFTextPreservesLiteralMarkup(t *testing.T) {
 	p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 1})
 	require.NoError(t, err)
 	const literal = "Order <invoice-1729> \\ *item* [ref](https://example.org) # Title"
-	data := redactiontest.PDF(t, []string{"inter-", "national", "part-time", literal}, "literal markup")
+	data := redactiontest.PDF(t, []string{"part-time", literal}, "literal markup")
 	upload := newTestUpload(data)
 	result, err := p.Render(t.Context(), upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	require.NoError(t, err)

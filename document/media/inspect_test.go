@@ -65,7 +65,6 @@ func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
 	encoded, err := json.Marshal(record, json.Deterministic(true))
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"max_text_lines":1000`)
-	assert.NotContains(t, string(encoded), `"pdf_text_only"`, "zero-valued admission policy must preserve existing fingerprints")
 	var decoded media.CapabilityRecord
 	require.NoError(t, json.Unmarshal(encoded, &decoded))
 	assert.Equal(t, policy, decoded.Policy)
@@ -2734,6 +2733,9 @@ func TestInspectPDFTextOnlyAdmission(t *testing.T) {
 			before, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, before.Eligible)
+			encoded, err := json.Marshal(policy, json.Deterministic(true))
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), `"pdf_text_only"`, "zero-valued admission policy must preserve existing fingerprints")
 			policy.PDFTextOnly = true
 			after, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
