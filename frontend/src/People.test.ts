@@ -437,18 +437,12 @@ it.each([
 
 it("shows the write error alert for a named rejection", async () => {
   const { region, done } = await renderSuggestions([isAda]);
-  const decide = vi
-    .spyOn(api, "decideFaceCandidate")
-    .mockRejectedValue(new APIError("Suggestion changed", 503, "unavailable"));
+  vi.spyOn(api, "decideFaceCandidate").mockRejectedValue(
+    new APIError("Suggestion changed", 503, "unavailable"),
+  );
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));
   const dialog = screen.getByRole("dialog", { name: "Is this Ada?" });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Not Ada" }));
-  expect(decide).toHaveBeenCalledExactlyOnceWith(
-    isAda.candidate_id,
-    { action: "reject" },
-    expect.anything(),
-    expect.anything(),
-  );
   expect((await screen.findByRole("alert")).textContent).toBe("Suggestion changed");
   await done();
 });

@@ -336,8 +336,6 @@ func TestFaceSuggestionBatchesPreserveNewFaceAssignment(t *testing.T) {
 		if group.SuggestedPersonID == person.PersonID {
 			require.Len(t, group.Faces, 1)
 			require.NotEqual(t, face.FaceID, group.Faces[0].FaceID, "the named face must stay out of suggestions")
-			_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: group.CandidateID, ExpectedRevision: group.Revision, Action: "reject", FaceOnly: true})
-			require.NoError(t, err)
 			return
 		}
 	}

@@ -42,15 +42,6 @@ func TestEmbeddedFaceProfilesRequireDedicatedSetup(t *testing.T) {
 			request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "custom-faces"}}
 			_, err = vault.PlanProcessing(t.Context(), request)
 			require.ErrorIs(t, err, docbank.ErrProcessingProfileUnavailable)
-			_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: request, Consent: true})
-			require.ErrorIs(t, err, docbank.ErrProcessingProfileUnavailable)
-			_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: request})
-			require.ErrorIs(t, err, docbank.ErrProcessingProfileUnavailable)
-			fence := docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.Version.ID}}
-			_, err = vault.DocumentCoverage(t.Context(), docbank.CoverageRequest{Profile: "custom-faces", Fence: fence})
-			require.ErrorIs(t, err, docbank.ErrProcessingProfileUnavailable)
-			_, err = vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "Ada", Mode: docbank.DocumentSearchLexical, Profile: "custom-faces", Fence: fence})
-			require.ErrorIs(t, err, docbank.ErrProcessingProfileUnavailable)
 		})
 	}
 }

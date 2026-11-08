@@ -5207,7 +5207,7 @@ it("finishes a slow suggestions read while photo events arrive and then catches 
   }
 });
 
-it("retries the pending suggestion refresh after a transient read failure", async () => {
+it("rejects a photo event pass when suggestions fail", async () => {
   history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
@@ -5224,23 +5224,11 @@ it("retries the pending suggestion refresh after a transient read failure", asyn
   render(App);
   await screen.findByRole("button", { name: "Ada 3 Library photos" });
   await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-  const refresh = photoEventPass();
-  vi.mocked(photoEvents.watchPhotoEvents).mockRestore();
-  Object.defineProperty(navigator, "locks", {
-    configurable: true,
-    value: { request: () => new Promise(() => {}) },
+  await act(async () => {
+    await expect(photoEventPass()({})).rejects.toThrow("Temporary read failure");
   });
-  vi.useFakeTimers();
-  const watcher = photoEvents.watchPhotoEvents("synthetic", refresh, vi.fn());
-  try {
-    await act(() => vi.advanceTimersByTimeAsync(30_000));
-    expect(read).toHaveBeenCalledTimes(3);
-    expect(screen.queryByText("Temporary read failure")).toBeNull();
-  } finally {
-    watcher.stop();
-    vi.useRealTimers();
-    Reflect.deleteProperty(navigator, "locks");
-  }
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(await screen.findByText("Temporary read failure")).toBeTruthy();
 });
 
 it("settles a delayed multi-page suggestion refresh without further events", async () => {

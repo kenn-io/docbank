@@ -96,7 +96,7 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 	}
 	type eligibility struct{ attached, live bool }
 	eligible := map[string]eligibility{}
-	err = queryRows(ctx, tx, `SELECT es.embedding_set_id,`+embeddingAttachmentEligibilitySQL("es.content_version_id", "es.profile_fingerprint", "g.attachment_id")+`,EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=es.content_version_id AND n.current_version_id=v.version_id AND a.kind='photo' AND f.role IN ('image','raw') AND `+liveIncludedDisplayPredicate+`)
+	err = queryRows(ctx, tx, `SELECT es.embedding_set_id,`+embeddingAttachmentEligibilitySQL("es.content_version_id", "es.profile_fingerprint", "g.attachment_id")+`,EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=es.content_version_id AND n.current_version_id=v.version_id AND `+liveFaceEmbeddingSourcePredicate+`)
  FROM embedding_sets es JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id WHERE es.embedding_set_id IN (SELECT value FROM `+d.arrayValues("$1")+`)`, []any{string(encoded)}, func(rows *sql.Rows) error {
 		var id string
 		var e eligibility

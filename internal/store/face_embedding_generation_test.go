@@ -16,6 +16,10 @@ func TestFaceEmbeddingIdentityLiteral(t *testing.T) {
 	generation.ID = FaceEmbeddingGenerationID(generation, "face")
 	require.Equal(t, "3903c30f51ca9eb9da1ad7ce9ce2b720329f0fca6981dc48ab4b08f965112629", generation.ID)
 	require.NoError(t, validateFaceEmbeddingGeneration(generation, "face"))
+	unsupported := generation
+	unsupported.ChunkPolicyFingerprint = fakeHash("unsupported-policy")
+	unsupported.ID = FaceEmbeddingGenerationID(unsupported, "face")
+	require.EqualError(t, validateFaceEmbeddingGeneration(unsupported, "face"), "invalid face generation identity")
 	face.Box.X = .25
 	require.NotEqual(t, checksum, FaceEmbeddingChecksum(fakeHash("a1"), face))
 	require.EqualError(t, validateFaceEmbeddingGeneration(generation, "other-model"), "invalid face generation identity")

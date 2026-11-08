@@ -22,6 +22,11 @@ func TestFaceProfileRequiresDedicatedSetup(t *testing.T) {
 	require.ErrorIs(t, err, ErrProfileNotConfigured)
 	_, err = x.service.Search(t.Context(), SearchRequest{Profile: config.LocalFacesProfile, Query: "Ada", Mode: "lexical", Limit: 24, AllLive: &store.SearchOptions{}})
 	require.ErrorIs(t, err, ErrProfileNotConfigured)
+	fence := SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}
+	_, err = x.service.Coverage(t.Context(), config.LocalFacesProfile, fence)
+	require.ErrorIs(t, err, ErrProfileNotConfigured)
+	_, err = x.service.Search(t.Context(), SearchRequest{Profile: config.LocalFacesProfile, Query: "Ada", Mode: "lexical", Limit: 24, Fence: fence})
+	require.ErrorIs(t, err, ErrProfileNotConfigured)
 	for _, profile := range x.service.Profiles() {
 		assert.NotEqual(t, config.LocalFacesProfile, profile.Name, "file processing must only list per-file profiles")
 	}

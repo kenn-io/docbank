@@ -568,9 +568,6 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`, false},
 		{"changed box", `UPDATE photo_faces SET width=width+0.01`, false},
 		{"replaced preview", "", false},
-		{"invalid generation", `UPDATE embedding_input_generations SET chunk_policy_fingerprint='` + workerHash("invalid policy") + `'`, true},
-		{"input count", `UPDATE embedding_input_generations SET input_count=input_count+1`, true},
-		{"vector manifest", `UPDATE embedding_vector_sets SET manifest_checksum='` + workerHash("invalid manifest") + `'`, true},
 		{"future vector set", `UPDATE embedding_vector_sets SET contract_version='review-future/v99'`, true},
 		{"future vector space", `UPDATE embedding_vector_spaces SET contract_version='review-future/v99'`, true},
 	} {

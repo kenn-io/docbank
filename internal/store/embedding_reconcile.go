@@ -391,7 +391,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				case document.EmbeddingInputImage:
 					eligibility = append(eligibility, "(a.display_file_id=f.file_id AND "+photoDescriptionEligibility+")")
 				case document.EmbeddingInputFace:
-					eligibility = append(eligibility, "(a.kind='photo' AND f.role IN ('image','raw') AND "+liveIncludedDisplayPredicate+" AND EXISTS(SELECT 1 FROM photo_faces face WHERE face.content_version_id=v.version_id))")
+					eligibility = append(eligibility, "("+liveFaceEmbeddingSourcePredicate+" AND EXISTS(SELECT 1 FROM photo_faces face WHERE face.content_version_id=v.version_id))")
 				case document.EmbeddingInputQueryText, document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk:
 					continue
 				}

@@ -645,9 +645,10 @@ it.each([
 });
 
 it.each([
-  [412, "stale_revision"],
-  [409, "person_candidate_decided"],
-])("rereads a group after a %i decision", async (status, code) => {
+  [412, "stale_revision", true],
+  [409, "person_candidate_decided", true],
+  [503, "unavailable", false],
+] as const)("handles a %i failed suggestion decision", async (status, code, reread) => {
   const fresh = { ...isAda, revision: 5 };
   vi.spyOn(api, "listFaceCandidates")
     .mockResolvedValueOnce({ items: [isAda], total: 1 })
@@ -661,12 +662,14 @@ it.each([
   people.suggestions.open(isAda);
   expect(await people.suggestions.decide({ action: "link", person_id: ada.person_id })).toBe(false);
   expect(people.suggestions.writeError).toBe("Suggestion changed");
-  expect(people.suggestions.review).toBeUndefined();
-  expect(people.suggestions.items).toEqual([fresh]);
-  people.suggestions.open(fresh);
+  expect(people.suggestions.review?.candidate).toEqual(reread ? undefined : isAda);
+  expect(people.suggestions.items).toEqual([reread ? fresh : isAda]);
+  people.suggestions.open(reread ? fresh : isAda);
   expect(people.suggestions.busy).toBe(false);
   await people.suggestions.decide({ action: "link", person_id: ada.person_id });
-  expect(decide.mock.calls[1]![2]).toEqual({ "If-Match": '"5"' });
+  expect(decide.mock.calls[1]![2]).toEqual({
+    "If-Match": `"${reread ? fresh.revision : isAda.revision}"`,
+  });
   people.dispose();
 });
 

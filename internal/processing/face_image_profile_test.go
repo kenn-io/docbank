@@ -17,6 +17,7 @@ func TestFaceProfileKeepsSourceEligibility(t *testing.T) {
 	t.Parallel()
 	for _, source := range []string{"hidden", "raw"} {
 		t.Run(source, func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			faces := newFaceEmbeddingFixture(t, false)
 			f := faces.f
