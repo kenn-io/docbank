@@ -71,6 +71,23 @@ func TestPublicationPublishesOnlyManagedScope(t *testing.T) {
 		require.Contains(t, sources, ref)
 	}
 }
+
+func TestPublicationNormalizesArchiveFilename(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "note\u0301.md")
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	ref := entries[0].Name() // Filesystems may normalize names when storing them.
+	report, err := Run(t.Context(), c, publicationOptions(root))
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+	require.Contains(t, publicationSources(t, s), ref)
+	_, err = s.NodeByPath(t.Context(), "/notes/noté.md")
+	require.NoError(t, err)
+}
 func TestPublicationQuietEpochAcknowledgesEverySource(t *testing.T) {
 	t.Parallel()
 	var batches []int
