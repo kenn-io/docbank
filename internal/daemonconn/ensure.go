@@ -308,15 +308,7 @@ func Ensure(ctx context.Context) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := EnsureDaemon(ctx, layout.Root)
-	if err != nil {
-		return nil, err
-	}
-	c, err := newProvenClientFor(ctx, res.Record)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrTransientDaemonAcquisition, err)
-	}
-	return c, nil
+	return EnsureFor(ctx, layout.Root)
 }
 
 // Running returns a proven client for an already-running compatible daemon.
@@ -325,12 +317,7 @@ func Running(ctx context.Context) (*Connection, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	rec, _, ok, err := discoverWithOptions(ctx, layout.Root, discoverOptions(true))
-	if err != nil || !ok {
-		return nil, false, err
-	}
-	c, err := newProvenClientFor(ctx, rec)
-	return c, err == nil, err
+	return RunningFor(ctx, layout.Root)
 }
 
 // EnsureWeb returns an ownership-proven client for a daemon that is both
