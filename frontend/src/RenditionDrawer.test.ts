@@ -79,7 +79,15 @@ describe("sanitized Markdown drawer", () => {
     });
     expect(await screen.findAllByText("Partial")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(container.querySelector(".rendition-body")?.textContent).toBe("");
+    const article = screen.getByRole("article", { name: "Sanitized Markdown document" });
+    expect(article.textContent?.trim()).toBe(
+      "Processing verified that this document has no readable text.",
+    );
+    expect(container.querySelector(".rendition-body")).toBeNull();
+    // Card styles wrap identity values set as code, so the hash stays inside its card.
+    expect(
+      screen.getByText("85bcc1ce42ddbdbb384839d9d7c947d3d811a52ea5bf63617ac32a3bc88053c5").tagName,
+    ).toBe("CODE");
   });
 
   it("shows the no-readable-mirror state without rendering unverified prose", async () => {
