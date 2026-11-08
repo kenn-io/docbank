@@ -435,7 +435,7 @@ it.each([
   await done();
 });
 
-it("reports a stale rejection from the review sheet", async () => {
+it("shows the write error alert for a named rejection", async () => {
   const { region, people, done } = await renderSuggestions([isAda]);
   const decide = vi.spyOn(people.suggestions, "decide").mockResolvedValue(false);
   await fireEvent.click(within(region).getByRole("button", { name: /Is this Ada\?/ }));

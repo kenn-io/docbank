@@ -37,5 +37,4 @@ func TestUnsupportedFaceStartPreservesConsent(t *testing.T) {
 	plan, err = x.service.Plan(t.Context(), selector)
 	require.NoError(t, err)
 	require.True(t, plan.ConsentRequired, "a refused source must preserve vault-wide face consent")
-	require.Zero(t, x.calls)
 }

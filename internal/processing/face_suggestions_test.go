@@ -51,13 +51,14 @@ func TestFaceSuggestionEvidenceSplitRetainsLastPair(t *testing.T) {
 	require.EqualValues(t, 47, suggestions[0].OccurrenceCount)
 	require.EqualValues(t, 2, suggestions[1].OccurrenceCount)
 }
-func TestFaceSuggestionCentroidAndActiveAssignment(t *testing.T) {
+func TestFaceSuggestionUsesUnitCentroid(t *testing.T) {
 	t.Parallel()
 	id := "00000000-0000-4000-8000-000000000010"
 	vectors := []faceVector{
 		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000001", ContentVersionID: id, AssertionID: "named"}, PersonID: id, PersonName: "Ada"}, Space: "model", Values: []float32{.2, .9797959}},
 		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000002", ContentVersionID: id, AssertionID: "named"}, PersonID: id, PersonName: "Ada"}, Space: "model", Values: []float32{.2, -.9797959}},
 		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000003", ContentVersionID: id}}, Space: "model", Values: []float32{1, 0}},
+		{Face: store.FaceSuggestionFace{PhotoFace: store.PhotoFace{FaceID: "00000000-0000-4000-8000-000000000004", ContentVersionID: id, AssertionID: "named"}, PersonID: "00000000-0000-4000-8000-000000000020", PersonName: "Bea"}, Space: "model", Values: []float32{.8, .6}},
 	}
 	suggestions, err := buildFaceSuggestions(t.Context(), vectors)
 	require.NoError(t, err)
