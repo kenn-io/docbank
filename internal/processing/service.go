@@ -1630,26 +1630,15 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			return prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
 		}
 	}
-	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
-		if err != nil {
-			return retrieval.Report{}, err
-		}
-		_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
-			Principal: service.principal, Scope: service.scope,
-			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
-			InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
-		})
-		if err != nil {
-			return retrieval.Report{}, err
-		}
-		defer fence.Close()
-		if prepared.rerankingAuthorizer != nil {
-			prepared.rerankingAuthorizer.queryFenceHeld = true
-		}
-	}
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
+	}
+	fence, err := service.beginSearchEgress(ctx, profile, prepared)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	if fence != nil {
+		defer fence.Close()
 	}
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
@@ -1680,6 +1669,29 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 	}
 	_, err := service.prepareSearch(request, profile)
 	return err
+}
+
+// beginSearchEgress is shared by ordinary and selected-media retrieval. The
+// selected lane calls it only after it has eligible vector candidates.
+func (service *Service) beginSearchEgress(ctx context.Context, profile configuredProfile, prepared preparedSearch) (*store.ProviderEgressFence, error) {
+	if prepared.authorization.ProviderID == "" || (prepared.mode != retrieval.ModeSemantic && prepared.mode != retrieval.ModeHybrid) {
+		return nil, nil
+	}
+	binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
+	if err != nil {
+		return nil, err
+	}
+	_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
+		Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if prepared.rerankingAuthorizer != nil {
+		prepared.rerankingAuthorizer.queryFenceHeld = true
+	}
+	return fence, nil
 }
 
 type preparedSearch struct {

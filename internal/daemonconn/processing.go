@@ -532,7 +532,10 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	if requestedMode == "" {
 		requestedMode = "auto"
 	}
-	if report.RequestedMode != requestedMode || !validDocumentSearchActualMode(requestedMode, report.ActualMode) {
+	unavailableMedia := report.ActualMode == "unavailable" && (requestedMode == "semantic" || requestedMode == "hybrid") &&
+		len(request.MediaSources) > 0 && report.MediaSourceSelection && !request.Rerank && len(report.Results) == 0 &&
+		report.Coverage.State == "incomplete" && report.Coverage.CompleteDocuments == 0
+	if report.RequestedMode != requestedMode || (!unavailableMedia && !validDocumentSearchActualMode(requestedMode, report.ActualMode)) {
 		return errors.New("retrieval mode authority is inconsistent")
 	}
 	limit := request.Limit

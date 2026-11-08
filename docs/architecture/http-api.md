@@ -879,6 +879,16 @@ selection lacks ready evidence or any selected build lacks its embeddings. Pendi
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
+
+For selected semantic and hybrid requests with no ready transcript build,
+`actual_mode` is `unavailable`, results are empty and coverage is incomplete
+with zero complete documents. A ready selected build without eligible embedding
+rows has that same semantic result, retaining its selection summary. Hybrid
+serves any selected lexical evidence with `actual_mode: "lexical"` and the
+`semantic_unavailable` degradation. Its embedding coverage remains incomplete
+with zero complete documents. These cases do not send query text to an encoder.
+`requested_mode` remains the caller's mode, and retrieval schedules no processing.
+
 A vector-index authority change during a semantic or hybrid request returns
 `409 stale_index` with no results. Retry after normal index publication;
 source reselection never authorizes another build as a substitute.

@@ -15,10 +15,11 @@ const (
 type Mode string
 
 const (
-	ModeAuto     Mode = "auto"
-	ModeLexical  Mode = "lexical"
-	ModeSemantic Mode = "semantic"
-	ModeHybrid   Mode = "hybrid"
+	ModeUnavailable Mode = "unavailable" // Response-only: selected media performed no retrieval.
+	ModeAuto        Mode = "auto"
+	ModeLexical     Mode = "lexical"
+	ModeSemantic    Mode = "semantic"
+	ModeHybrid      Mode = "hybrid"
 )
 
 type Lane string
@@ -131,9 +132,10 @@ type Coverage struct {
 type Degradation string
 
 const (
-	DegradationNone              Degradation = ""
-	DegradationExpansionDegraded Degradation = "query_expansion_degraded"
-	DegradationRerankingDegraded Degradation = "reranking_degraded"
+	DegradationNone                Degradation = ""
+	DegradationSemanticUnavailable Degradation = "semantic_unavailable"
+	DegradationExpansionDegraded   Degradation = "query_expansion_degraded"
+	DegradationRerankingDegraded   Degradation = "reranking_degraded"
 )
 
 type TraceCode string

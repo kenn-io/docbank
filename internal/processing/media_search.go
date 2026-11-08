@@ -6,6 +6,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -38,35 +39,76 @@ func (service *Service) searchMediaSources(
 		return retrieval.Report{}, err
 	}
 	plan := newMediaSearchPlan(request.MediaSources, requests, selected)
-	actual := prepared.mode
+	profile := service.profiles[request.Profile]
+	scope := store.SearchOptions{SelectedBuilds: plan.builds}
+	for _, build := range plan.builds {
+		scope.ContentVersionIDs = append(scope.ContentVersionIDs, build.ContentVersionID)
+	}
+	slices.Sort(scope.ContentVersionIDs)
+	scope.ContentVersionIDs = slices.Compact(scope.ContentVersionIDs)
+	if provider := profile.embedders[prepared.bindingID]; provider != nil {
+		descriptor := provider.Descriptor()
+		scope.EmbeddingDescriptor, scope.VectorSpaceID = &descriptor, profile.vectorSpaces[prepared.bindingID]
+	}
+	nonlexical := prepared.requestedMode == retrieval.ModeSemantic || prepared.requestedMode == retrieval.ModeHybrid
+	bindingRequired := false
+	for _, binding := range profile.portable.Embeddings {
+		if binding.Name == prepared.bindingID {
+			bindingRequired = binding.Activation == document.EmbeddingRequired
+		}
+	}
+	mode := prepared.mode
+	if nonlexical && len(plan.builds) == 0 {
+		mode = retrieval.ModeUnavailable
+	}
+	if len(plan.builds) != 0 && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid) {
+		available, err := service.catalog.SelectedSemanticRowsAvailable(ctx, profile.record.Fingerprint, prepared.bindingID, scope)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		if !available {
+			if mode == retrieval.ModeHybrid {
+				mode = retrieval.ModeLexical
+			} else {
+				mode = retrieval.ModeUnavailable
+			}
+		}
+	}
+	actual := mode
 	if actual == retrieval.ModeAuto {
 		actual = retrieval.ModeLexical
 	}
-	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: actual,
-		Results: []retrieval.Result{}}
-	if len(plan.builds) != 0 {
-		profile := service.profiles[request.Profile]
-		scope := store.SearchOptions{SelectedBuilds: plan.builds}
-		for _, build := range plan.builds {
-			scope.ContentVersionIDs = append(scope.ContentVersionIDs, build.ContentVersionID)
+	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: actual, Results: []retrieval.Result{}}
+	if len(plan.builds) != 0 && mode != retrieval.ModeUnavailable {
+		execution := prepared
+		execution.mode = mode
+		fence, err := service.beginSearchEgress(ctx, profile, execution)
+		if err != nil {
+			return retrieval.Report{}, err
 		}
-		slices.Sort(scope.ContentVersionIDs)
-		scope.ContentVersionIDs = slices.Compact(scope.ContentVersionIDs)
-		if provider := profile.embedders[prepared.bindingID]; provider != nil {
-			descriptor := provider.Descriptor()
-			scope.EmbeddingDescriptor, scope.VectorSpaceID = &descriptor, profile.vectorSpaces[prepared.bindingID]
+		if fence != nil {
+			defer fence.Close()
 		}
-		candidateLimit := max(profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit)
-		report, err = prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query,
-			Mode: prepared.mode, Limit: candidateLimit, LexicalLimit: profile.portable.Retrieval.LexicalLimit,
-			VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
-			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
-			Authorization: prepared.authorization})
+		query := retrieval.Query{Text: request.Query, Mode: mode, Limit: max(profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit),
+			LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
+			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID, Authorization: prepared.authorization}
+		report, err = prepared.searcher.Search(ctx, query)
+		if err == retrieval.ErrSelectedEmbeddingsUnavailable {
+			// Eligibility can disappear after the planning read. Never encode an
+			// empty leased allowlist; hybrid can still serve exact lexical evidence.
+			if mode == retrieval.ModeHybrid {
+				query.Mode = retrieval.ModeLexical
+				report, err = prepared.searcher.Search(ctx, query)
+			} else {
+				report = retrieval.Report{ActualMode: retrieval.ModeUnavailable, Results: []retrieval.Result{}}
+				err = nil
+			}
+		}
 		if err != nil {
 			return retrieval.Report{}, err
 		}
 	}
-	// Re-read authority for every source that could contribute evidence.
+	// Selection is reread even when no vector candidate was eligible.
 	current, err := service.selectMediaTranscripts(ctx, plan.ready)
 	if err != nil {
 		return retrieval.Report{}, err
@@ -79,22 +121,19 @@ func (service *Service) searchMediaSources(
 	}
 	report.RequestedMode = prepared.requestedMode
 	if prepared.requestedMode == retrieval.ModeHybrid && report.ActualMode == retrieval.ModeLexical {
-		report.Degradations = append(report.Degradations, retrieval.Degradation("semantic_unavailable"))
+		report.Degradations = append(report.Degradations, retrieval.DegradationSemanticUnavailable)
 	}
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	coverage := plan.coverage()
-	if actual == retrieval.ModeSemantic || actual == retrieval.ModeHybrid {
-		coverage.BindingRequired = true
-		if len(plan.builds) != 0 {
-			coverage.BindingRequired = report.Coverage.BindingRequired
-			coverage.CompleteDocuments = 0
-			for id, complete := range plan.complete {
-				if complete && slices.Contains(report.Coverage.CompleteContentVersionIDs, id) {
-					coverage.CompleteDocuments++
-				}
+	if nonlexical {
+		coverage.BindingRequired = bindingRequired
+		coverage.CompleteDocuments = 0
+		for id, complete := range plan.complete {
+			if complete && slices.Contains(report.Coverage.CompleteContentVersionIDs, id) {
+				coverage.CompleteDocuments++
 			}
 		}
-		if len(plan.builds) == 0 || report.Coverage.State != retrieval.CoverageComplete || coverage.CompleteDocuments != coverage.ScopedDocuments {
+		if report.Coverage.State != retrieval.CoverageComplete || coverage.CompleteDocuments != coverage.ScopedDocuments {
 			coverage.State = retrieval.CoverageIncomplete
 		}
 	}

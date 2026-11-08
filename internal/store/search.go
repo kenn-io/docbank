@@ -843,6 +843,33 @@ func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile
 	return rows, false, err
 }
 
+// SelectedSemanticRowsAvailable checks the same exact profile/build row
+// allowlist used for ANN scoring, before a selected-media query needs egress.
+func (s *Store) SelectedSemanticRowsAvailable(ctx context.Context, profile, binding string, opts SearchOptions) (bool, error) {
+	if len(opts.SelectedBuilds) == 0 {
+		return false, ErrInvalidProcessingSourceFence
+	}
+	normalized, err := s.NormalizeSearchOptions(ctx, opts)
+	if err != nil {
+		return false, err
+	}
+	available := false
+	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, scope SearchOptions) error {
+		selected, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx, profile, binding)
+		if err != nil {
+			return err
+		}
+		space := scope.VectorSpaceID
+		if space == "" {
+			space = fingerprints.VectorSpace[binding]
+		}
+		rows, _, err := semanticANNRowsForSourceTx(ctx, tx, profile, binding, selected.InputKind, space, scope)
+		available = len(rows) > 0
+		return err
+	})
+	return available, err
+}
+
 // semanticANNRowsTx reads eligible rows in the requested scope for SearchRows.
 // This allowlist excludes other bindings, trashed, non-current,
 // out-of-scope, and non-representative rows before scoring.

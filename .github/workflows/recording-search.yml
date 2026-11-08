@@ -50,6 +50,8 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
       - run: kit-retry 3 5 npm ci --prefix frontend
       - run: make generate-api
+      - name: Require reproducible API artifacts
+        run: git diff --exit-code -- internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts
       - run: npm --prefix frontend run fmt
       - run: npm --prefix frontend run check
       - run: npm --prefix frontend test -- src/generated-requests.test.ts src/receipts.test.ts
@@ -65,3 +67,4 @@ jobs:
             frontend/orval.config.ts
             frontend/src/generated-requests.test.ts
             frontend/src/receipts.test.ts
+            frontend/src/receipts.ts
