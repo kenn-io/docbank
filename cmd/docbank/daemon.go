@@ -323,6 +323,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+	if err := registerNotePlaintextProfile(processingProfiles); err != nil {
+		return err
+	}
 
 	choice, err := readLocalText(layout.Root)
 	if err != nil {
@@ -916,6 +919,18 @@ func daemonRepackPage(
 		opts.Now = repackNow()
 	}
 	return internalmaintenance.Repack(ctx, s, blobs, opts)
+}
+
+func registerNotePlaintextProfile(profiles map[string]processing.ProfileConfig) error {
+	name, profile, err := processing.NewNotePlaintextProfile()
+	if err != nil {
+		return fmt.Errorf("configuring note plaintext profile: %w", err)
+	}
+	if _, exists := profiles[name]; exists {
+		return fmt.Errorf("configured processing profile %q conflicts with the built-in note plaintext profile", name)
+	}
+	profiles[name] = profile
+	return nil
 }
 
 // renditionWorkerClock is the rendition workers' clock; nil means the current

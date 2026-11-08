@@ -32,6 +32,20 @@ import (
 	"go.kenn.io/docbank/internal/retrieval/zeroentropy"
 )
 
+func TestRegisterNotePlaintextProfile(t *testing.T) {
+	profiles := map[string]processing.ProfileConfig{}
+	require.NoError(t, registerNotePlaintextProfile(profiles))
+	profile, ok := profiles[processing.NotePlaintextProfileName]
+	require.True(t, ok)
+	require.NotNil(t, profile.RenditionProvider)
+	assert.Empty(t, profile.EmbeddingProviders)
+	assert.Nil(t, profile.RerankingProvider)
+
+	// A configured profile cannot replace the reserved local-only policy.
+	require.Error(t, registerNotePlaintextProfile(profiles))
+	assert.Same(t, profile.RenditionProvider, profiles[processing.NotePlaintextProfileName].RenditionProvider)
+}
+
 func TestExecutableProcessingProfilesRegistersPlaintextRendition(t *testing.T) {
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: plaintext.MaxDocumentBytes})
 	require.NoError(t, err)
