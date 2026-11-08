@@ -29,6 +29,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/emailpdf"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
@@ -323,10 +324,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
-	if err := registerNotePlaintextProfile(processingProfiles); err != nil {
-		return err
-	}
-
 	choice, err := readLocalText(layout.Root)
 	if err != nil {
 		logger.Warn("read local text selection; indexing remains inactive", "error", err)
@@ -357,6 +354,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			logger.Warn("restore local text selection; indexing remains inactive", "profile", choice.Profile, "error", err)
 			choice = config.LocalTextConfig{}
 		}
+	}
+	if err := registerNotePlaintextProfile(processingProfiles); err != nil {
+		return err
 	}
 
 	for _, watch := range cfg.Watches {
@@ -935,6 +935,15 @@ func registerNotePlaintextProfile(profiles map[string]processing.ProfileConfig) 
 	}
 	if _, exists := profiles[name]; exists {
 		return fmt.Errorf("configured processing profile %q conflicts with the built-in note plaintext profile", name)
+	}
+	// The service requires one runtime instance for each descriptor. Reuse only
+	// the same concrete in-process provider, never an arbitrary wrapper.
+	for _, existing := range profiles {
+		provider, ok := existing.RenditionProvider.(*plaintext.Provider)
+		if ok && provider != nil && provider.Descriptor().Fingerprint == profile.RenditionProvider.Descriptor().Fingerprint {
+			profile.RenditionProvider = provider
+			break
+		}
 	}
 	profiles[name] = profile
 	return nil

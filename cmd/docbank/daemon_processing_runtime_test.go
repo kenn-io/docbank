@@ -59,6 +59,8 @@ func TestExecutableProcessingProfilesRegistersPlaintextRendition(t *testing.T) {
 	require.NotNil(t, profiles["private-text"].RenditionProvider)
 	assert.Equal(t, descriptor, profiles["private-text"].RenditionProvider.Descriptor())
 	assert.Empty(t, profiles["private-text"].EmbeddingProviders)
+	require.NoError(t, registerNotePlaintextProfile(profiles))
+	assert.Same(t, profiles["private-text"].RenditionProvider, profiles[processing.NotePlaintextProfileName].RenditionProvider)
 }
 
 func TestExecutableProcessingProfilesConstructsConfiguredRerankers(t *testing.T) {
