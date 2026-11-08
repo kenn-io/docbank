@@ -319,7 +319,7 @@ export function batesRecipe(
     restamp: false,
     engine_identity: {
       name: "pdfcpu",
-      version: "v0.15.0",
+      version: "v0.16.4",
       api: "AddWatermarksMap",
       options: ["onTop=true", "update=restamp"],
     },

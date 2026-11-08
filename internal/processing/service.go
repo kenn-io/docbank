@@ -2458,7 +2458,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	if size != version.Size {
 		return media.CapabilityRecord{}, errors.Join(errors.New("inspection source size changed"), reader.Close())
 	}
-	capability, inspectErr := media.InspectCapability(reader, policy)
+	capability, inspectErr := media.InspectCapability(ctx, reader, policy)
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
@@ -2482,7 +2482,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, err
 		}
 		policy.UnlockPDF, policy.PDFPasswords = true, passwords
-		capability, inspectErr = media.InspectCapability(reader, policy)
+		capability, inspectErr = media.InspectCapability(ctx, reader, policy)
 		closeErr = reader.Close()
 		if inspectErr != nil || closeErr != nil {
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)

@@ -30,7 +30,7 @@ import (
 func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 	t.Parallel()
 	ooxml := syntheticOOXML(t)
-	locked, err := mediatest.EncryptPDF(mediatest.PDF(), "open-secret", "owner-secret", 128)
+	locked, err := mediatest.EncryptPDF(t.Context(), mediatest.PDF(), "open-secret", "owner-secret", 128)
 	require.NoError(t, err)
 	for _, testCase := range []struct {
 		name      string

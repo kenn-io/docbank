@@ -1,6 +1,7 @@
 package scanfixture
 
 import (
+	"context"
 	"errors"
 
 	"go.kenn.io/docbank/document/internal/formatdetect"
@@ -22,7 +23,7 @@ type Measurement struct {
 // Measure records existing page, stream, and metadata API results for a small
 // committed PDF fixture using the processing service's limits formula for
 // the given source-size bound. Other media and generated inputs are skipped.
-func Measure(f Fixture, maxSourceBytes int64) Measurement {
+func Measure(ctx context.Context, f Fixture, maxSourceBytes int64) Measurement {
 	measurement := Measurement{Name: f.Name}
 	if f.MediaType != mediaTypePDF {
 		measurement.Skipped = "not_pdf"
@@ -34,11 +35,11 @@ func Measure(f Fixture, maxSourceBytes int64) Measurement {
 	}
 	source := f.Bytes
 	var err error
-	measurement.Pages, err = formatdetect.CountPDFPages(source)
+	measurement.Pages, err = formatdetect.CountPDFPages(ctx, source)
 	if err != nil {
 		measurement.PageError = err.Error()
 	}
-	measurement.Inspect, err = formatdetect.InspectPDF(source, formatdetect.PDFLimits{
+	measurement.Inspect, err = formatdetect.InspectPDF(ctx, source, formatdetect.PDFLimits{
 		MaxExpandedBytes: maxSourceBytes,
 		MaxEntryBytes:    maxSourceBytes,
 		MaxEntries:       100_000,
@@ -47,7 +48,7 @@ func Measure(f Fixture, maxSourceBytes int64) Measurement {
 	if err != nil {
 		measurement.InspectError = err.Error()
 	}
-	_, err = formatdetect.ReadPDFMetadata(source)
+	_, err = formatdetect.ReadPDFMetadata(ctx, source)
 	if err != nil {
 		measurement.MetadataError = err.Error()
 	}

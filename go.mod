@@ -37,6 +37,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.20
 	github.com/tetratelabs/wazero v1.12.0
+	github.com/xdg-go/stringprep v1.0.4
 	github.com/yuin/goldmark/v2 v2.1.13
 	go.kenn.io/kata v0.22.0
 	go.kenn.io/kit v0.48.4
@@ -129,7 +130,6 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xo/terminfo v1.0.0 // indirect
 	github.com/yaronf/httpsign v0.6.2 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect

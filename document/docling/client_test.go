@@ -1716,7 +1716,7 @@ func writeRecordedJSON(t *testing.T, response http.ResponseWriter, value []byte)
 }
 
 func TestDoclingUnlocksPDF(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
 
@@ -1745,7 +1745,7 @@ func TestDoclingUnlocksPDF(t *testing.T) {
 					}
 				}
 			}
-			pdf, err := api.ReadAndValidate(bytes.NewReader(sent), &model.Configuration{
+			pdf, err := api.ReadAndValidate(r.Context(), bytes.NewReader(sent), &model.Configuration{
 				Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
 				Limits: model.DefaultResourceLimits(),
 			})

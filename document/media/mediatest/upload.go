@@ -20,7 +20,7 @@ import (
 // It binds the authorization to the sealed metadata and closes the upload at cleanup.
 func AuthorizePDF(t *testing.T, source []byte, metadata document.AuthorizedUploadMetadata, authorization *document.RenditionAuthorization) document.AuthorizedUpload {
 	t.Helper()
-	inspection, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+	inspection, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
 		Filename: metadata.Filename, DeclaredMediaType: "application/pdf",
 		ExpectedBytes: int64(len(source)), ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: authorization.DescriptorFingerprint,

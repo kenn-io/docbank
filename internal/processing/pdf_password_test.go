@@ -30,9 +30,9 @@ func (provider *passwordCountingProvider) PDFPasswords() ([]string, bool, error)
 
 func TestInspectionAndPrepareReadPasswordsOnlyForEncryptedPDF(t *testing.T) {
 	t.Parallel()
-	encrypted, err := mediatest.EncryptedPDF("open", "owner", 128)
+	encrypted, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
-	ownerOnly, err := mediatest.EncryptedPDF("", "owner", 128)
+	ownerOnly, err := mediatest.EncryptedPDF(t.Context(), "", "owner", 128)
 	require.NoError(t, err)
 	container := syntheticOOXMLFamily(t, "ppt/presentation.xml")
 	// Mark the first ZIP entry encrypted in both headers, as in the media inspection test.

@@ -297,11 +297,14 @@ func (client *Client) startRender(
 		return nil, err
 	}
 	original := source
-	source, uploadSHA256, err := providerutil.DecryptUpload(provider, upload, source, client.maxDocumentBytes)
+	source, uploadSHA256, err := providerutil.DecryptUpload(operation.Context(), provider, upload, source, client.maxDocumentBytes)
 	if uploadSHA256 != "" || err != nil {
 		clear(original)
 	}
 	if err != nil {
+		if operationErr := operation.Check(); operationErr != nil {
+			err = operationErr
+		}
 		operation.Cancel()
 		return nil, err
 	}

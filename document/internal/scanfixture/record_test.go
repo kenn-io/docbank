@@ -13,7 +13,7 @@ func TestScanEvidenceBaseline(t *testing.T) {
 	const maxSourceBytes = 128 << 20
 	var rows []Measurement
 	for _, fixture := range Corpus() {
-		rows = append(rows, Measure(fixture, maxSourceBytes))
+		rows = append(rows, Measure(t.Context(), fixture, maxSourceBytes))
 	}
 	encoded, err := json.Marshal(struct {
 		MaxSourceBytes int64
