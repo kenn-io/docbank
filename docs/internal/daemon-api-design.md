@@ -639,7 +639,39 @@ The embedded API, daemon connection, generated clients, and
 `docbank media transcript SOURCE_ID --source-version-id ID
 --content-version-id ID` use this same read owner. The response contains
 origin, completeness, omission and truncation flags, and per-unit optional
-`time_span` and `speaker` facts; it exposes no rendition or blob identifiers.
+`time_span` and `speaker` facts.
+
+The additive `media-transcript-read/v1` envelope also identifies `node_id` and
+`source_sha256` for the exact current content version. Ready transcripts carry
+`build_id`, `profile_fingerprint`, `evidence_checksum`, and, when retained,
+`artifact_sha256`. The evidence checksum hashes canonical normalized evidence;
+the artifact hash identifies the exact canonical `media-transcript/v1` JSON.
+Optional language comes from that verified retained artifact. Neither field
+is inferred from the sender or the filename.
+
+`speech_state: "complete"` means nonempty, untruncated segment evidence with
+no omissions except the field `non_speech_content`. A transcript does not
+describe sound effects, so the ordinary `completeness: "partial"` and
+`has_omissions: true` remain accurate. Other omissions or untimed supplied
+text yield `speech_state: "partial"`. Speech readiness does not assert verbatim
+accuracy, identify people, or prove silence; empty ASR output fails.
+
+Consumers bind the exact vault/source/source-version/content-version and
+original digest to their attachment. They replace cached text when build or
+hash identity changes and invalidate derived search/embeddings on replacement,
+trash, source revocation, or an unreadable tuple. Re-read current authority
+before publishing cached evidence. An old valid build can remain ready while
+a new attempt is pending or failed; operation state and evidence readiness
+are separate facts. Consumers may deliberately require a succeeded latest
+operation before publishing the text. Repeated reads do not create new builds.
+
+Audio jobs use the existing queue capacity and durable admission receipts.
+Inspection bounds bytes, M4A metadata, sample ranges, and duration before
+upload. The provider binds source digest and capability identity, caps upload
+and response bytes, and uses finite request/total timeouts and poll counts.
+Cancellation terminates local requests; a submitted provider job may continue
+on its service. Restart resumes durable work only under its original matching
+authority. Decoder or provider failures never publish an empty transcript.
 
 ## Change constraints
 

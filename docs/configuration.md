@@ -770,12 +770,35 @@ upload before granting consent with `docbank processing build`.
 
 ### Supplied audio transcription
 
-The daemon can transcribe supplied WAV and MP3 files through a configured
-Docling Serve deployment. The profile's descriptor, artifact policy, filename
+The daemon can transcribe supplied WAV, MP3, and M4A audio through a configured
+Docling Serve deployment with speech recognition installed. The profile's descriptor, artifact policy, filename
 disclosure, and trust boundary are portable. The endpoint, transport policy,
 and secret binding stay local to the daemon.
 
-Use `adapter_contract = "docbank-docling-asr/v1"` and set
+Use `adapter_contract = "docbank-docling-asr/v2"` for M4A/AAC alongside WAV and
+MP3. The existing `docbank-docling-asr/v1` profile keeps its WAV/MP3-only
+identity. Switching to v2 requires a new descriptor and disclosure fingerprint,
+a reviewed processing plan, and fresh consent. Existing grants never gain
+permission to upload another format implicitly.
+
+The deployment needs Docling Serve 1.32.0, Docling 2.124.0 with its ASR
+requirements, Docling Core 2.93.0, and an audio decoder such as FFmpeg. Merely
+running a document conversion endpoint does not provide speech recognition.
+The adapter requests `from_formats=audio`, JSON output, and in-body results;
+it accepts only timed tracks in document schema 1.10.0. It does not select or
+claim a particular model. Qualify the configured deployment with synthetic
+speech before authorizing real recordings. The M4A path inspects audio-only
+AAC/ALAC containers; the ASR qualification targets AAC, without promising other
+codecs or video transcription.
+
+For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
+and include `audio/mp4` in the descriptor alongside `audio/wav` and
+`audio/mpeg`, each with `original_file` input. Use
+`docling.ASRDisclosureFingerprint` with that descriptor and the exact endpoint
+and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
+A v1 descriptor cannot authorize that upload.
+
+Set
 `credential_binding = "credential:<name>"` on the rendition profile. Its
 `runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
 `poll_interval`, `max_poll_attempts`, `allowed_cidrs`, `proxy_mode`, and the
