@@ -364,7 +364,7 @@ func validateCurrentSchemaColumns(
 			strings.Join(blobs, ","), strings.Join(packs, ","), strings.Join(vaultMetadata, ","),
 		)
 	}
-	for _, table := range currentSchemaTables {
+	for _, table := range &currentSchemaTables {
 		got, err := queryTableColumns(ctx, db, table)
 		if err != nil {
 			return err

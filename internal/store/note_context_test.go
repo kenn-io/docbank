@@ -85,5 +85,11 @@ func checkNoteContextBackend(t *testing.T, s *Store) {
 	require.Empty(t, page.Edges)
 }
 
-func checkNoteContextSQLite(t *testing.T)   { checkNoteContextBackend(t, newTestStore(t)) }
-func checkNoteContextPostgres(t *testing.T) { checkNoteContextBackend(t, newPostgresQueryStore(t)) }
+func checkNoteContextSQLite(t *testing.T) {
+	t.Helper()
+	checkNoteContextBackend(t, newTestStore(t))
+}
+func checkNoteContextPostgres(t *testing.T) {
+	t.Helper()
+	checkNoteContextBackend(t, newPostgresQueryStore(t))
+}

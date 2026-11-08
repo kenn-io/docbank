@@ -83,7 +83,7 @@ func TestNotePlaintextPlanIsFixedLocalOnly(t *testing.T) {
 	name, config, err := NewNotePlaintextProfile()
 	require.NoError(t, err)
 	require.Equal(t, "brain-local-text", name)
-	require.Equal(t, name, NotePlaintextProfileName)
+	require.Equal(t, NotePlaintextProfileName, name)
 	require.IsType(t, (*plaintext.Provider)(nil), config.RenditionProvider)
 	require.Empty(t, config.Profile.Embeddings)
 	require.Empty(t, config.EmbeddingProviders)

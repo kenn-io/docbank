@@ -21,23 +21,23 @@ const maxOriginalBytes = 4 << 20
 var errOriginal = errors.New("authored-note original could not be verified")
 
 type noteCatalog interface {
-	NotePublicationStatus(context.Context, string) (store.NotePublicationStatus, error)
-	EligibleNoteSources(context.Context, string, string, int) ([]store.NotePublicationSource, error)
-	NoteParseForVersion(context.Context, string, string) (store.NoteParseRecord, bool, error)
-	RecordNoteParse(context.Context, store.NoteParseRecord) error
-	BeginNoteIndex(context.Context, store.NoteIndexTarget, string, string) (store.NoteIndexGeneration, error)
-	StageNoteIndexSource(context.Context, store.NoteIndexGeneration, store.NotePublicationSource, store.NoteParseRecord, []store.NoteLookupKey) error
-	SealNoteIndexKeys(context.Context, store.NoteIndexGeneration) error
-	NoteIndexCandidates(context.Context, store.NoteIndexGeneration, []store.NoteLookupKey) ([]store.NoteLookupCandidate, error)
-	NoteIndexSource(context.Context, store.NoteIndexGeneration, string) (store.PublishedNoteIdentity, store.NoteParseRecord, error)
-	StageNoteIndexEdges(context.Context, store.NoteIndexGeneration, string, []store.NoteIndexEdge) error
-	PublishNoteIndex(context.Context, store.NoteIndexGeneration) error
-	NoteIndexTargets(context.Context, string, int) ([]store.NoteIndexTarget, error)
+	NotePublicationStatus(ctx context.Context, _ string) (store.NotePublicationStatus, error)
+	EligibleNoteSources(ctx context.Context, _ string, _ string, _ int) ([]store.NotePublicationSource, error)
+	NoteParseForVersion(ctx context.Context, _ string, _ string) (store.NoteParseRecord, bool, error)
+	RecordNoteParse(ctx context.Context, _ store.NoteParseRecord) error
+	BeginNoteIndex(ctx context.Context, _ store.NoteIndexTarget, _ string, _ string) (store.NoteIndexGeneration, error)
+	StageNoteIndexSource(ctx context.Context, _ store.NoteIndexGeneration, _ store.NotePublicationSource, _ store.NoteParseRecord, _ []store.NoteLookupKey) error
+	SealNoteIndexKeys(ctx context.Context, _ store.NoteIndexGeneration) error
+	NoteIndexCandidates(ctx context.Context, _ store.NoteIndexGeneration, _ []store.NoteLookupKey) ([]store.NoteLookupCandidate, error)
+	NoteIndexSource(ctx context.Context, _ store.NoteIndexGeneration, _ string) (store.PublishedNoteIdentity, store.NoteParseRecord, error)
+	StageNoteIndexEdges(ctx context.Context, _ store.NoteIndexGeneration, _ string, _ []store.NoteIndexEdge) error
+	PublishNoteIndex(ctx context.Context, _ store.NoteIndexGeneration) error
+	NoteIndexTargets(ctx context.Context, _ string, _ int) ([]store.NoteIndexTarget, error)
 	WriteRevision() uint64
 }
 
 type originalReader interface {
-	OpenStreamContext(context.Context, string) (packstore.VerifiedReadCloser, int64, error)
+	OpenStreamContext(ctx context.Context, _ string) (packstore.VerifiedReadCloser, int64, error)
 }
 
 // Projector builds one fenced namespace generation with bounded source pages.

@@ -113,9 +113,10 @@ func (s *Store) NoteContext(ctx context.Context, request NoteContextRequest) (No
 
 func (s *Store) noteContextEdgesTx(ctx context.Context, tx *sql.Tx, request NoteContextRequest, page *NoteContextPage) error {
 	filter := "e.source_ref=$2"
-	if request.Direction == "incoming" {
+	switch request.Direction {
+	case "incoming":
 		filter = "e.target_source_ref=$2"
-	} else if request.Direction == "unresolved" {
+	case "unresolved":
 		filter += " AND e.edge_state NOT IN ('resolved','external','attachment')"
 	}
 	afterRef, afterOrdinal := "", int64(-1)

@@ -27,25 +27,28 @@ func renderSpec(goos string) Spec {
 
 // The decoder is deliberately separate from Render: plist/XML use generic
 // parsers and systemd quoting is interpreted as tokens, not reversed replaces.
-func decodedArgv(t testing.TB, goos string, data []byte) []string {
-	t.Helper()
+func decodedArgv(tb testing.TB, goos string, data []byte) []string {
+	tb.Helper()
 	if goos == "linux" {
 		for line := range strings.SplitSeq(string(data), "\n") {
-			if strings.HasPrefix(line, "ExecStart=") {
-				return decodeUnit(t, strings.TrimPrefix(line, "ExecStart="))
+			if value, ok := strings.CutPrefix(line, "ExecStart="); ok {
+				return decodeUnit(tb, value)
 			}
 		}
-		t.Fatal("missing ExecStart")
+		tb.Fatal("missing ExecStart")
 		return nil
 	}
 	if goos == "windows" {
 		var task struct {
 			Actions struct {
-				Exec struct{ Command, Arguments string }
-			}
+				Exec struct {
+					Command   string `xml:"Command"`
+					Arguments string `xml:"Arguments"`
+				} `xml:"Exec"`
+			} `xml:"Actions"`
 		}
-		require.NoError(t, xml.Unmarshal(data, &task))
-		return append([]string{task.Actions.Exec.Command}, decodeWindows(t, task.Actions.Exec.Arguments)...)
+		require.NoError(tb, xml.Unmarshal(data, &task))
+		return append([]string{task.Actions.Exec.Command}, decodeWindows(tb, task.Actions.Exec.Arguments)...)
 	}
 	var plist struct {
 		Dict struct {
@@ -55,13 +58,13 @@ func decodedArgv(t testing.TB, goos string, data []byte) []string {
 			} `xml:"array"`
 		} `xml:"dict"`
 	}
-	require.NoError(t, xml.Unmarshal(data, &plist))
-	require.Len(t, plist.Dict.Arrays, 1)
+	require.NoError(tb, xml.Unmarshal(data, &plist))
+	require.Len(tb, plist.Dict.Arrays, 1)
 	return plist.Dict.Arrays[0].Strings
 }
 
-func decodeUnit(t testing.TB, s string) []string {
-	t.Helper()
+func decodeUnit(tb testing.TB, s string) []string {
+	tb.Helper()
 	var args []string
 	literal := strings.HasPrefix(s, ":")
 	s = strings.TrimPrefix(s, ":")
@@ -70,7 +73,7 @@ func decodeUnit(t testing.TB, s string) []string {
 		if s == "" {
 			break
 		}
-		require.True(t, strings.HasPrefix(s, `"`))
+		require.True(tb, strings.HasPrefix(s, `"`))
 		s = s[1:]
 		var b strings.Builder
 		for len(s) > 0 {
@@ -80,12 +83,12 @@ func decodeUnit(t testing.TB, s string) []string {
 				break
 			}
 			if c == '\\' {
-				require.NotEmpty(t, s)
+				require.NotEmpty(tb, s)
 				c = s[0]
 				s = s[1:]
 			} else if c == '%' || (c == '$' && !literal) {
-				require.NotEmpty(t, s)
-				require.Equal(t, c, s[0])
+				require.NotEmpty(tb, s)
+				require.Equal(tb, c, s[0])
 				s = s[1:]
 			}
 			b.WriteByte(c)
@@ -95,8 +98,8 @@ func decodeUnit(t testing.TB, s string) []string {
 	return args
 }
 
-func decodeWindows(t testing.TB, s string) []string {
-	t.Helper()
+func decodeWindows(tb testing.TB, s string) []string {
+	tb.Helper()
 	var args []string
 	for len(strings.TrimSpace(s)) > 0 {
 		s = strings.TrimLeft(s, " \t")
@@ -127,7 +130,7 @@ func decodeWindows(t testing.TB, s string) []string {
 				}
 			}
 		}
-		require.False(t, quoted)
+		require.False(tb, quoted)
 		args = append(args, b.String())
 	}
 	return args

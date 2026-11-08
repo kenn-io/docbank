@@ -84,7 +84,7 @@ func TestNoteIndexGenerationCAS(t *testing.T) {
 	for _, change := range []string{"edit", "absence", "manual", "move", "restore", "policy"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
-			scan, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
+			_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
 			g := beginIndexFixture(t, s)
 			stageIndexFixture(t, s, g, notes)
 			require.NoError(t, s.StageNoteIndexEdges(t.Context(), g, "note.md", nil))
@@ -92,7 +92,7 @@ func TestNoteIndexGenerationCAS(t *testing.T) {
 			require.NoError(t, err)
 			switch change {
 			case "edit":
-				scan = beginNoteScan(t, s)
+				scan := beginNoteScan(t, s)
 				acceptNote(t, s, noteUpload(t, scan, "note.md", fakeHash("ab"), notes[0].source.Identity.SourceRevision))
 			case "absence":
 				completeNoteScan(t, s, beginNoteScan(t, s))
@@ -258,8 +258,14 @@ func checkNoteIndexBackend(t *testing.T, s *Store) {
 	require.NoError(t, s.PublishNoteIndex(t.Context(), g))
 }
 
-func checkNoteIndexSQLite(t *testing.T)   { checkNoteIndexBackend(t, newTestStore(t)) }
-func checkNoteIndexPostgres(t *testing.T) { checkNoteIndexBackend(t, newPostgresQueryStore(t)) }
+func checkNoteIndexSQLite(t *testing.T) {
+	t.Helper()
+	checkNoteIndexBackend(t, newTestStore(t))
+}
+func checkNoteIndexPostgres(t *testing.T) {
+	t.Helper()
+	checkNoteIndexBackend(t, newPostgresQueryStore(t))
+}
 
 func TestNoteIndexExtensionOnlySource(t *testing.T) {
 	t.Parallel()

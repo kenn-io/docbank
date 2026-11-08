@@ -27,9 +27,9 @@ type Status struct {
 // must honor cancellation and bound output; the default caps it at 64 KiB.
 type Runner func(context.Context, string, ...string) ([]byte, error)
 type Driver interface {
-	Install(context.Context, Spec) (Status, error)
-	Status(context.Context, Spec) (Status, error)
-	Uninstall(context.Context, Spec) error
+	Install(ctx context.Context, spec Spec) (Status, error)
+	Status(ctx context.Context, spec Spec) (Status, error)
+	Uninstall(ctx context.Context, spec Spec) error
 }
 
 var (

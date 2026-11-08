@@ -86,7 +86,7 @@ func TestNoteIndexEvidencePermutationProperty(t *testing.T) {
 		}
 		normalize(want)
 		bindings := map[string]string{}
-		for permutation := 0; permutation < 2; permutation++ {
+		for range 2 {
 			rows, err := s.NoteIndexCandidates(ht.Context(), g, keys)
 			require.NoError(ht, err)
 			require.LessOrEqual(ht, len(rows), 8)

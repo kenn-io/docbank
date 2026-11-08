@@ -16,7 +16,6 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"path"
 	"regexp"
 	"strings"
@@ -36,7 +35,7 @@ type Registration struct {
 var (
 	ErrUnsupported      = errors.New("publisher launchers unsupported on this platform")
 	ErrInvalidSpec      = errors.New("invalid publisher launcher specification")
-	ErrPercentExpansion = errors.New("Windows launcher paths cannot contain paired percent signs (Task Scheduler environment expansion)")
+	ErrPercentExpansion = errors.New("windows launcher paths cannot contain paired percent signs (Task Scheduler environment expansion)")
 	uidPattern          = regexp.MustCompile(`^[1-9][0-9]*$`)
 	sidPattern          = regexp.MustCompile(`^S-1-5-21(?:-[0-9]+){4}$`)
 )
@@ -171,5 +170,3 @@ func windowsArgument(s string) string {
 	b.WriteByte('"')
 	return b.String()
 }
-
-func invalidPlatform(goos string) error { return fmt.Errorf("%w: %s", ErrUnsupported, goos) }

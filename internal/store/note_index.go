@@ -311,7 +311,7 @@ func (s *Store) noteIndexSourceTx(ctx context.Context, q metadataQuerier, g Note
 
 func validNoteEdgeState(state string) bool {
 	switch state {
-	case "resolved", "missing", "ambiguous", "pending", "attachment", "external", "invalid", "unsupported", "unavailable":
+	case "resolved", "missing", "ambiguous", "pending", "attachment", "external", "invalid", "unsupported", noteSourceUnavailable:
 		return true
 	}
 	return false

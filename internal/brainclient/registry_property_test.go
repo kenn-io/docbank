@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ import (
 func TestBrainRegistryRoundTripProperty(t *testing.T) {
 	root := t.TempDir()
 	hegel.Test(t, func(ht *hegel.T) {
-		dir, err := os.MkdirTemp(root, "case-")
+		dir, err := os.MkdirTemp(root, "case-") //nolint:usetesting // Each generated case is removed immediately, including during shrinking.
 		require.NoError(ht, err)
 		defer func() { require.NoError(ht, os.RemoveAll(dir)) }()
 		r, err := OpenRegistry(filepath.Join(dir, "registry"))
@@ -48,8 +49,8 @@ func TestBrainRegistryRoundTripProperty(t *testing.T) {
 		}
 		// Reverse the authored insertion order; expected name order comes from
 		// ordinary string ordering, not a registry serialization helper.
-		for i := len(want) - 1; i >= 0; i-- {
-			require.NoError(ht, r.Put(t.Context(), want[i]))
+		for _, item := range slices.Backward(want) {
+			require.NoError(ht, r.Put(t.Context(), item))
 		}
 		fresh, err := OpenRegistry(filepath.Join(dir, "registry"))
 		require.NoError(ht, err)
@@ -72,7 +73,7 @@ func TestBrainRegistryNameValidationProperty(t *testing.T) {
 	root := t.TempDir()
 	validName := regexp.MustCompile(`^[a-z0-9._-]{1,64}$`)
 	hegel.Test(t, func(ht *hegel.T) {
-		dir, err := os.MkdirTemp(root, "case-")
+		dir, err := os.MkdirTemp(root, "case-") //nolint:usetesting // Each generated case is removed immediately, including during shrinking.
 		require.NoError(ht, err)
 		defer func() { require.NoError(ht, os.RemoveAll(dir)) }()
 		name := hegel.Draw(ht, hegel.Text().MaxSize(80))

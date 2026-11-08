@@ -3,7 +3,6 @@ package brainservice
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"io/fs"
 	"strings"
 	"testing"
@@ -100,5 +99,5 @@ func TestBrainServiceWindowsStateErrors(t *testing.T) {
 		return nil, nil
 	}, func(context.Context, string) (int, error) { return 0, fs.ErrPermission })
 	_, err := d.Status(t.Context(), renderSpec("windows"))
-	require.True(t, errors.Is(err, fs.ErrPermission))
+	require.ErrorIs(t, err, fs.ErrPermission)
 }

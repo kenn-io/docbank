@@ -34,7 +34,7 @@ func TestNoteIndexKeyset4097(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	g := beginIndexFixture(t, s)
 	require.EqualValues(t, 4097, g.ExpectedSources)
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		after, total := "", 0
 		for {
 			page, err := s.EligibleNoteSources(t.Context(), "notebook", after, 64)

@@ -14,6 +14,8 @@ import (
 
 const maxNoteArtifactBytes = 16 << 20
 
+const noteParseFailed = "failed"
+
 var ErrInvalidNoteProjection = errors.New("invalid authored-note projection")
 var ErrNoteIndexStale = errors.New("authored-note index inputs changed")
 
@@ -67,7 +69,7 @@ func validateNoteParse(ctx context.Context, record NoteParseRecord) error {
 		if record.Checksum != "" || len(record.Artifact) != 0 || (record.Reason != "input_limit" && record.Reason != "parser_limit") {
 			return ErrInvalidNoteProjection
 		}
-	case "failed":
+	case noteParseFailed:
 		if record.Checksum != "" || len(record.Artifact) != 0 || record.Reason != "invalid_markdown" {
 			return ErrInvalidNoteProjection
 		}

@@ -34,6 +34,7 @@ type projectorFixture struct {
 
 type faultOriginalReader struct {
 	originalReader
+
 	kind           string
 	cancel         context.CancelFunc
 	opened, closed int
@@ -74,6 +75,7 @@ func (projectorZeros) Read(data []byte) (int, error) {
 
 type faultOriginalStream struct {
 	packstore.VerifiedReadCloser
+
 	owner   *faultOriginalReader
 	payload io.Reader
 }
@@ -110,7 +112,10 @@ func (r *faultOriginalStream) Verify() error {
 			return err
 		}
 	}
-	return r.VerifiedReadCloser.Verify()
+	if err := r.VerifiedReadCloser.Verify(); err != nil {
+		return fmt.Errorf("verify synthetic stream: %w", err)
+	}
+	return nil
 }
 
 func (r *faultOriginalStream) Close() error {
@@ -449,6 +454,7 @@ func TestNoteProjectorCrashRecovery(t *testing.T) {
 
 type racingNoteCatalog struct {
 	noteCatalog
+
 	point string
 	fired bool
 	hook  func()

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/version"
@@ -28,11 +29,11 @@ func TestRootedDaemonAcquisitionIgnoresAmbientHome(t *testing.T) {
 			_ = json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: Service, Version: version.Version, PID: os.Getpid()})
 		case daemonauth.ChallengePath:
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			require.NoError(t, err)
-			require.Empty(t, r.Header.Get("X-Api-Key"))
+			assert.NoError(t, err)
+			assert.Empty(t, r.Header.Get("X-Api-Key"))
 			_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)})
 		case "/observed":
-			require.Equal(t, key, r.Header.Get("X-Api-Key"))
+			assert.Equal(t, key, r.Header.Get("X-Api-Key"))
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			http.NotFound(w, r)
@@ -59,7 +60,7 @@ func TestRootedDaemonAcquisitionIgnoresAmbientHome(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 200, response.StatusCode)
 		require.NoError(t, response.Body.Close())
-		c.Close()
+		require.NoError(t, c.Close())
 	}
 	_, err = os.Stat(ambient)
 	require.ErrorIs(t, err, os.ErrNotExist)
