@@ -165,6 +165,18 @@ it("binds a reservation to reviewed content and exact labels, beyond internally 
     const changed = response();
     change(changed);
     changed.recipe_sha256 = pageDigest(changed.recipe);
+    changed.request_sha256 = pageDigest({
+      namespace_id: ns.namespace_id,
+      snapshot_id: changed.snapshot_id,
+      recipe_sha256: changed.recipe_sha256,
+      start_at: frozen.start,
+      pages: changed.pages.map((page) => ({
+        OccurrenceID: page.occurrence_id,
+        UnstampedSHA256: page.source_blob_sha256,
+        SourcePage: page.source_page,
+        VerifiedPageCount: changed.pages.length,
+      })),
+    });
     expect(() => decodeNumberedReservation(changed, frozen)).toThrow();
   }
 });

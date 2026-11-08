@@ -71,7 +71,7 @@ func timeoutExempt(method, path string) bool {
 		return true
 	}
 	switch path {
-	case "/api/v1/redaction/render", redactionPublicationsPath:
+	case "/api/v1/redaction/render":
 		return method == http.MethodPost
 	case "/api/v1/push/uploads":
 		return method == http.MethodPost
