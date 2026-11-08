@@ -20,12 +20,12 @@ type publishedNoteParameter struct {
 	Set   bool
 }
 
-func (p publishedNoteParameter) Schema(r huma.Registry) *huma.Schema {
+func (p *publishedNoteParameter) Schema(r huma.Registry) *huma.Schema {
 	return r.Schema(reflect.TypeFor[PublishedNoteSelector](), true, "")
 }
 func (p *publishedNoteParameter) Receiver() reflect.Value    { return reflect.ValueOf(&p.Value).Elem() }
 func (p *publishedNoteParameter) OnParamSet(set bool, _ any) { p.Set = set }
-func (p publishedNoteParameter) selector() *PublishedNoteSelector {
+func (p *publishedNoteParameter) selector() *PublishedNoteSelector {
 	if !p.Set {
 		return nil
 	}

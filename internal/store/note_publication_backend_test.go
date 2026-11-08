@@ -7,11 +7,13 @@ import (
 )
 
 func checkNotePublicationScanSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNotePublicationScanBackend(t, newTestStore(t))
 }
 
 func checkNotePublicationScanPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNotePublicationScanBackend(t, newPostgresQueryStore(t))
 }
@@ -40,11 +42,13 @@ func checkNotePublicationScanBackend(t *testing.T, s *Store) {
 }
 
 func checkNotePublicationLifecycleSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNotePublicationLifecycleBackend(t, newTestStore(t))
 }
 
 func checkNotePublicationLifecyclePostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNotePublicationLifecycleBackend(t, newPostgresQueryStore(t))
 }

@@ -40,7 +40,9 @@ func TestPublishedNoteSearchToolPreservesIdentity(t *testing.T) {
 	output := structuredMap(t, result.StructuredContent)
 	hits := output["results"].([]any)
 	require.Len(t, hits, 1)
-	identity, ok := hits[0].(map[string]any)["published_note"].(map[string]any)
+	hit, ok := hits[0].(map[string]any)
+	require.True(t, ok)
+	identity, ok := hit["published_note"].(map[string]any)
 	require.True(t, ok, "published identity must survive tool serialization")
 	require.Equal(t, "folder/original.md", identity["source_ref"])
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
@@ -66,11 +67,13 @@ func TestNotePublicationAcceptLocalRejectsUnboundReceipt(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "/api/v1/note-publications/research/sources/accept-local", r.URL.Path)
-				require.Equal(t, serverKey, r.Header.Get("X-Api-Key"))
+				assert.Equal(t, "/api/v1/note-publications/research/sources/accept-local", r.URL.Path)
+				assert.Equal(t, serverKey, r.Header.Get("X-Api-Key"))
 				w.Header().Set("Content-Type", "application/json")
 				body, err := json.Marshal(test.result)
-				require.NoError(t, err)
+				if !assert.NoError(t, err) {
+					return
+				}
 				_, _ = w.Write(body)
 			}))
 			defer ts.Close()
