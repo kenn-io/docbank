@@ -649,12 +649,14 @@ the artifact hash identifies the exact canonical `media-transcript/v1` JSON.
 Optional language comes from that verified retained artifact. Neither field
 is inferred from the sender or the filename.
 
-`speech_state: "complete"` means nonempty, untruncated segment evidence with
+`speech_state: "complete"` means generated, nonempty, untruncated segment evidence with
 no omissions except the field `non_speech_content`. A transcript does not
 describe sound effects, so the ordinary `completeness: "partial"` and
-`has_omissions: true` remain accurate. Other omissions or untimed supplied
-text yield `speech_state: "partial"`. Speech readiness does not assert verbatim
-accuracy, identify people, or prove silence; empty ASR output fails.
+`has_omissions: true` remain accurate. Other omissions yield
+`speech_state: "partial"`. Supplied-origin transcripts always report partial
+speech provenance, including timed captions; this rule does not assert that
+speech is missing. Speech readiness does not assert verbatim accuracy,
+identify people, or prove silence; empty ASR output fails.
 
 Consumers bind the exact vault/source/source-version/content-version and
 original digest to their attachment. They replace cached text when build or
