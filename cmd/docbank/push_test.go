@@ -141,7 +141,7 @@ func TestPushMarkdownBrainDefaultsAndOverrides(t *testing.T) {
 		{"negative interval", []string{"--markdown-brain", "--scan-interval", "-1s"}, 0, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(keyChallenge("synthetic-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })))
+			server := httptest.NewServer(keyChallenge("synthetic-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })))
 			defer server.Close()
 			cmd := newPushCmd()
 			cmd.SilenceErrors = true
@@ -173,7 +173,7 @@ func TestPushMarkdownBrainCapabilityFailureDoesNotFallback(t *testing.T) {
 		} else {
 			archival++
 		}
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusNotFound)
 	})))
 	defer server.Close()
 	root := t.TempDir()

@@ -49,12 +49,12 @@ in two seconds and polls every five seconds by default.`,
 			if markdownBrain {
 				if !cmd.Flags().Changed("settle-time") {
 					if err := cmd.Flags().Set("settle-time", "2s"); err != nil {
-						return err
+						return fmt.Errorf("setting managed settle time: %w", err)
 					}
 				}
 				if !cmd.Flags().Changed("scan-interval") {
 					if err := cmd.Flags().Set("scan-interval", "5s"); err != nil {
-						return err
+						return fmt.Errorf("setting managed scan interval: %w", err)
 					}
 				}
 			}

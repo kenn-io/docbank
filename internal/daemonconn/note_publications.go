@@ -116,8 +116,8 @@ func (c *Connection) BeginNotePublicationScan(ctx context.Context, r api.NotePub
 		return zero, errors.New("invalid publication policy fingerprint")
 	}
 	var resp *http.Response
-	v, err := c.apiWithResponse(&resp).BeginNotePublicationScan(runtime.WithStreamingResponse(ctx), &apiclient.BeginNotePublicationScanRequestOptions{PathParams: &apiclient.BeginNotePublicationScanPath{Name: r.Name}, Body: &r})
-	v, err = readNotePublicationResponse[api.NotePublicationScan](resp, err, 64<<10)
+	_, err := c.apiWithResponse(&resp).BeginNotePublicationScan(runtime.WithStreamingResponse(ctx), &apiclient.BeginNotePublicationScanRequestOptions{PathParams: &apiclient.BeginNotePublicationScanPath{Name: r.Name}, Body: &r})
+	v, err := readNotePublicationResponse[api.NotePublicationScan](resp, err, 64<<10)
 	if err != nil {
 		return zero, err
 	}
@@ -139,8 +139,8 @@ func (c *Connection) NotePublicationSources(ctx context.Context, r api.NotePubli
 		q.After = &r.After
 	}
 	var resp *http.Response
-	v, err := c.apiWithResponse(&resp).ListNotePublicationSources(runtime.WithStreamingResponse(ctx), &apiclient.ListNotePublicationSourcesRequestOptions{PathParams: &apiclient.ListNotePublicationSourcesPath{Name: r.Name}, Query: q})
-	v, err = readNotePublicationResponse[api.NotePublicationSourcesPage](resp, err, int64(r.Limit+1)*(64<<10))
+	_, err := c.apiWithResponse(&resp).ListNotePublicationSources(runtime.WithStreamingResponse(ctx), &apiclient.ListNotePublicationSourcesRequestOptions{PathParams: &apiclient.ListNotePublicationSourcesPath{Name: r.Name}, Query: q})
+	v, err := readNotePublicationResponse[api.NotePublicationSourcesPage](resp, err, int64(r.Limit+1)*(64<<10))
 	if err != nil {
 		return zero, err
 	}
@@ -184,9 +184,13 @@ func (c *Connection) UploadPublishedNote(ctx context.Context, r api.NotePublicat
 	if r.ModifiedAt != "" {
 		q.ModifiedAt = &r.ModifiedAt
 	}
-	resp, err := streamUpload(ctx, r.FileName, mime, body, func(ctx context.Context, response **http.Response, editor runtime.RequestEditorFn) error {
+	resp, err := streamUpload(ctx, r.FileName, mime, body, func(ctx context.Context, response **http.Response, editor runtime.RequestEditorFn) error { //nolint:bodyclose // readNotePublicationResponse owns and closes the response.
 		_, err := c.apiWithResponse(response).UploadPublishedNote(ctx, &apiclient.UploadPublishedNoteRequestOptions{PathParams: &apiclient.UploadPublishedNotePath{Name: r.Name}, Query: q, Header: &apiclient.UploadPublishedNoteHeaders{XDocbankBlobHash: r.Hash, XDocbankBlobSize: r.Size}}, editor)
-		return notePublicationWireError(*response, err)
+		err = notePublicationWireError(*response, err)
+		if err != nil && *response != nil && (*response).Body != nil {
+			_ = (*response).Body.Close()
+		}
+		return err
 	})
 	if err != nil {
 		return receipt, err
@@ -231,8 +235,8 @@ func (c *Connection) AcknowledgePublishedNotes(ctx context.Context, r api.NotePu
 		return zero, err
 	}
 	var resp *http.Response
-	v, err := c.apiWithResponse(&resp).AcknowledgePublishedNotes(runtime.WithStreamingResponse(ctx), &apiclient.AcknowledgePublishedNotesRequestOptions{PathParams: &apiclient.AcknowledgePublishedNotesPath{Name: r.Name, ScanID: r.ScanID}, Body: &r})
-	v, err = readNotePublicationResponse[api.NotePublicationAck](resp, err, 2<<20)
+	_, err := c.apiWithResponse(&resp).AcknowledgePublishedNotes(runtime.WithStreamingResponse(ctx), &apiclient.AcknowledgePublishedNotesRequestOptions{PathParams: &apiclient.AcknowledgePublishedNotesPath{Name: r.Name, ScanID: r.ScanID}, Body: &r})
+	v, err := readNotePublicationResponse[api.NotePublicationAck](resp, err, 2<<20)
 	if err != nil {
 		return zero, err
 	}
@@ -255,8 +259,8 @@ func (c *Connection) CompleteNotePublicationScan(ctx context.Context, r api.Note
 		return zero, errors.New("invalid publication policy fingerprint")
 	}
 	var resp *http.Response
-	v, err := c.apiWithResponse(&resp).CompleteNotePublicationScan(runtime.WithStreamingResponse(ctx), &apiclient.CompleteNotePublicationScanRequestOptions{PathParams: &apiclient.CompleteNotePublicationScanPath{Name: r.Name, ScanID: r.ScanID}, Body: &r})
-	v, err = readNotePublicationResponse[api.NotePublicationStatus](resp, err, 64<<10)
+	_, err := c.apiWithResponse(&resp).CompleteNotePublicationScan(runtime.WithStreamingResponse(ctx), &apiclient.CompleteNotePublicationScanRequestOptions{PathParams: &apiclient.CompleteNotePublicationScanPath{Name: r.Name, ScanID: r.ScanID}, Body: &r})
+	v, err := readNotePublicationResponse[api.NotePublicationStatus](resp, err, 64<<10)
 	if err != nil {
 		return zero, err
 	}
@@ -271,8 +275,8 @@ func (c *Connection) NotePublicationStatus(ctx context.Context, name string) (ap
 		return zero, err
 	}
 	var resp *http.Response
-	v, err := c.apiWithResponse(&resp).GetNotePublicationStatus(runtime.WithStreamingResponse(ctx), &apiclient.GetNotePublicationStatusRequestOptions{PathParams: &apiclient.GetNotePublicationStatusPath{Name: name}})
-	v, err = readNotePublicationResponse[api.NotePublicationStatus](resp, err, 64<<10)
+	_, err := c.apiWithResponse(&resp).GetNotePublicationStatus(runtime.WithStreamingResponse(ctx), &apiclient.GetNotePublicationStatusRequestOptions{PathParams: &apiclient.GetNotePublicationStatusPath{Name: name}})
+	v, err := readNotePublicationResponse[api.NotePublicationStatus](resp, err, 64<<10)
 	if err != nil {
 		return zero, err
 	}
@@ -296,13 +300,15 @@ func validNoteAcknowledgement(got, expected api.PublishedNoteIdentity, name stri
 // Generated route declarations still own request construction. A bounded owned
 // stream prevents a malformed success from allocating an unbounded cursor page.
 func readNotePublicationResponse[T any](resp *http.Response, callErr error, limit int64) (*T, error) {
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err := notePublicationWireError(resp, callErr); err != nil {
 		return nil, err
 	}
 	if resp == nil || resp.Body == nil {
 		return nil, badNoteResponse()
 	}
-	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrPushResponseInterrupted, err)

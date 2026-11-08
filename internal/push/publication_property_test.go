@@ -65,10 +65,10 @@ type publicationCase struct {
 	close      func()
 }
 
-func newPublicationCase(t testing.TB, hook func(http.ResponseWriter, *http.Request, http.Handler)) (f publicationCase) {
-	t.Helper()
-	base, err := os.MkdirTemp("", "docbank-publication-case-")
-	require.NoError(t, err)
+func newPublicationCase(tb testing.TB, hook func(http.ResponseWriter, *http.Request, http.Handler)) (f publicationCase) {
+	tb.Helper()
+	base, err := os.MkdirTemp("", "docbank-publication-case-") //nolint:usetesting // Each generated example is removed immediately, including during shrinking.
+	require.NoError(tb, err)
 	var s *store.Store
 	var blobs *blob.Store
 	var server *api.Server
@@ -82,24 +82,24 @@ func newPublicationCase(t testing.TB, hook func(http.ResponseWriter, *http.Reque
 			server.Close()
 		}
 		if blobs != nil {
-			require.NoError(t, blobs.Close())
+			require.NoError(tb, blobs.Close())
 		}
 		if s != nil {
-			require.NoError(t, s.Close())
+			require.NoError(tb, s.Close())
 		}
-		require.NoError(t, os.RemoveAll(base))
+		require.NoError(tb, os.RemoveAll(base))
 	}
 	defer func() {
 		if !ready {
 			f.close()
 		}
 	}()
-	s, err = store.Open(t.Context(), filepath.Join(base, "vault.db"))
-	require.NoError(t, err)
+	s, err = store.Open(tb.Context(), filepath.Join(base, "vault.db"))
+	require.NoError(tb, err)
 	dir := filepath.Join(base, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0700))
+	require.NoError(tb, os.MkdirAll(filepath.Join(dir, "tmp"), 0700))
 	blobs, err = blob.New(store.NewPackCatalog(s), dir)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-key"
 	server = api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: base, Cfg: cfg, Logger: slog.New(slog.DiscardHandler)})
@@ -112,9 +112,9 @@ func newPublicationCase(t testing.TB, hook func(http.ResponseWriter, *http.Reque
 		}
 	}))
 	f.connection, err = daemonconn.NewPushConnection(ts.URL, "synthetic-key")
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	f.store, f.url, f.root = s, ts.URL, filepath.Join(base, "local")
-	require.NoError(t, os.Mkdir(f.root, 0700))
+	require.NoError(tb, os.Mkdir(f.root, 0700))
 	ready = true
 	return f
 }
@@ -162,7 +162,11 @@ func TestPublicationConvergenceProperty(t *testing.T) {
 				publicationProblem(w, 503, "internal")
 				return
 			}
-			suffix := dropSuffix.Load().(string)
+			suffix, ok := dropSuffix.Load().(string)
+			if !ok {
+				http.Error(w, "invalid synthetic state", http.StatusInternalServerError)
+				return
+			}
 			if suffix != "" && strings.HasSuffix(r.URL.Path, suffix) {
 				dropSuffix.Store("")
 				discardCommittedPublicationResponse(w, r, next)
