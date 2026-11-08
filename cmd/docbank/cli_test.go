@@ -823,12 +823,37 @@ func requireJob(t *testing.T, list api.JobList, name string) api.Job {
 const idleTimeoutJob = "daemon.idle-timeout"
 
 func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("DOCBANK_HOME", home)
-	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
-	startTestDaemon(t, home)
-	assert.Equal(t, "running", requireJob(t, daemonJobs(t), idleTimeoutJob).Status,
-		"a background daemon with nothing to keep it alive exits after idle_timeout")
+	for _, test := range []struct {
+		name                   string
+		background, persistent bool
+		timeout                string
+		watched                bool
+	}{
+		{"automatic", true, false, "30m", true},
+		{"disabled", true, false, "0s", false},
+		{"explicit", true, true, "30m", false},
+		{"foreground", false, false, "30m", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \""+test.timeout+"\"\n"), 0o600))
+			t.Setenv("DOCBANK_HOME", root)
+			t.Setenv(daemonconn.EnvBackgroundDaemon, map[bool]string{true: "1", false: "0"}[test.background])
+			t.Setenv(daemonconn.EnvPersistentDaemon, strconv.FormatBool(test.persistent))
+			startTestDaemon(t, root)
+			_, watched := jobNamed(daemonJobs(t), idleTimeoutJob)
+			assert.Equal(t, test.watched, watched)
+			rec, _, found, err := daemonconn.Find(t.Context(), root)
+			require.NoError(t, err)
+			require.True(t, found)
+			timeout := "0s"
+			if test.watched {
+				timeout = "30m0s"
+			}
+			assert.Equal(t, timeout, rec.Metadata[daemonconn.MetaIdleTimeout])
+			assert.Equal(t, strconv.FormatBool(test.persistent || !test.background), rec.Metadata[daemonconn.MetaPersistent])
+		})
+	}
 }
 
 func TestConfiguredBackupsCaptureAndKeepDaemonAlive(t *testing.T) {

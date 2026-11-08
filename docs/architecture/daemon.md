@@ -175,12 +175,12 @@ it holds the API key without either side sending it; only then does the key or
 any document byte cross that connection. Its target must support the push
 routes; an older daemon returns an error before any upload.
 
-A background-spawned daemon (started via auto-start, `daemon start`, or
-`daemon restart`) exits after `[server] idle_timeout` (default 30
+An automatically started daemon exits after `[server] idle_timeout` (default 30
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
-`docbank daemon run`, or any daemon hosting MCP HTTP, never idles out. It runs
-until signaled or stopped.
+`docbank daemon run`, an explicit `daemon start` or `daemon restart`, or any daemon hosting MCP HTTP, stays up. It runs
+until signaled or stopped. Replacements after upgrades preserve explicit launch intent.
+`docbank daemon status` shows the effective lifetime.
 An open photo event stream counts as an in-flight request, so a visible Photos tab keeps a background daemon from reaching its idle timeout.
 
 ## Background tasks

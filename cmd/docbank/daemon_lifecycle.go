@@ -15,7 +15,7 @@ import (
 
 var daemonCmd = &cobra.Command{
 	Long: `Data commands start the daemon automatically and replace one from a different
-binary version. Use these only to inspect, stop, or debug it.`,
+binary version. Use daemon start to keep it running until daemon stop.`,
 	GroupID: groupOperations,
 	Use:     "daemon",
 	Short:   "Manage the docbank daemon",
@@ -42,16 +42,15 @@ var daemonStartCmd = &cobra.Command{
 	Use:     "start",
 	Short:   "Start the daemon in the background",
 	Long: `Start a daemon for this vault in the background, replacing a running daemon
-whose version or protocol does not match this binary. Same convergence as the
-data commands' auto-start: after "daemon start" succeeds, the one running daemon
-is current.`,
+whose version, protocol, or automatic lifetime does not match this request.
+The daemon stays running until docbank daemon stop.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
 		if err != nil {
 			return err
 		}
-		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root)
+		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root, true)
 		if err != nil {
 			return err
 		}
@@ -93,6 +92,13 @@ var daemonStatusCmd = &cobra.Command{
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "running: pid %d at %s (%s), up %s\n",
 			rec.PID, rec.Address, info.Version, time.Since(rec.StartedAt).Round(time.Second))
+		if timeout, err := time.ParseDuration(rec.Metadata[daemonconn.MetaIdleTimeout]); err == nil {
+			if timeout == 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Stays running until docbank daemon stop")
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Exits after %s idle\n", timeout)
+			}
+		}
 		return nil
 	},
 }
@@ -125,7 +131,7 @@ var daemonRestartCmd = &cobra.Command{
 	Use:     "restart",
 	Short:   "Restart the daemon",
 	Long: `Stop the daemon if one is running, then start it again. Succeeds when no
-daemon was running.`,
+daemon was running. The daemon stays running until docbank daemon stop.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
@@ -136,7 +142,7 @@ daemon was running.`,
 		if err != nil {
 			return err
 		}
-		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root)
+		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root, true)
 		if err != nil {
 			return err
 		}

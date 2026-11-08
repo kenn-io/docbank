@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -308,7 +309,7 @@ func Ensure(ctx context.Context) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := EnsureDaemon(ctx, layout.Root)
+	res, err := EnsureDaemon(ctx, layout.Root, false)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +343,7 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := ensureDaemonWithOptions(ctx, layout.Root, Start, webDiscoverOptions())
+	res, err := ensureDaemonWithOptions(ctx, layout.Root, false, Start, webDiscoverOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -358,26 +359,29 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 
 // EnsureDaemon converges the vault on exactly one version- and
 // protocol-matched daemon: it returns the running daemon when it is compatible
-// with this binary, and otherwise — under the launch lock — stops it and starts
+// with this binary and satisfies persistent intent, and otherwise stops it
+// under the launch lock and starts
 // a fresh one. `daemon start`, `daemon restart`, and the data commands'
 // auto-start all share this path, so there is a single replacement policy and
 // no command ever leaves a stale daemon behind.
-func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
-	return ensureDaemon(ctx, root, Start)
+func EnsureDaemon(ctx context.Context, root string, persistent bool) (EnsureResult, error) {
+	return ensureDaemon(ctx, root, persistent, Start)
 }
 
 func ensureDaemon(
 	ctx context.Context,
 	root string,
-	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
+	persistent bool,
+	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),
 ) (EnsureResult, error) {
-	return ensureDaemonWithOptions(ctx, root, startFn, discoverOptions(true))
+	return ensureDaemonWithOptions(ctx, root, persistent, startFn, discoverOptions(true))
 }
 
 func ensureDaemonWithOptions(
 	ctx context.Context,
 	root string,
-	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
+	persistent bool,
+	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),
 	opts kitdaemon.DiscoverOptions,
 ) (EnsureResult, error) {
 	var res EnsureResult
@@ -391,7 +395,7 @@ func ensureDaemonWithOptions(
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
-	if ok {
+	if ok && (!persistent || rec.Metadata[MetaPersistent] == "true") {
 		res.Record = rec
 		return res, nil
 	}
@@ -402,12 +406,12 @@ func ensureDaemonWithOptions(
 		if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
-		if ok {
+		if ok && (!persistent || rec.Metadata[MetaPersistent] == "true") {
 			res.Record = rec
 			return nil
 		}
 
-		// Any live incompatible daemon blocks the vault lock: replace it.
+		// Replace an incompatible daemon or promote its automatic lifetime.
 		old, _, found, findErr := Find(ctx, root)
 		if findErr != nil && !errors.Is(findErr, kitdaemon.ErrDaemonUnreachable) {
 			return findErr
@@ -449,7 +453,7 @@ func ensureDaemonWithOptions(
 			}
 		}
 
-		res.Record, err = startFn(ctx, root)
+		res.Record, err = startFn(ctx, root, persistent || (res.Replaced != nil && res.Replaced.Metadata[MetaPersistent] == "true"))
 		res.Started = err == nil
 		return err
 	})
@@ -457,18 +461,18 @@ func ensureDaemonWithOptions(
 }
 
 // Start spawns a detached daemon and waits for a compatible ping.
-func Start(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
-	return start(ctx, root, true)
+func Start(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+	return start(ctx, root, true, persistent)
 }
 
 // StartAnyVersion spawns a detached daemon and waits for any docbank daemon.
 // update uses this after replacing the executable, because the old updater
 // process cannot know the new binary's version string at compile time.
-func StartAnyVersion(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
-	return start(ctx, root, false)
+func StartAnyVersion(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+	return start(ctx, root, false, persistent)
 }
 
-func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.RuntimeRecord, retErr error) {
+func start(ctx context.Context, root string, requireVersion, persistent bool) (_ kitdaemon.RuntimeRecord, retErr error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, err
@@ -492,7 +496,7 @@ func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.R
 	err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
 		Executable: exe,
 		Args:       []string{"daemon", "run"},
-		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", "DOCBANK_HOME="+root),
+		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", EnvPersistentDaemon+"="+strconv.FormatBool(persistent), "DOCBANK_HOME="+root),
 		Stdout:     logFile,
 		Stderr:     logFile,
 		AfterStart: func(cmd *exec.Cmd) { child = cmd.Process },

@@ -130,7 +130,7 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Start(ctx, root)
+		_, err := Start(ctx, root, false)
 		done <- err
 	}()
 	// The child reports its PID once it runs, before any runtime record exists.
@@ -280,8 +280,8 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 				root = filepath.Join(root, "missing", "vault")
 			}
 			started := false
-			_, err := ensureDaemon(t.Context(), root,
-				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			_, err := ensureDaemon(t.Context(), root, false,
+				func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
 					started = true
 					if test.missing {
 						_, err := os.Stat(filepath.Dir(root))
@@ -358,8 +358,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	rec.Metadata[metaProtocolVersion] = "119"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			started.Store(true)
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
@@ -382,8 +382,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	result, err := ensureDaemonWithOptions(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemonWithOptions(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", "127.0.0.1:3"), nil
 		}, webDiscoverOptions())
@@ -399,11 +399,15 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaPersistent] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, gotRoot string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			assert.True(t, persistent)
 			started = true
 			assert.Equal(t, canonicalRoot, gotRoot)
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
@@ -442,8 +446,8 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
 		})

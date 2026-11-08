@@ -1776,7 +1776,7 @@ docbank daemon stop
 | Command | Behavior |
 |---------|----------|
 | `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
-| `daemon start` | Start detached in the background; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon start` | Start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
 | `daemon status` | Report pid, address, version, and uptime without starting a daemon |
 | `daemon restart` | Stop a running daemon, then start it; also works when none is running |
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
@@ -1786,7 +1786,7 @@ docbank daemon stop
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
-for explicit control, such as inspecting logs before sending data commands.
+to keep the web UI and MCP available until `daemon stop`. Status shows the effective idle timeout or that the daemon stays running.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 

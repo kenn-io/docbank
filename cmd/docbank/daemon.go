@@ -595,12 +595,19 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
+	persistent := !background || os.Getenv(daemonconn.EnvPersistentDaemon) == "true"
+	var idleTimeout time.Duration
+	if !persistent && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 && cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+		idleTimeout = cfg.Server.IdleTimeout.Std()
+	}
 	rtStore := daemonconn.RuntimeStore(layout.Root)
 	webAddress := ""
 	if webListener != nil {
 		webAddress = webListener.Addr().String()
 	}
 	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
+	record.Metadata[daemonconn.MetaPersistent] = strconv.FormatBool(persistent)
+	record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
 	if localListener != nil {
 		record.Metadata["network_address"] = listener.Addr().String()
 	}
@@ -740,10 +747,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		servers = append(servers, servingHTTP{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true})
 	}
 
-	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+	if idleTimeout > 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
-			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, localText.Pending, stop)
+			idleWatch(ctx, tracker, idleTimeout, logger, localText.Pending, stop)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("starting idle-timeout job: %w", err)
