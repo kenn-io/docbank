@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -396,14 +397,15 @@ func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 		require.Len(t, matches, 1)
 		require.Equal(t, personID, matches[0].PersonID)
 		require.Contains(t, matches[0].RecentRank, "#")
+		require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
 		for _, person := range people {
 			if person.PersonID == personID {
-				before, _, _ := strings.Cut(person.RecentRank, "#")
-				after, _, _ := strings.Cut(matches[0].RecentRank, "#")
-				require.Equal(t, before, after)
+				continuation := options
+				continuation.AfterRecent = person.RecentRank
+				_, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", person.DisplayNameFolded, person.PersonID, 24, false, continuation)
+				require.ErrorIs(t, err, store.ErrStaleRevision, "a different result population needs its own continuation")
 			}
 		}
-		require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
 	})
 	t.Run("indexed exactness", func(t *testing.T) {
 		index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
@@ -688,4 +690,64 @@ func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
 			require.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
 		})
 	}
+}
+
+func TestFaceRankingContinuationRejectsChangedCentroids(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	ctx := t.Context()
+	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	beth, err := x.f.catalog.CreatePerson(ctx, "Beth", "operator")
+	require.NoError(t, err)
+	cara, err := x.f.catalog.CreatePerson(ctx, "Cara", "operator")
+	require.NoError(t, err)
+	version := x.f.addPhoto(t, "ranking-evidence.jpg", 720)
+	var moving store.PhotoFace
+	for i, person := range []string{ada.PersonID, ada.PersonID, beth.PersonID, cara.PersonID} {
+		face, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{X: .1 + float64(i)*.2, Y: .6, Width: .1, Height: .1}, person)
+		require.NoError(t, err)
+		if i == 0 {
+			moving = face
+		}
+	}
+	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+		angle := 0.0
+		if box.Y > .5 {
+			switch {
+			case box.X < .2:
+				angle = 0
+			case box.X < .4:
+				angle = 2.4
+			case box.X < .6:
+				angle = 1.7
+			default:
+				angle = 2.8
+			}
+		}
+		values := make([]float32, 512)
+		values[0], values[1] = float32(math.Cos(angle)), float32(math.Sin(angle))
+		return values
+	}
+	x.enable(t)
+	_, err = x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true}
+	first, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 2, false, options)
+	require.NoError(t, err)
+	require.Len(t, first, 2)
+	require.Equal(t, "Ada", first[0].DisplayName)
+	require.Equal(t, "Beth", first[1].DisplayName)
+	_, err = x.f.catalog.DecidePhotoFace(ctx, version, store.PhotoFaceDecisionRequest{FaceID: moving.FaceID, Revision: moving.Revision, Action: "name", PersonID: cara.PersonID})
+	require.NoError(t, err)
+	fresh, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+	require.NoError(t, err)
+	require.Len(t, fresh, 3)
+	require.Equal(t, "Cara", fresh[0].DisplayName)
+	require.Equal(t, "Beth", fresh[1].DisplayName)
+	require.Equal(t, "Ada", fresh[2].DisplayName)
+	options.AfterRecent = first[1].RecentRank
+	_, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", first[1].DisplayNameFolded, first[1].PersonID, 2, false, options)
+	require.ErrorIs(t, err, store.ErrStaleRevision, "changed centroids must invalidate continuation instead of repeating Ada and omitting Cara")
 }

@@ -126,9 +126,16 @@ func (s *Store) peopleForFaceTx(ctx context.Context, tx *sql.Tx, options PeopleS
 		}
 		return 0
 	})
-	// Carry the model identity with the ranked continuation so a replaced face
-	// vector cannot silently continue a different order.
-	binding := space + "/" + generationID + "/" + options.FaceID
+	// Bind the model, source, and full order so changed centroids cannot silently
+	// move people across the continuation boundary.
+	identity := []string{space, generationID, options.FaceID}
+	for _, person := range people {
+		identity = append(identity, person.PersonID)
+	}
+	binding, err := requestDigest(identity)
+	if err != nil {
+		return nil, err
+	}
 	start := 0
 	if afterID != "" {
 		cursorBinding, position, ok := strings.Cut(options.AfterRecent, "#")
