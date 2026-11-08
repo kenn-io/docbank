@@ -279,9 +279,20 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			previous := &blocks[len(blocks)-1]
 			if previous.depth == depth && previous.level == 0 && previous.span.End == line.Start {
 				if root {
-					previous.paragraph = false
-					previous.level = setext
-					previous.span.End = next
+					headingStart, err := leadingDefinitionsEnd(ctx, original, previous.content, b)
+					if err != nil {
+						return nil, err
+					}
+					if headingStart == previous.content.Start {
+						previous.paragraph = false
+						previous.level = setext
+						previous.span.End = next
+					} else if headingStart < previous.content.End {
+						end := previous.content.End
+						previous.content.End = headingStart
+						previous.span.End = headingStart
+						blocks = append(blocks, sourceBlock{span: Span{headingStart, next}, content: Span{headingStart, end}, root: true, level: setext})
+					}
 				}
 				paragraph = false
 				pos = next
@@ -315,6 +326,28 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		pos = next
 	}
 	return blocks, nil
+}
+
+// Leading reference definitions belong to the paragraph, not its heading.
+func leadingDefinitionsEnd(ctx context.Context, src []byte, content Span, b *budget) (int, error) {
+	scanner := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}}
+	pos := content.Start
+	for pos < content.End {
+		line, next, err := sourceLineAt(ctx, src, pos, b)
+		if err != nil {
+			return 0, err
+		}
+		line.End = min(line.End, content.End)
+		end, ok, err := scanner.definition(line, content.End)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			break
+		}
+		pos = max(next, end)
+	}
+	return pos, nil
 }
 
 func leadingIndent(ctx context.Context, raw []byte, start int, b *budget) (end, columns int, err error) {

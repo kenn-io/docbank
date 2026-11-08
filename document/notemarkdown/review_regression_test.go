@@ -105,3 +105,13 @@ func TestReviewMultilineReferenceTitle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
+
+func TestReviewSetextAfterReferenceDefinition(t *testing.T) {
+	src := []byte("[ref]: target.md\nHeading\n---\n\n[use][ref]\n")
+	n, err := Parse(t.Context(), src)
+	require.NoError(t, err)
+	require.Len(t, n.Headings, 1)
+	require.Equal(t, "Heading", n.Headings[0].Text)
+	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
+	require.Equal(t, "target.md", string(src[n.Links[0].DestinationSpan.Start:n.Links[0].DestinationSpan.End]))
+}
