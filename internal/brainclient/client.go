@@ -7,11 +7,13 @@ import (
 	"os"
 	"sync"
 	"time"
+	"uuid"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/push"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // Dependencies keep connection acquisition and publishing on the existing
@@ -153,4 +155,33 @@ func (c *Client) Disconnect(ctx context.Context, name string) error {
 		return errors.New("uninstall the publisher service before disconnecting")
 	}
 	return c.registry.Remove(ctx, name)
+}
+
+// AcceptLocal authorizes one later local upload against the observed archive
+// head and source revision; it does not modify archived content.
+func (c *Client) AcceptLocal(ctx context.Context, name, sourceRef, expectedHead string) (api.NotePublicationRecoveryGrant, error) {
+	if store.ValidatePushName(name) != nil || store.ValidatePushRef(sourceRef) != nil || store.ValidatePushRunID(expectedHead) != nil {
+		return api.NotePublicationRecoveryGrant{}, errors.New("invalid note recovery request")
+	}
+	cfg, err := c.registry.Get(ctx, name)
+	if err != nil {
+		return api.NotePublicationRecoveryGrant{}, err
+	}
+	conn, _, err := c.connection(ctx, cfg, true)
+	if err != nil {
+		return api.NotePublicationRecoveryGrant{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	snapshot, err := conn.NotePublicationSource(ctx, name, sourceRef)
+	if err != nil {
+		return api.NotePublicationRecoveryGrant{}, err
+	}
+	if snapshot.Source.ArchiveHead == nil || snapshot.Source.ArchiveHead.ContentVersionID != expectedHead {
+		return api.NotePublicationRecoveryGrant{}, store.ErrPublicationSourceStale
+	}
+	return conn.AcceptLocalPublishedNote(ctx, api.NotePublicationAcceptLocalRequest{
+		Name: name, DatabaseEpoch: snapshot.DatabaseEpoch, SourceRef: sourceRef,
+		ExpectedHeadVersionID: expectedHead, ExpectedSourceRevision: snapshot.Source.Identity.SourceRevision,
+		OperationID: uuid.NewV4().String(),
+	})
 }

@@ -107,7 +107,21 @@ func newBrainCmd() *cobra.Command {
 		}
 		return json.MarshalWrite(cmd.OutOrStdout(), result)
 	}}
-	cmd.AddCommand(connect, run, status)
+	var expectedHead string
+	recovery := &cobra.Command{Use: "accept-local <name> <source-ref>", Short: "Allow the next local upload against an observed archive head", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		r, err := registry()
+		if err != nil {
+			return err
+		}
+		grant, err := brainclient.New(r, brainclient.Dependencies{}).AcceptLocal(cmd.Context(), args[0], args[1], expectedHead)
+		if err != nil {
+			return err
+		}
+		return json.MarshalWrite(cmd.OutOrStdout(), grant)
+	}}
+	recovery.Flags().StringVar(&expectedHead, "expected-head", "", "observed archive content version")
+	_ = recovery.MarkFlagRequired("expected-head")
+	cmd.AddCommand(connect, run, status, recovery)
 	return cmd
 }
 
