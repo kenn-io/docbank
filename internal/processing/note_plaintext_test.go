@@ -53,6 +53,7 @@ func newNotePlaintextFixture(tb testing.TB) notePlaintextFixture {
 }
 
 func (f notePlaintextFixture) note(tb testing.TB, name, text string) store.Node {
+	tb.Helper()
 	return f.publish(tb, name, text, 0)
 }
 

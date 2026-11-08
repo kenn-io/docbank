@@ -23,35 +23,35 @@ type indexNoteFixture struct {
 
 // Fixtures use real publication authority and canonical parser output. The
 // authored keys and expected lookup results are supplied independently.
-func noteIndexFixture(t testing.TB, s *Store, specs ...indexNoteSpec) (NotePublicationScan, []indexNoteFixture) {
-	t.Helper()
-	scan := beginNoteScan(t, s)
+func noteIndexFixture(tb testing.TB, s *Store, specs ...indexNoteSpec) (NotePublicationScan, []indexNoteFixture) {
+	tb.Helper()
+	scan := beginNoteScan(tb, s)
 	items := make([]indexNoteFixture, len(specs))
 	for i, spec := range specs {
 		digest := sha256.Sum256([]byte(spec.body))
-		request := noteUpload(t, scan, spec.ref, hex.EncodeToString(digest[:]), 0)
+		request := noteUpload(tb, scan, spec.ref, hex.EncodeToString(digest[:]), 0)
 		request.Size = int64(len(spec.body))
-		items[i].source = acceptNote(t, s, request).Source
+		items[i].source = acceptNote(tb, s, request).Source
 		items[i].keys = spec.keys
 		record := NoteParseRecord{ContentVersionID: items[i].source.Identity.ContentVersionID, Hash: request.Hash, Size: request.Size, Recipe: notemarkdown.Recipe}
 		if spec.terminal != "pending" {
 			if spec.terminal != "" {
 				record.State, record.Reason = "limit", spec.terminal
 			} else {
-				note, err := notemarkdown.Parse(t.Context(), []byte(spec.body))
-				require.NoError(t, err)
-				record.Artifact, err = notemarkdown.CanonicalArtifact(t.Context(), note)
-				require.NoError(t, err)
+				note, err := notemarkdown.Parse(tb.Context(), []byte(spec.body))
+				require.NoError(tb, err)
+				record.Artifact, err = notemarkdown.CanonicalArtifact(tb.Context(), note)
+				require.NoError(tb, err)
 				sum := sha256.Sum256(record.Artifact)
 				record.State, record.Checksum = "ready", hex.EncodeToString(sum[:])
 			}
-			require.NoError(t, s.RecordNoteParse(t.Context(), record))
+			require.NoError(tb, s.RecordNoteParse(tb.Context(), record))
 		}
 		items[i].parse = record
 	}
-	completeNoteScan(t, s, scan)
-	sources, err := s.EligibleNoteSources(t.Context(), "notebook", "", 1000)
-	require.NoError(t, err)
+	completeNoteScan(tb, s, scan)
+	sources, err := s.EligibleNoteSources(tb.Context(), "notebook", "", 1000)
+	require.NoError(tb, err)
 	byRef := make(map[string]NotePublicationSource, len(sources))
 	for _, source := range sources {
 		byRef[source.Identity.SourceRef] = source
@@ -62,21 +62,21 @@ func noteIndexFixture(t testing.TB, s *Store, specs ...indexNoteSpec) (NotePubli
 	return scan, items
 }
 
-func beginIndexFixture(t testing.TB, s *Store) NoteIndexGeneration {
-	t.Helper()
-	status, err := s.NotePublicationStatus(t.Context(), "notebook")
-	require.NoError(t, err)
-	generation, err := s.BeginNoteIndex(t.Context(), NoteIndexTarget{Name: "notebook", DatabaseEpoch: status.DatabaseEpoch, NamespaceRevision: status.NamespaceRevision}, notemarkdown.Recipe, notemarkdown.ResolverRecipe)
-	require.NoError(t, err)
+func beginIndexFixture(tb testing.TB, s *Store) NoteIndexGeneration {
+	tb.Helper()
+	status, err := s.NotePublicationStatus(tb.Context(), "notebook")
+	require.NoError(tb, err)
+	generation, err := s.BeginNoteIndex(tb.Context(), NoteIndexTarget{Name: "notebook", DatabaseEpoch: status.DatabaseEpoch, NamespaceRevision: status.NamespaceRevision}, notemarkdown.Recipe, notemarkdown.ResolverRecipe)
+	require.NoError(tb, err)
 	return generation
 }
 
-func stageIndexFixture(t testing.TB, s *Store, g NoteIndexGeneration, notes []indexNoteFixture) {
-	t.Helper()
+func stageIndexFixture(tb testing.TB, s *Store, g NoteIndexGeneration, notes []indexNoteFixture) {
+	tb.Helper()
 	for _, note := range notes {
-		require.NoError(t, s.StageNoteIndexSource(t.Context(), g, note.source, note.parse, note.keys))
+		require.NoError(tb, s.StageNoteIndexSource(tb.Context(), g, note.source, note.parse, note.keys))
 	}
-	require.NoError(t, s.SealNoteIndexKeys(t.Context(), g))
+	require.NoError(tb, s.SealNoteIndexKeys(tb.Context(), g))
 }
 
 func TestNoteIndexGenerationCAS(t *testing.T) {

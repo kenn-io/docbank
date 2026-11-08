@@ -10,16 +10,16 @@ import (
 	"go.kenn.io/docbank/document/notemarkdown"
 )
 
-func parsedNoteFixture(t testing.TB, s *Store) (NotePublicationSource, NoteParseRecord) {
-	t.Helper()
+func parsedNoteFixture(tb testing.TB, s *Store) (NotePublicationSource, NoteParseRecord) {
+	tb.Helper()
 	body := []byte("note")
 	digest := sha256.Sum256(body)
-	scan := beginNoteScan(t, s)
-	source := acceptNote(t, s, noteUpload(t, scan, "note.md", hex.EncodeToString(digest[:]), 0)).Source
-	note, err := notemarkdown.Parse(t.Context(), body)
-	require.NoError(t, err)
-	artifact, err := notemarkdown.CanonicalArtifact(t.Context(), note)
-	require.NoError(t, err)
+	scan := beginNoteScan(tb, s)
+	source := acceptNote(tb, s, noteUpload(tb, scan, "note.md", hex.EncodeToString(digest[:]), 0)).Source
+	note, err := notemarkdown.Parse(tb.Context(), body)
+	require.NoError(tb, err)
+	artifact, err := notemarkdown.CanonicalArtifact(tb.Context(), note)
+	require.NoError(tb, err)
 	sum := sha256.Sum256(artifact)
 	return source, NoteParseRecord{ContentVersionID: source.Identity.ContentVersionID, Hash: note.SourceSHA256, Size: 4, Recipe: notemarkdown.Recipe, State: "ready", Checksum: hex.EncodeToString(sum[:]), Artifact: artifact}
 }
