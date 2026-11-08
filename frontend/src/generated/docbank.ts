@@ -9,6 +9,7 @@ import { sessionEmpty } from '../api-transport';
 import { sessionResponse } from '../api-transport';
 import { sessionPhotoPreview } from '../api-transport';
 import { mediaFormData } from '../media-form-data';
+import { publishedNoteParams } from '../published-note-params';
 
 // https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
 type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
@@ -12730,27 +12731,7 @@ return sessionJSON<DerivativePurgePlan>(getPlanDerivativePurgeUrl(),
 
 
 export const getListDocumentsUrl = (params?: ListDocumentsParams,) => {
-  const normalizedParams = new URLSearchParams();
-  const deepObjectEntries: string[] = [];
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const deepObjectParameters = ["published_notes","note_coverage"];
-
-    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
-      Object.entries(value).forEach(([subKey, subValue]) => {
-        if (subValue !== undefined) {
-          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
-        }
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
+  const stringifiedParams = publishedNoteParams(params);
 
   return stringifiedParams.length > 0 ? `/api/v1/documents?${stringifiedParams}` : `/api/v1/documents`
 }
@@ -16024,7 +16005,7 @@ export const uploadPublishedNote = async (name: string,
     params: UploadPublishedNoteParams,
     headers: UploadPublishedNoteHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPublishedNoteBody.file);
+formData.append(`file`, uploadPublishedNoteBody.file, params.name);
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -20970,27 +20951,7 @@ return sessionJSON<SavedQueryRunResult>(getRunSavedQueryUrl(savedQueryId),
 
 
 export const getSearchUrl = (params?: SearchParams,) => {
-  const normalizedParams = new URLSearchParams();
-  const deepObjectEntries: string[] = [];
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const deepObjectParameters = ["published_notes"];
-
-    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
-      Object.entries(value).forEach(([subKey, subValue]) => {
-        if (subValue !== undefined) {
-          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
-        }
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
+  const stringifiedParams = publishedNoteParams(params);
 
   return stringifiedParams.length > 0 ? `/api/v1/search?${stringifiedParams}` : `/api/v1/search`
 }
@@ -21371,27 +21332,7 @@ return sessionJSON<DocumentSimilarReport>(getFindSimilarDocumentsUrl(),
 
 
 export const getSearchTextCoverageUrl = (params?: SearchTextCoverageParams,) => {
-  const normalizedParams = new URLSearchParams();
-  const deepObjectEntries: string[] = [];
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const deepObjectParameters = ["published_notes"];
-
-    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
-      Object.entries(value).forEach(([subKey, subValue]) => {
-        if (subValue !== undefined) {
-          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
-        }
-      });
-      return;
-    }
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
+  const stringifiedParams = publishedNoteParams(params);
 
   return stringifiedParams.length > 0 ? `/api/v1/search/text-coverage?${stringifiedParams}` : `/api/v1/search/text-coverage`
 }

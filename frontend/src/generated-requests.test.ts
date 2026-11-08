@@ -74,24 +74,46 @@ it("uses the declared filename when uploading a Blob", async () => {
 
 it("keeps published-note upload filenames on multipart blobs", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
-  await api.uploadPublishedNote("notes", { file: new Blob(["synthetic"]) }, {
-    name: "note.md", scan_id: "synthetic", source_ref: "note.md", parent_path: "/notes",
-    operation_id: "synthetic", expected_source_revision: 0,
-  }, { "X-Docbank-Blob-Hash": "a".repeat(64), "X-Docbank-Blob-Size": "9" });
+  await api.uploadPublishedNote(
+    "notes",
+    { file: new Blob(["synthetic"]) },
+    {
+      name: "note.md",
+      scan_id: "synthetic",
+      source_ref: "note.md",
+      parent_path: "/notes",
+      operation_id: "synthetic",
+      expected_source_revision: 0,
+    },
+    { "X-Docbank-Blob-Hash": "a".repeat(64), "X-Docbank-Blob-Size": "9" },
+  );
   const body = fetch.mock.calls[0][1]?.body as FormData;
   expect((body.get("file") as File).name).toBe("note.md");
 });
 
 it.each([
-  (selector: api.PublishedNoteSelector | undefined) => api.getListDocumentsUrl({ published_notes: selector }),
-  (selector: api.PublishedNoteSelector | undefined) => api.getSearchUrl({ published_notes: selector }),
-  (selector: api.PublishedNoteSelector | undefined) => api.getSearchTextCoverageUrl({ published_notes: selector }),
+  (selector: api.PublishedNoteSelector | undefined) =>
+    api.getListDocumentsUrl({ published_notes: selector }),
+  (selector: api.PublishedNoteSelector | undefined) =>
+    api.getSearchUrl({ published_notes: selector }),
+  (selector: api.PublishedNoteSelector | undefined) =>
+    api.getSearchTextCoverageUrl({ published_notes: selector }),
 ])("preserves absent, empty and named publication selectors", (urlFor) => {
-  const query = (selector: api.PublishedNoteSelector | undefined) => new URL(urlFor(selector), "http://localhost").searchParams;
+  const query = (selector: api.PublishedNoteSelector | undefined) =>
+    new URL(urlFor(selector), "http://localhost").searchParams;
   expect(query(undefined).has("published_notes[publication]")).toBe(false);
   expect(query({}).has("published_notes[publication]")).toBe(true);
   expect(query({}).get("published_notes[publication]")).toBe("");
   expect(query({ publication: "notes" }).get("published_notes[publication]")).toBe("notes");
+});
+
+it("keeps publication and requested coverage selectors together", () => {
+  const url = new URL(
+    api.getListDocumentsUrl({ published_notes: {}, note_coverage: { profile: "private" } }),
+    "http://localhost",
+  );
+  expect(url.searchParams.has("published_notes[publication]")).toBe(true);
+  expect(url.searchParams.get("note_coverage[profile]")).toBe("private");
 });
 
 it("preserves a ranged Markdown response and repeats coverage IDs", async () => {

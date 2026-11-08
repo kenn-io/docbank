@@ -218,6 +218,8 @@ func TestBrainServiceErrorDescribesUnconfirmedOutcome(t *testing.T) {
 	require.NotContains(t, unknown.Error(), "registration_failed")
 	known := &OperationError{Status: Status{State: "stopped", ProblemCode: "registration_failed"}}
 	require.Contains(t, known.Error(), "installation failed")
+	installed := &OperationError{Status: Status{State: "running", Installed: true, ProblemCode: "registration_failed"}}
+	require.Contains(t, installed.Error(), "installation could not be confirmed")
 }
 
 func TestBrainServiceDisconnectGuard(t *testing.T) {
