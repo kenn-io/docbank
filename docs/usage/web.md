@@ -917,24 +917,23 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose **System → Protected folders** to read protection status. If nothing is
-protected, the section shows the command to protect a folder. Otherwise, or if
-status cannot be read, Docbank runs the vault-wide permanent audit verifier. Docbank
-replays canonical audit history against the current node, version, membership,
-topology, tag, and provenance projections, then reads and recomputes SHA-256 for
-every unique blob retained by protected history.
+Choose **System → Protected folders** to read protection status. When nothing is
+protected, the section shows the command to protect a folder and skips verification.
+Otherwise, including when status cannot be read, Docbank runs the vault-wide
+permanent audit verifier. It replays canonical audit history against the current
+node, version, membership, topology, tag, and provenance projections, then reads
+and recomputes SHA-256 for every unique blob retained by protected history.
 
 A successful result reports the protected and verified file totals and the
 protected size. **Details** holds the vault and allocation-lineage identities,
 the operation high-water mark, the allocation entry count and head, and each
 scope's terminal entry count and chain head. Copy buttons preserve the complete
-identities even when they wrap. A vault with nothing protected shows the
-`docbank audit enable` command instead of a failure. Metadata, missing-content,
+identities even when they wrap. Metadata, missing-content,
 corruption, and unreadable-content problems stay visible with the affected hash.
 
-Verification results provide a fresh proof of current authority. The drawer does not accept a
-previous evidence bundle, enroll a scope, or change protected state. Record
-`docbank audit verify --json` outside the vault and later use
+Verification results provide a fresh proof of current authority. The drawer does
+not accept a previous evidence bundle, enroll a scope, or change protected state.
+Record `docbank audit verify --json` outside the vault and later use
 `docbank audit verify --expected` when that external copy must act as a rollback
 trust anchor. Closing the drawer cancels its active request. Maintenance
 contention or interruption remains visible, and you can retry.

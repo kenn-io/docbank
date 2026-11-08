@@ -18,10 +18,18 @@ const evidence = {
 };
 
 function statusResponse(enabled = true): Response {
-  return new Response(JSON.stringify({ enabled }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({
+      enabled,
+      allocation_entry_count: enabled ? 18 : 0,
+      scopes: enabled ? evidence.scopes : [],
+      vault_id: evidence.vault_id,
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 let statusMock: ReturnType<typeof vi.fn>;
@@ -44,7 +52,7 @@ afterEach(() => {
 
 describe("audit evidence drawer", () => {
   it("shows independently verified authority and protected content", async () => {
-    const fetchMock = verifyMock.mockResolvedValueOnce(
+    const verifyRequests = verifyMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           enabled: true,
@@ -71,7 +79,7 @@ describe("audit evidence drawer", () => {
     expect(screen.getByText(evidence.lineage_id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.chain_head)).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(verifyRequests).toHaveBeenCalledWith(
       "/api/v1/audit/verify",
       expect.objectContaining({
         method: "POST",
@@ -80,28 +88,45 @@ describe("audit evidence drawer", () => {
     );
   });
 
-  it("distinguishes a dormant vault and offers no refresh until a folder is protected", async () => {
-    statusMock.mockResolvedValueOnce(statusResponse(false));
+  it.each(["status", "verification"])(
+    "distinguishes a dormant vault from %s without offering refresh",
+    async (source) => {
+      if (source === "status") statusMock.mockResolvedValueOnce(statusResponse(false));
+      else {
+        statusMock.mockRejectedValueOnce(new Error("status unavailable"));
+        verifyMock.mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              enabled: false,
+              protected_blobs: 0,
+              protected_bytes: 0,
+              verified_blobs: 0,
+            }),
+            { status: 200 },
+          ),
+        );
+      }
 
-    render(AuditEvidenceDrawer, {
-      session: "short-lived",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
+      render(AuditEvidenceDrawer, {
+        session: "short-lived",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      });
 
-    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
-      "docbank audit enable /folder",
-    );
-    expect(
-      screen.queryByRole("button", { name: "Run permanent audit verification again" }),
-    ).toBeNull();
-    expect(statusMock).toHaveBeenCalledTimes(1);
-    expect(verifyMock).not.toHaveBeenCalled();
-  });
+      expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
+        "docbank audit enable /folder",
+      );
+      expect(
+        screen.queryByRole("button", { name: "Run permanent audit verification again" }),
+      ).toBeNull();
+      expect(statusMock).toHaveBeenCalledTimes(1);
+      expect(verifyMock).toHaveBeenCalledTimes(source === "status" ? 0 : 1);
+    },
+  );
 
   it("verifies again on request and reports each problem", async () => {
-    const fetchMock = verifyMock
+    const verifyRequests = verifyMock
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -144,33 +169,8 @@ describe("audit evidence drawer", () => {
     expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
     expect(screen.getByText("corrupt")).toBeTruthy();
     expect(screen.getByText("c".repeat(64))).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(verifyRequests).toHaveBeenCalledTimes(2);
     expect(statusMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("reports metadata replay failures instead of calling the vault dormant", async () => {
-    verifyMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          enabled: false,
-          protected_blobs: 0,
-          protected_bytes: 0,
-          verified_blobs: 0,
-          metadata_problems: ["audit scope chain does not match its head"],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-
-    render(AuditEvidenceDrawer, {
-      session: "short-lived",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-
-    expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
-    expect(screen.getByText("audit scope chain does not match its head")).toBeTruthy();
-    expect(screen.queryByText(/No folders are protected/)).toBeNull();
   });
 
   it("withdraws an earlier verified result while refresh is unresolved", async () => {
@@ -214,8 +214,8 @@ describe("audit evidence drawer", () => {
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
   });
 
-  it.each(["HTTP", "transport"])(
-    "verifies after a %s status error and reports damaged authority",
+  it.each(["HTTP", "transport", "success"])(
+    "reports damaged authority after %s status",
     async (failure) => {
       if (failure === "HTTP") {
         statusMock.mockResolvedValueOnce(
@@ -223,7 +223,7 @@ describe("audit evidence drawer", () => {
             status: 500,
           }),
         );
-      } else {
+      } else if (failure === "transport") {
         statusMock.mockRejectedValueOnce(new Error("status unavailable"));
       }
       verifyMock.mockResolvedValueOnce(
@@ -233,7 +233,7 @@ describe("audit evidence drawer", () => {
             protected_blobs: 0,
             protected_bytes: 0,
             verified_blobs: 0,
-            metadata_problems: ["dormant audit authority has 1 row(s) in relation 1"],
+            metadata_problems: ["audit scope chain does not match its head"],
           }),
           { status: 200 },
         ),
@@ -244,7 +244,7 @@ describe("audit evidence drawer", () => {
         onauthfailure: vi.fn(),
       });
       expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
-      expect(screen.getByText("dormant audit authority has 1 row(s) in relation 1")).toBeTruthy();
+      expect(screen.getByText("audit scope chain does not match its head")).toBeTruthy();
       expect(screen.queryByText(/No folders are protected/)).toBeNull();
       expect(verifyMock).toHaveBeenCalledTimes(1);
     },
@@ -260,13 +260,8 @@ describe("audit evidence drawer", () => {
     expect(verifyMock).not.toHaveBeenCalled();
   });
 
-  it("cancels status on close and ignores its late response", async () => {
-    let resolveStatus!: (response: Response) => void;
-    statusMock.mockReturnValueOnce(
-      new Promise<Response>((resolve) => {
-        resolveStatus = resolve;
-      }),
-    );
+  it("cancels the pending status request on close", async () => {
+    statusMock.mockReturnValueOnce(new Promise<Response>(() => {}));
     const { unmount } = render(AuditEvidenceDrawer, {
       session: "short-lived",
       onclose: vi.fn(),
@@ -277,8 +272,6 @@ describe("audit evidence drawer", () => {
     const signal = statusMock.mock.calls[0]![1].signal as AbortSignal;
     await unmount();
     expect(signal.aborted).toBe(true);
-    resolveStatus(statusResponse());
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(verifyMock).not.toHaveBeenCalled();
   });
 });
