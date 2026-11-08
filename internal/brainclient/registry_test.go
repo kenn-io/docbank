@@ -148,13 +148,15 @@ func TestBrainRegistryRoundTripAndValidation(t *testing.T) {
 func TestBrainRegistryConcurrentWriters(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "registry")
 	cfg := brainFixtureConfig(t, "a")
+	executable, err := os.Executable()
+	require.NoError(t, err)
 	commands := make([]*exec.Cmd, 2)
 	for i, name := range []string{"a", "b"} {
 		c := cfg
 		c.Name = name
 		b, err := json.Marshal(c, jsonv1.FormatDurationAsNano(true))
 		require.NoError(t, err)
-		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestBrainRegistryChild$")
+		cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestBrainRegistryChild$")
 		cmd.Env = append(os.Environ(), "DOCBANK_REGISTRY_CHILD=put", "DOCBANK_REGISTRY_ROOT="+root, "DOCBANK_REGISTRY_CONFIG="+string(b))
 		commands[i] = cmd
 		require.NoError(t, cmd.Start())
@@ -213,7 +215,9 @@ func TestBrainRegistryRunLockAcrossProcesses(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestBrainRegistryChild$")
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(ctx, executable, "-test.run=^TestBrainRegistryChild$")
 	cmd.Env = append(os.Environ(), "DOCBANK_REGISTRY_CHILD=hold", "DOCBANK_REGISTRY_ROOT="+root, "DOCBANK_REGISTRY_CONFIG="+string(raw))
 	input, err := cmd.StdinPipe()
 	require.NoError(t, err)

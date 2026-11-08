@@ -319,15 +319,18 @@ func (s *Store) publishedNoteProcessingCoverage(ctx context.Context, scope Proce
 			return ProcessingCoverageSnapshot{}, err
 		}
 		page := make([]buildGroup, 0, pageSize)
-		for rows.Next() {
-			var group buildGroup
-			if err := rows.Scan(&group.build, &group.profile, &group.attachment, &group.total, &group.rebuilding); err != nil {
-				_ = rows.Close()
-				return ProcessingCoverageSnapshot{}, err
+		err = func() error {
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var group buildGroup
+				if err := rows.Scan(&group.build, &group.profile, &group.attachment, &group.total, &group.rebuilding); err != nil {
+					return err
+				}
+				page = append(page, group)
 			}
-			page = append(page, group)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return errors.Join(rows.Err(), rows.Close())
+		}()
+		if err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
 		// Close rows before validation queries so PostgreSQL uses no overlapping
