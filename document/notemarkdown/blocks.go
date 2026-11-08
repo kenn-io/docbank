@@ -402,7 +402,7 @@ func leadingIndent(ctx context.Context, raw []byte, start int, b *budget) (end, 
 // columns so tabs after a marker use the tab stop of the original line.
 func visualColumn(ctx context.Context, raw []byte, end int, b *budget) (int, error) {
 	column := 0
-	for i := 0; i < end; i++ {
+	for i := range end {
 		if err := b.step(ctx, 1); err != nil {
 			return 0, err
 		}
