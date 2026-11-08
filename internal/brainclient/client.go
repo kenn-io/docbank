@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -71,14 +72,11 @@ func (c *Client) connection(ctx context.Context, cfg ConnectionConfig, start boo
 	return conn, err == nil, err
 }
 
-// Connect saves only a validated source and target. Local text indexing needs
-// the separately reviewed fixed-plan client before it can be enabled.
+// Connect saves only a validated source and target. IndexLocal explicitly
+// grants the daemon's ordinary consent only after validating its fixed plan.
 func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
-	}
-	if cfg.IndexLocal {
-		return errors.New("local text indexing setup is not available yet")
 	}
 	info, err := os.Stat(cfg.SourceRoot)
 	if err != nil {
@@ -86,6 +84,16 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 	}
 	if !info.IsDir() {
 		return errors.New("source must be a directory")
+	}
+	saved, err := c.registry.Get(ctx, cfg.Name)
+	if err == nil {
+		if equalConfig(saved, cfg) {
+			return nil
+		}
+		return fmt.Errorf("connection already exists with different settings: %w", fs.ErrExist)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
 	conn, _, err := c.connection(ctx, cfg, true)
 	if err != nil {
@@ -95,7 +103,29 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 	if _, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: cfg.Name}, PageSize: 1}); err != nil {
 		return fmt.Errorf("checking daemon capability: %w", err)
 	}
-	return c.registry.Put(ctx, cfg)
+	granted := false
+	if cfg.IndexLocal {
+		plan, err := conn.NoteLocalTextPlan(ctx)
+		if err != nil {
+			return fmt.Errorf("reading local text plan: %w", err)
+		}
+		if err := api.ValidateNoteLocalTextPlan(plan); err != nil {
+			return err
+		}
+		if plan.Plan.ConsentRequired {
+			if _, err := conn.GrantScopedProcessingConsent(ctx, plan.ConsentRequest); err != nil {
+				return fmt.Errorf("local text consent request failed; check daemon consent before retrying because it may have succeeded: %w", err)
+			}
+			granted = true
+		}
+	}
+	if err := c.registry.Put(ctx, cfg); err != nil {
+		if granted {
+			return fmt.Errorf("saving connection failed after local text consent was granted; consent may remain active: %w", err)
+		}
+		return err
+	}
+	return nil
 }
 
 // Run holds the saved name's lock for the entire managed watch lifetime.

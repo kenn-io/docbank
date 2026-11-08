@@ -83,7 +83,7 @@ func newBrainCmd() *cobra.Command {
 	connect.Flags().StringVar(&remote, "to", "", "remote daemon URL")
 	connect.Flags().StringVar(&keyFile, "api-key-file", "", "existing remote API key file")
 	connect.Flags().StringSliceVar(&excludes, "exclude", nil, "exclude a relative path")
-	connect.Flags().BoolVar(&indexLocal, "index-local", false, "authorize local text indexing")
+	connect.Flags().BoolVar(&indexLocal, "index-local", false, "authorize in-process text indexing for eligible published notes across this vault")
 	connect.Flags().DurationVar(&settle, "settle-time", 2*time.Second, "settle time")
 	connect.Flags().DurationVar(&age, "minimum-age", 0, "minimum file age")
 	connect.Flags().DurationVar(&interval, "scan-interval", 5*time.Second, "scan interval")
