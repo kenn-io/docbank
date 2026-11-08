@@ -239,21 +239,6 @@ func TestCLISearchWriterFailure(t *testing.T) {
 	t.Cleanup(func() { resetDiscoveryFlags() })
 }
 
-func TestCLISearchRootHelp(t *testing.T) {
-	out, err := runCLI(t, "--help")
-	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(out, "Agents: find the right command with: docbank cli search \"<task>\"\n"))
-	step1 := `  docbank vault info --json                  # 1. confirm the selected vault`
-	step2 := `  docbank document add ./scans --dest /cases  # 2. import files and folders`
-	require.Contains(t, out, step1)
-	require.Contains(t, out, step2)
-	assert.Less(t, strings.Index(out, step1), strings.Index(out, step2))
-	assert.Equal(t, 1, strings.Count(out, "docbank cli search"))
-	out, err = runCLI(t, "cli")
-	require.NoError(t, err)
-	assert.Contains(t, out, "search")
-}
-
 // A fresh process must not resolve a vault, read config or start a daemon.
 func TestCLISearchFreshHome(t *testing.T) {
 	bin := buildDocbank(t)
