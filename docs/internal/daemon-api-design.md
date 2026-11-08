@@ -642,7 +642,11 @@ origin, completeness, omission and truncation flags, and per-unit optional
 `time_span` and `speaker` facts.
 
 The additive `media-transcript-read/v1` envelope also identifies `node_id` and
-`source_sha256` for the exact current content version. Ready transcripts carry
+`source_sha256` for the exact current content version after validating the source
+binding. A content mismatch or stale coverage returns before that validation,
+so these optional identity fields are absent; the contract and requested tuple
+remain present. Consumers must invalidate stale text regardless of whether
+these identity fields are available. Ready transcripts carry
 `build_id`, `profile_fingerprint`, `evidence_checksum`, and, when retained,
 `artifact_sha256`. The evidence checksum hashes canonical normalized evidence;
 the artifact hash identifies the exact canonical `media-transcript/v1` JSON.

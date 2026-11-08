@@ -430,6 +430,7 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 			SourceID: mediaReceipt.SourceID, SourceVersionID: mediaReceipt.SourceVersionID,
 			ContentVersionID: mediaReceipt.ContentVersionID})
 		require.NoError(t, err)
+		require.Equal(t, "unavailable", unready.EvidenceState)
 		require.Equal(t, "media-transcript-read/v1", unready.ContractVersion)
 		require.Equal(t, node.ID, unready.NodeID)
 		require.Equal(t, identity.SHA256, unready.SourceSHA256)
@@ -481,6 +482,7 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		require.Len(t, transcript.Transcript.EvidenceChecksum, 64)
 		require.Len(t, transcript.Transcript.ArtifactSHA256, 64)
 		require.Equal(t, "partial", transcript.Transcript.SpeechState)
+		require.Empty(t, transcript.Transcript.Language)
 		firstProfile, firstEvidence, firstArtifact := transcript.Transcript.ProfileFingerprint, transcript.Transcript.EvidenceChecksum, transcript.Transcript.ArtifactSHA256
 		newer := importTranscript("00000000-0000-4000-8000-000000000424",
 			secondOccurrence.OccurrenceID, "newer replacement transcript")
@@ -517,6 +519,15 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		status, err := vault.MediaStatus(t.Context(), mediaReceipt.SourceID)
 		require.NoError(t, err)
 		require.Equal(t, "stale", status.CoverageState)
+		stale, err := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
+			SourceID: mediaReceipt.SourceID, SourceVersionID: secondJob.SourceVersionID,
+			ContentVersionID: mediaReceipt.ContentVersionID})
+		require.NoError(t, err)
+		require.Equal(t, "media-transcript-read/v1", stale.ContractVersion)
+		require.Equal(t, "stale", stale.EvidenceState)
+		require.Zero(t, stale.NodeID)
+		require.Empty(t, stale.SourceSHA256)
+		require.Nil(t, stale.Transcript)
 		results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{Query: "newer replacement transcript",
 			Mode: DocumentSearchLexical, Profile: "supplied-transcript", Limit: 10,
 			Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{mediaReceipt.ContentVersionID}}})

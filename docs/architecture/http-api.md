@@ -461,6 +461,17 @@ includes `transcript.supplied_input_id`, the input bound to that build. A failed
 retry keeps the identities of the earlier covering build. Generated evidence
 omits `supplied_input_id`. Responses without ready evidence omit `transcript`.
 
+The `media-transcript-read/v1` envelope includes `contract_version` and, after
+validating the source binding, `node_id` and original `source_sha256`. Ready
+transcripts include `profile_fingerprint` and `evidence_checksum`, plus
+`artifact_sha256` and optional `language` when a canonical typed artifact is
+retained. Generated timed speech can report `speech_state: "complete"` while
+overall evidence remains partial because it omits non-speech sounds.
+Supplied-origin transcripts always report `speech_state: "partial"`, including
+timed captions; this preserves provenance and does not assert missing speech.
+Empty ASR output fails. See [exact transcript attribution](../agents/integration.md#read-an-exact-media-transcript)
+for consumer readiness and lifecycle rules.
+
 A content version that no longer matches the source version or is no longer
 the file's current version, or a build whose supplied input this source
 version cannot see, returns `stale` with no text. Unknown or hidden sources
