@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json/v2"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -45,9 +46,7 @@ func notePublicationUpload(t *testing.T, s *testStore, scan string, revision int
 	query := url.Values{"scan_id": {scan}, "source_ref": {"alpha.md"}, "name": {"alpha.md"},
 		"parent_path": {"/notes"}, "operation_id": {operation}, "expected_source_revision": {strconv.FormatInt(revision, 10)}}
 	for _, override := range overrides {
-		for key, values := range override {
-			query[key] = values
-		}
+		maps.Copy(query, override)
 	}
 	return serveLoopback(t.Context(), s.Server.Handler(), http.MethodPost,
 		"/api/v1/note-publications/research/uploads?"+query.Encode(), map[string]string{

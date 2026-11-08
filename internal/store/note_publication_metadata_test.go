@@ -105,6 +105,7 @@ func TestNotePublicationMetadataRejectsInvalidAuthorityAtomically(t *testing.T) 
 }
 
 func TestPublishedNoteValidation(t *testing.T) {
+	t.Parallel()
 	valid := NotePublicationSource{Identity: PublishedNoteIdentity{VaultID: metadataIngestID,
 		Publication: "notebook", SourceRef: "folder/note.md", NodeID: 2,
 		ContentVersionID: metadataVersionCurrent, Hash: fakeHash("ab"), Size: 4, SourceRevision: 1, NamespaceRevision: 1,

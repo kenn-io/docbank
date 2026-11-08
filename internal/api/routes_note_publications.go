@@ -263,8 +263,7 @@ func validateNoteRoute(d Deps, name string, ids ...string) error {
 // notePublicationError never includes database errors or source bytes in a
 // public diagnostic. The stable code is enough to choose recovery behavior.
 func notePublicationError(err error) *Error {
-	var apiErr *Error
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*Error](err); ok {
 		return apiErr
 	}
 	for _, entry := range []struct {

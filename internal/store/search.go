@@ -412,10 +412,10 @@ type SearchCandidateRevalidation struct {
 
 // RevalidatedSearchCandidate includes the current path captured with its evidence.
 type RevalidatedSearchCandidate struct {
-	PublishedNote *PublishedNoteIdentity
 	SearchCandidateIdentity
 
-	Path string
+	PublishedNote *PublishedNoteIdentity
+	Path          string
 }
 
 // SearchEvidenceIdentity is the stable authority needed to prove that one
