@@ -171,7 +171,7 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.snapshot, candidates, pass.incomplete); err != nil {
+	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.snapshot, candidates); err != nil {
 		if errors.Is(err, store.ErrStaleRevision) {
 			return nil
 		}

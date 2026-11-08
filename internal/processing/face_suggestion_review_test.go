@@ -390,56 +390,45 @@ func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 	}
 }
 
-func TestFacePublicationPreservesReviewWhenSourceVectorsReturn(t *testing.T) {
+func TestExactGroupRejectionAllowsLargerNamedGroup(t *testing.T) {
 	t.Parallel()
-	x, _ := newFaceSuggestionBatchFixture(t)
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
 	ctx := t.Context()
-	version := x.f.addPhoto(t, "edited.jpg", 700)
-	for _, left := range []float64{.1, .101} {
-		_, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{X: left, Y: .2, Width: .001, Height: .1}, "")
-		require.NoError(t, err)
-	}
-	x.worker.reconcileAt = time.Time{}
-	_, err := x.worker.ScanOnce(ctx)
+	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature == ""; attempt++ {
-		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	}
-	var original store.FaceCandidate
-	for offset := 0; offset < 750; offset += 250 {
-		groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+	reference := x.f.addPhoto(t, "ada-reference.jpg", 700)
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, reference, uuid.New().String(), document.FaceBox{X: .2, Y: .2, Width: .2, Height: .3}, ada.PersonID)
+	require.NoError(t, err)
+	x.enable(t)
+	for range 2 {
+		_, err = x.worker.ScanOnce(ctx)
 		require.NoError(t, err)
-		for _, group := range groups {
-			for _, face := range group.Faces {
-				if face.ContentVersionID == version {
-					original = group
-					break
-				}
-			}
-		}
 	}
-	require.NotEmpty(t, original.CandidateID)
-	_, _, err = x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{X: .997, Y: .2, Width: .001, Height: .1}, "")
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	groups, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, groups, 1)
+	require.Equal(t, ada.PersonID, groups[0].SuggestedPersonID)
+	require.Len(t, groups[0].Faces, 2)
+	_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
+	require.NoError(t, err)
+	imported := x.f.addPhoto(t, "new-lookalike.jpg", 730)
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, imported, uuid.New().String(), document.FaceBox{X: .2, Y: .2, Width: .2, Height: .3}, "")
+	require.NoError(t, err)
+	x.worker.reconcileAt = time.Time{}
+	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	require.NotNil(t, x.service.faceSuggestionsPending)
-	x.worker.reconcileAt = time.Time{}
-	n, err := x.worker.ScanOnce(ctx)
+	groups, total, err = x.f.catalog.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
-	require.Positive(t, n)
-	for attempt := 0; attempt < 32 && x.service.faceSuggestionsPending != nil; attempt++ {
-		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	}
-	require.Nil(t, x.service.faceSuggestionsPending)
-	for offset := 0; offset < 750; offset += 250 {
-		groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
-		require.NoError(t, err)
-		for _, group := range groups {
-			if group.CandidateID == original.CandidateID {
-				require.Equal(t, original.Revision, group.Revision)
-				return
-			}
+	require.EqualValues(t, 1, total)
+	for _, group := range groups {
+		if group.SuggestedPersonID == ada.PersonID {
+			require.Len(t, group.Faces, 3, "rejecting the original exact pair must allow a distinct three-face group")
+			return
 		}
 	}
-	t.Fatal("the still-current review disappeared when its source returned during a pending pass")
+	t.Fatal("new named group missing")
 }

@@ -664,7 +664,7 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			after, err := reopened.FaceMatchingInputs(ctx)
 			require.NoError(t, err)
 			assert.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
-			require.ErrorIs(t, reopened.ReplaceFaceSuggestions(ctx, before, nil, false), store.ErrStaleRevision, "the captured suggestion pass must fence the same changed authority")
+			require.ErrorIs(t, reopened.ReplaceFaceSuggestions(ctx, before, nil), store.ErrStaleRevision, "the captured suggestion pass must fence the same changed authority")
 			err = reopened.PublishEmbeddingHead(ctx, head)
 			require.ErrorIs(t, err, store.ErrEmbeddingAuthorityStale, "publication must fence the same stale face or preview evidence")
 		})

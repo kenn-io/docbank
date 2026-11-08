@@ -546,7 +546,7 @@ func checkCandidateLinksSkipPrunedVersions(t *testing.T, newStore func(*testing.
 				if !test.allPruned {
 					faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
 					require.NoError(t, err)
-					require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
+					require.Empty(t, faces[0].RejectedPersonIDs, "pruning leaves the original exact group decision intact")
 				}
 
 				return

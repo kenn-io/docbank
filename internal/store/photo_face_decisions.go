@@ -1047,15 +1047,14 @@ func (s *Store) readFaceDecisionsQuery(ctx context.Context, tx *sql.Tx, faces []
 	for i, f := range faces {
 		index[f.FaceID] = i
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.face_id,COALESCE(c.suggested_person_id,''),MAX(CASE WHEN c.occurrence_count=1 THEN 1 ELSE 0 END) FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+where+` GROUP BY 1,2 ORDER BY 1,2`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND c.occurrence_count=1`+where+` ORDER BY 1,2`, args...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var faceID, personID string
-		var single bool
-		if err = rows.Scan(&faceID, &personID, &single); err != nil {
+		if err = rows.Scan(&faceID, &personID); err != nil {
 			return err
 		}
 		i, ok := index[faceID]
@@ -1063,7 +1062,7 @@ func (s *Store) readFaceDecisionsQuery(ctx context.Context, tx *sql.Tx, faces []
 			continue
 		}
 		if personID == "" {
-			faces[i].Dismissed = single
+			faces[i].Dismissed = true
 		} else {
 			if len(faces[i].RejectedPersonIDs) == 1000 {
 				return ErrInvalidPhotoFace
@@ -1131,7 +1130,7 @@ func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, p
 
 func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, before *PhotoFaceDecisionState, faceID, personID, action string) error {
 	for _, c := range slices.Clone(before.Candidates) {
-		if c.State == personCandidateStateRejected && c.SuggestedPersonID == "" && c.OccurrenceCount > 1 {
+		if c.State == personCandidateStateRejected && c.OccurrenceCount > 1 {
 			continue
 		}
 		if action == faceDecisionReject && c.State == personCandidateStateRejected && c.SuggestedPersonID == "" {

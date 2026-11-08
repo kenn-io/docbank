@@ -132,7 +132,7 @@ const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'
 
 // faceSuggestionDecided matches an owner's dismissal of a face, or rejection of it for person.
 func faceSuggestionDecided(face, version, person string) string {
-	return `EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces rejected ON rejected.candidate_id=c.candidate_id WHERE rejected.face_id=` + face + ` AND rejected.content_version_id=` + version + ` AND ` + rejectedFaceMatchPredicate + ` AND ((c.suggested_person_id IS NULL AND c.occurrence_count=1) OR c.suggested_person_id=` + person + `))`
+	return `EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces rejected ON rejected.candidate_id=c.candidate_id WHERE rejected.face_id=` + face + ` AND rejected.content_version_id=` + version + ` AND ` + rejectedFaceMatchPredicate + ` AND c.occurrence_count=1 AND (c.suggested_person_id IS NULL OR c.suggested_person_id=` + person + `))`
 }
 
 // personFaceCropOrder chooses a ready crop, then its area and stable IDs.

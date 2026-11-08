@@ -153,9 +153,6 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 	if err != nil {
 		return PersonMatchCandidate{}, false, err
 	}
-	return s.retainNormalizedPersonCandidate(ctx, tx, candidate, terminal)
-}
-func (s *Store) retainNormalizedPersonCandidate(ctx context.Context, tx *sql.Tx, candidate PersonMatchCandidate, terminal bool) (PersonMatchCandidate, bool, error) {
 	if candidate.SuggestedPersonID != "" {
 		if terminal {
 			var exists bool

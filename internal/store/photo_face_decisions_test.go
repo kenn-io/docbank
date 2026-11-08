@@ -516,30 +516,26 @@ func checkPhotoFaceDecisionGroupedRejection(t *testing.T, newStore func(*testing
 					require.NoError(t, e)
 					require.Equal(t, c.Evidence, original.Evidence)
 					require.Equal(t, c.EvidenceSHA256, original.EvidenceSHA256)
-					require.Equal(t, "superseded", original.State)
+					require.Equal(t, "rejected", original.State)
 					replay, kept, e := s.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: c.ActorKey, DisplayName: c.DisplayName, SuggestedPersonID: c.SuggestedPersonID, Reason: c.Reason, Evidence: c.Evidence})
 					require.NoError(t, e)
 					require.True(t, kept)
 					require.Equal(t, c.CandidateID, replay.CandidateID)
-					require.Equal(t, "superseded", replay.State)
+					require.Equal(t, "rejected", replay.State)
 					return nil
 				}))
 			}
 			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
 			for _, f := range faces {
-				if f.FaceID == face.FaceID {
-					require.Empty(t, f.RejectedPersonIDs)
-				} else {
-					require.Equal(t, []string{p.PersonID}, f.RejectedPersonIDs)
-				}
+				require.Empty(t, f.RejectedPersonIDs, "an exact group rejection cannot mask either member")
 			}
 			_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 			require.NoError(t, err)
 			faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
 			for _, f := range faces {
-				require.Equal(t, []string{p.PersonID}, f.RejectedPersonIDs)
+				require.Empty(t, f.RejectedPersonIDs)
 			}
 			checkRetentionMetadata(t, s)
 		})
@@ -1854,7 +1850,7 @@ func checkFaceCandidateRetainsMembershipForReusedFaceID(t *testing.T, newStore f
 
 	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
-	require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
+	require.Empty(t, faces[0].RejectedPersonIDs, "missing evidence does not turn a group rejection into a face rejection")
 }
 
 func checkPersonMergeIgnoresCandidateFromPrunedFaceVersion(t *testing.T, newStore func(*testing.T) *Store) {

@@ -164,10 +164,9 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 	}), nil
 }
 
-// ReplaceFaceSuggestions preserves rejected evidence and supersedes open groups
-// whose membership changed within a complete captured source scope.
+// ReplaceFaceSuggestions opens new groups and leaves every existing candidate's decision alone.
 // The captured input signature fences publication and queue admission in one transaction.
-func (s *Store) ReplaceFaceSuggestions(ctx context.Context, captured FaceMatchingSnapshot, candidates []PersonMatchCandidate, incomplete bool) error {
+func (s *Store) ReplaceFaceSuggestions(ctx context.Context, captured FaceMatchingSnapshot, candidates []PersonMatchCandidate) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		snapshot, err := s.faceMatchingInputsTx(ctx, tx)
 		if err != nil {
@@ -184,32 +183,8 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, captured FaceMatchin
 		if signature != captured.Signature {
 			return ErrStaleRevision
 		}
-		wanted := map[string]bool{}
-		for i := range candidates {
-			c, err := normalizePersonCandidate(candidates[i])
-			if err != nil {
-				return err
-			}
-			candidates[i] = c
-			wanted[c.ActorKey+"\x00"+c.SuggestedPersonID+"\x00"+c.EvidenceSHA256] = true
-		}
-		ids, err := s.retirableFaceCandidatesTx(ctx, tx, versions, snapshot.Signature == captured.Signature, incomplete)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			c, err := personCandidateByIDTx(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if !wanted[c.ActorKey+"\x00"+c.SuggestedPersonID+"\x00"+c.EvidenceSHA256] {
-				if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE candidate_id=$1`, id); err != nil {
-					return err
-				}
-			}
-		}
 		for _, c := range candidates {
-			opened, retained, err := s.retainNormalizedPersonCandidate(ctx, tx, c, false)
+			opened, retained, err := s.retainPersonCandidate(ctx, tx, c, false)
 			if errors.Is(err, ErrPersonRetired) || errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -243,23 +218,6 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, captured FaceMatchin
 		}
 		return nil
 	})
-}
-
-// retirableFaceCandidatesTx preserves reviews outside a completed pass's scope.
-// An incomplete pass can add healthy groups but cannot retire an existing review.
-func (s *Store) retirableFaceCandidatesTx(ctx context.Context, tx *sql.Tx, versions map[string]bool, completeScope, incomplete bool) ([]string, error) {
-	if incomplete {
-		return nil, nil
-	}
-	ids := make([]string, 0, len(versions))
-	for version := range versions {
-		ids = append(ids, version)
-	}
-	encoded, err := json.Marshal(ids)
-	if err != nil {
-		return nil, err
-	}
-	return stringColumnTx(ctx, tx, "open face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND (NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND e.content_version_id NOT IN (SELECT value FROM `+(metadataJSONDialect{s.postgresSchema != ""}).arrayValues("$1")+`)) OR $2)`, string(encoded), completeScope)
 }
 
 type FaceCandidate struct {
