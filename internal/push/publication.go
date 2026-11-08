@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
+	"go.kenn.io/docbank/internal/store"
 )
 
 var errPublicationIncomplete = errors.New("publication inventory is incomplete")
@@ -266,6 +267,10 @@ func (p *publicationPublisher) publish(ctx context.Context, file ingest.FolderFi
 	if file.Info.Size() > blob.MaxIngestBytes {
 		return fmt.Errorf("source exceeds upload limit of %d bytes", blob.MaxIngestBytes)
 	}
+	name, err := store.NormalizeName(path.Base(file.Ref))
+	if err != nil {
+		return err
+	}
 	digest, err := file.Digest(ctx)
 	if err != nil {
 		return err
@@ -289,7 +294,7 @@ func (p *publicationPublisher) publish(ctx context.Context, file ingest.FolderFi
 	if known {
 		revision = source.Identity.SourceRevision
 	}
-	request := api.NotePublicationUploadRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, SourceRef: file.Ref, FileName: path.Base(file.Ref), ParentPath: path.Join(p.opts.Folder.Destination, path.Dir(file.Ref)), ModifiedAt: file.Info.ModTime().UTC().Format(time.RFC3339Nano), OperationID: uuid.NewV4().String(), Hash: digest, Size: file.Info.Size(), ExpectedSourceRevision: revision}
+	request := api.NotePublicationUploadRequest{Name: p.opts.Folder.Name, ScanID: p.scan.ScanID, SourceRef: file.Ref, FileName: name, ParentPath: path.Join(p.opts.Folder.Destination, path.Dir(file.Ref)), ModifiedAt: file.Info.ModTime().UTC().Format(time.RFC3339Nano), OperationID: uuid.NewV4().String(), Hash: digest, Size: file.Info.Size(), ExpectedSourceRevision: revision}
 	var receipt api.NotePublicationReceipt
 	err = p.retry(ctx, func() error {
 		if _, err := file.File.Seek(0, io.SeekStart); err != nil {
