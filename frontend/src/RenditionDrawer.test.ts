@@ -3,6 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { cleanup, render, screen } from "@testing-library/svelte";
 import RenditionDrawer from "./RenditionDrawer.svelte";
+import emptyPDF from "./testdata/omission-only-pdf.md?raw";
 
 afterEach(() => {
   cleanup();
@@ -49,6 +50,36 @@ describe("sanitized Markdown drawer", () => {
     const prose = container.querySelector(".rendition-body");
     expect(prose?.textContent).toContain("safe item");
     expect(prose?.textContent).not.toContain("body_sha256");
+  });
+
+  it("reads the omission-only PDF envelope emitted by the Go processing pipeline", async () => {
+    // Generated through pdftext.Render, NormalizeEvidenceV1, BuildRenditionV1,
+    // and EnvelopeRenditionV1 with one synthetic image-only page.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(emptyPDF, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "X-Docbank-Rendition-Attachment": "a".repeat(64),
+          "X-Docbank-Rendition-Build": "b".repeat(64),
+          "X-Docbank-Rendition-Artifact": "c".repeat(64),
+          "X-Docbank-Content-Version": "11111111-1111-4111-8111-111111111111",
+          "X-Docbank-Rendition-Profile": "e".repeat(64),
+          "X-Docbank-Rendition-Completeness": "partial",
+          "X-Docbank-Blob-Hash": bytesToHex(sha256(utf8ToBytes(emptyPDF))),
+          "X-Docbank-Blob-Size": String(utf8ToBytes(emptyPDF).length),
+        },
+      }),
+    );
+    const { container } = render(RenditionDrawer, {
+      session: "short-lived",
+      attachmentID: "a".repeat(64),
+      path: "/Reports/image-only.pdf",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    expect(await screen.findAllByText("Partial")).toHaveLength(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(container.querySelector(".rendition-body")?.textContent).toBe("");
   });
 
   it("shows the no-readable-mirror state without rendering unverified prose", async () => {
