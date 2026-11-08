@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -286,6 +287,18 @@ func (s *Store) publishedNoteProcessingCoverage(ctx context.Context, scope Proce
 	predicate, selectedArgs := publishedNoteEligibilitySQL(selector)
 	selected := `WITH selected AS (SELECT cv.version_id FROM ` + nodeFrom + ` WHERE ` + predicate + `)`
 	d := metadataJSONDialect{s.postgresSchema != ""}
+	// These queries are assembled exclusively from fixed SQL fragments. Their
+	// question marks are bind placeholders, never user input or SQL literals.
+	bind := func(query string) string {
+		if s.postgresSchema == "" {
+			return query
+		}
+		parts := strings.Split(query, "?")
+		for i := 1; i < len(parts); i++ {
+			parts[i] = fmt.Sprintf("$%d%s", i, parts[i])
+		}
+		return strings.Join(parts, "")
+	}
 	cells := selected + `, cells AS (
  SELECT COALESCE(h.attachment_id,'') attachment_id, COALESCE(a.build_id,'') build_id,
  COALESCE(a.profile_fingerprint,'') profile_fingerprint,
@@ -296,7 +309,7 @@ func (s *Store) publishedNoteProcessingCoverage(ctx context.Context, scope Proce
  LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id)`
 	args := append(append([]any{}, selectedArgs...), scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint)
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition"}}
-	if err := tx.QueryRowContext(ctx, cells+` SELECT COUNT(*),COALESCE(SUM(rebuilding),0) FROM cells`, args...).
+	if err := tx.QueryRowContext(ctx, bind(cells+` SELECT COUNT(*),COALESCE(SUM(rebuilding),0) FROM cells`), args...).
 		Scan(&result.Renditions.Total, &result.Renditions.Rebuilding); err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
@@ -313,8 +326,8 @@ func (s *Store) publishedNoteProcessingCoverage(ctx context.Context, scope Proce
 			where = ` WHERE build_id>? OR (build_id=? AND profile_fingerprint>?)`
 			pageArgs = append(pageArgs, lastBuild, lastBuild, lastProfile)
 		}
-		rows, err := tx.QueryContext(ctx, cells+` SELECT build_id,profile_fingerprint,MIN(attachment_id),COUNT(*),SUM(rebuilding)
- FROM cells`+where+` GROUP BY build_id,profile_fingerprint ORDER BY build_id,profile_fingerprint LIMIT 128`, pageArgs...)
+		rows, err := tx.QueryContext(ctx, bind(cells+` SELECT build_id,profile_fingerprint,MIN(attachment_id),COUNT(*),SUM(rebuilding)
+ FROM cells`+where+` GROUP BY build_id,profile_fingerprint ORDER BY build_id,profile_fingerprint LIMIT 128`), pageArgs...)
 		if err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
@@ -387,7 +400,7 @@ func (s *Store) publishedNoteProcessingCoverage(ctx context.Context, scope Proce
 			for range 2 {
 				queryArgs = append(queryArgs, scope.ProcessingProfileFingerprint, binding.Name, binding.InputKind, space)
 			}
-			if err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&item.Complete, &item.Rebuilding, &item.PreviousGenerationServing); err != nil {
+			if err := tx.QueryRowContext(ctx, bind(query), queryArgs...).Scan(&item.Complete, &item.Rebuilding, &item.PreviousGenerationServing); err != nil {
 				return ProcessingCoverageSnapshot{}, err
 			}
 			item.Unavailable -= item.Complete + item.Rebuilding

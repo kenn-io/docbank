@@ -92,22 +92,8 @@ func (service *documentQueryService) noteContext(ctx context.Context, d Deps, re
 			return NoteContextPage{}, fromProcessingError(err)
 		}
 		if request.Coverage.BindingID != "" {
-			var selected *processing.CoverageClass
-			for i := range report.Embeddings {
-				if report.Embeddings[i].Name == request.Coverage.BindingID {
-					selected = &report.Embeddings[i]
-					break
-				}
-			}
-			if selected == nil {
-				return NoteContextPage{}, NewError(422, "validation", "coverage binding is not configured")
-			}
-			report.Embeddings = []processing.CoverageClass{*selected}
-			report.State = "complete"
-			if report.Renditions.Required && report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total || selected.Complete+selected.Rebuilding != selected.Total {
-				report.State = "partial"
-			} else if report.Renditions.Rebuilding > 0 || selected.Rebuilding > 0 {
-				report.State = "rebuilding"
+			if err := selectNoteCoverageBinding(&report, request.Coverage.BindingID); err != nil {
+				return NoteContextPage{}, err
 			}
 		}
 		coverage := fromProcessingCoverage(report)
@@ -137,6 +123,23 @@ func (service *documentQueryService) noteContext(ctx context.Context, d Deps, re
 		}
 		wire.Items = wire.Items[:len(wire.Items)-1]
 	}
+}
+
+func selectNoteCoverageBinding(report *processing.Coverage, binding string) error {
+	for _, selected := range report.Embeddings {
+		if selected.Name != binding {
+			continue
+		}
+		report.Embeddings = []processing.CoverageClass{selected}
+		report.State = "complete"
+		if report.Renditions.Required && report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total || selected.Complete+selected.Rebuilding != selected.Total {
+			report.State = "partial"
+		} else if report.Renditions.Rebuilding > 0 || selected.Rebuilding > 0 {
+			report.State = "rebuilding"
+		}
+		return nil
+	}
+	return NewError(422, "validation", "coverage binding is not configured")
 }
 
 func noteContextWire(page store.NoteContextPage) (NoteContextPage, error) {

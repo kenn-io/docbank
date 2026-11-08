@@ -30,7 +30,7 @@ func (s *Store) ReleaseExportJob(
 		if err != nil {
 			return err
 		}
-		if job.State != "completed" && job.State != "canceled" && job.State != exportFailedState {
+		if job.State != "completed" && job.State != "canceled" && job.State != stateFailed {
 			return bundle.ErrConflict
 		}
 		if err := removeArchive(); err != nil {

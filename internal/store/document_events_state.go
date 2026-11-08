@@ -233,7 +233,7 @@ func (s *Store) RecordDocumentEventAttempt(
 	if err := validateCatalogSHA256(inputsSHA256, "document event inputs digest"); err != nil {
 		return err
 	}
-	if state != "failed" && state != "unavailable" {
+	if state != stateFailed && state != "unavailable" {
 		return errors.New("document event attempt state must be failed or unavailable")
 	}
 	canonicalDiagnostics, err := validateDocumentEventDiagnostics(diagnostics)

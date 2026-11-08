@@ -644,6 +644,10 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkProcessingCoverageSharedBuildKeepsVersionStates(t, newPostgresQueryStore)
 		}},
+		{"PublishedNoteProcessingCoverage", func(t *testing.T) { t.Helper(); checkPublishedNoteProcessingCoverage(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPublishedNoteProcessingCoverage(t, newPostgresQueryStore)
+		}},
 		{"EmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext", func(t *testing.T) {
 			t.Helper()
 			checkEmbeddingCatalogDeduplicatesExactSetsButFencesAttachmentContext(t, newTestStore)

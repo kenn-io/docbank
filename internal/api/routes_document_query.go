@@ -15,6 +15,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -27,9 +28,10 @@ const (
 )
 
 type documentQueryService struct {
-	store *store.Store
-	key   [documentCursorKeyBytes]byte
-	now   func() time.Time
+	store      *store.Store
+	processing *processing.Service
+	key        [documentCursorKeyBytes]byte
+	now        func() time.Time
 }
 
 // Byte slices keep control characters in legal paths from inflating JSON sixfold.
@@ -51,7 +53,7 @@ type documentCursorRequest struct {
 }
 
 func newDocumentQueryService(deps Deps) *documentQueryService {
-	service := &documentQueryService{store: deps.Store, now: deps.DocumentCursorNow}
+	service := &documentQueryService{store: deps.Store, processing: deps.Processing, now: deps.DocumentCursorNow}
 	if service.now == nil {
 		service.now = time.Now
 	}
@@ -75,6 +77,7 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		Summary: "List current live documents with authenticated keyset pagination",
 	}, func(ctx context.Context, input *struct {
 		PublishedNotes publishedNoteParameter `query:"published_notes,deepObject"`
+		NoteCoverage   noteCoverageParameter  `query:"note_coverage,deepObject"`
 		PathPrefix     string                 `query:"path_prefix" default:"/"`
 		Sort           string                 `query:"sort" default:"path" enum:"path,name,modified_at,size,media_type"`
 		Direction      string                 `query:"direction" default:"asc" enum:"asc,desc"`
@@ -82,7 +85,11 @@ func registerDocumentQueryRoute(api huma.API, service *documentQueryService) {
 		Cursor         string                 `query:"cursor"`
 		SourcePresent  bool                   `query:"source_present"`
 	}) (*response, error) {
-		page, err := service.ListDocuments(ctx, DocumentQuery{PublishedNotes: input.PublishedNotes.selector(), PathPrefix: input.PathPrefix,
+		var coverage *NoteCoverageSelection
+		if input.NoteCoverage.Set {
+			coverage = &input.NoteCoverage.Value
+		}
+		page, err := service.ListDocuments(ctx, DocumentQuery{PublishedNotes: input.PublishedNotes.selector(), NoteCoverage: coverage, PathPrefix: input.PathPrefix,
 			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor, SourcePresent: input.SourcePresent})
 		if err != nil {
 			return nil, err
@@ -300,6 +307,9 @@ func (service *documentQueryService) verifyCursorEnvelope(raw string) ([]byte, e
 }
 
 func (service *documentQueryService) ListDocuments(ctx context.Context, input DocumentQuery) (DocumentPage, error) {
+	if input.NoteCoverage != nil && (input.PublishedNotes == nil || input.PublishedNotes.Publication == "" || input.NoteCoverage.Profile == "") {
+		return DocumentPage{}, NewError(422, "validation", "coverage requires a named publication and profile")
+	}
 	query, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{
 		PublishedNotes: publishedNoteStoreSelector(input.PublishedNotes), SourcePresent: input.SourcePresent,
 		PathPrefix: input.PathPrefix, Sort: store.DocumentCatalogSort(input.Sort),
@@ -328,6 +338,35 @@ func (service *documentQueryService) ListDocuments(ctx context.Context, input Do
 	wire, err := service.toDocumentPage(page)
 	if err != nil {
 		return DocumentPage{}, FromStoreError(err)
+	}
+	if input.NoteCoverage != nil {
+		if wire.NoteReadiness == nil {
+			return DocumentPage{}, NewError(404, "not_found", "publication not found")
+		}
+		if service.processing == nil {
+			return DocumentPage{}, processingUnavailable()
+		}
+		report, err := service.processing.PublishedNoteCoverage(ctx, input.NoteCoverage.Profile, *publishedNoteStoreSelector(input.PublishedNotes))
+		if err != nil {
+			return DocumentPage{}, fromProcessingError(err)
+		}
+		if input.NoteCoverage.BindingID != "" {
+			if err := selectNoteCoverageBinding(&report, input.NoteCoverage.BindingID); err != nil {
+				return DocumentPage{}, err
+			}
+		}
+		// Coverage is observed separately; reject a changed publication instead
+		// of combining it with a different document-page namespace snapshot.
+		revision, err := service.store.PublishedNotesRevision(ctx, query.PublishedNotes)
+		if err != nil {
+			return DocumentPage{}, FromStoreError(err)
+		}
+		if revision != page.Query.PublishedNotesRevision {
+			return DocumentPage{}, FromStoreError(store.ErrInvalidDocumentCursor)
+		}
+		coverage := fromProcessingCoverage(report)
+		wire.NoteReadiness.Coverage, wire.NoteReadiness.CoverageSelection = &coverage, input.NoteCoverage
+		wire.NoteReadiness.CoverageObservedAt = service.now().UTC().Format(time.RFC3339Nano)
 	}
 	return wire, nil
 }

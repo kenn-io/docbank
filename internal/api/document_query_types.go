@@ -4,6 +4,7 @@ package api
 // store-owned defaults; Cursor is always opaque to clients.
 type DocumentQuery struct {
 	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitzero"`
+	NoteCoverage   *NoteCoverageSelection `json:"note_coverage,omitzero"`
 	SourcePresent  bool                   `json:"source_present,omitzero"`
 	PathPrefix     string                 `json:"path_prefix,omitzero"`
 	Sort           string                 `json:"sort,omitzero" enum:"path,name,modified_at,size,media_type"`

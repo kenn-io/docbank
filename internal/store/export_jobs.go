@@ -156,7 +156,7 @@ func (s *Store) ClaimExportJob(ctx context.Context) (ExportClaim, error) {
 			return err
 		}
 		if exportExpired(claim.Job.Deadline) {
-			claim.Job.State = exportFailedState
+			claim.Job.State = stateFailed
 			claim.Job.Failure = "deadline"
 			claim.Job.Sequence++
 			return putExportJob(ctx, tx, claim.Job)
@@ -222,7 +222,7 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 		}
 		j.Sequence++
 		if receipt == nil {
-			j.State = exportFailedState
+			j.State = stateFailed
 			j.Failure = failure
 			j.ExpiresAt = exportDeadline(10 * time.Minute)
 		} else {
@@ -272,7 +272,7 @@ func (s *Store) CancelExportJob(ctx context.Context, owner, id string) error {
 		if j.State == "completed" {
 			return bundle.ErrConflict
 		}
-		if j.State == "canceled" || j.State == exportFailedState {
+		if j.State == "canceled" || j.State == stateFailed {
 			return nil
 		}
 		j.State = "canceled"

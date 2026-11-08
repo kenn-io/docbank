@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-const exportFailedState = "failed"
+const stateFailed = "failed"
 
 // ExportMemberHash shares the snapshot membership algorithm. Multiple retained
 // versions of a node are distinct members; ordering is numeric node then version.
@@ -217,7 +217,7 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		return source, err
 	}
 	if !created {
-		if source.State == "resolving" || source.State == exportFailedState {
+		if source.State == "resolving" || source.State == stateFailed {
 			return source, bundle.ErrConflict
 		}
 		return source, nil
@@ -257,7 +257,7 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		// The durable reservation is retained, including after caller cancellation.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		source.State = exportFailedState
+		source.State = stateFailed
 		raw, _ := canonical.Marshal(source)
 		_, markErr := s.db.ExecContext(cleanup, `UPDATE export_sources SET state='failed',canonical_json=? WHERE id=? AND state='resolving'`, raw, source.ID)
 		return source, errors.Join(err, markErr)

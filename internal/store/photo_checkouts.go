@@ -717,7 +717,7 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 			_, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retirement_requested=1 WHERE checkout_id=$1`, id)
 			out.RetirementRequested = true
 			return err
-		case "", "completed", exportFailedState, "cancelled":
+		case "", "completed", stateFailed, "cancelled":
 		default:
 			return fmt.Errorf("%w: checkout cannot retire in its current state", ErrInvalidPhotoCheckout)
 		}

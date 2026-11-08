@@ -1,0 +1,36 @@
+name: Brain generated API artifact
+
+on:
+  push:
+    branches: [feat/markdown-brain-setup]
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - run: make generate-api
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: brain-generated-api-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts

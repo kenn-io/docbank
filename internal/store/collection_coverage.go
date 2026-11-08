@@ -149,7 +149,7 @@ func addCoverageCount(counts *CoverageCounts, state string, count int64) {
 		counts.Complete += count
 	case "partial":
 		counts.Partial += count
-	case "failed":
+	case stateFailed:
 		counts.Failed += count
 	case "none":
 		counts.None += count

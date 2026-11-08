@@ -180,22 +180,23 @@ func (s *Store) ListDocuments(
 				var pending, limited, failed int64
 				predicate, args := publishedNoteEligibilitySQLParameter(normalized.PublishedNotes, "$1")
 				args = append(args, notemarkdown.Recipe)
-				err = tx.QueryRowContext(ctx, `SELECT
+				err = tx.QueryRowContext(ctx, `WITH parameters(publication,recipe) AS (VALUES($1,$2)) SELECT
 COALESCE(SUM(CASE WHEN g.state IS NULL OR g.state NOT IN ('ready','limit','failed') THEN 1 ELSE 0 END),0),
 COALESCE(SUM(CASE WHEN g.state='limit' THEN 1 ELSE 0 END),0),
 COALESCE(SUM(CASE WHEN g.state='failed' THEN 1 ELSE 0 END),0)
-FROM published_note_sources p JOIN nodes n ON n.id=p.node_id
+FROM parameters parameters JOIN published_note_sources p ON p.publication_name=parameters.publication
+JOIN nodes n ON n.id=p.node_id
 JOIN content_versions cv ON cv.version_id=n.current_version_id
-LEFT JOIN note_parse_bindings b ON b.content_version_id=cv.version_id AND b.recipe=$2
+LEFT JOIN note_parse_bindings b ON b.content_version_id=cv.version_id AND b.recipe=parameters.recipe
 LEFT JOIN note_parse_generations g ON g.generation_id=b.generation_id AND g.recipe=b.recipe
  AND g.blob_hash=cv.blob_hash AND g.source_size=cv.size
-WHERE p.publication_name=$1 AND `+predicate, args...).Scan(&pending, &limited, &failed)
+WHERE `+predicate, args...).Scan(&pending, &limited, &failed)
 				if err != nil {
 					return DocumentCatalogPage{}, err
 				}
 				switch {
 				case failed > 0:
-					readiness.ParseState = "failed"
+					readiness.ParseState = stateFailed
 				case limited > 0:
 					readiness.ParseState = "limit"
 				case pending == 0 && !status.Incomplete && status.Conflicts == 0 && status.Unavailable == 0 && status.Unknown == 0:
