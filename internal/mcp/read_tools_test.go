@@ -786,6 +786,31 @@ func invokeReadTool(
 	return result, err
 }
 
+func TestListDocumentsReturnsNamedPublicationReadiness(t *testing.T) {
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/vault":
+			writeDaemonJSON(t, w, api.VaultIdentity{VaultID: testVaultID})
+		case "/api/v1/documents":
+			writeDaemonJSON(t, w, api.DocumentPage{PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"},
+				PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 1, Items: []api.DocumentSummary{},
+				NoteReadiness: &api.NoteReadiness{Publisher: api.NotePublicationStatus{Name: "notes", DatabaseEpoch: testVaultID, NamespaceRevision: 1},
+					Parse: api.NoteProjectionReadiness{State: "pending"}, Graph: api.NoteProjectionReadiness{State: "pending"}}})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	result, err := invokeReadTool(t.Context(), lease, "list_documents", map[string]any{"published_notes": map[string]any{"publication": "notes"}, "page_size": 1})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	output := structuredMap(t, result.StructuredContent)
+	assert.Equal(t, "pending", objectField(t, objectField(t, output, "note_readiness"), "parse")["state"])
+}
+
 func TestListDocumentsAndGetDocumentSkipVaultInventory(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

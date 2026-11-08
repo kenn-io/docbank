@@ -178,3 +178,44 @@ func TestBrainStatusObservesConsentAndTransportFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestBrainStatusReportsCoverageUnavailable(t *testing.T) {
+	for _, problem := range []struct {
+		code   string
+		status int
+	}{
+		{"processing_profile_unavailable", http.StatusUnprocessableEntity},
+		{"processing_unavailable", http.StatusServiceUnavailable},
+	} {
+		t.Run(problem.code, func(t *testing.T) {
+			const key = "synthetic-key"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == daemonauth.KeyChallengePath {
+					nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+					if err != nil {
+						http.Error(w, "bad nonce", http.StatusBadRequest)
+						return
+					}
+					_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
+					return
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(problem.status)
+				_ = json.MarshalWrite(w, api.Error{Status: problem.status, Code: problem.code, Title: "Synthetic"})
+			}))
+			t.Cleanup(server.Close)
+			r, err := OpenRegistry(filepath.Join(t.TempDir(), "registry"))
+			require.NoError(t, err)
+			cfg := ConnectionConfig{Name: "notes", SourceRoot: t.TempDir(), Destination: "/notes", LocalVaultRoot: t.TempDir(), SettleTime: time.Second, ScanInterval: time.Second}
+			require.NoError(t, r.Put(t.Context(), cfg))
+			client := New(r, Dependencies{Running: func(context.Context, string) (*daemonconn.Connection, bool, error) {
+				conn, err := daemonconn.NewPushConnection(server.URL, key)
+				return conn, err == nil, err
+			}})
+			status, err := client.Status(t.Context(), "notes")
+			require.NoError(t, err)
+			require.Equal(t, "indexing_status_unavailable", status.ProblemCode)
+		})
+	}
+}

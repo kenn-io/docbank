@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // Status reports an observation, never a saved intent as evidence of indexing.
@@ -40,7 +41,7 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 	}
 	defer func() { _ = conn.Close() }()
 	page, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: name},
-		NoteCoverage: &api.NoteCoverageSelection{Profile: "brain-local-text"}, PageSize: 1})
+		NoteCoverage: &api.NoteCoverageSelection{Profile: store.NotePlaintextProfileName}, PageSize: 1})
 	if err != nil {
 		if ctx.Err() != nil {
 			return status, ctx.Err()
@@ -48,6 +49,8 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 		status.ProblemCode = "publication_unavailable"
 		if daemonconn.IsTransportError(err) {
 			status.ProblemCode = "daemon_unavailable"
+		} else if code, ok := daemonconn.ProblemCode(err); ok && (code == "processing_profile_unavailable" || code == "processing_unavailable") {
+			status.ProblemCode = "indexing_status_unavailable"
 		}
 		return status, nil
 	}

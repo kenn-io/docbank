@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -342,6 +343,19 @@ func (s *Store) restoreNodeTx(
 	}
 	if err := s.refreshTrashedNodeWorkTx(ctx, tx, restoredNodes, node); err != nil {
 		return Node{}, err
+	}
+	// A worker may have rejected a published note while it was trashed. Clear
+	// its admission marker so the ordinary backfill rechecks live consent.
+	encodedIDs, err := json.Marshal(ids)
+	if err != nil {
+		return Node{}, fmt.Errorf("encoding restored node IDs: %w", err)
+	}
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	if _, err := tx.ExecContext(ctx, `UPDATE note_parse_bindings SET text_epoch=NULL
+ WHERE content_version_id IN (SELECT n.current_version_id FROM nodes n
+ JOIN published_note_sources p ON p.node_id=n.id
+ WHERE n.id IN (SELECT CAST(value AS BIGINT) FROM `+d.arrayValues("$1")+`))`, string(encodedIDs)); err != nil {
+		return Node{}, fmt.Errorf("reconsidering restored note text: %w", err)
 	}
 	if err := bumpRevisionTx(ctx, tx, target.destID, now); err != nil {
 		return Node{}, err

@@ -59,11 +59,26 @@ export default defineConfig({
               "uploadFileBody.file, params.name);",
             );
           }
+          if (operation.operationName === "uploadPublishedNote" && operation.body.formData) {
+            operation.body.formData = operation.body.formData.replace(
+              "uploadPublishedNoteBody.file);",
+              "uploadPublishedNoteBody.file, params.name);",
+            );
+          }
           return operation;
         },
         fetch: { includeHttpResponseReturnType: false, arrayFormat: "repeat" },
         mutator: { path: "src/api-transport.ts", name: "sessionJSON" },
         operations: {
+          listDocuments: {
+            paramsSerializer: { path: "src/published-note-params.ts", name: "publishedNoteParams" },
+          },
+          search: {
+            paramsSerializer: { path: "src/published-note-params.ts", name: "publishedNoteParams" },
+          },
+          searchTextCoverage: {
+            paramsSerializer: { path: "src/published-note-params.ts", name: "publishedNoteParams" },
+          },
           shutdownDaemon: { mutator: { path: "src/api-transport.ts", name: "sessionEmpty" } },
           readPhotoPreview: {
             mutator: { path: "src/api-transport.ts", name: "sessionPhotoPreview", inferred: true },

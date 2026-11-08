@@ -132,7 +132,7 @@ func selectNoteCoverageBinding(report *processing.Coverage, binding string) erro
 		}
 		report.Embeddings = []processing.CoverageClass{selected}
 		report.State = "complete"
-		if report.Renditions.Required && report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total || selected.Complete+selected.Rebuilding != selected.Total {
+		if (report.Renditions.Required && report.Renditions.Complete+report.Renditions.Rebuilding != report.Renditions.Total) || selected.Complete+selected.Rebuilding != selected.Total {
 			report.State = "partial"
 		} else if report.Renditions.Rebuilding > 0 || selected.Rebuilding > 0 {
 			report.State = "rebuilding"

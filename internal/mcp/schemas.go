@@ -660,6 +660,7 @@ func listDocumentsSchemas() (schema, schema) {
 	})
 	output := rootObjectSchema(withPrivateCache(schema{
 		"published_notes": publishedNoteSelectorSchema(),
+		"note_readiness":  noteReadinessSchema(),
 		"source_present":  booleanSchema(),
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
@@ -670,6 +671,31 @@ func listDocumentsSchemas() (schema, schema) {
 		"previous_cursor": cursorSchema(),
 	}), cacheRequired("path_prefix", "sort", "direction", "page_size", "items")...)
 	return input, output
+}
+
+func noteReadinessSchema() schema {
+	scan := objectSchema(schema{
+		"scan_id": uuidSchema(), "database_epoch": uuidSchema(), "policy_fingerprint": sha256Schema(),
+		"epoch": integerSchema(1, 0), "namespace_revision": integerSchema(0, 0),
+	}, "scan_id", "database_epoch", "policy_fingerprint", "epoch", "namespace_revision")
+	publisher := objectSchema(schema{
+		"name": stringSchema(64), "database_epoch": uuidSchema(), "last_complete_at": stringSchema(64),
+		"last_accepted_at": stringSchema(64), "namespace_revision": integerSchema(0, 0), "active_scan": scan,
+		"incomplete": booleanSchema(), "present": integerSchema(0, 0), "absent": integerSchema(0, 0),
+		"unknown": integerSchema(0, 0), "conflicts": integerSchema(0, 0), "unavailable": integerSchema(0, 0),
+		"recovery_pending": integerSchema(0, 0),
+	}, "name", "database_epoch", "last_complete_at", "last_accepted_at", "namespace_revision", "incomplete", "present", "absent", "unknown", "conflicts", "unavailable", "recovery_pending")
+	projection := objectSchema(schema{"state": stringSchema(64), "reason": stringSchema(128), "recipe": stringSchema(256), "generation": uuidSchema()}, "state")
+	class := objectSchema(schema{
+		"name": stringSchema(128), "required": booleanSchema(), "state": stringSchema(64), "complete": integerSchema(0, 0),
+		"unavailable": integerSchema(0, 0), "stale": integerSchema(0, 0), "ineligible": integerSchema(0, 0),
+		"rebuilding": integerSchema(0, 0), "previous_generation_serving": integerSchema(0, 0), "total": integerSchema(0, 0),
+	}, "name", "required", "state", "complete", "unavailable", "stale", "ineligible", "rebuilding", "previous_generation_serving", "total")
+	coverage := objectSchema(schema{"vault_uid": uuidSchema(), "profile_fingerprint": sha256Schema(), "state": stringSchema(64),
+		"renditions": class, "embeddings": arraySchema(class, 0)}, "vault_uid", "profile_fingerprint", "state", "renditions", "embeddings")
+	selection := objectSchema(schema{"profile": stringSchema(128), "binding_id": stringSchema(128)}, "profile")
+	return objectSchema(schema{"publisher": publisher, "parse": projection, "graph": projection,
+		"coverage_selection": selection, "coverage": coverage, "coverage_observed_at": stringSchema(64)}, "publisher", "parse", "graph")
 }
 
 func searchCoverageSchema() schema {
