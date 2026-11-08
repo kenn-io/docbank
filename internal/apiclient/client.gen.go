@@ -2818,6 +2818,7 @@ func (c *Client) ListDocuments(ctx context.Context, options *ListDocumentsReques
 	queryEncoding := map[string]runtime.QueryEncoding{
 		"cursor":          {Style: "form", Explode: &[]bool{false}[0]},
 		"direction":       {Style: "form", Explode: &[]bool{false}[0]},
+		"note_coverage":   {Style: "deepObject", Explode: &[]bool{false}[0]},
 		"page_size":       {Style: "form", Explode: &[]bool{false}[0]},
 		"path_prefix":     {Style: "form", Explode: &[]bool{false}[0]},
 		"published_notes": {Style: "deepObject", Explode: &[]bool{false}[0]},
@@ -29106,6 +29107,7 @@ type GetDocumentProcessingCoverageQuery struct {
 
 type ListDocumentsQuery struct {
 	PublishedNotes *PublishedNoteSelector       `json:"published_notes,omitempty"`
+	NoteCoverage   *NoteCoverageSelection       `json:"note_coverage,omitempty"`
 	PathPrefix     *string                      `json:"path_prefix,omitempty"`
 	Sort           *ListDocumentsQuerySort      `json:"sort,omitempty"`
 	Direction      *ListDocumentsQueryDirection `json:"direction,omitempty"`

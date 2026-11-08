@@ -39,7 +39,8 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 		return status, nil
 	}
 	defer func() { _ = conn.Close() }()
-	page, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: name}, PageSize: 1})
+	page, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: name},
+		NoteCoverage: &api.NoteCoverageSelection{Profile: "brain-local-text"}, PageSize: 1})
 	if err != nil {
 		if ctx.Err() != nil {
 			return status, ctx.Err()
@@ -65,6 +66,11 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 		return status, nil
 	}
 	if err := api.ValidateNoteLocalTextPlan(plan); err != nil {
+		status.ProblemCode = "indexing_plan_unrecognized"
+		return status, nil
+	}
+	if status.Readiness == nil || status.Readiness.Coverage == nil || status.Readiness.Coverage.ProfileFingerprint != plan.Plan.ProfileFingerprint {
+		status.Readiness = nil
 		status.ProblemCode = "indexing_plan_unrecognized"
 		return status, nil
 	}

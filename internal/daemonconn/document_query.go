@@ -23,7 +23,7 @@ func (c *Connection) ListDocuments(
 	if err := validateDocumentQuery(query); err != nil {
 		return api.DocumentPage{}, err
 	}
-	params := apiclient.ListDocumentsQuery{PublishedNotes: query.PublishedNotes}
+	params := apiclient.ListDocumentsQuery{PublishedNotes: query.PublishedNotes, NoteCoverage: query.NoteCoverage}
 	if query.SourcePresent {
 		params.SourcePresent = new(true)
 	}
@@ -101,6 +101,9 @@ func validateDocumentSummaryResolveRequest(request api.DocumentSummaryResolveReq
 }
 
 func validateDocumentQuery(query api.DocumentQuery) error {
+	if query.NoteCoverage != nil && (query.PublishedNotes == nil || query.PublishedNotes.Publication == "" || query.NoteCoverage.Profile == "") {
+		return store.ErrInvalidDocumentQuery
+	}
 	_, err := normalizeClientDocumentQuery(query)
 	if err != nil {
 		return err
@@ -122,9 +125,33 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 	if page.NoteReadiness != nil {
 		readiness := page.NoteReadiness
 		if query.PublishedNotes == nil || query.PublishedNotes.Publication == "" ||
-			!validNoteStatus(readiness.Publisher, query.PublishedNotes.Publication) ||
-			readiness.Coverage != nil || readiness.CoverageSelection != nil || readiness.CoverageObservedAt != "" {
+			!validNoteStatus(readiness.Publisher, query.PublishedNotes.Publication) {
 			return errors.New("document catalog response has invalid note readiness")
+		}
+		if query.NoteCoverage == nil {
+			if readiness.Coverage != nil || readiness.CoverageSelection != nil || readiness.CoverageObservedAt != "" {
+				return errors.New("document catalog response has unexpected note coverage")
+			}
+		} else {
+			if readiness.Coverage == nil || readiness.CoverageSelection == nil ||
+				*readiness.CoverageSelection != *query.NoteCoverage ||
+				!validUUIDv4(readiness.Coverage.VaultUID) || !validSHA256Hex(readiness.Coverage.ProfileFingerprint) {
+				return errors.New("document catalog response has invalid note coverage")
+			}
+			if _, err := time.Parse(time.RFC3339Nano, readiness.CoverageObservedAt); err != nil {
+				return errors.New("document catalog response has invalid coverage timestamp")
+			}
+			if query.NoteCoverage.BindingID != "" && (len(readiness.Coverage.Embeddings) != 1 || readiness.Coverage.Embeddings[0].Name != query.NoteCoverage.BindingID) {
+				return errors.New("document catalog response has invalid coverage binding")
+			}
+			if !validDocumentCoverageClass(readiness.Coverage.Renditions) {
+				return errors.New("document catalog response has invalid rendition coverage")
+			}
+			for _, item := range readiness.Coverage.Embeddings {
+				if !validDocumentCoverageClass(item) {
+					return errors.New("document catalog response has invalid embedding coverage")
+				}
+			}
 		}
 		switch readiness.Parse.State {
 		case "ready", "pending", "limit", "failed":
@@ -144,6 +171,9 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 			return errors.New("document catalog response has invalid graph state")
 		}
 	}
+	if query.NoteCoverage != nil && page.NoteReadiness == nil {
+		return errors.New("document catalog response is missing note coverage")
+	}
 	if page.SourcePresent != normalized.SourcePresent ||
 		page.PathPrefix != normalized.PathPrefix || page.Sort != string(normalized.Sort) ||
 		page.Direction != string(normalized.Direction) || page.PageSize != normalized.PageSize ||
@@ -162,6 +192,9 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 		if page.NoteReadiness != nil && item.PublishedNote.NamespaceRevision != page.NoteReadiness.Publisher.NamespaceRevision {
 			return errors.New("document catalog response has inconsistent note revision")
 		}
+		if query.NoteCoverage != nil && item.PublishedNote.VaultID != page.NoteReadiness.Coverage.VaultUID {
+			return errors.New("document catalog response has inconsistent coverage vault")
+		}
 		if err := validateDocumentSummary(item, index); err != nil ||
 			!clientDocumentPathWithinPrefix(item.Path, page.PathPrefix) {
 			return fmt.Errorf("document catalog response item %d has invalid identity", index)
@@ -172,6 +205,18 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 		seen[item.NodeID] = struct{}{}
 	}
 	return nil
+}
+
+func validDocumentCoverageClass(item api.CoverageClass) bool {
+	if item.Total < 0 {
+		return false
+	}
+	for _, count := range []int{item.Complete, item.Unavailable, item.Stale, item.Ineligible, item.Rebuilding, item.PreviousGenerationServing} {
+		if count < 0 || count > item.Total {
+			return false
+		}
+	}
+	return item.PreviousGenerationServing <= item.Rebuilding
 }
 
 func validateDocumentSummary(item api.DocumentSummary, index int) error {

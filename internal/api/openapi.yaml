@@ -24697,6 +24697,12 @@ paths:
           style: deepObject
         - explode: false
           in: query
+          name: note_coverage
+          schema:
+            $ref: "#/components/schemas/NoteCoverageSelection"
+          style: deepObject
+        - explode: false
+          in: query
           name: path_prefix
           schema:
             default: /

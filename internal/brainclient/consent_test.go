@@ -134,7 +134,11 @@ func TestBrainStatusObservesConsentAndTransportFailure(t *testing.T) {
 					}
 					_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
 				case "/api/v1/documents":
-					_ = json.MarshalWrite(w, api.DocumentPage{PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"}, PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 1, Items: []api.DocumentSummary{}})
+					_ = json.MarshalWrite(w, api.DocumentPage{PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"}, PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 1, Items: []api.DocumentSummary{},
+						NoteReadiness: &api.NoteReadiness{Publisher: api.NotePublicationStatus{Name: "notes", DatabaseEpoch: "11111111-1111-4111-8111-111111111111", NamespaceRevision: 1},
+							Parse: api.NoteProjectionReadiness{State: "pending"}, Graph: api.NoteProjectionReadiness{State: "pending"},
+							CoverageSelection: &api.NoteCoverageSelection{Profile: "brain-local-text"}, CoverageObservedAt: "2026-01-01T00:00:00Z",
+							Coverage: &api.CoverageReport{VaultUID: "11111111-1111-4111-8111-111111111111", ProfileFingerprint: plan.Plan.ProfileFingerprint}}})
 				case "/api/v1/notes/local-text-plan":
 					if disconnect {
 						hijacker, ok := w.(http.Hijacker)

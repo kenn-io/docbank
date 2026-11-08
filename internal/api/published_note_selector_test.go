@@ -47,9 +47,17 @@ func TestPublishedNoteSearchListAndCursor(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(coverageBody), &covered))
 	require.NotNil(t, covered.NoteReadiness)
 	require.NotNil(t, covered.NoteReadiness.Coverage)
+	require.NotNil(t, covered.NoteReadiness.CoverageSelection)
 	require.Equal(t, 2, covered.NoteReadiness.Coverage.Renditions.Total)
 	require.Equal(t, "private", covered.NoteReadiness.CoverageSelection.Profile)
 	require.NotEmpty(t, covered.NoteReadiness.CoverageObservedAt)
+	typedCoverage, err := daemonconn.New(ts.URL, testAPIKey).ListDocuments(t.Context(), api.DocumentQuery{
+		PublishedNotes: &api.PublishedNoteSelector{Publication: "notebook"}, NoteCoverage: &api.NoteCoverageSelection{Profile: "private"}, PageSize: 1,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, typedCoverage.NoteReadiness)
+	require.NotNil(t, typedCoverage.NoteReadiness.Coverage)
+	require.Equal(t, 2, typedCoverage.NoteReadiness.Coverage.Renditions.Total)
 	invalidCoverage, _ := get(t, ts, "/api/v1/documents?note_coverage%5Bprofile%5D=private", nil)
 	require.Equal(t, http.StatusUnprocessableEntity, invalidCoverage.StatusCode)
 	invalidBinding, _ := get(t, ts, coverageURL+"&note_coverage%5Bbinding_id%5D=missing", nil)

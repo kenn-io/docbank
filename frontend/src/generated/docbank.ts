@@ -9692,6 +9692,7 @@ content_version_id: string[];
 
 export type ListDocumentsParams = {
 published_notes?: PublishedNoteSelector;
+note_coverage?: NoteCoverageSelection;
 path_prefix?: string;
 sort?: ListDocumentsSort;
 direction?: ListDocumentsDirection;
@@ -12733,7 +12734,7 @@ export const getListDocumentsUrl = (params?: ListDocumentsParams,) => {
   const deepObjectEntries: string[] = [];
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    const deepObjectParameters = ["published_notes"];
+    const deepObjectParameters = ["published_notes","note_coverage"];
 
     if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
       Object.entries(value).forEach(([subKey, subValue]) => {
