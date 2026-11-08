@@ -815,8 +815,11 @@ explicit port must be between 1 and 65535. Redirects are not followed.
 Set a positive `max_transcript_chars` on the rendition profile. This limit
 caps the generated transcript and is part of the descriptor's policy
 fingerprint. Each processing profile keeps its own `max_document_chars` limit
-for subsequent processing. A runtime with no selecting profile remains staged
-and isn't executable.
+for subsequent processing. Set `retain_typed_artifacts = true` on the selecting processing profile when
+another application needs the canonical transcript hash or language. Without it,
+normalized evidence remains readable but `artifact_sha256` and retained language
+are unavailable. Strict conversation consumers require that artifact identity.
+A runtime with no selecting profile remains staged and isn't executable.
 
 After a restart, queued work whose descriptor is no longer configured fails
 with `stale_authority`. Plan the work and grant consent for the changed profile
