@@ -649,9 +649,11 @@ remain present. Consumers must invalidate stale text regardless of whether
 these identity fields are available. Ready transcripts carry
 `build_id`, `profile_fingerprint`, `evidence_checksum`, and, when retained,
 `artifact_sha256`. The evidence checksum hashes canonical normalized evidence;
-the artifact hash identifies the exact canonical `media-transcript/v1` JSON.
-Optional language comes from that verified retained artifact. Neither field
-is inferred from the sender or the filename.
+the artifact hash identifies the exact verified retained transcript bytes.
+Generated speech and timed captions use `media-transcript/v1`; untimed supplied
+text uses `supplied-transcript/v1` and also has an artifact hash when retained.
+Optional language comes only from a canonical `media-transcript/v1` artifact.
+Neither field is inferred from the sender or the filename.
 
 `speech_state: "complete"` means generated, nonempty, untruncated segment evidence with
 no omissions except the field `non_speech_content`. A transcript does not
