@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -129,7 +130,7 @@ func TestBrainRegistryRoundTripAndValidation(t *testing.T) {
 	t.Run("bounded strict read retains corrupt bytes", func(t *testing.T) {
 		cases := []string{`{`, `{"version":2,"connections":[]}`, `{"version":1,"connections":[],"secret":"x"}`, `{"version":1,"version":1,"connections":[]}`, `{"version":1,"connections":[{}]}`, `{"version":1,"connections":[]} {}`, strings.Repeat(" ", 1<<20) + `{}`, `null`, `{}`, `{"version":1,"connections":null}`, `{"version":1,"connections":[{"unknown":true}]}`}
 		for i, raw := range cases {
-			t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Run(strconv.Itoa(i), func(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(root, "connections.json"), []byte(raw), 0o600))
 				_, e := r.List(t.Context())
 				require.Error(t, e)

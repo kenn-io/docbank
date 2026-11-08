@@ -254,6 +254,7 @@ func notePlaintextMutations() map[string]func(*configuredProfile) {
 }
 
 func TestNotePlaintextRejectsChangedProfile(t *testing.T) {
+	t.Parallel()
 	for name, mutate := range notePlaintextMutations() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -343,6 +344,7 @@ func TestNotePlaintextReadinessBindsExactVersion(t *testing.T) {
 // Combining changed policy, execution, and disclosure must never yield an
 // approvable fixed local plan, even if the saved record still names the builtin.
 func TestNotePlaintextFixedPlanProperty(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "darwin" && runtime.GOARCH != "arm64" {
 		t.Skip("Hegel native engine requires macOS arm64")
 	}
@@ -390,6 +392,7 @@ func TestNotePlaintextFixedPlanProperty(t *testing.T) {
 // authorization/error mapping. Plans must observe each event without caching it
 // or changing the review fingerprint, and unrelated grants have no effect.
 func TestNotePlaintextLiveConsentProperty(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "darwin" && runtime.GOARCH != "arm64" {
 		t.Skip("Hegel native engine requires macOS arm64")
 	}
