@@ -10,6 +10,7 @@ import (
 )
 
 const notePublicationsStorageSchemaVersion = 49
+const noteSourceUnavailable = "unavailable"
 
 // NotePlaintextProfileName identifies the fixed local-only note rendition policy.
 const NotePlaintextProfileName = "brain-local-text"
@@ -88,7 +89,7 @@ func ValidatePublishedNoteSource(source NotePublicationSource) error {
 		return errors.New("invalid published note presence")
 	}
 	switch source.Availability {
-	case "retained", "unavailable":
+	case "retained", noteSourceUnavailable:
 	default:
 		return errors.New("invalid published note availability")
 	}

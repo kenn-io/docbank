@@ -18,6 +18,7 @@ import (
 )
 
 const notePublicationBase = "/api/v1/note-publications/{name}"
+const noteRevisionFormat = "int64"
 
 // NoteLocalTextPlan describes the fixed local-only policy and the exact
 // ordinary consent request required to enable it.
@@ -393,7 +394,7 @@ func registerNotePublicationUploadOpenAPI(api huma.API) {
 	upload := api.OpenAPI().Paths["/api/v1/uploads"].Post
 	schema := api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[NotePublicationReceipt](), true, "")
 	response := &huma.Response{Description: "Exact accepted publication receipt", Content: map[string]*huma.MediaType{jsonMediaType: {Schema: schema}}}
-	parameters := []*huma.Param{{Name: "name", In: "path", Required: true, Description: "Publication identity", Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(64)}}}
+	parameters := []*huma.Param{{Name: "name", In: openAPIPathLocation, Required: true, Description: "Publication identity", Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(64)}}}
 	for _, parameter := range upload.Parameters {
 		if parameter.Name == "name" || parameter.Name == BlobHashHeader || parameter.Name == BlobSizeHeader {
 			parameters = append(parameters, parameter)
@@ -406,9 +407,9 @@ func registerNotePublicationUploadOpenAPI(api huma.API) {
 	}{
 		{"scan_id", true, 36}, {"source_ref", true, 4096}, {"parent_path", true, 4096}, {"operation_id", true, 36}, {"modified_at", false, 64},
 	} {
-		parameters = append(parameters, &huma.Param{Name: field.name, In: "query", Required: field.required, Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(field.max)}})
+		parameters = append(parameters, &huma.Param{Name: field.name, In: openAPIQueryLocation, Required: field.required, Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(field.max)}})
 	}
-	parameters = append(parameters, &huma.Param{Name: "expected_source_revision", In: "query", Required: true, Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: new(float64(0))}})
+	parameters = append(parameters, &huma.Param{Name: "expected_source_revision", In: openAPIQueryLocation, Required: true, Schema: &huma.Schema{Type: mailboxIntegerType, Format: noteRevisionFormat, Minimum: new(float64(0))}})
 	responses := maps.Clone(upload.Responses)
 	responses["200"], responses["201"] = response, response
 	api.OpenAPI().AddOperation(&huma.Operation{OperationID: "uploadPublishedNote", Method: http.MethodPost, Path: notePublicationBase + "/uploads",

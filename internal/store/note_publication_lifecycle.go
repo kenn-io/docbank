@@ -105,20 +105,21 @@ func invalidateNotePublicationsTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		}
 		ids := numberedPlaceholders(len(args), 0)
 		cte := `WITH RECURSIVE affected(id) AS (SELECT id FROM nodes WHERE id IN (` + ids + `) UNION SELECT n.id FROM nodes n JOIN affected a ON n.parent_id=a.id) `
-		rows, err := tx.QueryContext(ctx, cte+`SELECT DISTINCT publication_name FROM published_note_sources WHERE node_id IN (SELECT id FROM affected)`, args...)
-		if err != nil {
-			return err
-		}
-		var names []string
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				_ = rows.Close()
-				return err
+		names, err := func() (names []string, resultErr error) {
+			rows, err := tx.QueryContext(ctx, cte+`SELECT DISTINCT publication_name FROM published_note_sources WHERE node_id IN (SELECT id FROM affected)`, args...)
+			if err != nil {
+				return nil, err
 			}
-			names = append(names, name)
-		}
-		err = errors.Join(rows.Err(), rows.Close())
+			defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err != nil {
+					return nil, err
+				}
+				names = append(names, name)
+			}
+			return names, rows.Err()
+		}()
 		if err != nil {
 			return err
 		}
