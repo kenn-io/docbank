@@ -5,10 +5,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"math"
 	"path"
+	"slices"
 )
 
 var (
@@ -146,6 +147,10 @@ func (s *Store) BeginNotePublicationScan(ctx context.Context, request NotePublic
 			return errors.New("publication scan epoch exhausted")
 		}
 		result.Epoch++
+		if _, err := tx.ExecContext(ctx, `DELETE FROM note_publication_seen WHERE scan_id IN
+			(SELECT scan_id FROM note_publication_scans WHERE publication_name=$1)`, request.Name); err != nil {
+			return err
+		}
 		result.ScanID, err = newUUIDv4()
 		if err != nil {
 			return err
@@ -307,7 +312,19 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 		if reserved != 0 {
 			return ErrPublicationOperationMismatch
 		}
-		if request.FileName != path.Base(request.SourceRef) || request.ParentPath != path.Join(scan.Destination, path.Dir(request.SourceRef)) {
+		expectedName, err := NormalizeName(path.Base(request.SourceRef))
+		if err != nil {
+			return err
+		}
+		expectedParent, err := pushParentSegments(path.Join(scan.Destination, path.Dir(request.SourceRef)))
+		if err != nil {
+			return err
+		}
+		actualParent, err := pushParentSegments(request.ParentPath)
+		if err != nil {
+			return err
+		}
+		if request.FileName != expectedName || !slices.Equal(actualParent, expectedParent) {
 			return ErrInvalidNotePublication
 		}
 		previous, err := s.publishedNoteSourceTx(ctx, tx, request.Name, request.SourceRef)
@@ -553,6 +570,9 @@ func (s *Store) CompleteNotePublicationScan(ctx context.Context, request NotePub
 			}
 			stamp := nowRFC3339()
 			if _, err = tx.ExecContext(ctx, `UPDATE note_publication_scans SET sealed=1,completed_at=$1 WHERE scan_id=$2`, stamp, scan.ScanID); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `DELETE FROM note_publication_seen WHERE scan_id=$1`, scan.ScanID); err != nil {
 				return err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE note_publications SET last_complete_at=$1 WHERE name=$2`, stamp, request.Name); err != nil {
