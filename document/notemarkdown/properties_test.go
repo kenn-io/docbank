@@ -481,8 +481,11 @@ func TestPropertyPlannedKeysResolve(t *testing.T) {
 		} {
 			q, err := PlanTarget(tc.source, Link{Form: tc.form, Target: tc.target})
 			require.NoError(ht, err)
-			require.Equal(ht, "invalid", q.Kind)
-			require.Empty(ht, q.Keys)
+			require.Equal(ht, "note", q.Kind)
+			require.Equal(ht, []LookupKey{{Kind: "path", Value: drive}}, q.Keys)
+			resolved, err := Resolve(ht.Context(), q, CandidateSet{Complete: true, Candidates: []Candidate{{Binding: "version", Path: drive, Kind: "note", Keys: q.Keys}}})
+			require.NoError(ht, err)
+			require.Equal(ht, "resolved", resolved.State)
 		}
 		target := hegel.Draw(ht, hegel.SampledFrom([]string{"../é.md", "nested/../Note.md", "%252F.md", "/Root", "Caf%C3%A9", "A%23B.md", ".hidden.md"}))
 		q, err := PlanTarget("area/start.md", Link{Form: "wiki", Target: target})

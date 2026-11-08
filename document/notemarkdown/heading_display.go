@@ -179,9 +179,12 @@ func (d *headingDisplay) render(start, end, depth int) (string, error) {
 		if c == '&' {
 			semi := bytes.IndexByte(d.src[i:min(end, i+34)], ';')
 			if semi >= 0 {
-				tokens = append(tokens, displayToken{text: decodeEntity(string(d.src[i : i+semi+1]))})
-				i += semi + 1
-				continue
+				raw := string(d.src[i : i+semi+1])
+				if decoded := decodeEntity(raw); decoded != raw {
+					tokens = append(tokens, displayToken{text: decoded})
+					i += semi + 1
+					continue
+				}
 			}
 		}
 		// One ordinary run avoids one allocation per UTF-8 byte.
@@ -306,6 +309,17 @@ func (d *headingDisplay) labelEnd(open, end int) (int, error) {
 				i += width - 1
 			}
 			continue
+		}
+		if d.src[i] == '<' {
+			scanner := linkScanner{ctx: d.ctx, src: d.src, b: d.b}
+			finish, err := scanner.inlineHTML(i, end)
+			if err != nil {
+				return 0, err
+			}
+			if finish > i {
+				i = finish - 1
+				continue
+			}
 		}
 		if d.src[i] == '[' {
 			depth++

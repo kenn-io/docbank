@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark/util"
 )
@@ -52,10 +53,11 @@ func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budg
 				previousDefinitions = false
 				break // definitions cannot interrupt an existing paragraph
 			}
+			after := definitionNext(src, end)
 			if ok {
-				excluded = append(excluded, Span{pos, min(max(end, next), block.content.End)})
+				excluded = append(excluded, Span{pos, min(max(after, next), block.content.End)})
 			}
-			pos = max(next, end)
+			pos = max(next, after)
 		}
 	}
 	ex := 0
@@ -90,10 +92,21 @@ func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budg
 	return s.links, nil
 }
 
+// Include the final line ending of a multi-line definition when resuming.
+func definitionNext(src []byte, end int) int {
+	if end < len(src) && src[end] == '\r' {
+		end++
+	}
+	if end < len(src) && src[end] == '\n' {
+		end++
+	}
+	return end
+}
+
 func linkSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
 func (s *linkScanner) referenceKey(start, end int) (string, error) {
-	if end-start > 999 || start == end {
+	if end-start > 4*999 || start == end || utf8.RuneCount(s.src[start:end]) > 999 {
 		return "", nil
 	}
 	if err := s.b.step(s.ctx, end-start); err != nil {
@@ -116,11 +129,11 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		return 0, false, nil
 	}
 	label := i + 1
-	for i++; i < line.End; i++ {
+	for i++; i < blockEnd && i-label <= 4*999; i++ {
 		if err := s.b.step(s.ctx, 1); err != nil {
 			return 0, false, err
 		}
-		if s.src[i] == '\\' && i+1 < line.End {
+		if s.src[i] == '\\' && i+1 < blockEnd {
 			i++
 			continue
 		}
@@ -130,6 +143,12 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		if s.src[i] != ']' {
 			continue
 		}
+		closingLine, _, err := sourceLineAt(s.ctx, s.src, i, s.b)
+		if err != nil {
+			return 0, false, err
+		}
+		closingLine.End = min(closingLine.End, blockEnd)
+		line = closingLine
 		if i+1 >= line.End || s.src[i+1] != ':' {
 			return 0, false, nil
 		}
@@ -164,10 +183,14 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		if err != nil || !ok {
 			return 0, false, err
 		}
+		beforeSpace := tail
 		for tail < line.End && linkSpace(s.src[tail]) {
 			tail++
 		}
-		if dest.Start == dest.End {
+		if dest.Start == dest.End && (j >= line.End || s.src[j] != '<') {
+			return 0, false, nil
+		}
+		if tail < line.End && tail == beforeSpace {
 			return 0, false, nil
 		}
 		definitionEnd := line.End
@@ -186,31 +209,21 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 				for k < titleLine.End && linkSpace(s.src[k]) {
 					k++
 				}
-				finish, yes, err := s.title(k, titleLine.End)
+				finish, yes, err := s.definitionTitle(k, blockEnd)
 				if err != nil {
 					return 0, false, err
 				}
 				if yes {
-					for finish < titleLine.End && linkSpace(s.src[finish]) {
-						finish++
-					}
-					if finish == titleLine.End {
-						definitionEnd = titleLine.End
-					}
+					definitionEnd = finish
 				}
 			}
 		}
 		if tail < line.End {
-			finish, yes, err := s.title(tail, line.End)
+			finish, yes, err := s.definitionTitle(tail, blockEnd)
 			if err != nil || !yes {
 				return 0, false, err
 			}
-			for finish < line.End && linkSpace(s.src[finish]) {
-				finish++
-			}
-			if finish != line.End {
-				return 0, false, nil
-			}
+			definitionEnd = finish
 		}
 		if _, exists := s.refs[key]; !exists {
 			s.refs[key] = referenceDefinition{dest}
@@ -218,6 +231,26 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		return definitionEnd, true, nil
 	}
 	return 0, false, nil
+}
+
+// definitionTitle returns the end of the title's final physical line.
+func (s *linkScanner) definitionTitle(start, blockEnd int) (int, bool, error) {
+	finish, ok, err := s.title(start, blockEnd)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	line, _, err := sourceLineAt(s.ctx, s.src, finish, s.b)
+	if err != nil {
+		return 0, false, err
+	}
+	line.End = min(line.End, blockEnd)
+	for finish < line.End && (s.src[finish] == ' ' || s.src[finish] == '\t') {
+		if err := s.b.step(s.ctx, 1); err != nil {
+			return 0, false, err
+		}
+		finish++
+	}
+	return finish, finish == line.End, nil
 }
 
 // destination recognizes an angle destination or balanced bare destination.
@@ -300,6 +333,37 @@ func (s *linkScanner) title(start, end int) (int, bool, error) {
 }
 
 func (s *linkScanner) inlineTarget(start, end int) (Span, int, bool, error) {
+	dest, finish, ok, err := s.inlineTargetWithDestination(start, end)
+	if err != nil || ok {
+		return dest, finish, ok, err
+	}
+	i := start + 1
+	for i < end && linkSpace(s.src[i]) {
+		if err := s.b.step(s.ctx, 1); err != nil {
+			return Span{}, 0, false, err
+		}
+		i++
+	}
+	if i == start+1 {
+		return Span{}, 0, false, nil
+	}
+	finish, ok, err = s.title(i, end)
+	if err != nil || !ok {
+		return Span{}, 0, false, err
+	}
+	for finish < end && linkSpace(s.src[finish]) {
+		if err := s.b.step(s.ctx, 1); err != nil {
+			return Span{}, 0, false, err
+		}
+		finish++
+	}
+	if finish < end && s.src[finish] == ')' {
+		return Span{i, i}, finish + 1, true, nil
+	}
+	return Span{}, 0, false, nil
+}
+
+func (s *linkScanner) inlineTargetWithDestination(start, end int) (Span, int, bool, error) {
 	i := start + 1 // opening parenthesis
 	for i < end && linkSpace(s.src[i]) {
 		if err := s.b.step(s.ctx, 1); err != nil {
@@ -371,8 +435,12 @@ func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
 				j++
 			} else if !wiki && raw[i] == '&' {
 				if semi := strings.IndexByte(raw[i:min(len(raw), i+34)], ';'); semi >= 0 {
-					j = i + semi + 1
-					value = decodeEntity(raw[i:j])
+					candidateEnd := i + semi + 1
+					decoded := decodeEntity(raw[i:candidateEnd])
+					if decoded != raw[i:candidateEnd] {
+						j = candidateEnd
+						value = decoded
+					}
 				}
 			}
 			write(value)
@@ -419,6 +487,20 @@ func (s *linkScanner) inline(start, end int) error {
 		}
 		first := i + 1
 		width := last - first
+		if width > 1 {
+			slashes := 0
+			for j := first - 1; j >= start && s.src[j] == '\\'; j-- {
+				if err := s.b.step(s.ctx, 1); err != nil {
+					return err
+				}
+				slashes++
+			}
+			if slashes%2 == 1 {
+				if n, ok := nextRun[width-1]; ok {
+					closer[first+1] = n
+				}
+			}
+		}
 		if n, ok := nextRun[width]; ok {
 			closer[first] = n
 		}
@@ -447,11 +529,19 @@ func (s *linkScanner) inline(start, end int) error {
 			continue
 		}
 		if c == '<' {
+			linksBefore := len(s.links)
 			finish, err := s.inlineHTML(i, end)
 			if err != nil {
 				return err
 			}
 			if finish > i {
+				if len(s.links) > linksBefore {
+					for j := range stack {
+						if !stack[j].embed {
+							stack[j].active = false
+						}
+					}
+				}
 				i = finish
 				continue
 			}
@@ -523,7 +613,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, str
 	labelStart, labelEnd, finish := op.label, closing, closing+1
 	if finish < end && s.src[finish] == '[' {
 		j := finish + 1
-		for j < end && j-finish <= 1000 && s.src[j] != ']' && s.src[j] != '[' {
+		for j < end && j-finish <= 4*999+1 && s.src[j] != ']' && s.src[j] != '[' {
 			if err := s.b.step(s.ctx, 1); err != nil {
 				return Span{}, 0, "", false, err
 			}
@@ -537,8 +627,6 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, str
 				labelStart, labelEnd = finish+1, j
 			}
 			finish = j + 1
-		} else {
-			return Span{}, 0, "", false, nil
 		}
 	}
 	key, err := s.referenceKey(labelStart, labelEnd)

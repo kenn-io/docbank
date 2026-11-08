@@ -26,7 +26,7 @@ func Parse(ctx context.Context, original []byte) (Note, error) {
 		if err := b.step(ctx, width); err != nil {
 			return Note{}, err
 		}
-		if r == '\n' {
+		if r == '\r' || r == '\n' && (i == 0 || original[i-1] != '\r') {
 			if err := addLimit("line_breaks", &lines, 1, maxLines); err != nil {
 				return Note{}, err
 			}

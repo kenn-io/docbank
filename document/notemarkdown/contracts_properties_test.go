@@ -215,7 +215,7 @@ func TestFragmentUnusedHeadings(t *testing.T) {
 		_, err = ResolveFragment(t.Context(), tc.fragment, make([]Heading, 4097))
 		requireLimit(t, err, "headings")
 	}
-	_, err := ResolveFragment(t.Context(), "\xff", bad)
+	_, err := ResolveFragment(t.Context(), "\xff", nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
 }
 func TestPropertyFragmentAdmissionBeforeContent(t *testing.T) {

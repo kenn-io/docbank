@@ -51,6 +51,11 @@ func htmlTagEnd(ctx context.Context, src []byte, start, end int, b *budget) (int
 }
 
 func (s *linkScanner) inlineHTML(start, end int) (int, error) {
+	for _, short := range []string{"<!-->", "<!--->"} {
+		if bytes.HasPrefix(s.src[start:end], []byte(short)) {
+			return start + len(short), nil
+		}
+	}
 	for _, special := range []struct{ prefix, close string }{{"<!--", "-->"}, {"<?", "?>"}, {"<![CDATA[", "]]>"}} {
 		if bytes.HasPrefix(s.src[start:end], []byte(special.prefix)) {
 			for i := start + len(special.prefix); i+len(special.close) <= end; i++ {
@@ -224,6 +229,15 @@ func (r *htmlRuneReader) ReadRune() (rune, int, error) {
 }
 
 func htmlEndMatches(ctx context.Context, text []byte, end string, b *budget) (bool, error) {
+	if end == "raw-tags" {
+		for _, tag := range []string{"</script>", "</style>", "</pre>", "</textarea>"} {
+			matched, err := htmlEndMatches(ctx, text, tag, b)
+			if err != nil || matched {
+				return matched, err
+			}
+		}
+		return false, nil
+	}
 	fold := strings.HasPrefix(end, "</")
 	for i := 0; i+len(end) <= len(text); i++ {
 		if err := b.step(ctx, len(end)); err != nil {
@@ -271,7 +285,10 @@ func htmlBlockStart(ctx context.Context, text []byte, generic bool, b *budget) (
 	tag := text[start:i]
 	for _, name := range []string{"script", "style", "pre", "textarea"} {
 		if start == 1 && bytes.EqualFold(tag, []byte(name)) {
-			return "</" + name + ">", true, nil
+			if i < len(text) && text[i] == '/' {
+				return "", false, nil
+			}
+			return "raw-tags", true, nil
 		}
 	}
 	for _, name := range []string{"address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search", "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul"} {

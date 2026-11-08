@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -69,17 +70,17 @@ func parseFrontmatter(ctx context.Context, original []byte, b *budget) (state st
 // sourceLineAt excludes CR/LF in the span; next includes the complete EOL.
 func sourceLineAt(ctx context.Context, src []byte, start int, b *budget) (line Span, next int, err error) {
 	next = start
-	for next < len(src) && src[next] != '\n' {
+	for next < len(src) && src[next] != '\n' && src[next] != '\r' {
 		if err := b.step(ctx, 1); err != nil {
 			return Span{}, 0, err
 		}
 		next++
 	}
 	end := next
-	if end > start && src[end-1] == '\r' {
-		end--
-	}
 	if next < len(src) {
+		if src[next] == '\r' && next+1 < len(src) && src[next+1] == '\n' {
+			next++
+		}
 		next++
 	}
 	return Span{start, end}, next, nil
@@ -108,6 +109,10 @@ func parseYAML(ctx context.Context, src []byte, b *budget) (yamlValue, error) {
 		return yamlValue{}, err
 	}
 	text := string(src)
+	if err := b.reserveStrings(2 * len(text)); err != nil {
+		return yamlValue{}, err
+	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	p := yamlParser{ctx: ctx, b: b}
 	physicalLines := strings.Split(text, "\n")
 	if len(physicalLines) > 0 && physicalLines[len(physicalLines)-1] == "" {
@@ -119,17 +124,14 @@ func parseYAML(ctx context.Context, src []byte, b *budget) (yamlValue, error) {
 		}
 		raw = strings.TrimSuffix(raw, "\r")
 		indent := len(raw) - len(strings.TrimLeft(raw, " "))
-		if strings.HasPrefix(raw[indent:], "\t") {
-			return yamlValue{}, errYAML
-		}
 		p.lines = append(p.lines, yamlLine{raw, indent})
 	}
 	p.skipBlank()
 	if p.pos == len(p.lines) {
 		return yamlValue{}, errYAML
 	}
-	if strings.HasPrefix(strings.TrimSpace(p.lines[p.pos].text), "{") {
-		n, err := p.flow(strings.TrimSpace(text), 1)
+	if strings.HasPrefix(yamlTrim(p.lines[p.pos].text), "{") {
+		n, err := p.flow(yamlTrim(text), 1)
 		if err != nil {
 			return yamlValue{}, err
 		}
@@ -159,7 +161,9 @@ func (p *yamlParser) enter(depth int) error {
 	return addLimit("yaml_nodes", &p.nodes, 1, maxYAMLNodes)
 }
 
-func yamlBlank(s string) bool { s = strings.TrimSpace(s); return s == "" || strings.HasPrefix(s, "#") }
+func yamlTrim(s string) string { return strings.Trim(s, " \t\r\n") }
+
+func yamlBlank(s string) bool { s = yamlTrim(s); return s == "" || strings.HasPrefix(s, "#") }
 func (p *yamlParser) skipBlank() {
 	for p.pos < len(p.lines) && yamlBlank(p.lines[p.pos].text) {
 		p.pos++
@@ -193,35 +197,48 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 		if line.indent != indent {
 			return yamlValue{}, errYAML
 		}
+		if strings.HasPrefix(line.text[indent:], "\t") {
+			return yamlValue{}, errYAML
+		}
 		text := line.text[indent:]
 		if err := p.b.step(p.ctx, len(text)+1); err != nil {
 			return yamlValue{}, err
 		}
 		p.pos++
 		var key, rest string
+		contentIndent := indent
 		if seq {
 			if !yamlSequence(text) {
-				return yamlValue{}, errYAML
+				p.pos--
+				break
 			}
-			rest = strings.TrimSpace(text[1:])
+			content := text[1:]
+			contentIndent = indent + 1 + len(content) - len(strings.TrimLeft(content, " "))
+			rest = yamlTrim(content)
 		} else {
 			colon := yamlMappingColon(text)
 			if colon < 0 {
 				return yamlValue{}, errYAML
 			}
-			k, err := p.flow(strings.TrimSpace(text[:colon]), depth+1)
+			k, err := p.flow(yamlTrim(text[:colon]), depth+1)
 			if err != nil {
 				return yamlValue{}, err
 			}
 			if k.kind != 's' || k.text == "<<" {
 				return yamlValue{}, errYAML
 			}
-			key, rest = k.text, strings.TrimSpace(text[colon+1:])
+			key, rest = k.text, yamlTrim(text[colon+1:])
 			if _, exists := n.fields[key]; exists {
 				return yamlValue{}, errYAML
 			}
 		}
-		value, err := p.lineValue(rest, indent, depth+1)
+		var value yamlValue
+		var err error
+		if seq && len(rest) > 0 && !strings.ContainsRune("[{", rune(rest[0])) && yamlMappingColon(rest) >= 0 {
+			value, err = p.compactMapping(rest, indent, contentIndent, depth+1)
+		} else {
+			value, err = p.lineValue(rest, indent, depth+1, !seq)
+		}
 		if err != nil {
 			return yamlValue{}, err
 		}
@@ -229,6 +246,45 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 			n.items = append(n.items, value)
 		} else {
 			n.fields[key] = value
+		}
+	}
+	return n, nil
+}
+
+func (p *yamlParser) compactMapping(text string, indent, contentIndent, depth int) (yamlValue, error) {
+	if err := p.enter(depth); err != nil {
+		return yamlValue{}, err
+	}
+	colon := yamlMappingColon(text)
+	key, err := p.flow(yamlTrim(text[:colon]), depth+1)
+	if err != nil {
+		return yamlValue{}, err
+	}
+	if key.kind != 's' || key.text == "<<" {
+		return yamlValue{}, errYAML
+	}
+	value, err := p.lineValue(yamlTrim(text[colon+1:]), contentIndent, depth+1, true)
+	if err != nil {
+		return yamlValue{}, err
+	}
+	n := yamlValue{kind: 'm', fields: map[string]yamlValue{key.text: value}}
+	p.skipBlank()
+	if p.pos < len(p.lines) && p.lines[p.pos].indent > indent {
+		if p.lines[p.pos].indent != contentIndent {
+			return yamlValue{}, errYAML
+		}
+		rest, err := p.block(contentIndent, depth+1)
+		if err != nil {
+			return yamlValue{}, err
+		}
+		if rest.kind != 'm' {
+			return yamlValue{}, errYAML
+		}
+		for k, v := range rest.fields {
+			if _, exists := n.fields[k]; exists {
+				return yamlValue{}, errYAML
+			}
+			n.fields[k] = v
 		}
 	}
 	return n, nil
@@ -251,7 +307,7 @@ func yamlMappingColon(s string) int {
 			}
 			continue
 		}
-		if s[i] == '\'' || s[i] == '"' {
+		if i == 0 && (s[i] == '\'' || s[i] == '"') {
 			quote = s[i]
 			continue
 		}
@@ -279,21 +335,23 @@ func yamlStripComment(s string) string {
 			}
 			continue
 		}
-		if s[i] == '\'' || s[i] == '"' {
+		if i == 0 && (s[i] == '\'' || s[i] == '"') {
 			quote = s[i]
 		}
 		if s[i] == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t') {
-			return strings.TrimSpace(s[:i])
+			return yamlTrim(s[:i])
 		}
 	}
-	return strings.TrimSpace(s)
+	return yamlTrim(s)
 }
 
-func (p *yamlParser) lineValue(rest string, indent, depth int) (yamlValue, error) {
-	rest = yamlStripComment(rest)
+func (p *yamlParser) lineValue(rest string, indent, depth int, mapping bool) (yamlValue, error) {
+	if !strings.HasPrefix(rest, "[") && !strings.HasPrefix(rest, "{") {
+		rest = yamlStripComment(rest)
+	}
 	if rest == "" {
 		p.skipBlank()
-		if p.pos < len(p.lines) && p.lines[p.pos].indent > indent {
+		if p.pos < len(p.lines) && (p.lines[p.pos].indent > indent || mapping && p.lines[p.pos].indent == indent && yamlSequence(p.lines[p.pos].text[indent:])) {
 			return p.block(p.lines[p.pos].indent, depth)
 		}
 		if err := p.enter(depth); err != nil {
@@ -351,9 +409,20 @@ func (p *yamlParser) closed(s string) (bool, error) {
 			}
 			continue
 		}
+		if c == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t') {
+			for i < len(s) && s[i] != '\n' {
+				if err := p.b.step(p.ctx, 1); err != nil {
+					return false, err
+				}
+				i++
+			}
+			continue
+		}
 		switch c {
 		case '\'', '"':
-			quote = c
+			if yamlQuoteStart(s, i) {
+				quote = c
+			}
 		case '[', '{':
 			depth++
 		case ']', '}':
@@ -361,6 +430,16 @@ func (p *yamlParser) closed(s string) (bool, error) {
 		}
 	}
 	return quote == 0 && depth == 0, nil
+}
+
+func yamlQuoteStart(s string, i int) bool {
+	for i--; i >= 0; i-- {
+		if s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' {
+			continue
+		}
+		return strings.ContainsRune("[{: ,", rune(s[i]))
+	}
+	return true
 }
 
 func (p *yamlParser) blockScalar(marker string, indent, depth int) (yamlValue, error) {
@@ -374,7 +453,7 @@ func (p *yamlParser) blockScalar(marker string, indent, depth int) (yamlValue, e
 	contentIndent := -1
 	for p.pos < len(p.lines) {
 		line := p.lines[p.pos]
-		if strings.TrimSpace(line.text) != "" {
+		if yamlTrim(line.text) != "" {
 			if line.indent <= indent {
 				break
 			}
@@ -391,7 +470,7 @@ func (p *yamlParser) blockScalar(marker string, indent, depth int) (yamlValue, e
 	for i := start; i < p.pos; i++ {
 		line := p.lines[i]
 		text := ""
-		if strings.TrimSpace(line.text) != "" && len(line.text) >= contentIndent && contentIndent >= 0 {
+		if yamlTrim(line.text) != "" && len(line.text) >= contentIndent && contentIndent >= 0 {
 			text = line.text[contentIndent:]
 		}
 		if err := p.b.step(p.ctx, len(text)+1); err != nil {
@@ -404,7 +483,7 @@ func (p *yamlParser) blockScalar(marker string, indent, depth int) (yamlValue, e
 		separator := byte('\n')
 		if marker[0] == '>' && text != "" && line.indent == contentIndent && i+1 < p.pos {
 			next := i + 1
-			for next < p.pos && strings.TrimSpace(p.lines[next].text) == "" {
+			for next < p.pos && yamlTrim(p.lines[next].text) == "" {
 				next++
 			}
 			if next < p.pos && p.lines[next].indent == contentIndent {
@@ -507,9 +586,19 @@ func (f *yamlFlow) value(depth int, inFlow bool) (yamlValue, error) {
 				if _, ok := n.fields[key]; ok {
 					return yamlValue{}, errYAML
 				}
-				v, err := f.value(depth+1, true)
-				if err != nil {
-					return yamlValue{}, err
+				f.spaces()
+				var v yamlValue
+				if f.pos < len(f.text) && (f.text[f.pos] == ',' || f.text[f.pos] == '}') {
+					if err := f.p.enter(depth + 1); err != nil {
+						return yamlValue{}, err
+					}
+					v.kind = 'v'
+				} else {
+					var err error
+					v, err = f.value(depth+1, true)
+					if err != nil {
+						return yamlValue{}, err
+					}
 				}
 				n.fields[key] = v
 			}
@@ -536,6 +625,9 @@ func (f *yamlFlow) value(depth int, inFlow bool) (yamlValue, error) {
 	}
 	start := f.pos
 	for f.pos < len(f.text) && f.text[f.pos] != '\n' && (!inFlow || !strings.ContainsRune(",]}{[", rune(f.text[f.pos]))) {
+		if f.text[f.pos] == '#' && (f.pos == start || f.text[f.pos-1] == ' ' || f.text[f.pos-1] == '\t') {
+			break
+		}
 		if err := f.p.b.step(f.p.ctx, 1); err != nil {
 			return yamlValue{}, err
 		}
@@ -572,7 +664,7 @@ func (f *yamlFlow) key(depth int) (string, error) {
 		for f.pos < len(f.text) && f.text[f.pos] != ':' && !strings.ContainsRune(",{}[]", rune(f.text[f.pos])) {
 			f.pos++
 		}
-		key = strings.TrimSpace(f.text[start:f.pos])
+		key = yamlTrim(f.text[start:f.pos])
 		if key == "" || yamlNonString(key) || strings.ContainsRune("&*!|>@`?", rune(key[0])) {
 			return "", errYAML
 		}
@@ -599,12 +691,10 @@ func yamlNonString(s string) bool {
 	if _, err := strconv.ParseInt(strings.ReplaceAll(s, "_", ""), 0, 64); err == nil {
 		return true
 	}
-	if len(s) >= 10 && s[4] == '-' && s[7] == '-' {
-		valid := true
-		for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
-			valid = valid && s[i] >= '0' && s[i] <= '9'
+	for _, layout := range []string{"2006-01-02", time.RFC3339Nano, "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05"} {
+		if _, err := time.Parse(layout, s); err == nil {
+			return true
 		}
-		return valid
 	}
 	return false
 }

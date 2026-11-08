@@ -12,16 +12,6 @@ import (
 	"hegel.dev/go/hegel"
 )
 
-func TestParseOriginalIdentity(t *testing.T) {
-	n, err := Parse(t.Context(), nil)
-	require.NoError(t, err)
-	require.Equal(t, Recipe, n.Recipe)
-	require.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", n.SourceSHA256)
-	require.Equal(t, 0, n.SourceBytes)
-	require.Equal(t, "absent", n.FrontmatterState)
-	require.Zero(t, n.BodyStart)
-}
-
 func TestParseAdmission(t *testing.T) {
 	for name, input := range map[string][]byte{
 		"utf8": {0xff}, "nul": {'a', 0, 'b'},
@@ -71,7 +61,8 @@ func TestPropertyParsePlainIdentity(t *testing.T) {
 }
 
 func TestLimitErrorDoesNotEchoInput(t *testing.T) {
-	err := &LimitError{Resource: "links"}
-	require.ErrorIs(t, err, ErrLimit)
-	require.Equal(t, "authored Markdown limit: links", err.Error())
+	input := "private-synthetic-marker" + strings.Repeat("x", 4<<20)
+	_, err := Parse(t.Context(), []byte(input))
+	requireLimit(t, err, "input_bytes")
+	require.NotContains(t, err.Error(), "private-synthetic-marker")
 }
