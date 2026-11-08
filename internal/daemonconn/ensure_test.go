@@ -399,12 +399,16 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	started := false
 	result, err := ensureDaemon(t.Context(), root, false,
-		func(_ context.Context, gotRoot string, _ bool) (kitdaemon.RuntimeRecord, error) {
+		func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
 			started = true
+			assert.True(t, persistent, "replacement preserves the explicit start despite the failed ping")
 			assert.Equal(t, canonicalRoot, gotRoot)
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
 				"replacement must wait for the recorded owner to exit")
@@ -652,10 +656,14 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
 	stopped, err := Stop(t.Context(), root)
 	require.NoError(t, err)
 	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
 	assert.Equal(t, rec.PID, stopped.PID)
+	assert.Equal(t, "true", stopped.Metadata[MetaExplicitStart])
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 

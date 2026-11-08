@@ -1786,7 +1786,7 @@ docbank daemon stop
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
-to keep the web UI and MCP available until `daemon stop`. Status shows the effective idle timeout or that the daemon stays running.
+for explicit control, such as inspecting logs before sending data commands.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 

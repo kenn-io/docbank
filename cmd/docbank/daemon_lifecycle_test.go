@@ -555,67 +555,48 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 		require.True(t, found)
 		return rec.PID
 	}
+	watched := func(bin string) bool {
+		var jobs api.JobList
+		require.NoError(t, json.Unmarshal([]byte(run(bin, "jobs", "--json")), &jobs))
+		_, found := jobNamed(jobs, idleTimeoutJob)
+		return found
+	}
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
-	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"0s\"\n"), 0o600))
 	run(oldBin, "search", "missing")
 	automatic := pid()
-	run(oldBin, "daemon", "start")
-	assert.Equal(t, automatic, pid(), "daemon start reuses a daemon already staying up")
-
-	require.NoError(t, os.WriteFile(config, nil, 0o600))
-	run(oldBin, "daemon", "stop")
-	run(oldBin, "search", "missing")
-	automatic = pid()
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle")
 	run(oldBin, "daemon", "start")
 	explicit := pid()
 	assert.NotEqual(t, automatic, explicit)
-
 	// An upgrade's replacement keeps the explicit lifetime.
 	run(newBin, "search", "missing")
 	assert.NotEqual(t, explicit, pid())
-	var jobs api.JobList
-	require.NoError(t, json.Unmarshal([]byte(run(newBin, "jobs", "--json")), &jobs))
-	_, watched := jobNamed(jobs, idleTimeoutJob)
-	assert.False(t, watched)
-}
+	assert.False(t, watched(newBin))
 
-func TestDaemonLifetimeAfterConfigChange(t *testing.T) {
-	oldBin := buildDocbank(t)
-	newBin := buildDocbankVersion(t, "v9.9.9-test")
-	for _, explicit := range []bool{false, true} {
-		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
-			root := t.TempDir()
-			config := filepath.Join(root, "config.toml")
-			run := func(bin string, args ...string) string {
-				cmd := exec.CommandContext(t.Context(), bin, args...)
-				cmd.Env = append(os.Environ(), "DOCBANK_HOME="+root)
-				out, err := cmd.CombinedOutput()
-				require.NoError(t, err, string(out))
-				return string(out)
-			}
-			t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-			settings := "[server]\nidle_timeout = \"0s\"\n"
-			if explicit {
-				settings = "[storage]\npack_interval = \"24h\"\n"
-			}
-			require.NoError(t, os.WriteFile(config, []byte(settings), 0o600))
-			run(oldBin, "search", "missing")
-			before, _, _, err := daemonconn.Find(t.Context(), root)
-			require.NoError(t, err)
-			if explicit {
-				run(oldBin, "daemon", "start")
-				after, _, _, err := daemonconn.Find(t.Context(), root)
-				require.NoError(t, err)
-				assert.Equal(t, before.PID, after.PID)
-			}
-			require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"2s\"\n"), 0o600))
-			run(newBin, "search", "missing")
-			var jobs api.JobList
-			require.NoError(t, json.Unmarshal([]byte(run(newBin, "jobs", "--json")), &jobs))
-			_, watched := jobNamed(jobs, idleTimeoutJob)
-			assert.Equal(t, !explicit, watched)
-		})
-	}
+	run(newBin, "daemon", "stop")
+	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"0s\"\n"), 0o600))
+	run(oldBin, "search", "missing")
+	automatic = pid()
+	run(oldBin, "daemon", "start")
+	assert.Equal(t, automatic, pid(), "daemon start reuses an automatic daemon with no idle timeout")
+
+	// daemon start keeps a daemon that configuration keeps up, and it stays up after the configuration changes.
+	run(newBin, "daemon", "stop")
+	require.NoError(t, os.WriteFile(config, []byte("[storage]\npack_interval = \"24h\"\n"), 0o600))
+	run(oldBin, "search", "missing")
+	automatic = pid()
+	run(oldBin, "daemon", "start")
+	assert.Equal(t, automatic, pid(), "daemon start reuses a daemon already staying up")
+	require.NoError(t, os.WriteFile(config, nil, 0o600))
+	run(newBin, "search", "missing")
+	assert.False(t, watched(newBin))
+
+	// A daemon kept up only by configuration follows the new configuration when replaced.
+	run(newBin, "daemon", "stop")
+	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"0s\"\n"), 0o600))
+	run(oldBin, "search", "missing")
+	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"2s\"\n"), 0o600))
+	run(newBin, "search", "missing")
+	assert.True(t, watched(newBin))
 }

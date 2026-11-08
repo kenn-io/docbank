@@ -178,8 +178,8 @@ routes; an older daemon returns an error before any upload.
 An automatically started daemon exits after `[server] idle_timeout` (default 30
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
-`docbank daemon run`, an explicit `daemon start` or `daemon restart`, or any daemon hosting MCP HTTP, stays up. It runs
-until signaled or stopped. Replacements after upgrades preserve explicit start requests and reload automatic lifetime from configuration.
+`docbank daemon run`, an explicit `daemon start` or `daemon restart` and its upgrade replacements, or any daemon hosting MCP HTTP, never idles out. It runs
+until signaled or stopped.
 An open photo event stream counts as an in-flight request, so a visible Photos tab keeps a background daemon from reaching its idle timeout.
 
 ## Background tasks

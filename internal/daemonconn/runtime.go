@@ -41,11 +41,6 @@ type EnsureResult struct {
 	Replaced *kitdaemon.RuntimeRecord
 }
 
-// Persistent reports whether the daemon's effective lifetime has no idle exit.
-func Persistent(rec kitdaemon.RuntimeRecord) bool {
-	return rec.Metadata[MetaIdleTimeout] == "0s"
-}
-
 // Explicit reports whether a user requested a daemon that stays running.
 func Explicit(rec kitdaemon.RuntimeRecord) bool {
 	return rec.Metadata[MetaExplicitStart] == "true"

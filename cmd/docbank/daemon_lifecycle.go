@@ -82,12 +82,10 @@ var daemonStatusCmd = &cobra.Command{
 				out["address"] = rec.Address
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
-				if rec.Metadata[daemonconn.MetaExplicitStart] != "" {
-					out["explicit_start"] = daemonconn.Explicit(rec)
-				}
 				if timeout := rec.Metadata[daemonconn.MetaIdleTimeout]; timeout != "" {
 					out["idle_timeout"] = timeout
-					out["persistent"] = daemonconn.Persistent(rec)
+					out["persistent"] = timeout == "0s"
+					out["explicit_start"] = daemonconn.Explicit(rec)
 				}
 			}
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
@@ -145,7 +143,7 @@ var daemonRestartCmd = &cobra.Command{
 	Use:     "restart",
 	Short:   "Restart the daemon",
 	Long: `Stop the daemon if one is running, then start it again. Succeeds when no
-daemon was running. The daemon stays running until docbank daemon stop.`,
+daemon was running.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
