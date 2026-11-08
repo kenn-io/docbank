@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,6 +77,45 @@ func TestListDocumentsUsesStoreUnicodePathNormalization(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "/Café", page.PathPrefix)
+}
+
+func TestListDocumentsFencesRequestedNoteCoverage(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		name   string
+		mutate func(*api.DocumentPage)
+		valid  bool
+	}{
+		{name: "matching", valid: true},
+		{name: "wrong profile", mutate: func(p *api.DocumentPage) { p.NoteReadiness.CoverageSelection.Profile = "other" }},
+		{name: "invalid timestamp", mutate: func(p *api.DocumentPage) { p.NoteReadiness.CoverageObservedAt = "invalid" }},
+		{name: "negative count", mutate: func(p *api.DocumentPage) { p.NoteReadiness.Coverage.Renditions.Total = -1 }},
+		{name: "missing coverage", mutate: func(p *api.DocumentPage) { p.NoteReadiness.Coverage = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page := api.DocumentPage{PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"}, PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 1, Items: []api.DocumentSummary{},
+				NoteReadiness: &api.NoteReadiness{Publisher: api.NotePublicationStatus{Name: "notes", DatabaseEpoch: id, NamespaceRevision: 1},
+					Parse: api.NoteProjectionReadiness{State: "pending"}, Graph: api.NoteProjectionReadiness{State: "pending"},
+					CoverageSelection: &api.NoteCoverageSelection{Profile: "private"}, CoverageObservedAt: "2026-01-01T00:00:00Z",
+					Coverage: &api.CoverageReport{VaultUID: id, ProfileFingerprint: strings.Repeat("a", 64)}}}
+			if tc.mutate != nil {
+				tc.mutate(&page)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.MarshalWrite(w, page)
+			}))
+			t.Cleanup(server.Close)
+			_, err := daemonconn.New(server.URL, "synthetic-key").ListDocuments(t.Context(), api.DocumentQuery{
+				PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"}, NoteCoverage: &api.NoteCoverageSelection{Profile: "private"}, PageSize: 1,
+			})
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }
 
 func TestResolveDocumentSummariesRejectsDuplicateIdentity(t *testing.T) {
