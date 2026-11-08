@@ -85,9 +85,15 @@
     protectionDisabled = false;
     error = "";
     try {
-      const status = await generated.auditStatus({}, { session: session, signal: active.signal });
+      const status = await generated
+        .auditStatus({}, { session: session, signal: active.signal })
+        .catch((cause) => {
+          if (active.signal.aborted || (cause instanceof APIError && cause.status === 401))
+            throw cause;
+          return null;
+        });
       if (request !== generation) return;
-      if (!status.enabled) {
+      if (status?.enabled === false) {
         protectionDisabled = true;
         return;
       }

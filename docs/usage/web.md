@@ -917,8 +917,9 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose **System → Protected folders** to read protection status. If protection
-is enabled, Docbank runs the vault-wide permanent audit verifier. Docbank
+Choose **System → Protected folders** to read protection status. If nothing is
+protected, the section shows the command to protect a folder. Otherwise, or if
+status cannot be read, Docbank runs the vault-wide permanent audit verifier. Docbank
 replays canonical audit history against the current node, version, membership,
 topology, tag, and provenance projections, then reads and recomputes SHA-256 for
 every unique blob retained by protected history.
@@ -931,7 +932,7 @@ identities even when they wrap. A vault with nothing protected shows the
 `docbank audit enable` command instead of a failure. Metadata, missing-content,
 corruption, and unreadable-content problems stay visible with the affected hash.
 
-This drawer runs only a fresh proof of current authority. It does not accept a
+Verification results provide a fresh proof of current authority. The drawer does not accept a
 previous evidence bundle, enroll a scope, or change protected state. Record
 `docbank audit verify --json` outside the vault and later use
 `docbank audit verify --expected` when that external copy must act as a rollback

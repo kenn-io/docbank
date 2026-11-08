@@ -194,7 +194,7 @@ describe("audit evidence drawer", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    statusMock.mockResolvedValueOnce(statusResponse()).mockReturnValueOnce(refreshResponse);
+    verifyMock.mockReturnValueOnce(refreshResponse);
 
     render(AuditEvidenceDrawer, {
       session: "short-lived",
@@ -217,23 +217,41 @@ describe("audit evidence drawer", () => {
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
   });
 
-  it("retries a failed status read before deciding protection is disabled", async () => {
-    statusMock
-      .mockRejectedValueOnce(new Error("status unavailable"))
-      .mockResolvedValueOnce(statusResponse(false));
-    render(AuditEvidenceDrawer, {
-      session: "short-lived",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-    expect((await screen.findByRole("alert")).textContent).toContain("status unavailable");
-    expect(screen.queryByText(/No folders are protected/)).toBeNull();
-    expect(verifyMock).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
-    expect(statusMock).toHaveBeenCalledTimes(2);
-    expect(verifyMock).not.toHaveBeenCalled();
-  });
+  it.each(["HTTP", "transport"])(
+    "verifies after a %s status error and reports damaged authority",
+    async (failure) => {
+      if (failure === "HTTP") {
+        statusMock.mockResolvedValueOnce(
+          new Response(JSON.stringify({ detail: "audit authority is incomplete" }), {
+            status: 500,
+          }),
+        );
+      } else {
+        statusMock.mockRejectedValueOnce(new Error("status unavailable"));
+      }
+      verifyMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            enabled: false,
+            protected_blobs: 0,
+            protected_bytes: 0,
+            verified_blobs: 0,
+            metadata_problems: ["dormant audit authority has 1 row(s) in relation 1"],
+          }),
+          { status: 200 },
+        ),
+      );
+      render(AuditEvidenceDrawer, {
+        session: "short-lived",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      });
+      expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
+      expect(screen.getByText("dormant audit authority has 1 row(s) in relation 1")).toBeTruthy();
+      expect(screen.queryByText(/No folders are protected/)).toBeNull();
+      expect(verifyMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("closes and requests sign-in when status returns unauthorized", async () => {
     statusMock.mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }));
@@ -258,12 +276,12 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
     await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(1));
+    expect(verifyMock).not.toHaveBeenCalled();
     const signal = statusMock.mock.calls[0]![1].signal as AbortSignal;
     await unmount();
     expect(signal.aborted).toBe(true);
     resolveStatus(statusResponse());
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(verifyMock).not.toHaveBeenCalled();
   });
 });
