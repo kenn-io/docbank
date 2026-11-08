@@ -330,3 +330,24 @@ func TestReviewSequenceFlowAndCompactMappingSpacing(t *testing.T) {
 	require.Equal(t, "valid", n.FrontmatterState)
 	require.Equal(t, "Good", n.Metadata.Title)
 }
+
+func TestReviewGrowingDefinitionLikeParagraphBudget(t *testing.T) {
+	for _, start := range []string{"> [unfinished\n", "> [ref]: note.md\n> prose\n"} {
+		src := start + strings.Repeat("> 2. item\n", 1200)
+		_, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err)
+	}
+}
+
+func TestReviewReferenceBeforeMixedIndent(t *testing.T) {
+	for _, src := range []string{
+		"[r]: note.md\n  \t[hidden](ghost.md)\n",
+		"> > [r]: note.md\n> >     [hidden](ghost.md)\n",
+		"- [r]: note.md\n      [hidden](ghost.md)\n",
+		"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err, src)
+		require.Empty(t, n.Links, src)
+	}
+}

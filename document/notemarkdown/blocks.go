@@ -31,7 +31,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 	htmlEnd := ""
 	inHTML := false
 	paragraph := false
+	paragraphFirst := -1
 	nonDefinitions := map[int]bool{}
+	probes := map[int]*definitionProbe{}
 	for pos := bodyStart; pos < len(original); {
 		line, next, err := sourceLineAt(ctx, original, pos, b)
 		if err != nil {
@@ -41,14 +43,29 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		content := 0
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
-		checkDefinitionBoundary := len(containers) == 0 && markdownIndented(raw) || len(containers) > 0 && mayLeaveDefinitionContainer(raw, containers[0])
-		if paragraph && checkDefinitionBoundary && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start && !possibleDefinitionTitle(raw) {
-			only, err := paragraphDefinitionsOnly(ctx, original, blocks, nonDefinitions, b)
+		if paragraph && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start {
+			check, candidate, indent, err := definitionBoundary(ctx, raw, containers, b)
 			if err != nil {
 				return nil, err
 			}
-			if only {
-				paragraph = false
+			if check {
+				only, err := paragraphDefinitionsOnly(ctx, original, blocks, paragraphFirst, nonDefinitions, probes, b)
+				if err != nil {
+					return nil, err
+				}
+				if only {
+					title := false
+					if indent < 4 && candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
+						scanner := linkScanner{ctx: ctx, src: original, b: b}
+						_, title, err = scanner.title(line.Start+candidate, len(original))
+						if err != nil {
+							return nil, err
+						}
+					}
+					if !title {
+						paragraph = false
+					}
+				}
 			}
 		}
 		matched := 0
@@ -153,7 +170,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				return nil, err
 			}
 			if (list || html) && indent+virtualIndent <= 3 && previous.paragraph && previous.depth == len(containers) && previous.span.End == line.Start {
-				only, err := paragraphDefinitionsOnly(ctx, original, blocks, nonDefinitions, b)
+				only, err := paragraphDefinitionsOnly(ctx, original, blocks, paragraphFirst, nonDefinitions, probes, b)
 				if err != nil {
 					return nil, err
 				}
@@ -387,6 +404,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				block.continuation = true
 			}
 		}
+		if !block.continuation {
+			paragraphFirst = len(blocks)
+		}
 		blocks = append(blocks, block)
 		paragraph = true
 		pos = next
@@ -394,54 +414,57 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 	return blocks, nil
 }
 
-func mayLeaveDefinitionContainer(raw []byte, outer blockContainer) bool {
-	i := 0
-	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
-		i++
-	}
-	if outer.kind == 'q' && (i == len(raw) || raw[i] != '>') || outer.kind == 'l' && i < outer.indent {
-		return true
-	}
-	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '>') {
-		i++
-	}
-	if outer.kind == 'q' {
-		content := bytes.TrimLeft(raw, " \t")
-		if len(content) > 0 && content[0] == '>' {
-			content = content[1:]
-			if len(content) > 0 && (content[0] == ' ' || content[0] == '\t') {
-				content = content[1:]
-			}
-			if markdownIndented(content) {
-				return true
-			}
+func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, int, error) {
+	pos, virtual := 0, 0
+	for _, container := range containers {
+		end, columns, err := leadingIndent(ctx, raw, pos, b)
+		if err != nil {
+			return false, 0, 0, err
 		}
+		columns += virtual
+		if container.kind == 'q' {
+			if columns > 3 || end == len(raw) || raw[end] != '>' {
+				return true, end, columns, nil
+			}
+			pos, virtual, err = quoteSpace(ctx, raw, end+1, b)
+			if err != nil {
+				return false, 0, 0, err
+			}
+			continue
+		}
+		if columns < container.indent {
+			return true, end, columns, nil
+		}
+		used := min(virtual, container.indent)
+		virtual -= used
+		column, err := visualColumn(ctx, raw, pos, b)
+		if err != nil {
+			return false, 0, 0, err
+		}
+		for pos < end && used < container.indent {
+			width := 1
+			if raw[pos] == '\t' {
+				width = 4 - column%4
+			}
+			used += width
+			column += width
+			pos++
+		}
+		virtual += used - container.indent
 	}
-	_, list := listMarker(raw, i)
-	return list || i < len(raw) && raw[i] == '<'
-}
-
-func markdownIndented(raw []byte) bool {
-	return len(raw) > 0 && raw[0] == '\t' || bytes.HasPrefix(raw, []byte("    "))
-}
-
-// Keep a possible next-line definition title in the same logical paragraph.
-func possibleDefinitionTitle(raw []byte) bool {
-	i := 0
-	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '>') {
-		i++
+	end, indent, err := leadingIndent(ctx, raw, pos, b)
+	if err != nil {
+		return false, 0, 0, err
 	}
-	return i < len(raw) && (raw[i] == '\'' || raw[i] == '"' || raw[i] == '(')
+	indent += virtual
+	_, list := listMarker(raw, end)
+	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, indent, nil
 }
 
-func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, nonDefinitions map[int]bool, b *budget) (bool, error) {
+func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, first int, nonDefinitions map[int]bool, probes map[int]*definitionProbe, b *budget) (bool, error) {
 	last := len(blocks) - 1
-	if last < 0 || !blocks[last].paragraph {
+	if first < 0 || first > last || !blocks[last].paragraph {
 		return false, nil
-	}
-	first := last
-	for first > 0 && blocks[first].continuation {
-		first--
 	}
 	key := blocks[first].span.Start
 	if nonDefinitions[key] {
@@ -451,12 +474,58 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 		nonDefinitions[key] = true
 		return false, nil
 	}
-	if !possibleReferenceDefinition(src[blocks[first].content.Start:blocks[first].content.End]) {
-		nonDefinitions[key] = true
+	probe := probes[key]
+	if probe == nil {
+		probe = &definitionProbe{block: first, offset: blocks[first].content.Start + 1}
+		probes[key] = probe
+	}
+	for !probe.closed && probe.block <= last {
+		block := blocks[probe.block]
+		probe.offset = max(probe.offset, block.content.Start)
+		for probe.offset < block.content.End {
+			if err := b.step(ctx, 1); err != nil {
+				return false, err
+			}
+			c := src[probe.offset]
+			probe.offset++
+			probe.bytes++
+			if probe.bytes > 4*999 {
+				nonDefinitions[key] = true
+				return false, nil
+			}
+			if probe.escaped {
+				probe.escaped = false
+				continue
+			}
+			if c == '\\' {
+				probe.escaped = true
+				continue
+			}
+			if c == '[' {
+				nonDefinitions[key] = true
+				return false, nil
+			}
+			if c == ']' {
+				probe.closed = true
+				break
+			}
+		}
+		if !probe.closed && probe.block < last {
+			probe.block++
+			probe.offset = blocks[probe.block].content.Start
+			probe.escaped = false
+		} else {
+			break
+		}
+	}
+	if !probe.closed {
 		return false, nil
 	}
 	if first == last {
 		end, err := leadingDefinitionsEnd(ctx, src, blocks[last].content, b)
+		if err == nil && end < blocks[last].content.End && !couldBeDefinition(src[end:blocks[last].content.End]) {
+			nonDefinitions[key] = true
+		}
 		return end >= blocks[last].content.End, err
 	}
 	start, end := blocks[first].span.Start, blocks[last].span.End
@@ -477,13 +546,27 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 	}
 	content := joined[len(joined)-1].content
 	position, err := leadingDefinitionsEnd(ctx, view, content, b)
+	if err == nil && position < content.End && !couldBeDefinition(view[position:content.End]) {
+		nonDefinitions[key] = true
+	}
 	return position >= content.End, err
+}
+
+type definitionProbe struct {
+	block, offset, bytes int
+	closed, escaped      bool
+}
+
+func couldBeDefinition(text []byte) bool {
+	text = bytes.TrimLeft(text, " \t\r\n")
+	return len(text) > 0 && text[0] == '[' && possibleReferenceDefinition(text)
 }
 
 // An unfinished label may become a definition on a continuation line.
 func possibleReferenceDefinition(text []byte) bool {
-	for i := 1; i < len(text); i++ {
-		if text[i] == '\\' && i+1 < len(text) {
+	limit := min(len(text), 4*999+1)
+	for i := 1; i < limit; i++ {
+		if text[i] == '\\' && i+1 < limit {
 			i++
 			continue
 		}
