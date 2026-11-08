@@ -224,39 +224,36 @@ describe("audit evidence drawer", () => {
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
   });
 
-  it.each(["HTTP", "success"])(
-    "reports damaged authority after %s status",
-    async (failure) => {
-      if (failure === "HTTP") {
-        statusMock.mockResolvedValueOnce(
-          new Response(JSON.stringify({ detail: "audit authority is incomplete" }), {
-            status: 500,
-          }),
-        );
-      }
-      verifyMock.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            enabled: false,
-            protected_blobs: 0,
-            protected_bytes: 0,
-            verified_blobs: 0,
-            metadata_problems: ["audit scope chain does not match its head"],
-          }),
-          { status: 200 },
-        ),
+  it.each(["HTTP", "success"])("reports damaged authority after %s status", async (failure) => {
+    if (failure === "HTTP") {
+      statusMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "audit authority is incomplete" }), {
+          status: 500,
+        }),
       );
-      render(AuditEvidenceDrawer, {
-        session: "short-lived",
-        onclose: vi.fn(),
-        onauthfailure: vi.fn(),
-      });
-      expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
-      expect(screen.getByText("audit scope chain does not match its head")).toBeTruthy();
-      expect(screen.queryByText(/No folders are protected/)).toBeNull();
-      expect(verifyMock).toHaveBeenCalledTimes(1);
-    },
-  );
+    }
+    verifyMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          enabled: false,
+          protected_blobs: 0,
+          protected_bytes: 0,
+          verified_blobs: 0,
+          metadata_problems: ["audit scope chain does not match its head"],
+        }),
+        { status: 200 },
+      ),
+    );
+    render(AuditEvidenceDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
+    expect(screen.getByText("audit scope chain does not match its head")).toBeTruthy();
+    expect(screen.queryByText(/No folders are protected/)).toBeNull();
+    expect(verifyMock).toHaveBeenCalledTimes(1);
+  });
 
   it("closes and requests sign-in when status returns unauthorized", async () => {
     statusMock.mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }));
