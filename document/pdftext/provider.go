@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/formatdetect"
@@ -104,7 +103,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		reason := ""
 		if page.Characters == 0 {
 			reason = "no_text_layer"
-		} else if strings.TrimFunc(page.Text, func(character rune) bool { return unicode.IsSpace(character) || unicode.IsControl(character) }) == "" {
+		} else if strings.TrimSpace(page.Text) == "" {
 			reason = "no_readable_text"
 		}
 		if reason != "" {
