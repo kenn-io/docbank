@@ -1909,6 +1909,20 @@ by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
 cache), and each Windows architecture. Only `main` pushes save, once per group
 per day, from the job that builds the most of that group; pull requests restore
 without saving so they cannot evict `main`'s caches from the repository quota.
+Before each daily save, the owning job retains the build and analysis action
+records it used and their referenced outputs, including executable directories.
+Trimming reads Go's v1 action records and rejects unknown record formats.
+The job rebuilds the module cache from restored downloads through a local file
+proxy, dropping stale versions while retaining the current `go.mod` graph,
+modules and tools requested by the job, checksum-database records, and the configured proxy fallback.
+An exact daily cache hit skips this preparation and trimming. Trimming first appears at the next new daily key.
+
+Owner saves keep the `GOMODCACHE` archive path and remove expanded module
+sources with `go clean -modcache`, preserving the `cache` subtree.
+Every restore ends with `go mod download` to expand module sources before
+the first build or test step. Existing archives keep restoring under the same
+cache version. Older workflows reading new archives expand modules in their
+first Go step.
 
 Windows jobs put `GOCACHE` and `GOMODCACHE` under `D:\a\_temp`. If D: is
 missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`
