@@ -11,9 +11,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPersonRevisionFence(t *testing.T) {
+func checkPersonRevisionFence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
 	require.NoError(t, err)
@@ -27,9 +28,10 @@ func TestPersonRevisionFence(t *testing.T) {
 	require.Equal(t, "Ada", read.DisplayName)
 }
 
-func TestPersonIdentityAuthorityAndSharedContactPoints(t *testing.T) {
+func checkPersonIdentityAuthorityAndSharedContactPoints(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	ada, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
 	require.NoError(t, err)
@@ -58,9 +60,10 @@ func TestPersonIdentityAuthorityAndSharedContactPoints(t *testing.T) {
 	require.Empty(t, identities)
 }
 
-func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
+func checkPersonMutationsAdvanceBindingEpoch(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -109,9 +112,9 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 	require.NoError(t, err)
 	var createdRowID string
 	require.NoError(t, s.writeDB.QueryRowContext(ctx,
-		`SELECT person_id FROM persons WHERE display_name=?`, "Synthetic").Scan(&createdRowID))
+		`SELECT person_id FROM persons WHERE display_name=$1`, "Synthetic").Scan(&createdRowID))
 	_, err = s.writeDB.ExecContext(ctx,
-		`UPDATE persons SET display_name=?,display_name_folded=?,revision=revision+1 WHERE person_id=?`,
+		`UPDATE persons SET display_name=$1,display_name_folded=$2,revision=revision+1 WHERE person_id=$3`,
 		"Later edit", "later edit", createdRowID)
 	require.NoError(t, err)
 	require.NoError(t, readConn.Close())
@@ -138,10 +141,10 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 	require.NoError(t, err)
 	var committedRevision int64
 	require.NoError(t, s.writeDB.QueryRowContext(ctx,
-		`SELECT revision FROM persons WHERE person_id=?`, initial.PersonID).Scan(&committedRevision))
+		`SELECT revision FROM persons WHERE person_id=$1`, initial.PersonID).Scan(&committedRevision))
 	require.Equal(t, int64(2), committedRevision)
 	_, err = s.writeDB.ExecContext(ctx,
-		`UPDATE persons SET display_name=?,display_name_folded=?,revision=revision+1 WHERE person_id=?`,
+		`UPDATE persons SET display_name=$1,display_name_folded=$2,revision=revision+1 WHERE person_id=$3`,
 		"Later edit", "later edit", initial.PersonID)
 	require.NoError(t, err)
 	require.NoError(t, readConn.Close())
@@ -153,9 +156,10 @@ func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
 	require.Equal(t, int64(2), updatedResult.person.Revision)
 }
 
-func TestPersonDetailResolvesAlias(t *testing.T) {
+func checkPersonDetailResolvesAlias(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -190,9 +194,10 @@ func TestPersonAuthorityRejectsInvalidInputs(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPerson)
 }
 
-func TestRetirePersonTombstonesResolution(t *testing.T) {
+func checkRetirePersonTombstonesResolution(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Retiring person", "transfer")
 	require.NoError(t, err)
@@ -211,15 +216,16 @@ func TestRetirePersonTombstonesResolution(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	var survivor, reason string
 	var survivorValid bool
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE(surviving_person_id,''),surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, person.PersonID).Scan(&survivor, &survivorValid, &reason))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE(surviving_person_id,''),surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=$1`, person.PersonID).Scan(&survivor, &survivorValid, &reason))
 	require.Empty(t, survivor)
 	require.False(t, survivorValid)
 	require.Equal(t, "deleted", reason)
 }
 
-func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {
+func checkRetirePersonCutsOffInboundMergeAliases(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	first, err := s.CreatePerson(t.Context(), "First", "operator")
 	require.NoError(t, err)
 	second, err := s.CreatePerson(t.Context(), "Second", "operator")
@@ -240,7 +246,7 @@ func TestRetirePersonCutsOffInboundMergeAliases(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	var survivorValid bool
 	var reason string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=?`, first.PersonID).Scan(&survivorValid, &reason))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT surviving_person_id IS NOT NULL,reason FROM person_aliases WHERE retired_person_id=$1`, first.PersonID).Scan(&survivorValid, &reason))
 	require.False(t, survivorValid)
 	require.Equal(t, "deleted", reason)
 }
@@ -261,11 +267,11 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 		nodes[name] = node
 		_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, people[name].PersonID, "")
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, recorded, people[name].PersonID)
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, recorded, people[name].PersonID)
 		require.NoError(t, err)
 	}
 	// A suppressed assertion is not depicted evidence.
-	_, err := s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-09-01T00:00:00.000000000Z',action='suppress' WHERE person_id=?`, people["Cy"].PersonID)
+	_, err := s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-09-01T00:00:00.000000000Z',action='suppress' WHERE person_id=$1`, people["Cy"].PersonID)
 	require.NoError(t, err)
 	page := func(ctx context.Context, query string, options PeopleSearchOptions, limit int) []string {
 		var ids []string
@@ -308,7 +314,7 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), "", recent, 1)[:2])
 	// Equal timestamps use folded name and ID, including across a page boundary.
-	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-01-01T00:00:00.000000001Z' WHERE person_id=?`, people["Zoe"].PersonID)
+	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-01-01T00:00:00.000000001Z' WHERE person_id=$1`, people["Zoe"].PersonID)
 	require.NoError(t, err)
 	for _, limit := range []int{1, 2, 3, 100} {
 		require.Equal(t, append([]string{people["Bob"].PersonID}, append(slices.Clone(zoes), people["Ada"].PersonID, people["Cy"].PersonID)...), page(WithPhotoHiddenToken(ctx, token), "", recent, limit))
@@ -346,7 +352,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
 				_, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
 				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("2026-0%d-01T00:00:00.000000000Z", index+1), person.PersonID)
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, fmt.Sprintf("2026-0%d-01T00:00:00.000000000Z", index+1), person.PersonID)
 				require.NoError(t, err)
 				if index > 0 {
 					switch condition {
@@ -369,7 +375,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
 			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")
 			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2025-12-01T00:00:00.000000000Z' WHERE content_version_id=?`, older.CurrentVersionID)
+			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2025-12-01T00:00:00.000000000Z' WHERE content_version_id=$1`, older.CurrentVersionID)
 			require.NoError(t, err)
 			rows, _, err = s.PeopleByDisplayName(ctx, "Bo", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
@@ -402,7 +408,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
 				_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("200%d-01-01T00:00:00.000000000Z", i+1), person.PersonID)
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, fmt.Sprintf("200%d-01-01T00:00:00.000000000Z", i+1), person.PersonID)
 				require.NoError(t, err)
 			}
 			recent := PeopleSearchOptions{RecentFirst: true}
@@ -456,7 +462,7 @@ func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
 		node := browsePhotoNode(t, s, name+".jpg", fakeHash("paging-"+name), "image/jpeg")
 		_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE person_id=?`, fmt.Sprintf("2026-01-%02dT00:00:00.000000000Z", 10-i), person.PersonID)
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, fmt.Sprintf("2026-01-%02dT00:00:00.000000000Z", 10-i), person.PersonID)
 		require.NoError(t, err)
 	}
 	options := PeopleSearchOptions{RecentFirst: true}
