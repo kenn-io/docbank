@@ -64,9 +64,15 @@ func TestReviewHeadingHTMLAttributeBrackets(t *testing.T) {
 }
 
 func TestReviewSelfClosingScriptBlock(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("<script/>\n\n# Heading\n"))
+	for _, tag := range []string{"script", "style", "pre", "textarea"} {
+		src := "<" + tag + "/>\n[hidden](hidden.md)\n\n[shown](shown.md)\n"
+		n, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err, tag)
+		require.Equal(t, []string{"shown.md"}, linkTargets(n.Links), tag)
+	}
+	n, err := Parse(t.Context(), []byte("paragraph\n<script/>\n[shown](shown.md)\n"))
 	require.NoError(t, err)
-	require.Len(t, n.Headings, 1)
+	require.Equal(t, []string{"shown.md"}, linkTargets(n.Links))
 }
 
 func TestReviewSetextAndThematicPrecedence(t *testing.T) {

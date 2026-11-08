@@ -286,7 +286,7 @@ func htmlBlockStart(ctx context.Context, text []byte, generic bool, b *budget) (
 	for _, name := range []string{"script", "style", "pre", "textarea"} {
 		if start == 1 && bytes.EqualFold(tag, []byte(name)) {
 			if i < len(text) && text[i] == '/' {
-				return "", false, nil
+				break
 			}
 			return "raw-tags", true, nil
 		}
