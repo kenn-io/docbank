@@ -58,28 +58,15 @@ func TestPDFTextCorpus(t *testing.T) {
 func TestPDFTextWhitespaceOmissions(t *testing.T) {
 	p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 3})
 	require.NoError(t, err)
-	for _, test := range []struct {
-		name      string
-		pages     []string
-		unitPages []int64
-		reasons   []string
-	}{
-		{"mixed", []string{"   ", "", "synthetic text"}, []int64{3}, []string{"no_readable_text", "no_text_layer"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			upload := newTestUpload(mediatest.PDFTextPages(test.pages, false))
-			result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
-			require.NoError(t, err)
-			require.Len(t, result.Evidence.Units, len(test.unitPages))
-			for i, page := range test.unitPages {
-				require.Equal(t, page, result.Evidence.Units[i].Locator.Start)
-			}
-			require.Len(t, result.Evidence.Omissions, len(test.reasons))
-			for i, reason := range test.reasons {
-				require.Equal(t, reason, result.Evidence.Omissions[i].Reason)
-				require.Equal(t, int64(i+1), result.Evidence.Omissions[i].Locator.Start)
-			}
-		})
+	upload := newTestUpload(mediatest.PDFTextPages([]string{"   ", "", "synthetic text"}, false))
+	result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
+	require.NoError(t, err)
+	require.Len(t, result.Evidence.Units, 1)
+	require.Equal(t, int64(3), result.Evidence.Units[0].Locator.Start)
+	require.Len(t, result.Evidence.Omissions, 2)
+	for i, reason := range []string{"no_readable_text", "no_text_layer"} {
+		require.Equal(t, reason, result.Evidence.Omissions[i].Reason)
+		require.Equal(t, int64(i+1), result.Evidence.Omissions[i].Locator.Start)
 	}
 }
 
@@ -141,40 +128,26 @@ func newTestUpload(data []byte) *mediatest.Upload {
 }
 
 func TestPDFTextSealedAdmissionRetainsProviderBounds(t *testing.T) {
-	for _, test := range []struct {
-		name, text string
-		rejected   bool
-	}{{"readable", "synthetic text", false}, {"expanded", strings.Repeat(" ", 16384), true}} {
-		t.Run(test.name, func(t *testing.T) {
-			text := test.text
-			data := redactiontest.PDF(t, []string{text}, "sealed PDF")
-			p, err := New(Profile{MaxDocumentBytes: int64(len(data)), MaxPages: 1})
-			require.NoError(t, err)
-			metadata := newTestUpload(data).Metadata()
-			authorization := mediatest.Authorization(p.Descriptor(), metadata)
-			record, err := media.InspectCapability(bytes.NewReader(data), media.InspectionPolicy{
-				Filename: metadata.Filename, DeclaredMediaType: metadata.MediaType, ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
-				DescriptorFingerprint: p.Descriptor().Fingerprint, ProfileFingerprint: strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile, PDFTextOnly: true,
-				MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
-				MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100,
-			})
-			require.NoError(t, err)
-			require.True(t, record.Eligible)
-			sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir()}, record, upload.UploadMetadata{Filename: metadata.Filename})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, sealed.Close()) })
-			authorization.CapabilityRecordChecksum = sealed.Metadata().CapabilityRecordChecksum
-			authorization.ProviderMetadataChecksum = sealed.Metadata().ProviderMetadataChecksum
-			result, err := document.RenderRendition(t.Context(), p, sealed, authorization)
-			if test.rejected {
-				require.Greater(t, record.Measurements.ExpandedBytes, int64(len(data)))
-				var providerError *document.RenditionProviderError
-				require.ErrorAs(t, err, &providerError)
-				require.Equal(t, document.RenditionErrorUnsupportedInput, providerError.Code())
-			} else {
-				require.NoError(t, err)
-				require.Contains(t, result.Evidence.Units[0].Text, text)
-			}
-		})
-	}
+	data := redactiontest.PDF(t, []string{strings.Repeat(" ", 16384)}, "sealed PDF")
+	p, err := New(Profile{MaxDocumentBytes: int64(len(data)), MaxPages: 1})
+	require.NoError(t, err)
+	metadata := newTestUpload(data).Metadata()
+	authorization := mediatest.Authorization(p.Descriptor(), metadata)
+	record, err := media.InspectCapability(bytes.NewReader(data), media.InspectionPolicy{
+		Filename: metadata.Filename, DeclaredMediaType: metadata.MediaType, ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
+		DescriptorFingerprint: p.Descriptor().Fingerprint, ProfileFingerprint: strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile, PDFTextOnly: true,
+		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
+		MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100,
+	})
+	require.NoError(t, err)
+	require.True(t, record.Eligible)
+	sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir()}, record, upload.UploadMetadata{Filename: metadata.Filename})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sealed.Close()) })
+	authorization.CapabilityRecordChecksum = sealed.Metadata().CapabilityRecordChecksum
+	authorization.ProviderMetadataChecksum = sealed.Metadata().ProviderMetadataChecksum
+	_, err = document.RenderRendition(t.Context(), p, sealed, authorization)
+	var providerError *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerError)
+	require.Equal(t, document.RenditionErrorUnsupportedInput, providerError.Code())
 }

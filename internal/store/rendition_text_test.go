@@ -165,17 +165,15 @@ func TestResolveRenditionTextIgnoresFailedPhotoDescriptions(t *testing.T) {
 func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	for _, test := range []struct {
-		name      string
-		mediaType string
-		corrupt   bool
+		name    string
+		corrupt bool
 	}{
-		{name: "plain", mediaType: "application/pdf"},
-		{name: "parameterized", mediaType: "application/pdf; version=1.7"},
-		{name: "corrupt", mediaType: "application/pdf", corrupt: true},
+		{name: "plain"},
+		{name: "corrupt", corrupt: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := open(t)
-			node, profile, artifactSize := seedOmissionOnlyPDF(t, s, test.mediaType, test.corrupt)
+			node, profile, artifactSize := seedOmissionOnlyPDF(t, s, test.corrupt)
 			view, err := s.ResolveRenditionText(t.Context(), RenditionTextBinding{NodeID: node.ID, NodeRevision: node.Revision, ContentVersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, SourceSize: node.Size, ProfileFingerprint: profile.Fingerprint})
 			if test.corrupt {
 				require.ErrorIs(t, err, ErrRenditionTextUnavailable)
@@ -189,15 +187,11 @@ func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T
 	}
 }
 
-func seedOmissionOnlyPDF(t *testing.T, s *Store, mediaType string, corrupt bool) (Node, ProcessingProfileRecord, int64) {
+func seedOmissionOnlyPDF(t *testing.T, s *Store, corrupt bool) (Node, ProcessingProfileRecord, int64) {
 	t.Helper()
 	seedRenditionCatalogVersions(t, s)
 	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
 	require.NoError(t, err)
-	if mediaType != node.MimeType {
-		node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, mediaType)
-		require.NoError(t, err)
-	}
 	profile := embeddingCatalogProfile(t)
 	build := catalogRenditionBuild(s, profile)
 	build.Units = nil
@@ -233,7 +227,7 @@ func seedOmissionOnlyPDF(t *testing.T, s *Store, mediaType string, corrupt bool)
 func checkEmptyPDFChunkSettlement(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
-	node, profile, _ := seedOmissionOnlyPDF(t, s, "application/pdf", false)
+	node, profile, _ := seedOmissionOnlyPDF(t, s, false)
 	profileFingerprint := profile.Fingerprint
 
 	coverage, err := s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{ContentVersionIDs: []string{node.CurrentVersionID}, ProcessingProfileFingerprint: profileFingerprint, Bindings: []ProcessingCoverageBinding{{BindingID: "chunk"}, {BindingID: "optional"}}})

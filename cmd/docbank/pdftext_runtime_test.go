@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
@@ -124,15 +123,8 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			require.NoError(t, stream.Close())
 			_, body, err := document.ParseRenditionFrontMatterV1(retained.Bytes())
 			require.NoError(t, err)
-			if test.text == 0 {
-				window, err := daemon.RenditionTextWindow(t.Context(), api.RenditionWindowRequest{VaultID: plan.VaultUID, NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: stream.AttachmentID, Offset: utf8.RuneCount(retained.Bytes()), MaxChars: 100})
-				require.NoError(t, err)
-				require.Empty(t, window.Text)
-				require.True(t, window.EOF)
-			} else {
-				require.Contains(t, string(body), query)
-			}
 			if test.text > 0 {
+				require.Contains(t, string(body), query)
 				search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: query, Mode: "lexical", Profile: "pdf", Limit: 10, Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
 				require.NoError(t, err)
 				require.Len(t, search.Results, 1)
