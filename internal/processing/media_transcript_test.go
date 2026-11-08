@@ -127,7 +127,7 @@ func (f captionFixture) caption(t *testing.T, occurrenceID, cue string) MediaRec
 	srt := []byte("1\n00:00:00,000 --> 00:00:01,000\n" + cue + "\n")
 	artifact, err := f.base.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
 		OperationID: uuid.New().String(), SourceID: f.remote.SourceID, OccurrenceID: occurrenceID,
-		Kind: "caption", Origin: "supplied", Provider: "synthetic", Filename: "call.srt",
+		Kind: "caption", Origin: "supplied", Provider: "synthetic", Language: "en", Filename: "call.srt",
 		MediaType: "application/x-subrip", SHA256: processingSHA256(srt), ByteLength: int64(len(srt)),
 		Content: bytes.NewReader(srt),
 	})
@@ -165,6 +165,8 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	require.Equal(t, "transcribed", ready.CoverageState)
 	require.NotNil(t, ready.Transcript)
 	require.Equal(t, "supplied", ready.Transcript.Origin)
+	require.Equal(t, "en", ready.Transcript.Language)
+	require.Equal(t, "partial", ready.Transcript.SpeechState)
 	active, err := f.fixture.catalog.ActiveRendition(t.Context(), request.ContentVersionID,
 		f.captions.profiles[f.profile].record.Fingerprint)
 	require.NoError(t, err)

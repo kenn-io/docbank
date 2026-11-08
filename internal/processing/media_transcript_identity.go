@@ -2,6 +2,7 @@ package processing
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"strings"
@@ -47,9 +48,6 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 			return errors.New("retained transcript artifact authority is invalid")
 		}
 		transcript.ArtifactSHA256 = artifact.Checksum
-		if transcript.Origin != "generated" {
-			return nil
-		}
 		stream, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
 		if err != nil {
 			return err
@@ -59,6 +57,17 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 		closeErr := stream.Close()
 		if size != artifact.Size || int64(len(raw)) != artifact.Size || readErr != nil || verifyErr != nil || closeErr != nil {
 			return errors.Join(errors.New("retained transcript artifact could not be read exactly"), readErr, verifyErr, closeErr)
+		}
+		if transcript.Origin != "generated" {
+			var identity struct {
+				ContractVersion string `json:"contract_version"`
+			}
+			if err := json.Unmarshal(raw, &identity); err != nil {
+				return err
+			}
+			if identity.ContractVersion != "media-transcript/v1" {
+				return nil
+			}
 		}
 		timed, err := mediatranscript.Unmarshal(raw)
 		if err != nil {
