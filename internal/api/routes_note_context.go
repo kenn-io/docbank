@@ -21,7 +21,7 @@ import (
 )
 
 const noteContextMaxBytes = 60 << 10
-const noteProjectionReady = "ready"
+const stateReady = "ready"
 
 type noteCoverageParameter struct {
 	Value NoteCoverageSelection
@@ -151,14 +151,14 @@ func noteContextWire(page store.NoteContextPage) (NoteContextPage, error) {
 	var note notemarkdown.Note
 	if page.ParseFound {
 		wire.Readiness.Parse.State, wire.Readiness.Parse.Reason = page.Parse.State, page.Parse.Reason
-		if page.Parse.State == noteProjectionReady {
+		if page.Parse.State == stateReady {
 			if err := json.Unmarshal(page.Parse.Artifact, &note, json.RejectUnknownMembers(true)); err != nil {
 				return NoteContextPage{}, err
 			}
 		}
 	}
 	if page.GraphReady {
-		wire.Readiness.Graph.State, wire.Readiness.Graph.Generation = noteProjectionReady, page.Generation.ID
+		wire.Readiness.Graph.State, wire.Readiness.Graph.Generation = stateReady, page.Generation.ID
 	}
 	clip := func(value string, limit int, field string) string {
 		if len(value) <= limit {

@@ -79,7 +79,7 @@ func TestBrainRegistryNameValidationProperty(t *testing.T) {
 		name := hegel.Draw(ht, hegel.Text().MaxSize(80))
 		r, err := OpenRegistry(filepath.Join(dir, "registry"))
 		require.NoError(ht, err)
-		cfg := ConnectionConfig{Name: name, SourceRoot: filepath.Join(dir, "source"), Destination: "/knowledge", LocalVaultRoot: filepath.Join(dir, "vault"), ScanInterval: time.Nanosecond}
+		cfg := ConnectionConfig{Name: name, SourceRoot: filepath.Join(dir, "source"), Destination: "/knowledge", LocalVaultRoot: filepath.Join(dir, "vault"), SettleTime: time.Nanosecond, ScanInterval: time.Nanosecond}
 		err = r.Put(t.Context(), cfg)
 		if validName.MatchString(name) {
 			require.NoError(ht, err)

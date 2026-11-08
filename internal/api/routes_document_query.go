@@ -117,7 +117,7 @@ func (service *documentQueryService) toDocumentPage(
 		wire.NoteReadiness = &NoteReadiness{Publisher: fromNotePublicationStatus(page.NoteReadiness.Publisher),
 			Parse: NoteProjectionReadiness{State: "unknown"}, Graph: NoteProjectionReadiness{State: "pending"}}
 		if page.NoteReadiness.Generation != "" {
-			wire.NoteReadiness.Graph.State = "ready"
+			wire.NoteReadiness.Graph.State = stateReady
 			wire.NoteReadiness.Graph.Generation = page.NoteReadiness.Generation
 		}
 	}

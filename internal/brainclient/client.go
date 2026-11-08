@@ -87,12 +87,13 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 	}
 	saved, err := c.registry.Get(ctx, cfg.Name)
 	if err == nil {
-		if equalConfig(saved, cfg) {
+		if !equalConfig(saved, cfg) {
+			return fmt.Errorf("connection already exists with different settings: %w", fs.ErrExist)
+		}
+		if !cfg.IndexLocal {
 			return nil
 		}
-		return fmt.Errorf("connection already exists with different settings: %w", fs.ErrExist)
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	conn, _, err := c.connection(ctx, cfg, true)

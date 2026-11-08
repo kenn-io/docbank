@@ -38,10 +38,10 @@ func TestValidateNoteLocalTextPlan(t *testing.T) {
 		"inconsistent consent": func(p *NoteLocalTextPlan) { p.Plan.ConsentState = "active" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			copy := valid
-			copy.Plan.Flow = append([]ProcessingFlowHop(nil), valid.Plan.Flow...)
-			mutate(&copy)
-			require.Error(t, ValidateNoteLocalTextPlan(copy))
+			candidate := valid
+			candidate.Plan.Flow = append([]ProcessingFlowHop(nil), valid.Plan.Flow...)
+			mutate(&candidate)
+			require.Error(t, ValidateNoteLocalTextPlan(candidate))
 		})
 	}
 }

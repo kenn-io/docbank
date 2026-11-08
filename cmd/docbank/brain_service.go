@@ -31,7 +31,7 @@ func brainServiceSpec(ctx context.Context, name, root string) (brainservice.Spec
 	}
 	current, err := user.Current()
 	if err != nil {
-		return brainservice.Spec{}, err
+		return brainservice.Spec{}, fmt.Errorf("resolving current user: %w", err)
 	}
 	executable, err := os.Executable()
 	if err != nil {

@@ -58,6 +58,10 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 			return status, ctx.Err()
 		}
 		status.ProblemCode = "indexing_status_unavailable"
+		if daemonconn.IsTransportError(err) {
+			status.ConnectionState = "unknown"
+			status.ProblemCode = "daemon_unavailable"
+		}
 		return status, nil
 	}
 	if err := api.ValidateNoteLocalTextPlan(plan); err != nil {

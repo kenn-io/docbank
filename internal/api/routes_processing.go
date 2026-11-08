@@ -732,7 +732,7 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 }
 
 func fromDocumentSimilarReport(report retrieval.SimilarReport) DocumentSimilarReport {
-	result := DocumentSimilarReport{State: "ready", Source: DocumentSimilarSource{NodeID: report.Source.NodeID, ContentVersionID: report.Source.ContentVersionID},
+	result := DocumentSimilarReport{State: stateReady, Source: DocumentSimilarSource{NodeID: report.Source.NodeID, ContentVersionID: report.Source.ContentVersionID},
 		BindingID: report.BindingID, Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired, State: string(report.Coverage.State),
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments}, Truncated: report.Truncated,
 		Results: make([]DocumentSimilarResult, len(report.Results))}
