@@ -332,7 +332,7 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		records = append(records, struct {
 			id, text  string
 			generated bool
-		}{fmt.Sprintf("distractor-%d", i), "The telescope delivery arrives Friday at three.", false})
+		}{fmt.Sprintf("distractor-%d", i), fmt.Sprintf("The telescope delivery arrives Friday at three, reference %d.", i), false})
 	}
 	for i, item := range records {
 		if item.id == "a-v1" && option.TranscriptA != "" {

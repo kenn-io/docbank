@@ -1,10 +1,12 @@
 package api_test
 
 import (
+	"bytes"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/vectorindex"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -272,6 +274,37 @@ func TestSelectedMediaSearchFencesDistractorsBeforeLaneLimit(t *testing.T) {
 		require.Equal(t, "complete", report.Coverage.State)
 		require.Equal(t, 1, report.Coverage.ScopedDocuments)
 		require.False(t, report.Truncated)
+		// Inspect the real persisted index as well as the HTTP result. Distinct
+		// transcript checksums keep the distractors from sharing one vector row.
+		var inputID, space string
+		for _, evidence := range report.Results[0].Evidence {
+			if evidence.Kind == "embedding" {
+				inputID, space = evidence.InputID, evidence.VectorSpaceID
+			}
+		}
+		require.NotEmpty(t, inputID)
+		stored, err := f.catalog.ActiveVectorIndexGeneration(t.Context(), space)
+		require.NoError(t, err)
+		index, err := vectorindex.OpenGeneration(bytes.NewReader(stored.Bytes), int64(len(stored.Bytes)))
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, index.Metadata().RowCount, 5)
+		neighbors, err := index.Search([]float32{1, 0, 0}, index.Metadata().RowCount)
+		require.NoError(t, err)
+		var selectedScore float64
+		found := false
+		for _, neighbor := range neighbors {
+			if neighbor.InputKey == inputID {
+				selectedScore, found = neighbor.Score, true
+			}
+		}
+		require.True(t, found)
+		outranking := 0
+		for _, neighbor := range neighbors {
+			if neighbor.Score > selectedScore {
+				outranking++
+			}
+		}
+		require.Greater(t, outranking, 1, "more unique retained rows must outrank the selected row than the lane can admit")
 		for _, evidence := range report.Results[0].Evidence {
 			require.Equal(t, report.MediaSelections[0].BuildID, evidence.BuildID)
 			require.Len(t, evidence.MediaSources, 1)

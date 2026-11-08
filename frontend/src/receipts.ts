@@ -425,10 +425,14 @@ export function validateDocumentSearchReport(
   const unavailableMedia =
     actualMode === "unavailable" &&
     (requestedMode === "semantic" || requestedMode === "hybrid") &&
-    Array.isArray(request.media_sources) && request.media_sources.length > 0 &&
-    report.media_source_selection === true && request.rerank !== true &&
-    Array.isArray(report.results) && report.results.length === 0 &&
-    isRecord(report.coverage) && report.coverage.state === "incomplete" &&
+    Array.isArray(request.media_sources) &&
+    request.media_sources.length > 0 &&
+    report.media_source_selection === true &&
+    request.rerank !== true &&
+    Array.isArray(report.results) &&
+    report.results.length === 0 &&
+    isRecord(report.coverage) &&
+    report.coverage.state === "incomplete" &&
     report.coverage.complete_documents === 0;
   if (
     report.requested_mode !== requestedMode ||
