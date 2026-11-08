@@ -994,6 +994,7 @@ var backendSuites = []backendSuite{
 		{"NotePublicationSourceSnapshot", checkNotePublicationSourceSnapshotSQLite, checkNotePublicationSourceSnapshotPostgres},
 		{"NoteProjection", checkNoteProjectionSQLite, checkNoteProjectionPostgres},
 		{"NoteIndex", checkNoteIndexSQLite, checkNoteIndexPostgres},
+		{"NoteContext", checkNoteContextSQLite, checkNoteContextPostgres},
 		{"PublishedNoteIdentities", checkPublishedNoteIdentitiesSQLite, checkPublishedNoteIdentitiesPostgres},
 	}},
 	{name: "sources", postgres: "native operations", scope: "Provenance, collections, labels and related photo/event effects.", scenarios: []backendScenario{
