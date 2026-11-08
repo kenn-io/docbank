@@ -37,8 +37,8 @@ prove it holds that key before push sends the key or any file. Rejected files
 are reported and skipped, and then the exit code is nonzero.
 
 --markdown-brain publishes only .md/.markdown files as a managed current view.
-Completed inventories retire removed paths from that view while keeping history.
-Managed watch defaults to a two-second settle window and five-second polling.`,
+Completed scans remove paths from the view but keep history. Watch settles
+in two seconds and polls every five seconds by default.`,
 		Example: `  docbank push ~/documents --to http://127.0.0.1:7778 --name laptop --dest /documents
   docbank push ~/documents --to http://127.0.0.1:7778 --name laptop --dest /documents --watch`,
 		GroupID: groupSources,
