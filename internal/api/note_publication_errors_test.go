@@ -25,6 +25,9 @@ func TestNotePublicationUploadErrorsKeepStorageDetailsPrivate(t *testing.T) {
 		{store.ErrPublicationSourceStale, 409, "publication_source_stale"},
 		{store.ErrPublicationScanSuperseded, 409, "publication_scan_superseded"},
 		{ingest.ErrUploadDigestMismatch, 422, "digest_mismatch"},
+		{store.ErrExists, 409, "exists"},
+		{store.ErrNotDir, 422, "not_dir"},
+		{store.ErrInvalidName, 422, "validation"},
 	} {
 		mapped := notePublicationUploadError(test.cause)
 		require.Equal(t, test.status, mapped.Status)
