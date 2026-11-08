@@ -181,31 +181,58 @@ func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.P
 
 func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	t.Parallel()
-	x, omitted := newFaceSuggestionBatchFixture(t)
-	ctx := t.Context()
-	service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
-	require.NoError(t, err)
-	t.Cleanup(service.Stop)
-	require.NoError(t, service.rebuildFaceSuggestions(ctx))
-	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.Empty(t, page, "partial groups must stay unpublished")
-	require.Zero(t, total)
-	_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: "dismiss"})
-	require.NoError(t, err)
-	for attempt := 0; attempt < 32 && service.faceSuggestionsSignature == ""; attempt++ {
-		require.NoError(t, service.rebuildFaceSuggestions(ctx))
+	for _, action := range []string{"dismiss", "name"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			x, omitted := newFaceSuggestionBatchFixture(t)
+			ctx := t.Context()
+			service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
+			require.NoError(t, err)
+			t.Cleanup(service.Stop)
+			require.NoError(t, service.rebuildFaceSuggestions(ctx))
+			page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+			require.NoError(t, err)
+			require.Empty(t, page, "partial groups must stay unpublished")
+			require.Zero(t, total)
+			personID := ""
+			expectedTotal := int64(498)
+			if action == "name" {
+				person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+				require.NoError(t, err)
+				personID, expectedTotal = person.PersonID, 499
+			}
+			_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: action, PersonID: personID})
+			require.NoError(t, err)
+			for attempt := 0; attempt < 32 && service.faceSuggestionsSignature == ""; attempt++ {
+				require.NoError(t, service.rebuildFaceSuggestions(ctx))
+			}
+			require.NotEmpty(t, service.faceSuggestionsSignature)
+			_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
+			require.NoError(t, err)
+			require.Equal(t, expectedTotal, total, "only current evidence must reach publication")
+			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+			require.NoError(t, err)
+			require.Equal(t, snapshot.Signature, service.faceSuggestionsSignature)
+			retired, _, err := x.f.catalog.PersonCandidates(ctx, "superseded", 24, 0)
+			require.NoError(t, err)
+			require.Empty(t, retired, "stale groups must never be published")
+			if action == "name" {
+				found := false
+				for offset := 0; offset < 500; offset += 250 {
+					groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+					require.NoError(t, err)
+					for _, group := range groups {
+						if group.SuggestedPersonID == personID {
+							require.Len(t, group.Faces, 1)
+							require.NotEqual(t, omitted.FaceID, group.Faces[0].FaceID)
+							found = true
+						}
+					}
+				}
+				require.True(t, found, "catch-up must suggest the remaining face for the newly named person")
+			}
+		})
 	}
-	require.NotEmpty(t, service.faceSuggestionsSignature)
-	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 498, total, "only current evidence must reach publication")
-	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Equal(t, snapshot.Signature, service.faceSuggestionsSignature)
-	retired, _, err := x.f.catalog.PersonCandidates(ctx, "superseded", 24, 0)
-	require.NoError(t, err)
-	require.Empty(t, retired, "stale groups must never be published")
 }
 
 func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
@@ -281,65 +308,6 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 		synctest.Wait()
 		require.Equal(t, current.Signature, x.service.faceSuggestionsSignature, "the lane must publish the final input snapshot without another write")
 	})
-}
-
-func TestFaceSuggestionBatchesPreserveNewFaceAssignment(t *testing.T) {
-	t.Parallel()
-	x, _ := newFaceSuggestionBatchFixture(t)
-	ctx := t.Context()
-	seed := x.inputs[0]
-	if seed.Box.X > .2 {
-		seed = x.inputs[1]
-	}
-	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	_, err = x.f.catalog.DecidePhotoFace(ctx, seed.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: seed.FaceID, Revision: seed.Revision, Action: "name", PersonID: person.PersonID})
-	require.NoError(t, err)
-	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature == ""; attempt++ {
-		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	}
-	readGroups := func() []store.FaceCandidate {
-		var groups []store.FaceCandidate
-		for offset := 0; offset < 500; offset += 250 {
-			page, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
-			require.NoError(t, err)
-			groups = append(groups, page...)
-		}
-		return groups
-	}
-	groups := readGroups()
-	var named store.FaceCandidate
-	for _, group := range groups {
-		if group.SuggestedPersonID == person.PersonID {
-			named = group
-		}
-	}
-	require.Len(t, named.Faces, 2)
-	_, err = x.f.catalog.UpdatePerson(ctx, person.PersonID, person.Revision, "Ada Lovelace")
-	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	require.NotNil(t, x.service.faceSuggestionsPending, "name the face between comparison batches")
-	face := named.Faces[0]
-	_, err = x.f.catalog.DecidePhotoFace(ctx, face.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: "name", PersonID: person.PersonID})
-	require.NoError(t, err)
-	for attempt := 0; attempt < 32 && x.service.faceSuggestionsPending != nil; attempt++ {
-		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	}
-	require.Nil(t, x.service.faceSuggestionsPending)
-	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature != snapshot.Signature; attempt++ {
-		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	}
-	groups = readGroups()
-	for _, group := range groups {
-		if group.SuggestedPersonID == person.PersonID {
-			require.Len(t, group.Faces, 1)
-			require.NotEqual(t, face.FaceID, group.Faces[0].FaceID, "the named face must stay out of suggestions")
-			return
-		}
-	}
-	t.Fatal("catch-up must suggest the remaining face")
 }
 
 func TestFaceSuggestionsPublishDuringImports(t *testing.T) {

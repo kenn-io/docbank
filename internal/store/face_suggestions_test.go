@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,8 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func TestFaceCandidateRejectionAfterSourceUnavailable(t *testing.T) {
@@ -366,79 +363,54 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
 	t.Helper()
 	var s *Store
-	var seed *sql.DB
-	prefix := ""
 	if postgres {
-		setup, owner := pgtest.NewDatabase(t)
-		s = newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
-		seed, prefix = setup, "documents."
+		s = newPostgresQueryStore(t)
 	} else {
 		s = newTestStore(t)
-		seed = s.db
 	}
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "faces.jpg", fakeHash("f1"), 12, "image/jpeg")
 	require.NoError(t, err)
 	faces := make([]FaceSuggestionFace, 2)
 	for i := range faces {
-		faces[i].PhotoFace = PhotoFace{FaceID: uuid.New().String(), ContentVersionID: node.CurrentVersionID, Box: document.FaceBox{X: float64(i) * .5, Width: .2, Height: .2}, Revision: 1}
-		if postgres {
-			_, err = s.db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES($1,$2,$3,0,0.2,0.2,1,$4)`, faces[i].FaceID, node.CurrentVersionID, faces[i].Box.X, "2026-01-01T00:00:00Z")
-			require.NoError(t, err)
-		} else {
-			faces[i].PhotoFace, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, faces[i].FaceID, faces[i].Box, "")
-			require.NoError(t, err)
-		}
+		faces[i].PhotoFace, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: float64(i) * .5, Width: .2, Height: .2}, "")
+		require.NoError(t, err)
 	}
 	candidate, err := NewFaceCandidate(faces, "", "")
 	require.NoError(t, err)
-	id := uuid.New().String()
-	if postgres {
-		candidate, err = normalizePersonCandidate(candidate)
-		require.NoError(t, err)
-		_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at) VALUES($1,$2,$3,'face_match',$4,$5,2,1,'open',$6)`, id, candidate.ActorKey, candidate.DisplayName, string(candidate.Evidence), candidate.EvidenceSHA256, "2026-01-01T00:00:00Z")
-		require.NoError(t, err)
-		for _, face := range faces {
-			_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_candidate_faces(candidate_id,face_id,content_version_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, face.FaceID, face.ContentVersionID)
-			require.NoError(t, err)
-		}
-	} else {
-		require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{candidate}))
-		rows, _, err := s.PersonCandidates(ctx, "open", 24, 0)
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		id = rows[0].CandidateID
-	}
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{candidate}))
+	rows, _, err := s.PersonCandidates(ctx, "open", 24, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
 	page, total, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)
 	require.Len(t, page, 1)
-	require.Equal(t, id, page[0].CandidateID)
+	require.Equal(t, rows[0].CandidateID, page[0].CandidateID)
 	require.Len(t, page[0].Faces, 2)
 	for _, face := range page[0].Faces {
 		require.Equal(t, node.CurrentVersionID, face.ContentVersionID)
 	}
-	_, err = seed.ExecContext(ctx, `UPDATE `+prefix+`photo_assets SET excluded_at=$1 WHERE asset_id=(SELECT asset_id FROM `+prefix+`photo_files WHERE node_id=$2)`, "2026-01-02T00:00:00Z", node.ID)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	page, total, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, page)
 	require.Zero(t, total)
-	_, err = seed.ExecContext(ctx, `UPDATE `+prefix+`photo_assets SET excluded_at=NULL WHERE asset_id=(SELECT asset_id FROM `+prefix+`photo_files WHERE node_id=$1)`, node.ID)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
 	page, total, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.EqualValues(t, 1, total)
-	_, err = seed.ExecContext(ctx, `UPDATE `+prefix+`nodes SET trashed_at=$1 WHERE id=$2`, "2026-01-03T00:00:00Z", node.ID)
+	_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
 	require.NoError(t, err)
 	page, total, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, page)
 	require.Zero(t, total)
-	if postgres {
-		faceMatchingSnapshot(t, s)
-	}
 }
 
 func faceMatchingSignature(t *testing.T, s *Store) string {

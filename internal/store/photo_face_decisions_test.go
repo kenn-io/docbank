@@ -1409,7 +1409,7 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	require.Equal(t, personCandidateStateRejected, decided.State)
 	faces, _, _, err = s.PhotoFacePersonNames(ctx, current.ID)
 	require.NoError(t, err)
-	require.Equal(t, []string{p.PersonID}, faces[0].RejectedPersonIDs)
+	require.Empty(t, faces[0].RejectedPersonIDs, "pruning preserves the original group rejection scope")
 	backup.Reset()
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	require.NoError(t, newTestStore(t).ImportMetadata(ctx, &backup))

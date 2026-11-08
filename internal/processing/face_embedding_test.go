@@ -331,29 +331,6 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 
-func TestFacePickerReadsOneSharedPhoto(t *testing.T) {
-	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	x.matchAll = true
-	ctx := t.Context()
-	named := x.inputs[0]
-	_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
-	require.NoError(t, err)
-	x.enable(t)
-	_, err = x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-	options := store.PeopleSearchOptions{FaceID: x.inputs[1].FaceID, FaceReader: reader, RecentFirst: true}
-	for _, query := range []string{"", "A", "Ad", "Ada"} {
-		reader.opens = 0
-		people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
-		require.NoError(t, err)
-		require.Len(t, people, 1)
-		require.Equal(t, "Ada", people[0].DisplayName)
-		require.Equal(t, 1, reader.opens, "each query opens the shared photo only once")
-	}
-}
-
 func newNamedFacePickerFixture(t *testing.T) (*faceEmbeddingFixture, string) {
 	t.Helper()
 	ctx := t.Context()
@@ -477,6 +454,14 @@ func TestFacePickerUsesNamedFacesFromQueryPhoto(t *testing.T) {
 	require.Equal(t, personID, people[0].PersonID, "the matching named face in the query photo ranks Ada ahead of Zoe")
 	require.Contains(t, people[0].RecentRank, "#", "the named source contributes to vector ranking")
 	require.Equal(t, 4, reader.opens)
+	for _, query := range []string{"A", "Ad", "Ada"} {
+		reader.opens = 0
+		people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 24, true, options)
+		require.NoError(t, err)
+		require.Len(t, people, 1)
+		require.Equal(t, personID, people[0].PersonID)
+		require.Equal(t, 3, reader.opens, "the query photo and Ada's two other photos each open once")
+	}
 }
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {

@@ -538,15 +538,15 @@ func (s *Store) rejectFaceTx(ctx context.Context, tx *sql.Tx, before *PhotoFaceD
 	if err := s.clearNamedFaceCandidatesTx(ctx, tx, before, face.FaceID, request.PersonID, request.Action); err != nil {
 		return err
 	}
-	raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: face.ContentVersionID, Role: personAssertionRoleDepicted, EvidenceKind: "face", EvidenceID: face.FaceID}})
-	if err != nil {
-		return err
-	}
 	person := request.PersonID
 	if request.Action == "dismiss" {
 		person = ""
 	}
-	c, kept, err := s.retainPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + face.FaceID, DisplayName: "Face", SuggestedPersonID: person, Reason: personCandidateReasonFaceMatch, Evidence: raw}, true)
+	candidate, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, person, "Face")
+	if err != nil {
+		return err
+	}
+	c, kept, err := s.retainPersonCandidate(ctx, tx, candidate, true)
 	if err != nil {
 		return err
 	}
