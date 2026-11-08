@@ -48,7 +48,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"photo XMP publication", "photo_xmp.go: settlePhotoXMPTx; document_maintenance.go: refreshPhotoAssetWorkTx", "photo-edit contracts; receipts are replaced rather than updated", `
  photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
 	{"photo metadata recovery", "unported: source-head recovery", "must refresh export work when heads are removed", `photo_xmp_unsettled_head_delete`},
-	{"people candidates", "unported: person candidate publication", "must update the candidate-to-face projection in the publishing transaction", `
+	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation contracts cover inserts; evidence replacement during metadata restore remains unqualified", `
  person_candidate_faces_insert person_candidate_faces_update`},
 	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
  nodes_fts_insert nodes_fts_delete nodes_fts_update

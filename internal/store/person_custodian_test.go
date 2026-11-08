@@ -23,9 +23,10 @@ func TestCustodianScopeRejectsMixedCoordinates(t *testing.T) {
 	require.Error(t, validateCustodianScope(CustodianScope{Kind: "document", ContentVersionID: "version-a", NodeID: 2, PackageID: "package-a"}))
 }
 
-func TestCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T) {
+func checkCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, s, "custodian-package")
 	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "CUS000001")
@@ -82,9 +83,10 @@ func TestCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T) {
 	require.Equal(t, other.AssignmentID, others[0].AssignmentID)
 }
 
-func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
+func checkCustodianAssignmentUsesRealVersion(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	node, version := seedPeopleVersion(t, s)
 	_, err := s.SetCustodian(t.Context(), CustodianRequest{Scope: CustodianScope{
 		Kind: "document", NodeID: node, ContentVersionID: version}, RawLabel: "Records Team",
@@ -97,9 +99,10 @@ func TestCustodianAssignmentUsesRealVersion(t *testing.T) {
 	require.Nil(t, rows[0].PersonID)
 }
 
-func TestCustodianAdditionalRejectsDuplicateClaim(t *testing.T) {
+func checkCustodianAdditionalRejectsDuplicateClaim(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
 	request := CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: node, ContentVersionID: version},
@@ -121,9 +124,10 @@ func TestCustodianAdditionalRejectsDuplicateClaim(t *testing.T) {
 	require.Len(t, rows, 2)
 }
 
-func TestCustodianCollectionAppliesOnlyToMembers(t *testing.T) {
+func checkCustodianCollectionAppliesOnlyToMembers(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	_, unrelatedVersion := seedPeopleVersion(t, s)
 	run, err := s.BeginIngest(ctx, "cli", "Synthetic custodian collection")
@@ -151,9 +155,10 @@ func TestCustodianCollectionAppliesOnlyToMembers(t *testing.T) {
 	require.Empty(t, rows)
 }
 
-func TestCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T) {
+func checkCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	run, err := s.BeginCallerSuppliedIngest(ctx, "cli", "Synthetic source assertion")
 	require.NoError(t, err)
@@ -165,9 +170,10 @@ func TestCustodianCollectionRejectsCallerSuppliedProvenance(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestCustodiansIncludesRetiredPersonAsUnresolved(t *testing.T) {
+func checkCustodiansIncludesRetiredPersonAsUnresolved(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(ctx, "Records owner", "operator")
@@ -187,9 +193,10 @@ func TestCustodiansIncludesRetiredPersonAsUnresolved(t *testing.T) {
 	require.Nil(t, unresolved[0].PersonID)
 }
 
-func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) {
+func checkCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node, version := seedPeopleVersion(t, s)
 	first, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
@@ -212,7 +219,7 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	require.NotNil(t, assignment.PersonID)
 	require.Equal(t, first.PersonID, *assignment.PersonID)
 	var folded string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT raw_label_folded FROM custodian_assignments WHERE assignment_id=?`, assignment.AssignmentID).Scan(&folded))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT raw_label_folded FROM custodian_assignments WHERE assignment_id=$1`, assignment.AssignmentID).Scan(&folded))
 	require.Equal(t, "ada lovelace", folded)
 
 	_, err = s.SetCustodian(ctx, CustodianRequest{Scope: scope, PersonID: second.PersonID,
@@ -234,9 +241,10 @@ func TestCustodianMutationUsesRevisionFenceAndNullableCoordinates(t *testing.T) 
 	require.Equal(t, epochBefore+3, epoch)
 }
 
-func TestCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t *testing.T) {
+func checkCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "Synthetic custodian collection")
 	require.NoError(t, err)
@@ -305,9 +313,10 @@ func TestCustodianAuthorityRejectsInvalidValuesAndReferences(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPerson)
 }
 
-func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
+func checkResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, s, "resolve-custodian")
 	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "CUS000010")
@@ -337,9 +346,10 @@ func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
-func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
+func checkOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	pkg, node := seedReceivedPackage(t, s, "operator-custodian")
 	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "CUS000020")
@@ -482,7 +492,7 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 				require.NoError(t, err)
 			}
 			var retained int
-			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM document_people WHERE person_id=?`, person.PersonID).Scan(&retained))
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM document_people WHERE person_id=$1`, person.PersonID).Scan(&retained))
 			require.Positive(t, retained)
 			all, _, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, false, PeopleSearchOptions{})
 			require.NoError(t, err)

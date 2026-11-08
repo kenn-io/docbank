@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -89,7 +91,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 					return ErrStaleRevision
 				}
 				personID := nullableCustodianString(request.PersonID)
-				result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,raw_label=?,raw_label_folded=?,basis=?,source_ref=?,revision=revision+1,recorded_at=? WHERE assignment_id=? AND revision=?`, personID, request.RawLabel, document.FoldPersonName(request.RawLabel), request.Basis, request.SourceRef, nowRFC3339(), assignmentID, revision)
+				result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,raw_label=$2,raw_label_folded=$3,basis=$4,source_ref=$5,revision=revision+1,recorded_at=$6 WHERE assignment_id=$7 AND revision=$8`, personID, request.RawLabel, document.FoldPersonName(request.RawLabel), request.Basis, request.SourceRef, nowRFC3339(), assignmentID, revision)
 				if err != nil {
 					return err
 				}
@@ -107,8 +109,9 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 			}
 		} else {
 			var exists bool
+			match := fmt.Sprintf(" AND person_id IS NOT DISTINCT FROM $%d AND raw_label_folded=$%d AND basis=$%d AND source_ref=$%d)", len(args)+1, len(args)+2, len(args)+3, len(args)+4)
 			args = append(args, nullableCustodianString(request.PersonID), document.FoldPersonName(request.RawLabel), request.Basis, request.SourceRef)
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM custodian_assignments WHERE retired_at IS NULL AND rank='additional' AND `+predicate+` AND person_id IS ? AND raw_label_folded=? AND basis=? AND source_ref=?)`, args...).Scan(&exists); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM custodian_assignments WHERE retired_at IS NULL AND rank='additional' AND `+predicate+match, args...).Scan(&exists); err != nil {
 				return err
 			}
 			if exists {
@@ -124,8 +127,8 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 			return err
 		}
 		ingestID, packageID, packageRecordID, nodeID, versionID := custodianScopeValues(request.Scope)
-		_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, assignmentID, request.Scope.Kind, ingestID, packageID, packageRecordID, nodeID, versionID, nullableCustodianString(request.PersonID), request.RawLabel, document.FoldPersonName(request.RawLabel), request.Rank, request.Basis, request.SourceRef, nowRFC3339())
-		if s.driver.IsUniqueViolation(err) {
+		_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, assignmentID, request.Scope.Kind, ingestID, packageID, packageRecordID, nodeID, versionID, nullableCustodianString(request.PersonID), request.RawLabel, document.FoldPersonName(request.RawLabel), request.Rank, request.Basis, request.SourceRef, nowRFC3339())
+		if s.isUniqueViolation(err) {
 			return ErrCustodianConflict
 		}
 		if err != nil {
@@ -160,7 +163,7 @@ func custodianScopeValues(scope CustodianScope) (ingestID, packageID, packageRec
 func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request CustodianRequest) error {
 	if request.PersonID != "" {
 		var state string
-		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=?`, request.PersonID).Scan(&state); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=$1`, request.PersonID).Scan(&state); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
@@ -171,7 +174,7 @@ func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request Cust
 	switch request.Scope.Kind {
 	case "collection":
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ingests WHERE id=? AND source_kind NOT LIKE 'embedded:%')`, request.Scope.IngestID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ingests WHERE id=$1 AND LOWER(source_kind) NOT LIKE 'embedded:%')`, request.Scope.IngestID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -179,7 +182,7 @@ func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request Cust
 		}
 	case "document":
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=? AND node_id=?)`, request.Scope.ContentVersionID, request.Scope.NodeID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=$1 AND node_id=$2)`, request.Scope.ContentVersionID, request.Scope.NodeID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -187,14 +190,14 @@ func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request Cust
 		}
 	case "package":
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM packages WHERE package_id=?)`, request.Scope.PackageID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM packages WHERE package_id=$1)`, request.Scope.PackageID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
 			return ErrNotFound
 		}
 		if request.Scope.PackageRecordID != "" {
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM package_records WHERE package_id=? AND row_id=?)`,
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM package_records WHERE package_id=$1 AND row_id=$2)`,
 				request.Scope.PackageID, request.Scope.PackageRecordID).Scan(&exists); err != nil {
 				return err
 			}
@@ -209,11 +212,11 @@ func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request Cust
 func exactCustodianScopePredicate(scope CustodianScope) (string, []any) {
 	switch scope.Kind {
 	case "collection":
-		return `scope_kind='collection' AND ingest_id=?`, []any{scope.IngestID}
+		return `scope_kind='collection' AND ingest_id=$1`, []any{scope.IngestID}
 	case "package":
-		return `scope_kind='package' AND package_id=? AND package_record_id=?`, []any{scope.PackageID, scope.PackageRecordID}
+		return `scope_kind='package' AND package_id=$1 AND package_record_id=$2`, []any{scope.PackageID, scope.PackageRecordID}
 	default:
-		return `scope_kind='document' AND content_version_id=?`, []any{scope.ContentVersionID}
+		return `scope_kind='document' AND content_version_id=$1`, []any{scope.ContentVersionID}
 	}
 }
 
@@ -230,7 +233,7 @@ func (s *Store) RetireCustodian(ctx context.Context, assignmentID string, revisi
 			return ErrStaleRevision
 		}
 		now := nowRFC3339()
-		result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET retired_at=?,revision=revision+1 WHERE assignment_id=? AND revision=?`, now, assignmentID, revision)
+		result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET retired_at=$1,revision=revision+1 WHERE assignment_id=$2 AND revision=$3`, now, assignmentID, revision)
 		if err != nil {
 			return err
 		}
@@ -270,14 +273,14 @@ func (s *Store) ResolveCustodian(ctx context.Context, assignmentID, personID str
 			return err
 		}
 		var state string
-		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=?`, canonicalID).Scan(&state); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=$1`, canonicalID).Scan(&state); err != nil {
 			return err
 		}
 		if state == "retired" {
 			return ErrPersonRetired
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1,recorded_at=?
-			WHERE assignment_id=? AND revision=? AND retired_at IS NULL`, canonicalID, nowRFC3339(), assignmentID, revision)
+		result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,revision=revision+1,recorded_at=$2
+			WHERE assignment_id=$3 AND revision=$4 AND retired_at IS NULL`, canonicalID, nowRFC3339(), assignmentID, revision)
 		if err != nil {
 			return err
 		}
@@ -328,8 +331,8 @@ func (s *Store) SetOperatorPackageCustodian(ctx context.Context, request Custodi
 		case err == nil && current != request.IfMatchRevision:
 			return ErrStaleRevision
 		case err == nil:
-			result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,raw_label=?,raw_label_folded=?,source_ref=?,revision=revision+1,recorded_at=?
-				WHERE assignment_id=? AND revision=?`, nullableCustodianString(request.PersonID), request.RawLabel,
+			result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,raw_label=$2,raw_label_folded=$3,source_ref=$4,revision=revision+1,recorded_at=$5
+				WHERE assignment_id=$6 AND revision=$7`, nullableCustodianString(request.PersonID), request.RawLabel,
 				document.FoldPersonName(request.RawLabel), request.SourceRef, nowRFC3339(), assignmentID, current)
 			if err != nil {
 				return err
@@ -352,10 +355,10 @@ func (s *Store) SetOperatorPackageCustodian(ctx context.Context, request Custodi
 			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(
 				assignment_id,scope_kind,package_id,package_record_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
-				VALUES(?,'package',?,?,?,?,?,'primary','operator_assigned',?,?)`, assignmentID, request.Scope.PackageID,
+				VALUES($1,'package',$2,$3,$4,$5,$6,'primary','operator_assigned',$7,$8)`, assignmentID, request.Scope.PackageID,
 				request.Scope.PackageRecordID, nullableCustodianString(request.PersonID), request.RawLabel,
 				document.FoldPersonName(request.RawLabel), request.SourceRef, nowRFC3339())
-			if s.driver.IsUniqueViolation(err) {
+			if s.isUniqueViolation(err) {
 				return ErrCustodianConflict
 			}
 			if err != nil {
@@ -393,19 +396,19 @@ func scanCustodian(row interface{ Scan(dest ...any) error }) (CustodianAssignmen
 }
 
 func custodianByIDTx(ctx context.Context, tx *sql.Tx, assignmentID string) (CustodianAssignment, error) {
-	return scanCustodian(tx.QueryRowContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE assignment_id=?`, assignmentID))
+	return scanCustodian(tx.QueryRowContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE assignment_id=$1`, assignmentID))
 }
 
 func (s *Store) custodianByID(ctx context.Context, assignmentID string) (CustodianAssignment, error) {
-	return scanCustodian(s.db.QueryRowContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE assignment_id=?`, assignmentID))
+	return scanCustodian(s.db.QueryRowContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE assignment_id=$1`, assignmentID))
 }
 
 func (s *Store) CustodiansForVersion(ctx context.Context, contentVersionID string) ([]CustodianAssignment, error) {
 	rows, err := s.db.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+custodianColumns+` FROM custodian_assignments ca
 		WHERE ca.retired_at IS NULL AND (
-			(ca.scope_kind='document' AND ca.content_version_id=?) OR
-			(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=?)))
+			(ca.scope_kind='document' AND ca.content_version_id=$1) OR
+			(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))
 		ORDER BY CASE WHEN ca.scope_kind='document' AND ca.basis='operator_assigned' THEN 0 WHEN ca.scope_kind='document' AND ca.basis='transfer_record' THEN 1 ELSE 4 END,ca.recorded_at,ca.assignment_id`, contentVersionID, contentVersionID)
 	if err != nil {
 		return nil, err
@@ -444,25 +447,25 @@ func (s *Store) Custodians(ctx context.Context, scope CustodianScope, unresolved
 		where = append(where, "person_id IS NULL")
 	}
 	if scope.Kind != "" {
-		where = append(where, "scope_kind=?")
+		where = append(where, "scope_kind=$1")
 		args = append(args, scope.Kind)
 		switch scope.Kind {
 		case "collection":
-			where = append(where, "ingest_id=?")
+			where = append(where, "ingest_id=$2")
 			args = append(args, scope.IngestID)
 		case "document":
-			where = append(where, "content_version_id=? AND node_id=?")
+			where = append(where, "content_version_id=$2 AND node_id=$3")
 			args = append(args, scope.ContentVersionID, scope.NodeID)
 		case "package":
-			where = append(where, "package_id=?")
+			where = append(where, "package_id=$2")
 			args = append(args, scope.PackageID)
 			if scope.HasPackageRecordID {
-				where = append(where, "package_record_id=?")
+				where = append(where, "package_record_id=$3")
 				args = append(args, scope.PackageRecordID)
 			}
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -473,7 +476,7 @@ func (s *Store) Custodians(ctx context.Context, scope CustodianScope, unresolved
 		return nil, 0, err
 	}
 	pageArgs := append(slices.Clone(args), limit, offset)
-	rows, err := tx.QueryContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE `+clause+` ORDER BY recorded_at,assignment_id LIMIT ? OFFSET ?`, pageArgs...)
+	rows, err := tx.QueryContext(ctx, `SELECT `+custodianColumns+` FROM custodian_assignments WHERE `+clause+` ORDER BY recorded_at,assignment_id LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2), pageArgs...)
 	if err != nil {
 		return nil, 0, err
 	}

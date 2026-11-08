@@ -504,6 +504,24 @@ GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
     ON documents.saved_queries TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
+    updated_at, key_face_id) ON documents.persons TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
+GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
+    display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;
+GRANT INSERT, UPDATE(surviving_uid, observed_at)
+    ON documents.person_external_uid_aliases TO docbank_runtime;
+GRANT INSERT, UPDATE(surviving_person_id, reason, retired_at)
+    ON documents.person_aliases TO docbank_runtime;
+GRANT INSERT ON documents.person_merges, documents.person_splits TO docbank_runtime;
+GRANT INSERT, UPDATE(person_id, raw_label, raw_label_folded, basis, source_ref,
+    revision, recorded_at, retired_at) ON documents.custodian_assignments TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(person_id, action, note, revision, photo_mark)
+    ON documents.person_document_assertions TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(suggested_person_id, state, decided_person_id, decided_at, revision)
+    ON documents.person_match_candidates TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.person_candidate_faces TO docbank_runtime;
+GRANT UPDATE(assertion_id) ON documents.photo_faces TO docbank_runtime;
 GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
     documents.document_events, documents.document_event_actors, documents.document_event_primaries
     TO docbank_runtime;
@@ -808,9 +826,10 @@ the original versions, jobs, receipts, epochs and node revisions.
 `make backend-coverage` reports the recorded SQLite catalog effects,
 their PostgreSQL owners and their remaining boundaries. Audit enrollment already
 queues affected photos through `queueAuditPhotosTx`. Deleting authority or
-memberships during import/restore still needs that effect. Source-head recovery,
-people candidates and search still have unported effects; their
-retained tables do not establish write support.
+memberships during import/restore still needs that effect. Candidate insertion writes the candidate-to-face projection in its transaction.
+No native writer replaces candidate evidence in place; a future metadata restore
+must also rebuild that projection. Source-head recovery and search still have
+unported effects; their retained tables do not establish write support.
 
 For each remaining port, capture affected identities before cascades remove the
 rows that identify them. Validate values and immutable-record rules in the Go
@@ -1124,8 +1143,9 @@ pending physical cleanup is gone; this does not qualify multi-store operations.
 
 The `photo-import` suite covers these native Store workflows. Retained XMP
 receipts used by import are produced by SQLite's publisher. Native XMP publication
-and authored editing are covered by the `photo-edit` suite below; people/review
-workflows and public PostgreSQL vault opening remain unqualified.
+and authored editing are covered by `photo-edit`; `photo-review` and
+`people-curation` cover their own operations below. Public PostgreSQL vault
+opening remains unavailable.
 
 #### Photo metadata edits and XMP synchronization
 
@@ -1188,11 +1208,11 @@ ordered index seek. The PostgreSQL check disables sequential scans to prove the
 ready-preview index is usable; planner choice on a populated library remains
 unverified. Retained SQLite fixtures cover
 candidate/undo protection and regeneration after restore; they do not qualify
-PostgreSQL people curation or restore. The two worker tables (explicit waiters
+their producers or restore. Native people curation has its own contract below.
+The two worker tables (explicit waiters
 and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
 sequence; a future metadata importer must advance it past imported IDs.
-Provider network execution, people curation and public PostgreSQL vault opening
-remain unqualified. Quality scoring and hidden sessions use the contracts below.
+Provider network execution and public PostgreSQL vault opening remain unqualified. Quality scoring and hidden sessions use the contracts below.
 
 #### Photo quality and hidden sessions
 
@@ -1239,7 +1259,7 @@ refresh affected displays and export work inside the write.
 
 The `photo-quality-hidden` contracts cover native publication, terminal and stale
 results, retained dismissal, lockout, expiry, revocation, settings, rollback and
-read snapshots. General photo browsing and quality filters, people curation,
+read snapshots. General photo browsing and quality filters,
 portable restore and public PostgreSQL vault opening remain separate
 qualification boundaries. Explicit-selection review uses the contract below.
 
@@ -1267,8 +1287,44 @@ have read-only runtime access; this does not qualify PostgreSQL index building,
 publication, reader leases or collection.
 
 The `photo-review` suite covers native explicit selections and retained-index
-reads. Search-driven browsing, query/frozen-run selection, people curation,
+reads. Search-driven browsing and query/frozen-run selection,
 portable restore and public PostgreSQL vault opening remain separate.
+
+#### People and face curation
+
+The shared Store supports person creation, revision-fenced edits and retirement,
+contact identities, external UID aliases, custodians, candidate decisions, face
+naming and rejection, key faces, merges, explicit splits, and face-decision undo
+on both backends. Exact-person details, candidate pages and face previews use
+these same operations. Browser writes retain the existing hidden-photo checks;
+unlocking remains local to the owning Store.
+
+All mutations use writer admission. Identity moves, aliases, face links,
+candidate state, binding epochs and replay receipts commit together. PostgreSQL
+writes candidate-to-face membership when it inserts a face candidate; SQLite
+keeps its released trigger. Candidate evidence is immutable through these
+operations. The runtime role can change only the listed mutable columns and can
+insert, but not rewrite, merge and split receipts. Conflict handling does not
+continue a PostgreSQL transaction after a uniqueness error.
+
+Person details, candidate and custodian pages, external UID resolution and actor
+keys use repeatable-read transactions. Counts, identities and the returned rows
+therefore describe one snapshot. Queries close their result sets before issuing
+related lookups. SQLite keeps its forced preview join order and exact receipt
+index expressions; PostgreSQL uses ordinary joins and matching catalog indexes.
+Queries do not rewrite placeholders or add another database facade.
+
+The `people-curation` contracts reuse the existing lifecycle scenarios on both
+engines. PostgreSQL-specific cases interrupt writes at the final receipt or
+candidate projection, and commit edits between statements in a read. Package
+custody writes run against a validated retained package fixture; this does not
+qualify package creation or import.
+
+General people discovery (including autocomplete, recent-first listing and photo
+summaries), query-selected photo browsing, document-person resolver publication
+and rebuilds, portable recovery, and public PostgreSQL vault opening remain
+unqualified. Their retained catalogs and the curation operations above do not
+establish support for those producers or user entry points.
 
 #### Photo albums
 
