@@ -305,3 +305,28 @@ func TestReviewCompactMappingInUnknownSequence(t *testing.T) {
 	require.Equal(t, "valid", n.FrontmatterState)
 	require.Equal(t, "Good", n.Metadata.Title)
 }
+
+func TestReviewOrdinaryContainerParagraphBudget(t *testing.T) {
+	src := "> [ordinary] prose\n" + strings.Repeat("> 2. item\n", 600)
+	_, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+}
+
+func TestReviewReferenceBeforeIndentedCode(t *testing.T) {
+	for _, src := range []string{
+		"[r]: target.md\n    [hidden](ghost.md)\n",
+		"> [r]: target.md\n>     [hidden](ghost.md)\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err, src)
+		require.Empty(t, n.Links, src)
+	}
+}
+
+func TestReviewSequenceFlowAndCompactMappingSpacing(t *testing.T) {
+	src := "---\ntitle: Good\nextra:\n  - {name: Other}\n  -   name: More\n      kind: test\n---\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, "Good", n.Metadata.Title)
+}

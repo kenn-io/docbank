@@ -206,12 +206,15 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 		}
 		p.pos++
 		var key, rest string
+		contentIndent := indent
 		if seq {
 			if !yamlSequence(text) {
 				p.pos--
 				break
 			}
-			rest = yamlTrim(text[1:])
+			content := text[1:]
+			contentIndent = indent + 1 + len(content) - len(strings.TrimLeft(content, " "))
+			rest = yamlTrim(content)
 		} else {
 			colon := yamlMappingColon(text)
 			if colon < 0 {
@@ -231,8 +234,8 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 		}
 		var value yamlValue
 		var err error
-		if seq && yamlMappingColon(rest) >= 0 {
-			value, err = p.compactMapping(rest, indent, depth+1)
+		if seq && len(rest) > 0 && !strings.ContainsRune("[{", rune(rest[0])) && yamlMappingColon(rest) >= 0 {
+			value, err = p.compactMapping(rest, indent, contentIndent, depth+1)
 		} else {
 			value, err = p.lineValue(rest, indent, depth+1, !seq)
 		}
@@ -248,7 +251,7 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 	return n, nil
 }
 
-func (p *yamlParser) compactMapping(text string, indent, depth int) (yamlValue, error) {
+func (p *yamlParser) compactMapping(text string, indent, contentIndent, depth int) (yamlValue, error) {
 	if err := p.enter(depth); err != nil {
 		return yamlValue{}, err
 	}
@@ -260,17 +263,17 @@ func (p *yamlParser) compactMapping(text string, indent, depth int) (yamlValue, 
 	if key.kind != 's' || key.text == "<<" {
 		return yamlValue{}, errYAML
 	}
-	value, err := p.lineValue(yamlTrim(text[colon+1:]), indent+2, depth+1, true)
+	value, err := p.lineValue(yamlTrim(text[colon+1:]), contentIndent, depth+1, true)
 	if err != nil {
 		return yamlValue{}, err
 	}
 	n := yamlValue{kind: 'm', fields: map[string]yamlValue{key.text: value}}
 	p.skipBlank()
 	if p.pos < len(p.lines) && p.lines[p.pos].indent > indent {
-		if p.lines[p.pos].indent != indent+2 {
+		if p.lines[p.pos].indent != contentIndent {
 			return yamlValue{}, errYAML
 		}
-		rest, err := p.block(indent+2, depth+1)
+		rest, err := p.block(contentIndent, depth+1)
 		if err != nil {
 			return yamlValue{}, err
 		}
