@@ -11,18 +11,18 @@ import (
 )
 
 // Seed only publication membership; processing heads/jobs use their real APIs.
-func publishCoverageVersions(t testing.TB, s *Store, versions []string) {
-	t.Helper()
-	_, err := s.db.ExecContext(t.Context(), `INSERT INTO note_publications
+func publishCoverageVersions(tb testing.TB, s *Store, versions []string) {
+	tb.Helper()
+	_, err := s.db.ExecContext(tb.Context(), `INSERT INTO note_publications
 		(name,destination,policy_fingerprint,namespace_revision,active,last_complete_at,last_accepted_at)
 		VALUES('notebook','/',?,1,1,'','') ON CONFLICT(name) DO NOTHING`, fakeHash("ab"))
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	for i, version := range versions {
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO published_note_sources
+		_, err = s.db.ExecContext(tb.Context(), `INSERT INTO published_note_sources
 			(publication_name,source_ref,node_id,content_version_id,blob_hash,size,source_revision,presence,availability,accepted_at)
 			SELECT 'notebook',?,node_id,version_id,blob_hash,size,1,'present','retained',recorded_at
 			FROM content_versions WHERE version_id=?`, fmt.Sprintf("source-%05d.md", i), version)
-		require.NoError(t, err)
+		require.NoError(tb, err)
 	}
 }
 
