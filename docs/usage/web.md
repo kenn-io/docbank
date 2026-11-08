@@ -917,8 +917,8 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose **System → Protected folders** to run the vault-wide permanent
-audit verifier. The verifier does more than read stored status. Docbank
+Choose **System → Protected folders** to read protection status. If protection
+is enabled, Docbank runs the vault-wide permanent audit verifier. Docbank
 replays canonical audit history against the current node, version, membership,
 topology, tag, and provenance projections, then reads and recomputes SHA-256 for
 every unique blob retained by protected history.

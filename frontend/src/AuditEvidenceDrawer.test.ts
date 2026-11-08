@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
 
 const evidence = {
@@ -17,14 +17,58 @@ const evidence = {
   ],
 };
 
+function statusResponse(enabled = true): Response {
+  return new Response(JSON.stringify({ enabled }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+let statusMock: ReturnType<typeof vi.fn>;
+let verifyMock: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  statusMock = vi.fn(() => Promise.resolve(statusResponse()));
+  verifyMock = vi.fn();
+  vi.spyOn(globalThis, "fetch").mockImplementation((url, options) => {
+    if (url === "/api/v1/audit/status") return statusMock(url, options);
+    if (url === "/api/v1/audit/verify") return verifyMock(url, options);
+    throw new Error(`Unexpected request: ${url}`);
+  });
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe("audit evidence drawer", () => {
+  it("distinguishes a dormant vault and offers no refresh until a folder is protected", async () => {
+    statusMock.mockResolvedValueOnce(statusResponse(false));
+
+    render(AuditEvidenceDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
+      "docbank audit enable /folder",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Run permanent audit verification again" }),
+    ).toBeNull();
+    expect(statusMock).toHaveBeenCalledTimes(1);
+    expect(statusMock).toHaveBeenCalledWith(
+      "/api/v1/audit/status",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(verifyMock).not.toHaveBeenCalled();
+  });
+
   it("shows independently verified authority and protected content", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    const fetchMock = verifyMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           enabled: true,
@@ -60,38 +104,8 @@ describe("audit evidence drawer", () => {
     );
   });
 
-  it("distinguishes a dormant vault and offers no refresh until a folder is protected", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          enabled: false,
-          protected_blobs: 0,
-          protected_bytes: 0,
-          verified_blobs: 0,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-
-    render(AuditEvidenceDrawer, {
-      session: "short-lived",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-
-    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
-      "docbank audit enable /folder",
-    );
-    expect(
-      screen.queryByRole("button", { name: "Run permanent audit verification again" }),
-    ).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it("verifies again on request and reports each problem", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
+    const fetchMock = verifyMock
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -135,10 +149,11 @@ describe("audit evidence drawer", () => {
     expect(screen.getByText("corrupt")).toBeTruthy();
     expect(screen.getByText("c".repeat(64))).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(statusMock).toHaveBeenCalledTimes(2);
   });
 
   it("reports metadata replay failures instead of calling the vault dormant", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    verifyMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           enabled: false,
@@ -167,20 +182,19 @@ describe("audit evidence drawer", () => {
     const refreshResponse = new Promise<Response>((_resolve, reject) => {
       rejectRefresh = reject;
     });
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            enabled: true,
-            evidence,
-            protected_blobs: 3,
-            protected_bytes: 4096,
-            verified_blobs: 3,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      )
-      .mockReturnValueOnce(refreshResponse);
+    verifyMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          enabled: true,
+          evidence,
+          protected_blobs: 3,
+          protected_bytes: 4096,
+          verified_blobs: 3,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    statusMock.mockResolvedValueOnce(statusResponse()).mockReturnValueOnce(refreshResponse);
 
     render(AuditEvidenceDrawer, {
       session: "short-lived",
@@ -201,5 +215,55 @@ describe("audit evidence drawer", () => {
     rejectRefresh(new Error("verification interrupted"));
     expect((await screen.findByRole("alert")).textContent).toContain("verification interrupted");
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
+  });
+
+  it("retries a failed status read before deciding protection is disabled", async () => {
+    statusMock
+      .mockRejectedValueOnce(new Error("status unavailable"))
+      .mockResolvedValueOnce(statusResponse(false));
+    render(AuditEvidenceDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    expect((await screen.findByRole("alert")).textContent).toContain("status unavailable");
+    expect(screen.queryByText(/No folders are protected/)).toBeNull();
+    expect(verifyMock).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
+    expect(statusMock).toHaveBeenCalledTimes(2);
+    expect(verifyMock).not.toHaveBeenCalled();
+  });
+
+  it("closes and requests sign-in when status returns unauthorized", async () => {
+    statusMock.mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }));
+    const onclose = vi.fn(),
+      onauthfailure = vi.fn();
+    render(AuditEvidenceDrawer, { session: "short-lived", onclose, onauthfailure });
+    await waitFor(() => expect(onauthfailure).toHaveBeenCalledTimes(1));
+    expect(onclose).toHaveBeenCalledTimes(1);
+    expect(verifyMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels status on close and ignores its late response", async () => {
+    let resolveStatus!: (response: Response) => void;
+    statusMock.mockReturnValueOnce(
+      new Promise<Response>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const { unmount } = render(AuditEvidenceDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(1));
+    const signal = statusMock.mock.calls[0]![1].signal as AbortSignal;
+    await unmount();
+    expect(signal.aborted).toBe(true);
+    resolveStatus(statusResponse());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(verifyMock).not.toHaveBeenCalled();
   });
 });
