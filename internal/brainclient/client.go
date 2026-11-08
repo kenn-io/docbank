@@ -90,7 +90,7 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 		return fmt.Errorf("connecting to daemon: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	if _, err := conn.ListDocuments(ctx, api.DocumentQuery{PageSize: 1}); err != nil {
+	if _, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: cfg.Name}, PageSize: 1}); err != nil {
 		return fmt.Errorf("checking daemon capability: %w", err)
 	}
 	return c.registry.Put(ctx, cfg)

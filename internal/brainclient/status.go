@@ -27,6 +27,9 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 	status := Status{Name: name, ObservedAt: c.deps.Now().UTC(), ConnectionState: "unknown", BodyIndexingState: "unknown"}
 	conn, running, err := c.connection(ctx, cfg, false)
 	if err != nil {
+		if ctx.Err() != nil {
+			return status, ctx.Err()
+		}
 		status.ProblemCode = "daemon_unavailable"
 		return status, nil
 	}
@@ -36,6 +39,9 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 	}
 	defer func() { _ = conn.Close() }()
 	if _, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: name}, PageSize: 1}); err != nil {
+		if ctx.Err() != nil {
+			return status, ctx.Err()
+		}
 		status.ProblemCode = "publication_unavailable"
 		return status, nil
 	}
