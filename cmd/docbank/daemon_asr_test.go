@@ -345,10 +345,22 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 }
 
 func TestDaemonDoclingASRRestoredWork(t *testing.T) {
+	for _, kind := range []string{"WAV", "M4A"} {
+		t.Run(kind, func(t *testing.T) { testDaemonDoclingASRRestoredWork(t, kind == "M4A") })
+	}
+}
+
+func testDaemonDoclingASRRestoredWork(t *testing.T, allowM4A bool) {
+	t.Helper()
 	provider := newDaemonDoclingServer(t)
+	provider.allowM4A = allowM4A
 	provider.resultGate = make(chan struct{})
 	root, daemon, stop := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
-	receipt, selector, plan := daemonASRSourceAndPlan(t, daemon, "restored.wav", mediatest.WAV())
+	filename, mediaType, content := "restored.wav", "audio/wav", mediatest.WAV()
+	if allowM4A {
+		filename, mediaType, content = "restored.m4a", "audio/mp4", mediatest.AACM4A()
+	}
+	receipt, selector, plan := daemonASRSourceAndPlanWith(t, daemon, "00000000-0000-4000-8000-000000000671", filename, mediaType, content)
 	_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 		Selector: selector, PlanFingerprint: plan.Fingerprint,
 	}})

@@ -83,7 +83,7 @@ func (service *Service) MediaTranscript(
 	}
 	transcript := MediaTranscriptEvidence{BuildID: view.Build.ID,
 		ProfileFingerprint: view.Attachment.Profile.Fingerprint, EvidenceChecksum: evidence.Checksum,
-		SpeechState: transcriptSpeechState(evidence, view.Build.Truncated), SuppliedInputID: selected.inputID,
+		SpeechState: transcriptSpeechState(evidence, view.Build.Truncated || view.Build.PartialSuccess), SuppliedInputID: selected.inputID,
 		Origin: origin, Completeness: string(view.Build.Completeness),
 		Truncated: view.Build.Truncated, HasOmissions: len(evidence.Omissions) > 0,
 		Units: make([]MediaTranscriptUnit, len(evidence.Units))}

@@ -169,6 +169,10 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 		f.captions.profiles[f.profile].record.Fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, active.Build.ID, ready.Transcript.BuildID)
+	require.Equal(t, active.Build.SourceSHA256, ready.SourceSHA256)
+	require.Equal(t, active.Build.EvidenceChecksum, ready.Transcript.EvidenceChecksum)
+	require.Equal(t, active.Attachment.Profile.Fingerprint, ready.Transcript.ProfileFingerprint)
+	require.Len(t, ready.Transcript.ArtifactSHA256, 64)
 	require.Equal(t, queued.SuppliedInputID, ready.Transcript.SuppliedInputID)
 	require.Len(t, ready.Transcript.Units, 1)
 	require.Equal(t, "synthetic cue", ready.Transcript.Units[0].Text)
@@ -291,6 +295,29 @@ func TestMediaTranscriptSpeechCompleteness(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			evidence := document.NormalizedEvidenceV1{UnitKind: document.EvidenceUnitSegment, Units: []document.NormalizedEvidenceUnitV1{{Text: "synthetic speech"}}, Omissions: tc.omissions}
 			require.Equal(t, tc.want, transcriptSpeechState(evidence, tc.truncated))
+		})
+	}
+}
+
+func TestMediaTranscriptSpeechStateRefusesEmptyUntimedAndMissingRanges(t *testing.T) {
+	base := document.NormalizedEvidenceV1{UnitKind: document.EvidenceUnitSegment, Units: []document.NormalizedEvidenceUnitV1{{Text: "synthetic"}}}
+	for _, change := range []string{"empty", "blank", "untimed", "unit omission", "range omission"} {
+		t.Run(change, func(t *testing.T) {
+			evidence := base
+			evidence.Units = append([]document.NormalizedEvidenceUnitV1(nil), base.Units...)
+			switch change {
+			case "empty":
+				evidence.Units = nil
+			case "blank":
+				evidence.Units[0].Text = " \t"
+			case "untimed":
+				evidence.UnitKind = document.EvidenceUnitGeneric
+			case "unit omission":
+				evidence.Units[0].Omissions = []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}
+			case "range omission":
+				evidence.Omissions = []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "non_speech_content", Range: &document.EvidenceTextRangeV1{Start: 0, End: 1}}}
+			}
+			require.Equal(t, "partial", transcriptSpeechState(evidence, false))
 		})
 	}
 }
