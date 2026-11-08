@@ -229,7 +229,13 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 				return yamlValue{}, errYAML
 			}
 		}
-		value, err := p.lineValue(rest, indent, depth+1, !seq)
+		var value yamlValue
+		var err error
+		if seq && yamlMappingColon(rest) >= 0 {
+			value, err = p.compactMapping(rest, indent, depth+1)
+		} else {
+			value, err = p.lineValue(rest, indent, depth+1, !seq)
+		}
 		if err != nil {
 			return yamlValue{}, err
 		}
@@ -237,6 +243,45 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 			n.items = append(n.items, value)
 		} else {
 			n.fields[key] = value
+		}
+	}
+	return n, nil
+}
+
+func (p *yamlParser) compactMapping(text string, indent, depth int) (yamlValue, error) {
+	if err := p.enter(depth); err != nil {
+		return yamlValue{}, err
+	}
+	colon := yamlMappingColon(text)
+	key, err := p.flow(yamlTrim(text[:colon]), depth+1)
+	if err != nil {
+		return yamlValue{}, err
+	}
+	if key.kind != 's' || key.text == "<<" {
+		return yamlValue{}, errYAML
+	}
+	value, err := p.lineValue(yamlTrim(text[colon+1:]), indent+2, depth+1, true)
+	if err != nil {
+		return yamlValue{}, err
+	}
+	n := yamlValue{kind: 'm', fields: map[string]yamlValue{key.text: value}}
+	p.skipBlank()
+	if p.pos < len(p.lines) && p.lines[p.pos].indent > indent {
+		if p.lines[p.pos].indent != indent+2 {
+			return yamlValue{}, errYAML
+		}
+		rest, err := p.block(indent+2, depth+1)
+		if err != nil {
+			return yamlValue{}, err
+		}
+		if rest.kind != 'm' {
+			return yamlValue{}, errYAML
+		}
+		for k, v := range rest.fields {
+			if _, exists := n.fields[k]; exists {
+				return yamlValue{}, errYAML
+			}
+			n.fields[k] = v
 		}
 	}
 	return n, nil

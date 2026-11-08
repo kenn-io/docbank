@@ -40,6 +40,15 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		content := 0
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
+		if paragraph && len(containers) > 0 && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start && mayLeaveDefinitionContainer(raw, containers[0]) && !possibleDefinitionTitle(raw) {
+			only, err := paragraphDefinitionsOnly(ctx, original, blocks, b)
+			if err != nil {
+				return nil, err
+			}
+			if only {
+				paragraph = false
+			}
+		}
 		matched := 0
 		lazy := false
 		for matched < len(containers) {
@@ -142,20 +151,11 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				return nil, err
 			}
 			if (list || html) && indent+virtualIndent <= 3 && previous.paragraph && previous.depth == len(containers) && previous.span.End == line.Start {
-				first := len(blocks) - 1
-				for first > 0 && blocks[first].continuation {
-					first--
-				}
-				view, joined, _, err := prepareLinkSource(ctx, original, blocks[first:], b)
+				only, err := paragraphDefinitionsOnly(ctx, original, blocks, b)
 				if err != nil {
 					return nil, err
 				}
-				paragraphContent := joined[len(joined)-1].content
-				end, err := leadingDefinitionsEnd(ctx, view, paragraphContent, b)
-				if err != nil {
-					return nil, err
-				}
-				if end >= paragraphContent.End {
+				if only {
 					paragraph = false
 				}
 			}
@@ -390,6 +390,67 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		pos = next
 	}
 	return blocks, nil
+}
+
+func mayLeaveDefinitionContainer(raw []byte, outer blockContainer) bool {
+	i := 0
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+		i++
+	}
+	if outer.kind == 'q' && (i == len(raw) || raw[i] != '>') || outer.kind == 'l' && i < outer.indent {
+		return true
+	}
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '>') {
+		i++
+	}
+	_, list := listMarker(raw, i)
+	return list || i < len(raw) && raw[i] == '<'
+}
+
+// Keep a possible next-line definition title in the same logical paragraph.
+func possibleDefinitionTitle(raw []byte) bool {
+	i := 0
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '>') {
+		i++
+	}
+	return i < len(raw) && (raw[i] == '\'' || raw[i] == '"' || raw[i] == '(')
+}
+
+func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, b *budget) (bool, error) {
+	last := len(blocks) - 1
+	if last < 0 || !blocks[last].paragraph {
+		return false, nil
+	}
+	first := last
+	for first > 0 && blocks[first].continuation {
+		first--
+	}
+	if blocks[first].content.Start >= len(src) || src[blocks[first].content.Start] != '[' {
+		return false, nil
+	}
+	if first == last {
+		end, err := leadingDefinitionsEnd(ctx, src, blocks[last].content, b)
+		return end >= blocks[last].content.End, err
+	}
+	start, end := blocks[first].span.Start, blocks[last].span.End
+	rebased := make([]sourceBlock, 0, last-first+1)
+	for _, block := range blocks[first : last+1] {
+		if err := b.node(ctx, 1); err != nil {
+			return false, err
+		}
+		block.span.Start -= start
+		block.span.End -= start
+		block.content.Start -= start
+		block.content.End -= start
+		rebased = append(rebased, block)
+	}
+	view, joined, _, err := prepareLinkSource(ctx, src[start:end], rebased, b)
+	if err != nil {
+		return false, err
+	}
+	content := joined[len(joined)-1].content
+	position, err := leadingDefinitionsEnd(ctx, view, content, b)
+	return position >= content.End, err
 }
 
 func quoteSpace(ctx context.Context, raw []byte, pos int, b *budget) (int, int, error) {

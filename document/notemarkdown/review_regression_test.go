@@ -284,3 +284,24 @@ func TestReviewBlockScalarContentTab(t *testing.T) {
 	require.Equal(t, "valid", n.FrontmatterState)
 	require.Equal(t, "Good", n.Metadata.Title)
 }
+
+func TestReviewRepeatedContainerDefinitionsBudget(t *testing.T) {
+	src := strings.Repeat("> [long\n> label]: n.md\n> 2. item\n\n", 600)
+	_, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+}
+
+func TestReviewDefinitionBeforeRootHeading(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("> [r]: target.md\nHeading\n===\n"))
+	require.NoError(t, err)
+	require.Len(t, n.Headings, 1)
+	require.Equal(t, "Heading", n.Headings[0].Text)
+}
+
+func TestReviewCompactMappingInUnknownSequence(t *testing.T) {
+	src := "---\ntitle: Good\nextra:\n  - name: Other\n    kind: test\n---\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, "Good", n.Metadata.Title)
+}
