@@ -351,3 +351,23 @@ func TestReviewReferenceBeforeMixedIndent(t *testing.T) {
 		require.Empty(t, n.Links, src)
 	}
 }
+
+func TestReviewIncompleteDefinitionSuffixBudget(t *testing.T) {
+	for _, start := range []string{"> [r]: note.md \"unfinished\n", "> [r]: note.md\n> [unfinished\n"} {
+		_, err := Parse(t.Context(), []byte(start+strings.Repeat("> 2. item\n", 1200)))
+		require.NoError(t, err)
+	}
+}
+
+func TestReviewIndentedReferenceTitle(t *testing.T) {
+	src := "[r]: note.md\n    \"title\n[hidden](ghost.md)\"\n\n[use][r]\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}
+
+func TestReviewLazySetextDoesNotEndParagraph(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("> [a\n===\n> b](note.md)\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}

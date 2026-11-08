@@ -44,7 +44,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
 		if paragraph && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start {
-			check, candidate, indent, err := definitionBoundary(ctx, raw, containers, b)
+			check, candidate, _, err := definitionBoundary(ctx, raw, containers, b)
 			if err != nil {
 				return nil, err
 			}
@@ -55,7 +55,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				}
 				if only {
 					title := false
-					if indent < 4 && candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
+					if candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
 						scanner := linkScanner{ctx: ctx, src: original, b: b}
 						_, title, err = scanner.title(line.Start+candidate, len(original))
 						if err != nil {
@@ -354,7 +354,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		if err != nil {
 			return nil, err
 		}
-		if paragraph && len(blocks) > 0 && setext > 0 && indent <= 3 {
+		if paragraph && !lazy && len(blocks) > 0 && setext > 0 && indent <= 3 {
 			previous := &blocks[len(blocks)-1]
 			if previous.depth == depth && previous.level == 0 && previous.span.End == line.Start {
 				if root {
@@ -521,10 +521,47 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 	if !probe.closed {
 		return false, nil
 	}
+	if probe.wait != 0 {
+		for probe.waitBlock <= last {
+			block := blocks[probe.waitBlock]
+			probe.waitOffset = max(probe.waitOffset, block.content.Start)
+			for probe.waitOffset < block.content.End {
+				if err := b.step(ctx, 1); err != nil {
+					return false, err
+				}
+				c := src[probe.waitOffset]
+				probe.waitOffset++
+				if probe.waitEscaped {
+					probe.waitEscaped = false
+					continue
+				}
+				if c == '\\' {
+					probe.waitEscaped = true
+					continue
+				}
+				if c == probe.wait {
+					probe.wait = 0
+					break
+				}
+			}
+			if probe.wait == 0 {
+				break
+			}
+			if probe.waitBlock == last {
+				return false, nil
+			}
+			probe.waitBlock++
+			probe.waitOffset = blocks[probe.waitBlock].content.Start
+			probe.waitEscaped = false
+		}
+	}
 	if first == last {
 		end, err := leadingDefinitionsEnd(ctx, src, blocks[last].content, b)
 		if err == nil && end < blocks[last].content.End && !couldBeDefinition(src[end:blocks[last].content.End]) {
 			nonDefinitions[key] = true
+		} else if err == nil && end < blocks[last].content.End {
+			probe.wait, err = pendingDefinitionDelimiter(ctx, src[end:blocks[last].content.End], b)
+			probe.waitBlock, probe.waitOffset = last, blocks[last].content.End
 		}
 		return end >= blocks[last].content.End, err
 	}
@@ -548,13 +585,73 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 	position, err := leadingDefinitionsEnd(ctx, view, content, b)
 	if err == nil && position < content.End && !couldBeDefinition(view[position:content.End]) {
 		nonDefinitions[key] = true
+	} else if err == nil && position < content.End {
+		probe.wait, err = pendingDefinitionDelimiter(ctx, view[position:content.End], b)
+		probe.waitBlock, probe.waitOffset = last, blocks[last].content.End
 	}
 	return position >= content.End, err
 }
 
 type definitionProbe struct {
-	block, offset, bytes int
-	closed, escaped      bool
+	block, offset, bytes  int
+	closed, escaped       bool
+	wait                  byte
+	waitBlock, waitOffset int
+	waitEscaped           bool
+}
+
+// An incomplete label or title cannot become complete until its closing byte
+// arrives. Remember it so growing container paragraphs need not be rebuilt.
+func pendingDefinitionDelimiter(ctx context.Context, text []byte, b *budget) (byte, error) {
+	text = bytes.TrimLeft(text, " \t\r\n")
+	if len(text) == 0 || text[0] != '[' {
+		return 0, nil
+	}
+	i := 1
+	for i < len(text) && text[i] != ']' {
+		if err := b.step(ctx, 1); err != nil {
+			return 0, err
+		}
+		if text[i] == '\\' && i+1 < len(text) {
+			i++
+		}
+		i++
+	}
+	if i == len(text) {
+		return ']', nil
+	}
+	if i+1 >= len(text) || text[i+1] != ':' {
+		return 0, nil
+	}
+	i += 2
+	for i < len(text) && linkSpace(text[i]) {
+		if err := b.step(ctx, 1); err != nil {
+			return 0, err
+		}
+		i++
+	}
+	scanner := linkScanner{ctx: ctx, src: text, b: b}
+	_, tail, ok, err := scanner.destination(i, len(text))
+	if err != nil || !ok {
+		return 0, err
+	}
+	for tail < len(text) && linkSpace(text[tail]) {
+		if err := b.step(ctx, 1); err != nil {
+			return 0, err
+		}
+		tail++
+	}
+	if tail == len(text) || text[tail] != '\'' && text[tail] != '"' && text[tail] != '(' {
+		return 0, nil
+	}
+	_, complete, err := scanner.title(tail, len(text))
+	if err != nil || complete {
+		return 0, err
+	}
+	if text[tail] == '(' {
+		return ')', nil
+	}
+	return text[tail], nil
 }
 
 func couldBeDefinition(text []byte) bool {
