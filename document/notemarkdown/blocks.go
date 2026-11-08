@@ -44,7 +44,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
 		if paragraph && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start {
-			check, candidate, _, _, err := definitionBoundary(ctx, raw, containers, b)
+			check, candidate, _, err := definitionBoundary(ctx, raw, containers, b)
 			if err != nil {
 				return nil, err
 			}
@@ -69,7 +69,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 							}
 							if p != line.Start+candidate {
 								lineText := original[part.Start:part.End]
-								_, start, _, matched, err := definitionBoundary(ctx, lineText, containers, b)
+								_, start, matched, err := definitionBoundary(ctx, lineText, containers, b)
 								if err != nil {
 									return nil, err
 								}
@@ -438,32 +438,32 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 	return blocks, nil
 }
 
-func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, int, bool, error) {
+func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, bool, error) {
 	pos, virtual := 0, 0
 	for _, container := range containers {
 		end, columns, err := leadingIndent(ctx, raw, pos, b)
 		if err != nil {
-			return false, 0, 0, false, err
+			return false, 0, false, err
 		}
 		columns += virtual
 		if container.kind == 'q' {
 			if columns > 3 || end == len(raw) || raw[end] != '>' {
-				return true, end, columns, false, nil
+				return true, end, false, nil
 			}
 			pos, virtual, err = quoteSpace(ctx, raw, end+1, b)
 			if err != nil {
-				return false, 0, 0, false, err
+				return false, 0, false, err
 			}
 			continue
 		}
 		if columns < container.indent {
-			return true, end, columns, false, nil
+			return true, end, false, nil
 		}
 		used := min(virtual, container.indent)
 		virtual -= used
 		column, err := visualColumn(ctx, raw, pos, b)
 		if err != nil {
-			return false, 0, 0, false, err
+			return false, 0, false, err
 		}
 		for pos < end && used < container.indent {
 			width := 1
@@ -478,11 +478,11 @@ func definitionBoundary(ctx context.Context, raw []byte, containers []blockConta
 	}
 	end, indent, err := leadingIndent(ctx, raw, pos, b)
 	if err != nil {
-		return false, 0, 0, false, err
+		return false, 0, false, err
 	}
 	indent += virtual
 	_, list := listMarker(raw, end)
-	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, indent, true, nil
+	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, true, nil
 }
 
 func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, first int, nonDefinitions map[int]bool, probes map[int]*definitionProbe, b *budget) (bool, error) {
