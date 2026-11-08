@@ -7,9 +7,11 @@ import (
 )
 
 func checkPublishedNoteIdentitiesSQLite(t *testing.T) {
+	t.Helper()
 	checkPublishedNoteIdentities(t, newTestStore(t))
 }
 func checkPublishedNoteIdentitiesPostgres(t *testing.T) {
+	t.Helper()
 	checkPublishedNoteIdentities(t, newPostgresQueryStore(t))
 }
 
