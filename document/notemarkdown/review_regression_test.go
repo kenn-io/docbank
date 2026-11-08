@@ -133,3 +133,62 @@ func TestReviewListTabNormalPadding(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
 }
+
+func TestReviewDefinitionsAfterMultilineTitle(t *testing.T) {
+	src := []byte("[a]: one.md \"first\nsecond\"\n[b]: two.md\n\n[x][a] [y][b]\n")
+	n, err := Parse(t.Context(), src)
+	require.NoError(t, err)
+	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
+}
+
+func TestReviewHeadingHTMLCommentBrackets(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("# [a <!-- [ -->b](target.md)\n"))
+	require.NoError(t, err)
+	require.Equal(t, "a b", n.Headings[0].Text)
+}
+
+func TestReviewFlowCommentDoesNotInjectValues(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("---\ntags: [one # , injected\n  , two]\n---\n"))
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, []string{"one", "two"}, n.Metadata.Tags)
+}
+
+func TestReviewMarkdownNonbreakingSpace(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[link\n\u00a0\nlabel](target.md)\n\nHeading\n---\u00a0\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
+	require.Empty(t, n.Headings)
+}
+
+func TestReviewStandaloneCRLines(t *testing.T) {
+	src := []byte("---\rtitle: Sample\r---\r# A\r# B\r")
+	n, err := Parse(t.Context(), src)
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, "Sample", n.Metadata.Title)
+	require.Len(t, n.Headings, 2)
+	require.Equal(t, "# B\r", string(src[n.Headings[1].Span.Start:n.Headings[1].Span.End]))
+}
+
+func TestReviewEmptyContainerDoesNotStartParagraph(t *testing.T) {
+	for _, prefix := range []string{">\n", "-\n"} {
+		n, err := Parse(t.Context(), []byte(prefix+"Heading\n===\n"))
+		require.NoError(t, err)
+		require.Len(t, n.Headings, 1, prefix)
+		require.Equal(t, "Heading", n.Headings[0].Text)
+	}
+}
+
+func TestReviewEscapedBacktickPrefix(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("\\``[x](ghost.md)`"))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+}
+
+func TestReviewDefinitionDoesNotInterruptList(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[r]: target.md\n2. item\nSetext\n=====\n\n[use][r]\n"))
+	require.NoError(t, err)
+	require.Empty(t, n.Headings)
+	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
+}

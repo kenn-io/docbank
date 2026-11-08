@@ -70,17 +70,17 @@ func parseFrontmatter(ctx context.Context, original []byte, b *budget) (state st
 // sourceLineAt excludes CR/LF in the span; next includes the complete EOL.
 func sourceLineAt(ctx context.Context, src []byte, start int, b *budget) (line Span, next int, err error) {
 	next = start
-	for next < len(src) && src[next] != '\n' {
+	for next < len(src) && src[next] != '\n' && src[next] != '\r' {
 		if err := b.step(ctx, 1); err != nil {
 			return Span{}, 0, err
 		}
 		next++
 	}
 	end := next
-	if end > start && src[end-1] == '\r' {
-		end--
-	}
 	if next < len(src) {
+		if src[next] == '\r' && next+1 < len(src) && src[next+1] == '\n' {
+			next++
+		}
 		next++
 	}
 	return Span{start, end}, next, nil
@@ -109,6 +109,10 @@ func parseYAML(ctx context.Context, src []byte, b *budget) (yamlValue, error) {
 		return yamlValue{}, err
 	}
 	text := string(src)
+	if err := b.reserveStrings(2 * len(text)); err != nil {
+		return yamlValue{}, err
+	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	p := yamlParser{ctx: ctx, b: b}
 	physicalLines := strings.Split(text, "\n")
 	if len(physicalLines) > 0 && physicalLines[len(physicalLines)-1] == "" {
@@ -130,10 +134,7 @@ func parseYAML(ctx context.Context, src []byte, b *budget) (yamlValue, error) {
 		return yamlValue{}, errYAML
 	}
 	if strings.HasPrefix(strings.TrimSpace(p.lines[p.pos].text), "{") {
-		if err := b.reserveStrings(len(text)); err != nil {
-			return yamlValue{}, err
-		}
-		n, err := p.flow(strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n")), 1)
+		n, err := p.flow(strings.TrimSpace(text), 1)
 		if err != nil {
 			return yamlValue{}, err
 		}
@@ -552,6 +553,9 @@ func (f *yamlFlow) value(depth int, inFlow bool) (yamlValue, error) {
 	}
 	start := f.pos
 	for f.pos < len(f.text) && f.text[f.pos] != '\n' && (!inFlow || !strings.ContainsRune(",]}{[", rune(f.text[f.pos]))) {
+		if f.text[f.pos] == '#' && (f.pos == start || f.text[f.pos-1] == ' ' || f.text[f.pos-1] == '\t') {
+			break
+		}
 		if err := f.p.b.step(f.p.ctx, 1); err != nil {
 			return yamlValue{}, err
 		}

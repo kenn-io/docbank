@@ -37,7 +37,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			return nil, err
 		}
 		raw := original[line.Start:line.End]
-		blank := len(bytes.TrimSpace(raw)) == 0
+		blank := len(bytes.Trim(raw, " \t")) == 0
 		content := 0
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
@@ -116,7 +116,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				htmlEnd = ""
 			}
 		}
-		blank = len(bytes.TrimSpace(raw[content:])) == 0
+		blank = len(bytes.Trim(raw[content:], " \t")) == 0
 		if blank {
 			if fenceChar != 0 {
 				pos = next
@@ -128,6 +128,24 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			paragraph = false
 			pos = next
 			continue
+		}
+		// A paragraph containing only reference definitions does not prevent a
+		// list marker (including a non-1 ordered marker) from opening a block.
+		if paragraph && len(containers) == 0 && len(blocks) > 0 {
+			previous := &blocks[len(blocks)-1]
+			start, indent, err := leadingIndent(ctx, raw, content, b)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := listMarker(raw, start); ok && indent <= 3 && previous.paragraph && previous.span.End == line.Start {
+				end, err := leadingDefinitionsEnd(ctx, original, previous.content, b)
+				if err != nil {
+					return nil, err
+				}
+				if end >= previous.content.End {
+					paragraph = false
+				}
+			}
 		}
 		if fenceChar == 0 && !inHTML && !lazy {
 			for {
@@ -149,7 +167,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 						after++
 					}
 				} else if markerEnd, ok := listMarker(raw, end); ok && (!paragraph || listCanInterrupt(raw, end, markerEnd)) {
-					candidate := bytes.TrimSpace(raw[end:])
+					candidate := bytes.Trim(raw[end:], " \t")
 					setext, err := setextLevel(ctx, candidate, b)
 					if err != nil {
 						return nil, err
@@ -198,13 +216,18 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				paragraph = false
 			}
 		}
+		if len(bytes.Trim(raw[content:], " \t")) == 0 {
+			paragraph = false
+			pos = next
+			continue
+		}
 		depth := len(containers)
 		root := depth == 0
 		if err := b.node(ctx, depth+1); err != nil {
 			return nil, err
 		}
 		text := raw[content:]
-		trimmed := bytes.TrimSpace(text)
+		trimmed := bytes.Trim(text, " \t")
 		if inHTML {
 			if htmlEnd != "" {
 				matched, err := htmlEndMatches(ctx, text, htmlEnd, b)
@@ -228,7 +251,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			if err != nil {
 				return nil, err
 			}
-			if indent+virtualIndent <= 3 && n >= fenceWidth && len(bytes.TrimSpace(trimmed[n:])) == 0 {
+			if indent+virtualIndent <= 3 && n >= fenceWidth && len(bytes.Trim(trimmed[n:], " \t")) == 0 {
 				fenceChar = 0
 			}
 			pos = next
@@ -247,7 +270,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		if indent <= 3 {
 			content = localStart
 			text = raw[content:]
-			trimmed = bytes.TrimSpace(text)
+			trimmed = bytes.Trim(text, " \t")
 		}
 		if indent <= 3 && len(trimmed) > 0 && (trimmed[0] == '`' || trimmed[0] == '~') {
 			n, err := byteRun(ctx, trimmed, trimmed[0], b)
@@ -370,7 +393,7 @@ func leadingDefinitionsEnd(ctx context.Context, src []byte, content Span, b *bud
 		if !ok {
 			break
 		}
-		pos = max(next, end)
+		pos = max(next, definitionNext(src, end))
 	}
 	return pos, nil
 }
@@ -437,7 +460,7 @@ func listMarker(raw []byte, start int) (int, bool) {
 // Call only after listMarker validates the bounded (at most nine digits) marker.
 // CommonMark's start number is numeric, so 01. may interrupt just like 1.
 func listCanInterrupt(raw []byte, start, end int) bool {
-	if len(bytes.TrimSpace(raw[end:])) == 0 {
+	if len(bytes.Trim(raw[end:], " \t")) == 0 {
 		return false
 	}
 	if raw[start] < '0' || raw[start] > '9' {

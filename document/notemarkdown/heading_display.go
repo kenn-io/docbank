@@ -311,7 +311,8 @@ func (d *headingDisplay) labelEnd(open, end int) (int, error) {
 			continue
 		}
 		if d.src[i] == '<' {
-			finish, err := htmlTagEnd(d.ctx, d.src, i, end, d.b)
+			scanner := linkScanner{ctx: d.ctx, src: d.src, b: d.b}
+			finish, err := scanner.inlineHTML(i, end)
 			if err != nil {
 				return 0, err
 			}

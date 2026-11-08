@@ -52,10 +52,11 @@ func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budg
 				previousDefinitions = false
 				break // definitions cannot interrupt an existing paragraph
 			}
+			after := definitionNext(src, end)
 			if ok {
-				excluded = append(excluded, Span{pos, min(max(end, next), block.content.End)})
+				excluded = append(excluded, Span{pos, min(max(after, next), block.content.End)})
 			}
-			pos = max(next, end)
+			pos = max(next, after)
 		}
 	}
 	ex := 0
@@ -88,6 +89,17 @@ func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budg
 	}
 	sort.SliceStable(s.links, func(i, j int) bool { return s.links[i].Span.Start < s.links[j].Span.Start })
 	return s.links, nil
+}
+
+// Include the final line ending of a multi-line definition when resuming.
+func definitionNext(src []byte, end int) int {
+	if end < len(src) && src[end] == '\r' {
+		end++
+	}
+	if end < len(src) && src[end] == '\n' {
+		end++
+	}
+	return end
 }
 
 func linkSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
@@ -443,6 +455,20 @@ func (s *linkScanner) inline(start, end int) error {
 		}
 		first := i + 1
 		width := last - first
+		if width > 1 {
+			slashes := 0
+			for j := first - 1; j >= start && s.src[j] == '\\'; j-- {
+				if err := s.b.step(s.ctx, 1); err != nil {
+					return err
+				}
+				slashes++
+			}
+			if slashes%2 == 1 {
+				if n, ok := nextRun[width-1]; ok {
+					closer[first+1] = n
+				}
+			}
+		}
 		if n, ok := nextRun[width]; ok {
 			closer[first] = n
 		}
