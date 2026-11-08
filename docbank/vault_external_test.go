@@ -2913,8 +2913,6 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 		{"supplied_input_count", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0], SuppliedInputIDs: slices.Repeat([]string{strings.Repeat("a", 64)}, 65)}}, true, docbank.DocumentSearchLexical},
 		{"invalid_utf8_source_version", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "\xff", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchLexical},
 		{"selected", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, false, docbank.DocumentSearchLexical},
-		{"semantic", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchSemantic},
-		{"hybrid", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchHybrid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			selected := request
@@ -2933,6 +2931,17 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 				require.Contains(t, string(encoded), `"media_selections":[]`)
 			}
 			require.Empty(t, report.Results, "explicit selection never returns ordinary filename hits")
+		})
+	}
+
+	for _, mode := range []docbank.DocumentSearchMode{docbank.DocumentSearchSemantic, docbank.DocumentSearchHybrid} {
+		t.Run(string(mode)+"_without_embeddings", func(t *testing.T) {
+			selected := request
+			selected.Mode = mode
+			selected.MediaSources = []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}
+			report, err := vault.SearchDocuments(t.Context(), selected)
+			require.ErrorContains(t, err, "semantic retrieval is not configured", "the selector mode is admitted; this profile has no embeddings")
+			require.Empty(t, report.Results)
 		})
 	}
 

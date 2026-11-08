@@ -453,6 +453,7 @@ func (f *mediaQualificationFixture) control(ctx context.Context, action, id stri
 // process. The test deadline bounds its lifetime; interrupt and stop both run
 // testing cleanup, including removal of every synthetic vault and manifest.
 func TestMediaQualificationServer(t *testing.T) {
+	t.Parallel()
 	path := os.Getenv("DOCBANK_MEDIA_QUALIFICATION_MANIFEST")
 	if path == "" {
 		t.Skip("set explicit fixture manifest output path")
@@ -474,11 +475,11 @@ func TestMediaQualificationServer(t *testing.T) {
 			ID     string `json:"id"`
 		}
 		if err := json.UnmarshalRead(io.LimitReader(r.Body, 4096), &request, json.RejectUnknownMembers(true)); err != nil {
-			http.Error(w, "invalid control", 400)
+			http.Error(w, "invalid control", http.StatusBadRequest)
 			return
 		}
 		if err := f.control(r.Context(), request.Action, request.ID); err != nil {
-			http.Error(w, err.Error(), 409)
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

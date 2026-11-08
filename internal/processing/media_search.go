@@ -82,18 +82,16 @@ func (service *Service) searchMediaSources(
 	if len(plan.builds) != 0 && mode != retrieval.ModeUnavailable {
 		execution := prepared
 		execution.mode = mode
-		fence, err := service.beginSearchEgress(ctx, profile, execution)
+		closeEgress, err := service.beginSearchEgress(ctx, profile, execution)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
-		if fence != nil {
-			defer fence.Close()
-		}
+		defer closeEgress()
 		query := retrieval.Query{Text: request.Query, Mode: mode, Limit: max(profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit),
 			LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
 			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID, Authorization: prepared.authorization}
 		report, err = prepared.searcher.Search(ctx, query)
-		if err == retrieval.ErrSelectedEmbeddingsUnavailable {
+		if errors.Is(err, retrieval.ErrSelectedEmbeddingsUnavailable) {
 			// Eligibility can disappear after the planning read. Never encode an
 			// empty leased allowlist; hybrid can still serve exact lexical evidence.
 			if mode == retrieval.ModeHybrid {

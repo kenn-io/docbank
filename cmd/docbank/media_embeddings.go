@@ -8,10 +8,10 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func configuredSuppliedMediaProfile(cfg config.Config, catalog *store.Store, blobs *blob.Store, principal string,
+func configuredSuppliedMediaProfile(cfg config.Config, catalog *store.Store, blobs *blob.Store,
 	profiles map[string]processing.ProfileConfig,
 ) (string, processing.ProfileConfig, error) {
-	name, profile, err := processing.NewSuppliedMediaProfile(catalog, blobs, principal)
+	name, profile, err := processing.NewSuppliedMediaProfile(catalog, blobs, "daemon:operator")
 	if err != nil || cfg.SuppliedMediaEmbeddingProfile == "" {
 		return name, profile, err
 	}

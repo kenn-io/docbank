@@ -28,7 +28,7 @@ func TestSelectedMediaDaemonSuppliedEmbeddingSetup(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	_, base, err := processing.NewSuppliedMediaProfile(catalog, blobs, "daemon:operator")
 	require.NoError(t, err)
-	name, composed, err := configuredSuppliedMediaProfile(cfg, catalog, blobs, "daemon:operator", profiles)
+	name, composed, err := configuredSuppliedMediaProfile(cfg, catalog, blobs, profiles)
 	require.NoError(t, err)
 	require.Equal(t, base.Profile.Rendition, composed.Profile.Rendition)
 	require.Equal(t, base.Profile.EvidenceLexical, composed.Profile.EvidenceLexical)
@@ -39,13 +39,13 @@ func TestSelectedMediaDaemonSuppliedEmbeddingSetup(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
 	cfg.SuppliedMediaEmbeddingProfile = "missing"
-	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, "daemon:operator", profiles)
+	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, profiles)
 	require.ErrorContains(t, err, "no executable runtime")
 	cfg.SuppliedMediaEmbeddingProfile = config.LocalTextProfile
 	donor := profiles[config.LocalTextProfile]
 	donor.Profile.Embeddings = append([]document.EmbeddingBindingV1(nil), donor.Profile.Embeddings...)
 	donor.Profile.Embeddings[0].InputKind = document.EmbeddingInputOriginalFile
 	profiles[config.LocalTextProfile] = donor
-	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, "daemon:operator", profiles)
+	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, profiles)
 	require.ErrorContains(t, err, "rendition_chunk")
 }

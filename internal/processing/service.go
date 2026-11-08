@@ -1633,13 +1633,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
-	fence, err := service.beginSearchEgress(ctx, profile, prepared)
+	closeEgress, err := service.beginSearchEgress(ctx, profile, prepared)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	if fence != nil {
-		defer fence.Close()
-	}
+	defer closeEgress()
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
 		searchScope.EmbeddingDescriptor = &descriptor
@@ -1673,9 +1671,9 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 
 // beginSearchEgress is shared by ordinary and selected-media retrieval. The
 // selected lane calls it only after it has eligible vector candidates.
-func (service *Service) beginSearchEgress(ctx context.Context, profile configuredProfile, prepared preparedSearch) (*store.ProviderEgressFence, error) {
+func (service *Service) beginSearchEgress(ctx context.Context, profile configuredProfile, prepared preparedSearch) (func(), error) {
 	if prepared.authorization.ProviderID == "" || (prepared.mode != retrieval.ModeSemantic && prepared.mode != retrieval.ModeHybrid) {
-		return nil, nil
+		return func() {}, nil
 	}
 	binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
 	if err != nil {
@@ -1691,7 +1689,7 @@ func (service *Service) beginSearchEgress(ctx context.Context, profile configure
 	if prepared.rerankingAuthorizer != nil {
 		prepared.rerankingAuthorizer.queryFenceHeld = true
 	}
-	return fence, nil
+	return fence.Close, nil
 }
 
 type preparedSearch struct {

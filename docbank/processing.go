@@ -184,8 +184,9 @@ func (v *Vault) LookupFormat(ctx context.Context, query string) (document.Format
 }
 
 // SearchDocuments searches the request's source fence. Invalid MediaSources
-// selectors, or a mode or reranking choice they do not support, match
-// ErrMediaSearchInvalid.
+// selectors or selected-media reranking match ErrMediaSearchInvalid. Semantic
+// and hybrid selectors are admitted; they still require an embedding-capable
+// profile and return a capability error when one is not configured.
 func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchRequest) (DocumentSearchReport, error) {
 	if err := v.begin(ctx); err != nil {
 		return DocumentSearchReport{}, err
