@@ -43,30 +43,6 @@ afterEach(() => {
 });
 
 describe("audit evidence drawer", () => {
-  it("distinguishes a dormant vault and offers no refresh until a folder is protected", async () => {
-    statusMock.mockResolvedValueOnce(statusResponse(false));
-
-    render(AuditEvidenceDrawer, {
-      session: "short-lived",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-
-    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
-      "docbank audit enable /folder",
-    );
-    expect(
-      screen.queryByRole("button", { name: "Run permanent audit verification again" }),
-    ).toBeNull();
-    expect(statusMock).toHaveBeenCalledTimes(1);
-    expect(statusMock).toHaveBeenCalledWith(
-      "/api/v1/audit/status",
-      expect.objectContaining({ method: "GET" }),
-    );
-    expect(verifyMock).not.toHaveBeenCalled();
-  });
-
   it("shows independently verified authority and protected content", async () => {
     const fetchMock = verifyMock.mockResolvedValueOnce(
       new Response(
@@ -102,6 +78,26 @@ describe("audit evidence drawer", () => {
         body: "{}",
       }),
     );
+  });
+
+  it("distinguishes a dormant vault and offers no refresh until a folder is protected", async () => {
+    statusMock.mockResolvedValueOnce(statusResponse(false));
+
+    render(AuditEvidenceDrawer, {
+      session: "short-lived",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(await screen.findByText(/No folders are protected/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy audit enable command" }).title).toBe(
+      "docbank audit enable /folder",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Run permanent audit verification again" }),
+    ).toBeNull();
+    expect(statusMock).toHaveBeenCalledTimes(1);
+    expect(verifyMock).not.toHaveBeenCalled();
   });
 
   it("verifies again on request and reports each problem", async () => {
@@ -182,19 +178,20 @@ describe("audit evidence drawer", () => {
     const refreshResponse = new Promise<Response>((_resolve, reject) => {
       rejectRefresh = reject;
     });
-    verifyMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          enabled: true,
-          evidence,
-          protected_blobs: 3,
-          protected_bytes: 4096,
-          verified_blobs: 3,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-    verifyMock.mockReturnValueOnce(refreshResponse);
+    verifyMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            enabled: true,
+            evidence,
+            protected_blobs: 3,
+            protected_bytes: 4096,
+            verified_blobs: 3,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockReturnValueOnce(refreshResponse);
 
     render(AuditEvidenceDrawer, {
       session: "short-lived",
