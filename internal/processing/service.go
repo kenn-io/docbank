@@ -29,6 +29,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/formatcoverage"
@@ -1795,6 +1796,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			if err != nil {
 				return jobIDs, err
 			}
+			if len(generation.Inputs) == 0 {
+				continue
+			}
 		default:
 			return jobIDs, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
 		}
@@ -1996,6 +2000,10 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
+	if len(generated.Inputs) == 0 {
+		return store.EmbeddingInputGenerationRecord{}, nil
+	}
+
 	encoded, err := document.MarshalEmbeddingInputGeneration(generated)
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
@@ -2522,6 +2530,7 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 		declaredMediaType = baseType
 	}
 	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
+		PDFTextOnly:   profile.portable.Rendition.AdapterContract == pdftext.AdapterContract,
 		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,

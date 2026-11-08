@@ -189,10 +189,14 @@ func (m *fixedLinearMemory) Free() {
 // Close a rendering engine before starting another engine or VerifyFresh;
 // concurrent sessions wait with their page context and deadline.
 func NewPDFium(recipe redaction.Recipe) (Engine, error) {
-	return newPDFium(recipe, readProcessRSS)
+	engine, err := newPDFium(recipe, readProcessRSS)
+	if err != nil {
+		return nil, err
+	}
+	return engine, nil
 }
 
-func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (Engine, error) {
+func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (*pdfiumEngine, error) {
 	if err := validateRecipe(recipe); err != nil {
 		return nil, err
 	}

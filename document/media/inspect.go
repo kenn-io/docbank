@@ -69,6 +69,7 @@ const (
 // InspectionPolicy binds finite preflight limits and downstream authority to
 // one exact source. Every supported family must have an enforceable bound.
 type InspectionPolicy struct {
+	PDFTextOnly       bool     `json:"pdf_text_only,omitzero"`
 	PDFPasswords      []string `json:"-"`
 	pdfPassword       *string
 	UnlockPDF         bool   `json:"-"`
@@ -1301,6 +1302,7 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
 	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{
+		TextOnly:         policy.PDFTextOnly,
 		MaxExpandedBytes: policy.MaxExpandedBytes,
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,

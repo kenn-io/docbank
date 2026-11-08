@@ -640,7 +640,10 @@ useful shapes:
   plan reports `local_process` and the `in-process` destination before consent.
   See
   [local EPUB extraction](../document-understanding.md#extract-epub-locally)
-  for limits and counting rules.
+  for limits and counting rules. The `docbank-pdftext-rendition/v1` adapter reads
+  existing PDF text locally and records exact page omissions for pages with no
+  text layer. An image-only PDF completes with those omissions and an empty
+  text body. See [local PDF text extraction](../document-understanding.md#extract-pdf-text-locally).
 - **Hosted provider.** A configured Mistral OCR or embedding runtime, or an embedded caller's
   rendition or embedding provider, may cross a hosted-provider trust boundary.
   The reviewed plan identifies the provider and the input class it receives:

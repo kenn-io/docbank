@@ -957,6 +957,8 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPublishRenditionJobPersistsRejectionsOnFailure(t, newPostgresQueryStore)
 		}},
+		{"ResolveRenditionTextOmissionOnlyPDF", func(t *testing.T) { t.Helper(); checkResolveRenditionTextOmissionOnlyPDF(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkResolveRenditionTextOmissionOnlyPDF(t, newPostgresQueryStore) }},
+		{"EmptyPDFChunkSettlement", func(t *testing.T) { t.Helper(); checkEmptyPDFChunkSettlement(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmptyPDFChunkSettlement(t, newPostgresQueryStore) }},
 		{"ResolveRenditionTextReportsExactFailedAttempts", func(t *testing.T) { t.Helper(); checkResolveRenditionTextReportsExactFailedAttempts(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkResolveRenditionTextReportsExactFailedAttempts(t, newPostgresQueryStore)
