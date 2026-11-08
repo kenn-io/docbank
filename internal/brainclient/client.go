@@ -20,13 +20,13 @@ import (
 // Dependencies keep connection acquisition and publishing on the existing
 // daemon transport. Tests may supply synthetic, ownership-proven endpoints.
 type Dependencies struct {
-	Ensure           func(context.Context, string) (*daemonconn.Connection, error)
-	Running          func(context.Context, string) (*daemonconn.Connection, bool, error)
-	Remote           func(string, string) (*daemonconn.Connection, error)
-	ReadKey          func(string) (string, error)
-	Publish          func(context.Context, *daemonconn.Connection, push.Options) (push.Report, error)
-	ServiceInstalled func(context.Context, string) (bool, error)
-	Now              func() time.Time
+	Ensure          func(context.Context, string) (*daemonconn.Connection, error)
+	Running         func(context.Context, string) (*daemonconn.Connection, bool, error)
+	Remote          func(string, string) (*daemonconn.Connection, error)
+	ReadKey         func(string) (string, error)
+	Publish         func(context.Context, *daemonconn.Connection, push.Options) (push.Report, error)
+	DisconnectGuard func(context.Context, string, func(context.Context) error) error
+	Now             func() time.Time
 }
 
 type Client struct {
@@ -174,17 +174,12 @@ func (c *Client) Run(ctx context.Context, name string, status func(context.Conte
 // Disconnect removes only client configuration and requires an explicit
 // launcher ownership check; archived data and publication membership remain.
 func (c *Client) Disconnect(ctx context.Context, name string) error {
-	if c.deps.ServiceInstalled == nil {
-		return errors.New("launcher status is unavailable")
+	if c.deps.DisconnectGuard != nil {
+		return c.deps.DisconnectGuard(ctx, name, func(ctx context.Context) error {
+			return c.registry.Remove(ctx, name)
+		})
 	}
-	installed, err := c.deps.ServiceInstalled(ctx, name)
-	if err != nil {
-		return err
-	}
-	if installed {
-		return errors.New("uninstall the publisher service before disconnecting")
-	}
-	return c.registry.Remove(ctx, name)
+	return errors.New("launcher status is unavailable")
 }
 
 // AcceptLocal authorizes one later local upload against the observed archive

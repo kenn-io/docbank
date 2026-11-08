@@ -211,6 +211,23 @@ func TestBrainServiceOwnedLifecycle(t *testing.T) {
 	_, err = os.Stat(receiptPath(spec, manager.reg))
 	require.True(t, os.IsNotExist(err))
 }
+
+func TestBrainServiceDisconnectGuard(t *testing.T) {
+	driver, spec, manager := driverFixture(t)
+	sentinel := errors.New("synthetic registry missing")
+	_, err := driver.InstallChecked(t.Context(), spec, func(context.Context) error { return sentinel })
+	require.ErrorIs(t, err, sentinel)
+	require.Empty(t, manager.calls)
+	_, err = driver.InstallChecked(t.Context(), spec, func(context.Context) error { return nil })
+	require.NoError(t, err)
+	removed := false
+	err = driver.WithAbsent(t.Context(), spec, func(context.Context) error { removed = true; return nil })
+	require.ErrorContains(t, err, "uninstall")
+	require.False(t, removed)
+	require.NoError(t, driver.Uninstall(t.Context(), spec))
+	require.NoError(t, driver.WithAbsent(t.Context(), spec, func(context.Context) error { removed = true; return nil }))
+	require.True(t, removed)
+}
 func TestBrainServicePreservesUnownedDefinition(t *testing.T) {
 	for _, kind := range []string{"manager", "file", "modified-owned"} {
 		t.Run(kind, func(t *testing.T) {

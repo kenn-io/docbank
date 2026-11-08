@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/brainclient"
+	"go.kenn.io/docbank/internal/brainservice"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/push"
 )
@@ -134,7 +135,8 @@ func newBrainCmd() *cobra.Command {
 	}}
 	recovery.Flags().StringVar(&expectedHead, "expected-head", "", "observed archive content version")
 	_ = recovery.MarkFlagRequired("expected-head")
-	cmd.AddCommand(connect, run, status, recovery)
+	disconnect, service := newBrainLifecycleCommands(registry, func() string { return configRoot }, brainservice.NewDriver(nil))
+	cmd.AddCommand(connect, run, status, recovery, disconnect, service)
 	return cmd
 }
 

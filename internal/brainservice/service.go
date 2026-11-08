@@ -29,8 +29,10 @@ type Status struct {
 type Runner func(context.Context, string, ...string) ([]byte, error)
 type Driver interface {
 	Install(ctx context.Context, spec Spec) (Status, error)
+	InstallChecked(ctx context.Context, spec Spec, check func(context.Context) error) (Status, error)
 	Status(ctx context.Context, spec Spec) (Status, error)
 	Uninstall(ctx context.Context, spec Spec) error
+	WithAbsent(ctx context.Context, spec Spec, action func(context.Context) error) error
 }
 
 var (
@@ -224,6 +226,12 @@ func (d *serviceDriver) writeDefinition(name string, data []byte) error {
 	return d.write(name, data)
 }
 func (d *serviceDriver) Install(ctx context.Context, s Spec) (Status, error) {
+	return d.InstallChecked(ctx, s, nil)
+}
+
+// InstallChecked runs the caller's registry check under the same lock used by
+// disconnect, before registration. It never starts a launcher if check fails.
+func (d *serviceDriver) InstallChecked(ctx context.Context, s Spec, check func(context.Context) error) (Status, error) {
 	reg, err := Render(d.goos, s)
 	if err != nil {
 		return Status{State: "unknown", ProblemCode: "invalid_spec"}, err
@@ -233,6 +241,11 @@ func (d *serviceDriver) Install(ctx context.Context, s Spec) (Status, error) {
 		return Status{ID: reg.ID, State: "unknown", ProblemCode: "lock_failed"}, err
 	}
 	defer unlock()
+	if check != nil {
+		if err := check(ctx); err != nil {
+			return Status{ID: reg.ID, State: "unknown", ProblemCode: "configuration_invalid"}, err
+		}
+	}
 	status, err := d.Status(ctx, s)
 	if err != nil {
 		return status, err
@@ -275,6 +288,30 @@ func (d *serviceDriver) Install(ctx context.Context, s Spec) (Status, error) {
 		return d.failed(ctx, s, "registration_unconfirmed", ErrManager)
 	}
 	return status, nil
+}
+
+// WithAbsent serializes the absent check and client removal with installation.
+// An unreadable manager or leftover owned receipt is not proof of absence.
+func (d *serviceDriver) WithAbsent(ctx context.Context, s Spec, action func(context.Context) error) error {
+	if _, err := Render(d.goos, s); err != nil {
+		return err
+	}
+	if action == nil {
+		return errors.New("missing disconnect action")
+	}
+	unlock, err := lockService(ctx, s)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	status, err := d.Status(ctx, s)
+	if err != nil {
+		return err
+	}
+	if status.Installed || status.Owned {
+		return errors.New("uninstall the publisher service before disconnecting")
+	}
+	return action(ctx)
 }
 func (d *serviceDriver) Uninstall(ctx context.Context, s Spec) error {
 	reg, err := Render(d.goos, s)

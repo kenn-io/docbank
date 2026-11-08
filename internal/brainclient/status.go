@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 // Status reports an observation, never a saved intent as evidence of indexing.
@@ -44,6 +45,9 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 			return status, ctx.Err()
 		}
 		status.ProblemCode = "publication_unavailable"
+		if daemonconn.IsTransportError(err) {
+			status.ProblemCode = "daemon_unavailable"
+		}
 		return status, nil
 	}
 	status.ConnectionState = "connected"
