@@ -164,10 +164,14 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		if err != nil || !ok {
 			return 0, false, err
 		}
+		beforeSpace := tail
 		for tail < line.End && linkSpace(s.src[tail]) {
 			tail++
 		}
-		if dest.Start == dest.End {
+		if dest.Start == dest.End && (j >= line.End || s.src[j] != '<') {
+			return 0, false, nil
+		}
+		if tail < line.End && tail == beforeSpace {
 			return 0, false, nil
 		}
 		definitionEnd := line.End
@@ -371,8 +375,12 @@ func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
 				j++
 			} else if !wiki && raw[i] == '&' {
 				if semi := strings.IndexByte(raw[i:min(len(raw), i+34)], ';'); semi >= 0 {
-					j = i + semi + 1
-					value = decodeEntity(raw[i:j])
+					candidateEnd := i + semi + 1
+					decoded := decodeEntity(raw[i:candidateEnd])
+					if decoded != raw[i:candidateEnd] {
+						j = candidateEnd
+						value = decoded
+					}
 				}
 			}
 			write(value)
@@ -447,11 +455,19 @@ func (s *linkScanner) inline(start, end int) error {
 			continue
 		}
 		if c == '<' {
+			linksBefore := len(s.links)
 			finish, err := s.inlineHTML(i, end)
 			if err != nil {
 				return err
 			}
 			if finish > i {
+				if len(s.links) > linksBefore {
+					for j := range stack {
+						if !stack[j].embed {
+							stack[j].active = false
+						}
+					}
+				}
 				i = finish
 				continue
 			}

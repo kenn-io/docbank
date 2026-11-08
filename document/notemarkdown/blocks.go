@@ -102,7 +102,12 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				htmlEnd = ""
 			}
 		}
+		blank = len(bytes.TrimSpace(raw[content:])) == 0
 		if blank {
+			if fenceChar != 0 {
+				pos = next
+				continue
+			}
 			if inHTML && htmlEnd == "" {
 				inHTML = false
 			}

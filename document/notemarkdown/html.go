@@ -270,7 +270,7 @@ func htmlBlockStart(ctx context.Context, text []byte, generic bool, b *budget) (
 	}
 	tag := text[start:i]
 	for _, name := range []string{"script", "style", "pre", "textarea"} {
-		if start == 1 && bytes.EqualFold(tag, []byte(name)) {
+		if start == 1 && (i == len(text) || text[i] != '/') && bytes.EqualFold(tag, []byte(name)) {
 			return "</" + name + ">", true, nil
 		}
 	}

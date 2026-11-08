@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -129,7 +130,10 @@ func parseYAML(ctx context.Context, src []byte, b *budget) (yamlValue, error) {
 		return yamlValue{}, errYAML
 	}
 	if strings.HasPrefix(strings.TrimSpace(p.lines[p.pos].text), "{") {
-		n, err := p.flow(strings.TrimSpace(text), 1)
+		if err := b.reserveStrings(len(text)); err != nil {
+			return yamlValue{}, err
+		}
+		n, err := p.flow(strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n")), 1)
 		if err != nil {
 			return yamlValue{}, err
 		}
@@ -201,7 +205,8 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 		var key, rest string
 		if seq {
 			if !yamlSequence(text) {
-				return yamlValue{}, errYAML
+				p.pos--
+				break
 			}
 			rest = strings.TrimSpace(text[1:])
 		} else {
@@ -221,7 +226,7 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 				return yamlValue{}, errYAML
 			}
 		}
-		value, err := p.lineValue(rest, indent, depth+1)
+		value, err := p.lineValue(rest, indent, depth+1, !seq)
 		if err != nil {
 			return yamlValue{}, err
 		}
@@ -279,7 +284,7 @@ func yamlStripComment(s string) string {
 			}
 			continue
 		}
-		if s[i] == '\'' || s[i] == '"' {
+		if i == 0 && (s[i] == '\'' || s[i] == '"') {
 			quote = s[i]
 		}
 		if s[i] == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t') {
@@ -289,11 +294,13 @@ func yamlStripComment(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func (p *yamlParser) lineValue(rest string, indent, depth int) (yamlValue, error) {
-	rest = yamlStripComment(rest)
+func (p *yamlParser) lineValue(rest string, indent, depth int, mapping bool) (yamlValue, error) {
+	if !strings.HasPrefix(rest, "[") && !strings.HasPrefix(rest, "{") {
+		rest = yamlStripComment(rest)
+	}
 	if rest == "" {
 		p.skipBlank()
-		if p.pos < len(p.lines) && p.lines[p.pos].indent > indent {
+		if p.pos < len(p.lines) && (p.lines[p.pos].indent > indent || mapping && p.lines[p.pos].indent == indent && yamlSequence(p.lines[p.pos].text[indent:])) {
 			return p.block(p.lines[p.pos].indent, depth)
 		}
 		if err := p.enter(depth); err != nil {
@@ -348,6 +355,15 @@ func (p *yamlParser) closed(s string) (bool, error) {
 					continue
 				}
 				quote = 0
+			}
+			continue
+		}
+		if c == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t') {
+			for i < len(s) && s[i] != '\n' {
+				if err := p.b.step(p.ctx, 1); err != nil {
+					return false, err
+				}
+				i++
 			}
 			continue
 		}
@@ -599,12 +615,10 @@ func yamlNonString(s string) bool {
 	if _, err := strconv.ParseInt(strings.ReplaceAll(s, "_", ""), 0, 64); err == nil {
 		return true
 	}
-	if len(s) >= 10 && s[4] == '-' && s[7] == '-' {
-		valid := true
-		for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
-			valid = valid && s[i] >= '0' && s[i] <= '9'
+	for _, layout := range []string{"2006-01-02", time.RFC3339Nano, "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05"} {
+		if _, err := time.Parse(layout, s); err == nil {
+			return true
 		}
-		return valid
 	}
 	return false
 }
