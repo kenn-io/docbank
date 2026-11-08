@@ -33,6 +33,8 @@ import (
 // Admission, retained evidence, embeddings, vector publication and search use
 // the production service, workers, store and HTTP handler.
 type mediaQualificationRecord struct {
+	SourceSHA256     string `json:"source_sha256"`
+	ByteLength       int64  `json:"byte_length"`
 	ID               string `json:"id"`
 	Profile          string `json:"profile"`
 	SourceID         string `json:"source_id"`
@@ -255,6 +257,10 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 		descriptor.Fingerprint = ""
 		descriptor.Dimension = 384
 		descriptor.Normalization = document.VectorNormalizationUnitLength
+		descriptor.ModelInput, err = document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "qualification-minilm-identity-v1", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "{{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "{{content}}"}})
+		require.NoError(t, err)
+		descriptor.CompatibilityID = descriptor.ModelInput.CompatibilityID
+		descriptor.DocumentFormatter, descriptor.QueryFormatter = "identity", "identity"
 		descriptor.Model = "all-MiniLM-L6-v2"
 		descriptor.ModelRevision = fmt.Sprint(metadata["revision"])
 		encoder.descriptor, err = document.NewEmbeddingDescriptor(descriptor)
@@ -300,7 +306,7 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 		raw[len(raw)-1] = byte(i + 1)
 		receipt, err := client.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{OperationID: uuid.New().String(), Filename: item.id + ".wav", MediaType: "audio/wav", SHA256: processingTestHash(string(raw)), ByteLength: int64(len(raw)), Occurrence: api.MediaOccurrenceBody{Ref: item.id, Revision: "1"}}, bytes.NewReader(raw))
 		require.NoError(t, err)
-		record := mediaQualificationRecord{ID: item.id, Profile: processing.SuppliedMediaProfileName, SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID, Origin: "supplied", Text: item.text, occurrenceID: receipt.OccurrenceID}
+		record := mediaQualificationRecord{SourceSHA256: processingTestHash(string(raw)), ByteLength: int64(len(raw)), ID: item.id, Profile: processing.SuppliedMediaProfileName, SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID, Origin: "supplied", Text: item.text, occurrenceID: receipt.OccurrenceID}
 		if item.generated {
 			record.Profile, record.Origin = "qualification-generated", "generated"
 			record.StartMS, record.EndMS = new(int64(1000)), new(int64(4000))
@@ -330,6 +336,15 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 		require.NotNil(t, transcript.Transcript)
 		require.Equal(t, record.Origin, transcript.Transcript.Origin)
 		f.manifest.Records = append(f.manifest.Records, record)
+	}
+	// Readiness includes real nonlexical HTTP reads, after continuation has
+	// synchronously completed embedding jobs and vector publication.
+	for _, record := range f.manifest.Records {
+		report, err := client.SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
+		require.NoError(t, err)
+		require.Equal(t, "semantic", report.ActualMode)
+		require.Equal(t, "complete", report.Coverage.State)
+		require.Len(t, report.Results, 1)
 	}
 	t.Cleanup(func() { _ = f.encoder.barrier(context.WithoutCancel(t.Context()), "release") })
 	return f

@@ -73,7 +73,7 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 		for _, hit := range report.Results {
 			for _, evidence := range hit.Evidence {
 				if evidence.Kind == "embedding" {
-					require.Equal(t, supplied.ContentVersionID, evidence.ContentVersionID)
+					require.Equal(t, supplied.ContentVersionID, evidence.MediaSources[0].ContentVersionID)
 				}
 			}
 		}
@@ -102,7 +102,12 @@ func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 				report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
 				done <- outcome{report, err}
 			}()
-			require.NoError(t, f.control(t.Context(), "wait", ""))
+			select {
+			case <-f.encoder.entered:
+			case early := <-done:
+				require.NoError(t, early.err)
+				t.Fatal("query finished before entering the encoder barrier")
+			}
 			require.NoError(t, f.control(t.Context(), action, record.ID))
 			require.NoError(t, f.control(t.Context(), "release", ""))
 			result := <-done
@@ -115,4 +120,34 @@ func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
+	t.Parallel()
+	f := newMediaQualificationFixture(t)
+	supplied, generated := f.manifest.Records[0], f.manifest.Records[2]
+	require.NoError(t, f.control(t.Context(), "arm", ""))
+	type outcome struct {
+		report api.DocumentSearchReport
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(supplied.Profile, "semantic", supplied, generated))
+		done <- outcome{report, err}
+	}()
+	select {
+	case <-f.encoder.entered:
+	case early := <-done:
+		require.NoError(t, early.err)
+		t.Fatal("query finished before entering the encoder barrier")
+	}
+	require.NoError(t, f.control(t.Context(), "replace", supplied.ID))
+	require.NoError(t, f.control(t.Context(), "release", ""))
+	result := <-done
+	require.NoError(t, result.err)
+	require.Empty(t, result.report.Results)
+	require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
+	require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")
+	require.Equal(t, "incomplete", result.report.Coverage.State)
 }

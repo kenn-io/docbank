@@ -44,7 +44,8 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: '24'
-      - run: npm ci --prefix frontend
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 npm ci --prefix frontend
       - run: make generate-api
       - uses: actions/upload-artifact@v7.0.2
         with:

@@ -849,19 +849,31 @@ canonical lowercase SHA-256 identities; `null` is rejected. Excluded selections
 make coverage incomplete and consume no ranking budget. Constraints are not
 echoed in evidence source identities. Only selected transcripts contribute
 to results and coverage; fence members without a selector are excluded.
-Source and source-version IDs are nonempty UTF-8 bounded to 256 bytes. Use `lexical` or
-`auto` without reranking. Docbank selects each source's covering transcript
+Source and source-version IDs are nonempty UTF-8 bounded to 256 bytes. Use
+`lexical`, `auto`, `semantic`, or `hybrid` without reranking. Docbank selects each source's covering transcript
 before ranking and limits, including while a retry is pending.
 
 These reports include `media_source_selection: true`, even without matches.
 `media_selections` lists each final-stable eligible source tuple with its actual
-`origin`, `supplied_input_id` when supplied, and `completeness`, independent of
+`build_id`, `origin`, `supplied_input_id` when supplied, and `completeness`, independent of
 query matches. Unready or input-excluded sources are omitted; an empty selection
 summary is `[]`. Ordinary search omits the summary.
 Each selected content/build pair has its own result. Its evidence carries
-`media_sources` and `build_id`, alongside the existing segment, excerpt and timing. Coverage counts
-content versions and is incomplete while any requested selection lacks
-ready evidence. Pending or unavailable transcripts leave ready matches usable.
+`media_sources` and `build_id`. Lexical evidence uses `rendition_segment`;
+semantic evidence uses `embedding` with its exact input, generation, embedding
+set and vector-space identities. Semantic evidence has no `segment_id`.
+Its excerpt and optional timing come from the authenticated retained input.
+Hybrid results can carry both references from the same selected build. When
+lexical evidence contributes the displayed excerpt, use its timing.
+
+Semantic and hybrid modes use only embeddings for the selected builds under
+the requested processing profile and binding. The selected profile must have
+already produced those chunk embeddings through ordinary processing. Search
+never processes media or grants consent. A ready transcript under a different
+profile is an embedding coverage gap, even when the same bytes have another
+embedded transcript. Both scoring and candidate limits enforce exact selected
+builds. Coverage counts content versions and is incomplete while any requested
+selection lacks ready evidence or any selected build lacks its embeddings. Pending or unavailable transcripts leave ready matches usable.
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
