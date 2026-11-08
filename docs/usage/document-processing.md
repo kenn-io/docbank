@@ -259,7 +259,7 @@ cannot start a review. **Fit page** initially shows the whole page; choose
    choose **Use expanded mask**, or keep editing.
 3. Choose **Preview redaction**. Inspect **Redacted** and **Text** on each page.
    The displayed page images are the exact images verified against this PDF.
-4. Choose **Confirm and download ZIP**, then **Download ZIP**. Extract
+4. Choose **Download unnumbered ZIP**, then **Download ZIP**. Extract
    `redacted.pdf` to open it. The ZIP also contains the sanitized text and receipt.
    Keep the tab open until the transfer finishes.
 
@@ -314,7 +314,8 @@ Use them with [`redaction verify`](#check-and-retain-a-saved-archive).
 In the browser, start from a ready redaction preview and choose **Number and keep
 PDF**. Select a namespace, or create one with a prefix, suffix and digit count.
 The first-number field starts at that namespace's next sequence. You can change
-it or choose **Refresh next number** before confirming. This is a suggestion:
+it or use the **Refresh next number** icon beside the field before confirming.
+Starts below the known next number are refused. The suggested number is advisory:
 other reservations can advance the cursor, and label formats can collide.
 A conflict requires another explicit choice and confirmation. A namespace that cannot
 fit all pages stays unavailable even if you enter an earlier first number.
@@ -324,10 +325,12 @@ and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
 a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
 points. The server verifies the content and footer before publication.
 **Download numbered PDF** downloads the retained PDF, and **Open Productions**
-opens its recovery view. Downloads check the retained file identity; masks and
-approved text are not rechecked. The plain preview and ZIP remain available
-until their usual expiry or discard. Download that ZIP before expiry if you need
-its sanitized-text sidecar; this action produces no numbered ZIP.
+opens its recovery view. The published result stays available while you edit
+other masks, until you close the review. Downloads check the retained file
+identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
+until their usual expiry or discard. **Download unnumbered ZIP** saves that
+reviewed preview. Download it before expiry if you need its sanitized-text
+sidecar; this action produces no numbered ZIP.
 
 A failed or canceled request cannot release reserved numbers. **Retry reservation**
 replays the same frozen range when its reply was uncertain. **Retry publication**

@@ -65,6 +65,8 @@
   let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
   let numberingInputs = $state<NumberingInputs>();
+  let publishedInputs = $state<NumberingInputs>();
+  const displayedNumberingInputs = $derived(publishedInputs ?? numberingInputs);
   let numberingLocked = $state(false);
   let preview = $state<RedactionPreview>();
   let expansion = $state<RedactionMask>();
@@ -397,7 +399,7 @@
     }
   }
   function savePrivate(kind: "preparation" | "masks" | "review") {
-    const saved = review && preparation ? { preparation, masks, review } : numberingInputs;
+    const saved = review && preparation ? { preparation, masks, review } : displayedNumberingInputs;
     if (!saved) return;
     const value = saved[kind];
     const url = URL.createObjectURL(
@@ -423,6 +425,7 @@
     selectionAnnouncement = "";
     preparation = undefined;
     numberingInputs = undefined;
+    publishedInputs = undefined;
     numberingLocked = false;
     review = undefined;
     preview = undefined;
@@ -651,7 +654,7 @@
               </section>{/if}
           </aside>
         </div>
-        {#if review || numberingInputs}<details>
+        {#if review || displayedNumberingInputs}<details>
             <summary>Private review files</summary>
             <p>
               Keep these for offline verification. Preparation contains unredacted evidence; do not
@@ -663,15 +666,22 @@
                   onclick={() => savePrivate(kind as "preparation" | "masks" | "review")}
                   >Save {kind}</Button
                 >{/each}
+              {#if !publishedInputs}<p class="notice">
+                  Save all three before numbering to finish through the CLI if this tab closes.
+                </p>{/if}
             </div>
           </details>{/if}
-        {#if numberingInputs}{#key numberingInputs.review.sha256}<RedactionNumbering
+        {#if displayedNumberingInputs}{#key displayedNumberingInputs.review.sha256}<RedactionNumbering
               {session}
-              inputs={numberingInputs}
+              inputs={displayedNumberingInputs}
               {title}
               bind:locked={numberingLocked}
               {onauthfailure}
-              {onpublished}
+              onpublished={() => {
+                publishedInputs = numberingInputs;
+                onpublished();
+              }}
+              onnotice={(message) => (notice = message)}
               {onproductions}
             />{/key}{/if}
         {#if preview}<p class="notice">
@@ -711,11 +721,8 @@
         {:else if preview}<Button
             disabled={downloading || numberingLocked}
             onclick={() => void back()}>Back to masks</Button
-          ><Button
-            tone="info"
-            surface="solid"
-            disabled={downloading || outputLoading}
-            onclick={() => (dialog = "download")}>Confirm and download ZIP</Button
+          ><Button disabled={downloading || outputLoading} onclick={() => (dialog = "download")}
+            >Download unnumbered ZIP</Button
           >
         {:else if preparation}<Toggle
             disabled={busy || numberingLocked || !imageReady || masks.length >= 256}

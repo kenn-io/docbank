@@ -43,6 +43,14 @@ it("reads the used cursor before enabling confirmation and requires separate ret
     screen.getByRole("checkbox", { name: "Keep the unredacted original indefinitely" }),
   );
   expect((confirm as HTMLButtonElement).disabled).toBe(false);
+  await fireEvent.input(screen.getByRole("textbox", { name: "First number" }), {
+    target: { value: "2" },
+  });
+  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText("Use 3 or higher.")).toBeTruthy();
+  await fireEvent.input(screen.getByRole("textbox", { name: "First number" }), {
+    target: { value: "3" },
+  });
   await fireEvent.click(confirm);
   const dialog = screen.getByRole("dialog", { name: "Keep this numbered PDF?" });
   await fireEvent.keyDown(dialog, { key: "Escape" });

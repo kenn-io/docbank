@@ -130,7 +130,7 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await drawer.getByRole("button", { name: "Mask whole page 2", exact: true }).click();
     await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
     await expect(
-      drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }),
+      drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }),
     ).toBeEnabled({ timeout: 60000 });
     await drawer.getByText("Private review files", { exact: true }).click();
     const privateFiles: string[] = [];
@@ -147,7 +147,7 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     const picker = drawer.getByRole("combobox", { name: /^Numbering namespace/ });
     await expect(picker).toBeEnabled();
     await picker.click();
-    await page.getByRole("option", { name: "FULL0", exact: true }).click();
+    await page.getByRole("option", { name: "FULL · 1 digit", exact: true }).click();
     await expect(first).toHaveValue("10");
     await drawer
       .getByRole("checkbox", { name: "Keep the unredacted original indefinitely" })
@@ -163,7 +163,7 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
       .getByRole("checkbox", { name: "Keep the unredacted original indefinitely" })
       .uncheck();
     await picker.click();
-    await page.getByRole("option", { name: "QUAL000000", exact: true }).click();
+    await page.getByRole("option", { name: "QUAL · 6 digits", exact: true }).click();
     await expect(first).toHaveValue("3");
     await expect(drawer.getByText("QUAL000003–QUAL000004", { exact: true })).toBeVisible();
     const reviewNumbering = drawer.getByRole("button", { name: "Review numbering", exact: true });
@@ -171,6 +171,12 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await drawer
       .getByRole("checkbox", { name: "Keep the unredacted original indefinitely" })
       .check();
+    await first.fill("2");
+    await expect(reviewNumbering).toBeDisabled();
+    await expect(drawer.getByText("Use 3 or higher.", { exact: true })).toBeVisible();
+    await first.fill("3");
+    await mkdir(captures!, { recursive: true });
+    await page.screenshot({ path: path.join(captures!, "numbered-form.png") });
     await reviewNumbering.click();
     const confirmation = page.getByRole("dialog", { name: "Keep this numbered PDF?", exact: true });
     await expect(confirmation).toContainText("half-inch footer");
@@ -193,6 +199,7 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await page.screenshot({ path: path.join(captures!, "numbered-short.png") });
     await page.setViewportSize({ width: 1440, height: 960 });
     await reviewNumbering.click();
+    await expect(confirmation).toBeVisible();
     await page.screenshot({ path: path.join(captures!, "numbered-confirmation.png") });
     let reserved: NumberedReservation | undefined,
       reserveCalls = 0;
@@ -238,7 +245,7 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     expect(reserved?.pages.map((p) => p.label)).toEqual(["QUAL000003", "QUAL000004"]);
     await drawer.getByRole("button", { name: "Text", exact: true }).click();
     await expect(drawer.getByLabel("Sanitized text for page 2")).toContainText("[REDACTED]");
-    await drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+    await drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }).click();
     const zipEvent = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
     await (await zipEvent).saveAs(path.join(scratch, "plain.zip"));
@@ -274,6 +281,9 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await downloadNumbered.click();
     const pdf = path.join(scratch, "numbered.pdf");
     await (await downloadEvent).saveAs(pdf);
+    await expect(
+      drawer.getByText(/Download started\. Keep this tab open .*finishes\./),
+    ).toHaveCount(1);
     const bytes = await readFile(pdf),
       digest = createHash("sha256").update(bytes).digest("hex");
     expect(digest).toBe(committed!.blob_sha256);
@@ -297,6 +307,17 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     expect(JSON.stringify(checked)).toContain("masks_text_and_numbers");
     expect(await readFile(path.join(scratch, "checked.pdf"))).toEqual(bytes);
     await page.screenshot({ path: path.join(captures!, "numbered-kept.png") });
+    // Editing a new set of masks must not unmount the retained delivery.
+    await drawer
+      .getByRole("listitem")
+      .filter({ hasText: "Whole page 1" })
+      .getByRole("button", { name: "Remove", exact: true })
+      .click();
+    await expect(downloadNumbered).toBeEnabled();
+    const repeatDownload = page.waitForEvent("download");
+    await downloadNumbered.click();
+    await (await repeatDownload).saveAs(path.join(scratch, "after-mask-edit.pdf"));
+    expect(await readFile(path.join(scratch, "after-mask-edit.pdf"))).toEqual(bytes);
     await drawer.getByRole("button", { name: "Open Productions", exact: true }).click();
     await expect(page.getByRole("main", { name: "Productions", exact: true })).toBeVisible();
     await stop();

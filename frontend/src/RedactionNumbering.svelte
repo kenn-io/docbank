@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { Button, Checkbox, Modal, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import IconAction from "./IconAction.svelte";
   import { APIError } from "./api-transport.js";
   import { listBatesNamespaces, createBatesNamespace, downloadBatesExport } from "./bates.js";
   import {
@@ -20,6 +22,7 @@
     onauthfailure,
     onpublished,
     onproductions,
+    onnotice = () => {},
   }: {
     session: string;
     inputs: NumberingInputs;
@@ -28,6 +31,7 @@
     onauthfailure: (cause: unknown) => void;
     onpublished: () => void;
     onproductions?: () => void;
+    onnotice?: (message: string) => void;
   } = $props();
   let opened = $state(false),
     namespaces = $state<BatesNamespace[]>([]),
@@ -41,7 +45,6 @@
     suffix = $state(""),
     padding = $state("6");
   let error = $state(""),
-    notice = $state(""),
     phase = $state<
       "idle" | "reserving" | "reserve-failed" | "publishing" | "publish-failed" | "done"
     >("idle");
@@ -62,6 +65,7 @@
       nextSequence !== undefined &&
       nextSequence + inputs.review.resolved.page_count <= 10 ** namespace.padding,
   );
+  const belowNext = $derived(nextSequence !== undefined && Number(start) < nextSequence);
   const busy = $derived(phase === "reserving" || phase === "publishing");
   $effect(() => {
     locked = !!frozen && !artifact;
@@ -137,7 +141,8 @@
     }
   }
   function begin() {
-    if (!namespace || !cursorReady || !hasRoom || !consent || !labels.length || frozen) return;
+    if (!namespace || !cursorReady || !hasRoom || belowNext || !consent || !labels.length || frozen)
+      return;
     frozen = structuredClone({
       ...$state.snapshot(inputs),
       namespace: $state.snapshot(namespace),
@@ -153,7 +158,7 @@
     controller = new AbortController();
     const signal = controller.signal;
     error = "";
-    notice = "";
+    onnotice("");
     try {
       if (!reservation) {
         phase = "reserving";
@@ -193,7 +198,7 @@
     error = "";
     try {
       await downloadBatesExport(session, artifact, controller.signal);
-      if (!disposed) notice = "Download started. Keep this tab open until it finishes.";
+      if (!disposed) onnotice("Download started. Keep this tab open until the download finishes.");
     } catch (cause) {
       if (!controller.signal.aborted) fail(cause);
     }
@@ -229,14 +234,11 @@
     <h3>Keep a numbered PDF</h3>
     {#if artifact}
       <p><strong>{artifact.pages[0]?.label}–{artifact.pages.at(-1)?.label}</strong></p>
-      <p>Kept in Productions. The unredacted original is retained indefinitely.</p>
+      <p>Kept in Productions.</p>
       <Button tone="info" surface="solid" onclick={() => void download()}
         >Download numbered PDF</Button
       >
       {#if onproductions}<Button onclick={onproductions}>Open Productions</Button>{/if}
-      <p class="muted">
-        Download checks the retained file record. Masks and approved text are not rechecked.
-      </p>
     {:else if frozen}
       <p>
         <strong
@@ -257,12 +259,7 @@
             : "Rendering and keeping PDF…"}
         </p>
         <Button onclick={cancel}>Cancel request</Button>
-      {:else}<p>
-          {reservation
-            ? "Numbers are reserved. Retry publication with this allocation."
-            : "The reservation reply is uncertain. Retry the identical request."}
-        </p>
-        <Button onclick={() => void run()}
+      {:else}<Button onclick={() => void run()}
           >{reservation ? "Retry publication" : "Retry reservation"}</Button
         >{/if}
       {#if reservation}<p class="muted">Allocation: {reservation.allocation_id}</p>{/if}
@@ -274,35 +271,46 @@
           value={selected}
           options={namespaces.map((n) => ({
             value: n.namespace_id,
-            label: n.prefix + "0".repeat(n.padding) + n.suffix,
+            label: `${n.prefix ? n.prefix + " · " : ""}${n.padding} ${n.padding === 1 ? "digit" : "digits"}${n.suffix ? " · " + n.suffix : ""}`,
           }))}
           disabled={loading}
           onchange={(id) => void choose(id)}
         />
         <label for="redaction-first-number">First number</label>
-        <TextInput
-          id="redaction-first-number"
-          ariaLabel="First number"
-          bind:value={start}
-          disabled={!cursorReady || loading}
-          block
-        />
-        <Button size="sm" disabled={loading} onclick={() => void choose(selected)}
-          >Refresh next number</Button
-        >
+        <div class="number-input">
+          <TextInput
+            id="redaction-first-number"
+            ariaLabel="First number"
+            bind:value={start}
+            disabled={!cursorReady || loading}
+            block
+          />
+          <IconAction
+            size="sm"
+            ariaLabel="Refresh next number"
+            disabled={loading}
+            onclick={() => void choose(selected)}
+          >
+            <RefreshCwIcon size={14} aria-hidden="true" />
+          </IconAction>
+        </div>
         {#if cursorReady}
           {#if !hasRoom}<p class="error">
-              This namespace cannot fit {inputs.review.resolved.page_count} pages. Choose another namespace.
+              This namespace cannot fit {inputs.review.resolved.page_count}
+              {inputs.review.resolved.page_count === 1 ? "page" : "pages"}. Choose another
+              namespace.
             </p>
+          {:else if belowNext}<p class="error">Use {nextSequence} or higher.</p>
           {:else if labels.length}<p><strong>{labels[0]}–{labels.at(-1)}</strong></p>
           {:else}<p class="error">
-              This range does not fit. Choose another first number or namespace.
+              Use a whole number from {nextSequence} to {10 ** namespace!.padding -
+                inputs.review.resolved.page_count}.
             </p>{/if}
         {/if}
       {/if}
       {#if listing && !loading}<Button onclick={() => void open()}>Retry namespaces</Button>{/if}
       <details>
-        <summary>Create or find a namespace</summary>
+        <summary>New namespace</summary>
         <label for="numbering-prefix">Prefix</label><TextInput
           id="numbering-prefix"
           ariaLabel="Numbering prefix"
@@ -329,37 +337,22 @@
         />
         <Button disabled={loading} onclick={() => void create()}>Create namespace</Button>
       </details>
-      <p>
-        The unredacted original is kept indefinitely, with no release path. Failed or abandoned
-        reservations keep their numbers.
-      </p>
-      <p>
-        Each page gains a half-inch footer below its reviewed content. The numbered download is PDF
-        only; download the plain ZIP before preview expiry if you need its text sidecar.
-      </p>
-      <p>
-        Save the private review files before continuing. If this tab closes before publication,
-        finishing a reserved range requires those files through the CLI.
-      </p>
       <Checkbox bind:checked={consent} label="Keep the unredacted original indefinitely" />
+      <p class="muted">Reserved numbers can't be released, even if publication fails.</p>
       <Button
         tone="info"
         surface="solid"
-        disabled={loading || !cursorReady || !hasRoom || !consent || !labels.length}
+        disabled={loading || !cursorReady || !hasRoom || belowNext || !consent || !labels.length}
         onclick={() => (confirm = true)}>Review numbering</Button
       >
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if notice}<p role="status">{notice}</p>{/if}
   {/if}
 </section>
 {#if confirm}<Modal title="Keep this numbered PDF?" onclose={() => (confirm = false)}>
     <p>{title} · {inputs.review.resolved.page_count} pages</p>
     <p><strong>{labels[0]}–{labels.at(-1)}</strong></p>
-    <p>
-      The unredacted original will be kept indefinitely. Numbers cannot be released. Pages gain a
-      half-inch footer below the reviewed content.
-    </p>
+    <p>Pages gain a half-inch footer below the reviewed content.</p>
     {#snippet footer()}<Button onclick={() => (confirm = false)}>Keep reviewing</Button><Button
         tone="info"
         surface="solid"
@@ -383,6 +376,15 @@
   }
   p {
     overflow-wrap: anywhere;
+  }
+  h3 {
+    font-weight: 600;
+  }
+  .number-input {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
   }
   .muted {
     color: var(--text-muted);
