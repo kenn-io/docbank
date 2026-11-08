@@ -400,6 +400,15 @@ func TestReviewTitleLookaheadStopsAtHeading(t *testing.T) {
 	require.Len(t, n.Headings, 1)
 }
 
+func TestReviewRepeatedUnterminatedTitleLookaheadBudget(t *testing.T) {
+	for _, title := range []string{"(", "\"", "'"} {
+		src := strings.Repeat("[r]: note.md\n    "+title+"unfinished\n\n", 1200) + "[use][r]\n"
+		n, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err, title)
+		require.Equal(t, []string{"note.md"}, linkTargets(n.Links), title)
+	}
+}
+
 func TestReviewInvalidReferenceTailBudget(t *testing.T) {
 	for _, start := range []string{"> [r]: note.md trailing\n", "> [r]: note.md \"title\" trailing\n"} {
 		_, err := Parse(t.Context(), []byte(start+strings.Repeat("> 2. item\n", 1200)))

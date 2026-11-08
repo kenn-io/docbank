@@ -56,34 +56,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				if only {
 					title := false
 					if candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
-						scanner := linkScanner{ctx: ctx, src: original, b: b}
-						var finish int
-						finish, title, err = scanner.definitionTitle(line.Start+candidate, len(original))
+						title, err = continuationTitle(ctx, original, line.Start+candidate, containers, b)
 						if err != nil {
 							return nil, err
-						}
-						for p := line.Start + candidate; title && p < finish; {
-							part, after, err := sourceLineAt(ctx, original, p, b)
-							if err != nil {
-								return nil, err
-							}
-							if p != line.Start+candidate {
-								lineText := original[part.Start:part.End]
-								_, start, matched, err := definitionBoundary(ctx, lineText, containers, b)
-								if err != nil {
-									return nil, err
-								}
-								if !matched || len(bytes.Trim(lineText[start:], " \t")) == 0 {
-									title = false
-								} else {
-									interrupt, err := blockInterrupt(ctx, lineText[start:], 0, b)
-									if err != nil {
-										return nil, err
-									}
-									title = !interrupt
-								}
-							}
-							p = after
 						}
 					}
 					if !title {
@@ -436,6 +411,55 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		pos = next
 	}
 	return blocks, nil
+}
+
+// Check each continuation boundary before searching beyond it for the closing delimiter.
+func continuationTitle(ctx context.Context, src []byte, start int, containers []blockContainer, b *budget) (bool, error) {
+	closing := src[start]
+	if closing == '(' {
+		closing = ')'
+	}
+	escaped := false
+	for pos := start; pos < len(src); {
+		line, next, err := sourceLineAt(ctx, src, pos, b)
+		if err != nil {
+			return false, err
+		}
+		if pos != start {
+			text := src[line.Start:line.End]
+			_, content, matched, err := definitionBoundary(ctx, text, containers, b)
+			if err != nil {
+				return false, err
+			}
+			if !matched || len(bytes.Trim(text[content:], " \t")) == 0 {
+				return false, nil
+			}
+			interrupt, err := blockInterrupt(ctx, text[content:], 0, b)
+			if err != nil || interrupt {
+				return false, err
+			}
+		}
+		first := pos
+		if pos == start {
+			first++
+		}
+		for i := first; i < next; i++ {
+			if err := b.step(ctx, 1); err != nil {
+				return false, err
+			}
+			if escaped {
+				escaped = false
+			} else if src[i] == '\\' {
+				escaped = true
+			} else if src[i] == closing {
+				scanner := linkScanner{ctx: ctx, src: src, b: b}
+				_, ok, err := scanner.definitionTitle(start, line.End)
+				return ok, err
+			}
+		}
+		pos = next
+	}
+	return false, nil
 }
 
 func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, bool, error) {
