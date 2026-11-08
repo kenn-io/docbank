@@ -14,6 +14,9 @@ export function publishedNoteParams(params?: object): string {
       if (key === "published_notes" && !entries.some(([name]) => name === "publication")) {
         result.append("published_notes[publication]", "");
       }
+      if (key === "note_coverage" && entries.length === 0) {
+        result.append("note_coverage[profile]", "");
+      }
       for (const [name, item] of entries) {
         result.append(`${key}[${name}]`, item === null ? "null" : String(item));
       }

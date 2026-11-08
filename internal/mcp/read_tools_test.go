@@ -792,10 +792,14 @@ func TestListDocumentsReturnsNamedPublicationReadiness(t *testing.T) {
 		case "/api/v1/vault":
 			writeDaemonJSON(t, w, api.VaultIdentity{VaultID: testVaultID})
 		case "/api/v1/documents":
+			assert.Equal(t, "private", request.URL.Query().Get("note_coverage[profile]"))
 			writeDaemonJSON(t, w, api.DocumentPage{PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"},
 				PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 1, Items: []api.DocumentSummary{},
 				NoteReadiness: &api.NoteReadiness{Publisher: api.NotePublicationStatus{Name: "notes", DatabaseEpoch: testVaultID, NamespaceRevision: 1},
-					Parse: api.NoteProjectionReadiness{State: "pending"}, Graph: api.NoteProjectionReadiness{State: "pending"}}})
+					Parse: api.NoteProjectionReadiness{State: "pending"}, Graph: api.NoteProjectionReadiness{State: "pending"},
+					CoverageSelection: &api.NoteCoverageSelection{Profile: "private"}, CoverageObservedAt: "2026-01-01T00:00:00Z",
+					Coverage: &api.CoverageReport{VaultUID: testVaultID, ProfileFingerprint: testProfileID, State: "partial",
+						Renditions: api.CoverageClass{Name: "rendition", State: "partial"}, Embeddings: []api.CoverageClass{}}}})
 		default:
 			http.NotFound(w, request)
 		}
@@ -804,11 +808,12 @@ func TestListDocumentsReturnsNamedPublicationReadiness(t *testing.T) {
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(daemon.URL, "synthetic-key"), nil
 	}, func(*daemonconn.Connection) error { return nil })
-	result, err := invokeReadTool(t.Context(), lease, "list_documents", map[string]any{"published_notes": map[string]any{"publication": "notes"}, "page_size": 1})
+	result, err := invokeReadTool(t.Context(), lease, "list_documents", map[string]any{"published_notes": map[string]any{"publication": "notes"}, "note_coverage": map[string]any{"profile": "private"}, "page_size": 1})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 	output := structuredMap(t, result.StructuredContent)
 	assert.Equal(t, "pending", objectField(t, objectField(t, output, "note_readiness"), "parse")["state"])
+	assert.Equal(t, "partial", objectField(t, objectField(t, output, "note_readiness"), "coverage")["state"])
 }
 
 func TestListDocumentsAndGetDocumentSkipVaultInventory(t *testing.T) {

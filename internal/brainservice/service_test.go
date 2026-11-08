@@ -212,6 +212,14 @@ func TestBrainServiceOwnedLifecycle(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
+func TestBrainServiceErrorDescribesUnconfirmedOutcome(t *testing.T) {
+	unknown := &OperationError{Status: Status{State: "unknown", ProblemCode: "registration_failed"}}
+	require.Contains(t, unknown.Error(), "could not be confirmed")
+	require.NotContains(t, unknown.Error(), "registration_failed")
+	known := &OperationError{Status: Status{State: "stopped", ProblemCode: "registration_failed"}}
+	require.Contains(t, known.Error(), "installation failed")
+}
+
 func TestBrainServiceDisconnectGuard(t *testing.T) {
 	driver, spec, manager := driverFixture(t)
 	sentinel := errors.New("synthetic registry missing")

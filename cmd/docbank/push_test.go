@@ -199,7 +199,7 @@ func TestPushMarkdownBrainStatusOutput(t *testing.T) {
 	s := push.PublicationStatus{Event: "conflict", Observed: 5, Accepted: 2, Unchanged: 1, Failed: 2, Degraded: true, VerificationLag: 3 * time.Second, Current: &api.NotePublicationStatus{Present: 7, Absent: 8, Incomplete: true, Conflicts: 2, LastCompleteAt: "2026-11-07T00:00:00Z"}, Errors: []push.PublicationFailure{{Code: "published_source_diverged", SourceRef: "a.md"}}, ErrorsOmitted: 9}
 	require.NoError(t, writePublicationStatus(&out, s))
 	text := out.String()
-	for _, want := range []string{"inventory conflict: observed 5, accepted 2, unchanged 1, failed 2", "polling-degraded true", "lag 3s", "current: present 7, absent 8", "incomplete true", "last-complete 2026-11-07T00:00:00Z", "published_source_diverged \"a.md\"", "reasons omitted 9"} {
+	for _, want := range []string{"inventory conflict: observed 5, accepted 2, unchanged 1, failed 2", "polling-degraded true", "lag 3s", "current: present 7, absent 8", "incomplete true", "last-complete 2026-11-07T00:00:00Z", "archive changed \"a.md\"", "reasons omitted 9"} {
 		require.Contains(t, text, want)
 	}
 	require.NotContains(t, text, "indexed")

@@ -84,7 +84,7 @@ in two seconds and polls every five seconds by default.`,
 	cmd.Flags().StringVar(&name, "name", "", "stable push name (lowercase letters, digits, -, _, .)")
 	cmd.Flags().StringVar(&dest, "dest", "", "absolute virtual destination")
 	cmd.Flags().StringVar(&keyFile, "api-key-file", "", "read API key from a file instead of DOCBANK_API_KEY")
-	cmd.Flags().BoolVar(&markdownBrain, "markdown-brain", false, "publish current Markdown membership with retained archive history")
+	cmd.Flags().BoolVar(&markdownBrain, "markdown-brain", false, "publish current Markdown; keep archive history")
 	cmd.Flags().BoolVar(&watch, "watch", false, "keep scanning with watched-inbox stability rules")
 	cmd.Flags().BoolVar(&captureOnChange, "capture-on-change", false, "read observable changes promptly in watch mode")
 	cmd.Flags().StringArrayVar(&excludes, "exclude", nil, "literal basename or source-relative path to exclude (repeatable)")
@@ -161,7 +161,7 @@ func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Op
 			if errors.Is(runErr, daemonconn.ErrNotePublicationUnavailable) {
 				runErr = daemonconn.ErrNotePublicationUnavailable
 			} else {
-				runErr = errors.New("managed publication stopped; inspect scan status for bounded reasons")
+				runErr = errors.New("publishing stopped; see scan errors")
 			}
 		}
 	}
@@ -190,7 +190,7 @@ func writePublicationStatus(w io.Writer, s push.PublicationStatus) error {
 		}
 	}
 	for _, failure := range s.Errors {
-		if _, err := fmt.Fprintf(w, "reason %s %s\n", failure.Code, strconv.QuoteToASCII(failure.SourceRef)); err != nil {
+		if _, err := fmt.Fprintf(w, "reason %s %s\n", publicationFailureMessage(failure.Code), strconv.QuoteToASCII(failure.SourceRef)); err != nil {
 			return fmt.Errorf("writing publication reason: %w", err)
 		}
 	}
@@ -200,6 +200,33 @@ func writePublicationStatus(w io.Writer, s push.PublicationStatus) error {
 		}
 	}
 	return nil
+}
+
+func publicationFailureMessage(code string) string {
+	switch code {
+	case "published_source_diverged", "publication_source_stale":
+		return "archive changed"
+	case "note_source_unavailable":
+		return "archived source unavailable"
+	case "publication_scan_superseded":
+		return "another scan replaced this scan"
+	case "publication_scan_sealed":
+		return "scan already completed"
+	case "publication_operation_mismatch":
+		return "operation no longer matches"
+	case "digest_mismatch", "size_mismatch", "source_changed":
+		return "source changed while reading"
+	case "canceled":
+		return "operation canceled"
+	case "capability_unavailable":
+		return "daemon cannot publish notes"
+	case "transport":
+		return "daemon connection lost"
+	case "source_access":
+		return "source could not be read"
+	default:
+		return "publishing failed"
+	}
 }
 func publicationTime(t time.Time) string {
 	if t.IsZero() {

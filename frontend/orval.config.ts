@@ -76,7 +76,7 @@ export default defineConfig({
           search: {
             paramsSerializer: { path: "src/published-note-params.ts", name: "publishedNoteParams" },
           },
-          searchTextCoverage: {
+          "search-text-coverage": {
             paramsSerializer: { path: "src/published-note-params.ts", name: "publishedNoteParams" },
           },
           shutdownDaemon: { mutator: { path: "src/api-transport.ts", name: "sessionEmpty" } },

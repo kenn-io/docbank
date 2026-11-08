@@ -336,6 +336,7 @@ func getVaultInfo(ctx context.Context, session documentReadSession, raw []byte) 
 
 type listDocumentsInput struct {
 	PublishedNotes *api.PublishedNoteSelector `json:"published_notes"`
+	NoteCoverage   *api.NoteCoverageSelection `json:"note_coverage"`
 	SourcePresent  bool                       `json:"source_present"`
 	PathPrefix     string                     `json:"path_prefix"`
 	Sort           string                     `json:"sort"`
@@ -361,7 +362,7 @@ func listDocuments(
 		vaultID string
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
-		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: input.PublishedNotes, PathPrefix: input.PathPrefix,
+		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: input.PublishedNotes, NoteCoverage: input.NoteCoverage, PathPrefix: input.PathPrefix,
 			Sort: input.Sort, Direction: input.Direction, PageSize: input.PageSize, Cursor: input.Cursor, SourcePresent: input.SourcePresent})
 		if callErr != nil {
 			return response{}, callErr

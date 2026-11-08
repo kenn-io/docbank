@@ -51,7 +51,19 @@ type OperationError struct {
 	Cause  error
 }
 
-func (e *OperationError) Error() string { return "publisher launcher: " + e.Status.ProblemCode }
+func (e *OperationError) Error() string {
+	if e.Status.State == "unknown" || e.Status.ProblemCode == "registration_unconfirmed" || e.Status.ProblemCode == "removal_unconfirmed" {
+		return "publisher launcher outcome could not be confirmed"
+	}
+	switch e.Status.ProblemCode {
+	case "receipt_write_failed", "definition_write_failed", "registration_failed":
+		return "publisher installation failed"
+	case "stop_failed", "delete_failed", "definition_remove_failed", "reload_failed", "receipt_remove_failed":
+		return "publisher removal failed"
+	default:
+		return "publisher launcher operation failed"
+	}
+}
 func (e *OperationError) Unwrap() error { return e.Cause }
 
 type serviceDriver struct {

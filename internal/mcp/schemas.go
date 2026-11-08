@@ -651,6 +651,7 @@ func listChangesSchemas() (schema, schema) {
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"published_notes": publishedNoteSelectorSchema(),
+		"note_coverage":   noteCoverageSelectionSchema(),
 		"source_present":  booleanSchema(),
 		"path_prefix":     schema{"type": "string", "maxLength": maxPathCharacters, "pattern": "^/"},
 		"sort":            enumSchema("path", "name", "modified_at", "size", "media_type"),
@@ -693,9 +694,12 @@ func noteReadinessSchema() schema {
 	}, "name", "required", "state", "complete", "unavailable", "stale", "ineligible", "rebuilding", "previous_generation_serving", "total")
 	coverage := objectSchema(schema{"vault_uid": uuidSchema(), "profile_fingerprint": sha256Schema(), "state": stringSchema(64),
 		"renditions": class, "embeddings": arraySchema(class, 0)}, "vault_uid", "profile_fingerprint", "state", "renditions", "embeddings")
-	selection := objectSchema(schema{"profile": stringSchema(128), "binding_id": stringSchema(128)}, "profile")
 	return objectSchema(schema{"publisher": publisher, "parse": projection, "graph": projection,
-		"coverage_selection": selection, "coverage": coverage, "coverage_observed_at": stringSchema(64)}, "publisher", "parse", "graph")
+		"coverage_selection": noteCoverageSelectionSchema(), "coverage": coverage, "coverage_observed_at": stringSchema(64)}, "publisher", "parse", "graph")
+}
+
+func noteCoverageSelectionSchema() schema {
+	return objectSchema(schema{"profile": schema{"type": "string", "minLength": 1, "maxLength": 128}, "binding_id": stringSchema(128)}, "profile")
 }
 
 func searchCoverageSchema() schema {
