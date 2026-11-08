@@ -58,7 +58,7 @@ func TestPlanTarget(t *testing.T) {
 	}
 }
 func TestPlanTargetAdmission(t *testing.T) {
-	for _, source := range []string{"", "/abs.md", "../x.md", "a/./b.md", "a//b.md", `C:\x.md`, "nul\x00.md", "bad\xff.md"} {
+	for _, source := range []string{"", "/abs.md", "../x.md", "a/./b.md", "a//b.md", "nul\x00.md", "bad\xff.md"} {
 		_, err := PlanTarget(source, Link{Form: "wiki", Target: "X"})
 		require.ErrorIs(t, err, ErrInvalidInput)
 	}
@@ -70,6 +70,22 @@ func TestPlanTargetAdmission(t *testing.T) {
 	requireLimit(t, err, "target_bytes")
 	_, err = PlanTarget(strings.Repeat("a", 4090)+"/a.md", Link{Form: "wiki", Target: "longname"})
 	requireLimit(t, err, "target_bytes")
+}
+
+func TestPlanTargetAdmittedSourceIdentity(t *testing.T) {
+	for _, source := range []string{"A:notes.md", `C:\x.md`, `\\notes.md`} {
+		q, err := PlanTarget(source, Link{Form: "markdown", Target: "#section"})
+		require.NoError(t, err, source)
+		require.Equal(t, []LookupKey{{Kind: "path", Value: source}}, q.Keys)
+		r, err := Resolve(t.Context(), q, CandidateSet{Complete: true, Candidates: []Candidate{{Binding: "version", Path: source, Kind: "note", Keys: q.Keys}}})
+		require.NoError(t, err, source)
+		require.Equal(t, "resolved", r.State)
+	}
+	for _, target := range []string{"A:notes.md", "A%3Anotes.md", `\\host\note.md`} {
+		q, err := PlanTarget("start.md", Link{Form: "markdown", Target: target})
+		require.NoError(t, err, target)
+		require.Equal(t, "invalid", q.Kind, target)
+	}
 }
 func TestPlanTargetNoFilesystem(t *testing.T) {
 	q, err := PlanTarget("unmounted/never-created/start.md", Link{Form: "wiki", Target: "../Target"})

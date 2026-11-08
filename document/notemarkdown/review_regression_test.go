@@ -400,6 +400,21 @@ func TestReviewTitleLookaheadStopsAtHeading(t *testing.T) {
 	require.Len(t, n.Headings, 1)
 }
 
+func TestReviewTitleLookaheadContainerAndIndent(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		links  []string
+	}{
+		{"> [r]: n.md\n\"outside [x](x.md)\"\n", []string{"x.md"}},
+		{"[r]: n.md\n    \"one\n    # literal\n[ghost](g.md)\"\n\n[use][r]\n", []string{"n.md"}},
+		{"> [r]: n.md\n>     \"one\n>     # literal\n> [ghost](g.md)\"\n\n[use][r]\n", []string{"n.md"}},
+	} {
+		n, err := Parse(t.Context(), []byte(tc.source))
+		require.NoError(t, err, tc.source)
+		require.Equal(t, tc.links, linkTargets(n.Links), tc.source)
+	}
+}
+
 func TestReviewRepeatedUnterminatedTitleLookaheadBudget(t *testing.T) {
 	for _, title := range []string{"(", "\"", "'"} {
 		src := strings.Repeat("[r]: note.md\n    "+title+"unfinished\n\n", 1200) + "[use][r]\n"

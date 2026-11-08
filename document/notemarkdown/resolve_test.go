@@ -52,7 +52,7 @@ func TestResolveRejectsMalformedSet(t *testing.T) {
 	cases := [][]Candidate{
 		{{Binding: "a", Path: "area/X.md", Kind: "note", Keys: []LookupKey{q.Keys[0], q.Keys[0], q.Keys[0], q.Keys[0], q.Keys[0]}}},
 		{{Binding: "", Path: "area/X.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}},
-		{{Binding: "a", Path: "../X.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}},
+		{{Binding: "a", Path: "../X.md", Kind: "note", Keys: []LookupKey{q.Keys[1]}}},
 		{{Binding: "a", Path: "area/Y.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}},
 		{{Binding: "a", Path: "area/X.md", Kind: "unknown", Keys: []LookupKey{q.Keys[0]}}},
 		{{Binding: "a", Path: "area/X.md", Kind: "note", Keys: nil}},

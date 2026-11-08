@@ -111,7 +111,7 @@ func PlanTarget(sourcePath string, link Link) (TargetQuery, error) {
 }
 
 func canonicalSourcePath(value string) bool {
-	if value == "" || !utf8.ValidString(value) || strings.ContainsRune(value, 0) || strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\\`) || drivePath(value) {
+	if value == "" || !utf8.ValidString(value) || strings.ContainsRune(value, 0) || strings.HasPrefix(value, "/") {
 		return false
 	}
 	for component := range strings.SplitSeq(value, "/") {

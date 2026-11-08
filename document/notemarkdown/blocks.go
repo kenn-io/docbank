@@ -44,7 +44,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
 		if paragraph && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start {
-			check, candidate, _, err := definitionBoundary(ctx, raw, containers, b)
+			check, candidate, _, _, matched, err := definitionBoundary(ctx, raw, containers, b)
 			if err != nil {
 				return nil, err
 			}
@@ -55,7 +55,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				}
 				if only {
 					title := false
-					if candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
+					if matched && candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
 						title, err = continuationTitle(ctx, original, line.Start+candidate, containers, b)
 						if err != nil {
 							return nil, err
@@ -427,14 +427,14 @@ func continuationTitle(ctx context.Context, src []byte, start int, containers []
 		}
 		if pos != start {
 			text := src[line.Start:line.End]
-			_, content, matched, err := definitionBoundary(ctx, text, containers, b)
+			_, content, containerStart, virtual, matched, err := definitionBoundary(ctx, text, containers, b)
 			if err != nil {
 				return false, err
 			}
 			if !matched || len(bytes.Trim(text[content:], " \t")) == 0 {
 				return false, nil
 			}
-			interrupt, err := blockInterrupt(ctx, text[content:], 0, b)
+			interrupt, err := blockInterruptIndent(ctx, text[containerStart:], 0, virtual, b)
 			if err != nil || interrupt {
 				return false, err
 			}
@@ -462,32 +462,32 @@ func continuationTitle(ctx context.Context, src []byte, start int, containers []
 	return false, nil
 }
 
-func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, bool, error) {
+func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, int, int, bool, error) {
 	pos, virtual := 0, 0
 	for _, container := range containers {
 		end, columns, err := leadingIndent(ctx, raw, pos, b)
 		if err != nil {
-			return false, 0, false, err
+			return false, 0, 0, 0, false, err
 		}
 		columns += virtual
 		if container.kind == 'q' {
 			if columns > 3 || end == len(raw) || raw[end] != '>' {
-				return true, end, false, nil
+				return true, end, 0, 0, false, nil
 			}
 			pos, virtual, err = quoteSpace(ctx, raw, end+1, b)
 			if err != nil {
-				return false, 0, false, err
+				return false, 0, 0, 0, false, err
 			}
 			continue
 		}
 		if columns < container.indent {
-			return true, end, false, nil
+			return true, end, 0, 0, false, nil
 		}
 		used := min(virtual, container.indent)
 		virtual -= used
 		column, err := visualColumn(ctx, raw, pos, b)
 		if err != nil {
-			return false, 0, false, err
+			return false, 0, 0, 0, false, err
 		}
 		for pos < end && used < container.indent {
 			width := 1
@@ -502,11 +502,11 @@ func definitionBoundary(ctx context.Context, raw []byte, containers []blockConta
 	}
 	end, indent, err := leadingIndent(ctx, raw, pos, b)
 	if err != nil {
-		return false, 0, false, err
+		return false, 0, 0, 0, false, err
 	}
 	indent += virtual
 	_, list := listMarker(raw, end)
-	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, true, nil
+	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, pos, virtual, true, nil
 }
 
 func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, first int, nonDefinitions map[int]bool, probes map[int]*definitionProbe, b *budget) (bool, error) {
@@ -961,11 +961,15 @@ func listCanInterrupt(raw []byte, start, end int) bool {
 }
 
 func blockInterrupt(ctx context.Context, raw []byte, sibling byte, b *budget) (bool, error) {
+	return blockInterruptIndent(ctx, raw, sibling, 0, b)
+}
+
+func blockInterruptIndent(ctx context.Context, raw []byte, sibling byte, virtual int, b *budget) (bool, error) {
 	start, indent, err := leadingIndent(ctx, raw, 0, b)
 	if err != nil {
 		return false, err
 	}
-	if indent >= 4 {
+	if indent+virtual >= 4 {
 		return false, nil
 	}
 	text := raw[start:]

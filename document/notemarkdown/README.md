@@ -60,8 +60,9 @@ create authored links.
 `PlanTarget(sourcePath, link)` takes a canonical relative slash source path and
 a syntax-decoded target. It splits literal query/fragment syntax before one
 percent-decoding pass. `%252F` stays literal `%2F`; encoded slash/backslash/NUL,
-invalid UTF-8, malformed escapes, drive/UNC spellings and namespace escapes are
-invalid. A literal interior backslash stays a filename character. Paths preserve
+invalid UTF-8, malformed escapes, authored drive/UNC spellings and namespace escapes are
+invalid. Source and candidate identities retain admitted filename characters, including
+drive-like names. A literal interior backslash stays a filename character. Paths preserve
 case and Unicode bytes on every OS; no filesystem normalization occurs.
 
 Relative Markdown paths start at the source directory. Empty or fragment-only
