@@ -531,6 +531,30 @@ untracked physical object. It cannot leave a readable blob row. GC reclaims
 that residue. A successful retry returns the existing node, so the receipt
 continues to identify the same document.
 
+## Managed note publication
+
+The authenticated `/api/v1/note-publications/{name}` routes provide a managed
+inventory protocol for a publisher. A publication and source reference identify
+an observation independently of the archived node's path. A scan has an epoch;
+uploads and acknowledgements must match its current authority and source
+revision. Operation IDs make retries replay the same receipt. Completing a
+successful scan seals it and marks unseen sources absent. An interrupted scan
+does not declare those sources absent, and a superseded or sealed scan cannot
+continue writing.
+
+Uploads verify the original bytes and their declared hash and size before
+committing the source binding. A manual archive edit can diverge from the
+accepted version. Accept-local recovery is an explicit operation bound to the
+observed archive head and source revision; a later verified upload creates the
+new accepted version. Pruning an accepted version leaves an unavailable source
+observation instead of retaining the content. Restore creates a new database
+epoch, invalidating earlier scan and recovery authority.
+
+Published-source search selects present, available sources whose accepted
+version is still the live archive head before applying result limits. These
+routes and selectors are the authority foundation; they do not by themselves
+install a local publisher or provide authored-note graph context.
+
 ## Manual remote recording publication
 
 `POST /api/v1/media/sources` accepts a JSON reference before any recording
