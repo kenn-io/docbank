@@ -179,6 +179,9 @@ func (d *serviceDriver) Status(ctx context.Context, s Spec) (Status, error) {
 	installed, running, matched, err := d.query(ctx, s, reg)
 	if err != nil {
 		status.ProblemCode = "manager_unavailable"
+		if errors.Is(err, ErrManager) {
+			return status, err
+		}
 		return status, errors.Join(ErrManager, err)
 	}
 	status.Installed, status.Running = installed, running

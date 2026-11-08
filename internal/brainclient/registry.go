@@ -136,7 +136,7 @@ func (r *Registry) Get(ctx context.Context, name string) (ConnectionConfig, erro
 			return cfg, nil
 		}
 	}
-	return ConnectionConfig{}, fmt.Errorf("connection not found: %w", fs.ErrNotExist)
+	return ConnectionConfig{}, fmt.Errorf("connection %q: %w", name, fs.ErrNotExist)
 }
 
 // Put creates a connection or accepts an identical saved configuration.
@@ -167,7 +167,7 @@ func (r *Registry) Put(ctx context.Context, cfg ConnectionConfig) (retErr error)
 			if equalConfig(saved, cfg) {
 				return nil
 			}
-			return fmt.Errorf("connection already exists with different settings: %w", fs.ErrExist)
+			return fmt.Errorf("connection settings differ: %w", fs.ErrExist)
 		}
 	}
 	list = append(list, cfg)
@@ -211,7 +211,7 @@ func (r *Registry) Remove(ctx context.Context, name string) (retErr error) {
 			return r.save(ctx, slices.Delete(list, i, i+1))
 		}
 	}
-	return fmt.Errorf("connection not found: %w", fs.ErrNotExist)
+	return fmt.Errorf("connection %q: %w", name, fs.ErrNotExist)
 }
 
 // AcquireRun excludes other runs and changes to this name until release.

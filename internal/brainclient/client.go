@@ -89,7 +89,7 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 	alreadySaved := err == nil
 	if err == nil {
 		if !equalConfig(saved, cfg) {
-			return fmt.Errorf("connection already exists with different settings: %w", fs.ErrExist)
+			return fmt.Errorf("connection settings differ: %w", fs.ErrExist)
 		}
 		if !cfg.IndexLocal {
 			return nil

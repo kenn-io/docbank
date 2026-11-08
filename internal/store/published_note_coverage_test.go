@@ -254,7 +254,7 @@ func TestPublishedNoteCoverageSourceStateProperty(t *testing.T) {
 			case 1:
 				presence = "absent"
 			case 2:
-				availability = "pruned"
+				availability = "unavailable"
 			case 3:
 				hash = fakeHash("fd")
 			case 4:
