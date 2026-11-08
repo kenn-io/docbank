@@ -109,7 +109,7 @@ func (c ConnectionConfig) validate() error {
 		return err
 	}
 	if path.Clean(c.Destination) != c.Destination {
-		return errors.New("destination must be a canonical absolute virtual path")
+		return errors.New("remove repeated or trailing slashes and . or .. from --dest")
 	}
 	for segment := range strings.SplitSeq(strings.TrimPrefix(c.Destination, "/"), "/") {
 		if segment == "" {

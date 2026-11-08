@@ -602,6 +602,41 @@ func TestPublicationSeenBodyBound(t *testing.T) {
 	}
 	require.Equal(t, 250, p.report.Skipped)
 }
+
+func TestPublicationSeenConflictKeepsWatchAndHealthyAcknowledgements(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "conflict.md")
+	writePublicationFile(t, root, "healthy.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	cfg, policy, err := publicationPolicy(opts.Folder)
+	require.NoError(t, err)
+	opts.Folder, opts.Watch = cfg, true
+	p := &publicationPublisher{connection: c, opts: opts, policy: policy}
+	require.NoError(t, p.beforeScan(t.Context(), ingest.FolderScan{}))
+	for _, source := range p.sources {
+		p.seen = append(p.seen, source.Identity)
+	}
+	require.Len(t, p.seen, 2)
+	conflict := p.sources["conflict.md"]
+	node, err := s.NodeByID(t.Context(), conflict.Identity.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType)
+	require.NoError(t, err)
+	require.NoError(t, p.flushSeen(t.Context()))
+	require.Empty(t, p.seen)
+	require.True(t, p.failed)
+	require.Equal(t, 1, p.report.Skipped)
+	require.Equal(t, 1, p.report.Failed)
+	require.NoError(t, p.afterScan(t.Context(), ingest.FolderScanResult{Complete: true}))
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.True(t, status.Incomplete)
+	require.EqualValues(t, 2, status.Present)
+}
 func TestPublicationNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
 	t.Parallel()
 	for _, route := range []string{"begin", "sources", "upload", "seen", "complete", "status"} {

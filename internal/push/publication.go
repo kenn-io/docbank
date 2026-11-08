@@ -187,6 +187,15 @@ func (p *publicationPublisher) queueSeen(ctx context.Context, id api.PublishedNo
 	return nil
 }
 func (p *publicationPublisher) flushSeen(ctx context.Context) error {
+	for len(p.seen) > 0 {
+		if err := p.flushSeenBatch(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *publicationPublisher) flushSeenBatch(ctx context.Context) error {
 	if len(p.seen) == 0 {
 		return nil
 	}
@@ -210,6 +219,11 @@ func (p *publicationPublisher) flushSeen(ctx context.Context) error {
 	})
 	if err != nil {
 		p.failed = true
+		code, _ := daemonconn.ProblemCode(err)
+		if ctx.Err() == nil && !publicationStopsRun(err) &&
+			(code == "published_source_diverged" || code == "note_source_unavailable" || errors.Is(err, errPublicationBindingChanged)) {
+			return p.reconcileSeenConflicts(ctx)
+		}
 		return err
 	}
 	if ack.Scan.DatabaseEpoch != p.scan.DatabaseEpoch || ack.Scan.Epoch != p.scan.Epoch || ack.Scan.PolicyFingerprint != p.policy {
@@ -234,6 +248,51 @@ func (p *publicationPublisher) flushSeen(ctx context.Context) error {
 		}
 	}
 	p.seen = nil
+	return nil
+}
+
+// A seen batch is atomic on the daemon. Refresh its sources, report entries
+// that cannot safely be acknowledged, and retain the remaining positive
+// observations for a separate acknowledgement. The scan stays incomplete.
+func (p *publicationPublisher) reconcileSeenConflicts(ctx context.Context) error {
+	if err := p.refreshSources(ctx); err != nil {
+		return err
+	}
+	remaining := make([]api.PublishedNoteIdentity, 0, len(p.seen))
+	var rejected []struct {
+		ref, code string
+	}
+	for _, old := range p.seen {
+		current, ok := p.sources[old.SourceRef]
+		code := ""
+		switch {
+		case !ok || !samePublicationContent(current.Identity, old):
+			code = "publication_source_stale"
+		case current.Availability != "retained":
+			code = "note_source_unavailable"
+		case current.Conflict != "":
+			code = "published_source_diverged"
+		default:
+			remaining = append(remaining, current.Identity)
+		}
+		if code != "" {
+			rejected = append(rejected, struct{ ref, code string }{old.SourceRef, code})
+		}
+	}
+	if len(rejected) == 0 {
+		// The conflicting state changed again before refresh. Do not spin or
+		// acknowledge an unidentified conflict; the next scan can reconsider it.
+		for _, id := range remaining {
+			rejected = append(rejected, struct{ ref, code string }{id.SourceRef, "publication_source_stale"})
+		}
+		remaining = nil
+	}
+	p.seen = remaining
+	for _, item := range rejected {
+		if err := p.rejectLocked(ctx, item.ref, &publicationSourceError{Code: item.code}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (p *publicationPublisher) process(ctx context.Context, file ingest.FolderFile) error {

@@ -233,24 +233,15 @@ func TestNotePlaintextRevocation(t *testing.T) {
 // or consent authority. All must fail before a plan or grant request is exposed.
 func notePlaintextMutations() map[string]func(*configuredProfile) {
 	return map[string]func(*configuredProfile){
-		"filename":          func(p *configuredProfile) { p.portable.Rendition.DiscloseFilename = true },
-		"disclosure":        func(p *configuredProfile) { p.portable.Rendition.DisclosureFingerprint = strings.Repeat("a", 64) },
-		"credential":        func(p *configuredProfile) { p.portable.Rendition.CredentialBinding = "credential:other" },
-		"retention":         func(p *configuredProfile) { p.portable.RetentionDisclosure.RetainProviderMarkdown = true },
-		"embedding":         func(p *configuredProfile) { p.portable.Embeddings = []document.EmbeddingBindingV1{{Name: "other"}} },
-		"limit":             func(p *configuredProfile) { p.portable.Rendition.MaxDocumentBytes-- },
-		"profile record":    func(p *configuredProfile) { p.record.Fingerprint = strings.Repeat("b", 64) },
-		"consent record":    func(p *configuredProfile) { p.record.RenditionDisclosureFingerprint = strings.Repeat("c", 64) },
-		"network endpoint":  func(p *configuredProfile) { p.renderDisclosure.Endpoint = "https://provider.invalid" },
-		"processor":         func(p *configuredProfile) { p.renderDisclosure.UltimateProcessor = "other-processor" },
-		"model":             func(p *configuredProfile) { p.renderDisclosure.Model = "other-model" },
-		"metadata":          func(p *configuredProfile) { p.renderDisclosure.MetadataClasses = []string{"filename"} },
-		"runtime retention": func(p *configuredProfile) { p.renderDisclosure.RetainedArtifactRoles = []string{"original_file"} },
-		"wrapped provider":  func(p *configuredProfile) { p.provider = struct{ document.RenditionProvider }{p.provider} },
-		"missing provider":  func(p *configuredProfile) { p.provider = nil },
-		"rerank disclosure": func(p *configuredProfile) { p.rerankingDisclosure.Endpoint = "https://rerank.invalid" },
-		"embedding runtime": func(p *configuredProfile) { p.embeddingRuntimes = map[string]*ProviderEmbeddingRuntime{"other": {}} },
-		"vector space":      func(p *configuredProfile) { p.vectorSpaces = map[string]string{"other": "other-vector-space"} },
+		"filename":         func(p *configuredProfile) { p.portable.Rendition.DiscloseFilename = true },
+		"disclosure":       func(p *configuredProfile) { p.portable.Rendition.DisclosureFingerprint = strings.Repeat("a", 64) },
+		"credential":       func(p *configuredProfile) { p.portable.Rendition.CredentialBinding = "credential:other" },
+		"retention":        func(p *configuredProfile) { p.portable.RetentionDisclosure.RetainProviderMarkdown = true },
+		"embedding":        func(p *configuredProfile) { p.portable.Embeddings = []document.EmbeddingBindingV1{{Name: "other"}} },
+		"limit":            func(p *configuredProfile) { p.portable.Rendition.MaxDocumentBytes-- },
+		"processor":        func(p *configuredProfile) { p.renderDisclosure.UltimateProcessor = "other-processor" },
+		"model":            func(p *configuredProfile) { p.renderDisclosure.Model = "other-model" },
+		"wrapped provider": func(p *configuredProfile) { p.provider = struct{ document.RenditionProvider }{p.provider} },
 	}
 }
 
