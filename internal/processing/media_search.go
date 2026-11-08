@@ -38,13 +38,30 @@ func (service *Service) searchMediaSources(
 		return retrieval.Report{}, err
 	}
 	plan := newMediaSearchPlan(request.MediaSources, requests, selected)
-	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: retrieval.ModeLexical,
+	actual := prepared.mode
+	if actual == retrieval.ModeAuto {
+		actual = retrieval.ModeLexical
+	}
+	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: actual,
 		Results: []retrieval.Result{}}
 	if len(plan.builds) != 0 {
-		candidateLimit := service.profiles[request.Profile].portable.Retrieval.LexicalLimit
+		profile := service.profiles[request.Profile]
+		scope := store.SearchOptions{SelectedBuilds: plan.builds}
+		for _, build := range plan.builds {
+			scope.ContentVersionIDs = append(scope.ContentVersionIDs, build.ContentVersionID)
+		}
+		slices.Sort(scope.ContentVersionIDs)
+		scope.ContentVersionIDs = slices.Compact(scope.ContentVersionIDs)
+		if provider := profile.embedders[prepared.bindingID]; provider != nil {
+			descriptor := provider.Descriptor()
+			scope.EmbeddingDescriptor, scope.VectorSpaceID = &descriptor, profile.vectorSpaces[prepared.bindingID]
+		}
+		candidateLimit := max(profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit)
 		report, err = prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query,
-			Mode: prepared.mode, Limit: candidateLimit, LexicalLimit: candidateLimit,
-			Scope: store.SearchOptions{SelectedBuilds: plan.builds}, ContentFirst: true})
+			Mode: prepared.mode, Limit: candidateLimit, LexicalLimit: profile.portable.Retrieval.LexicalLimit,
+			VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
+			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
+			Authorization: prepared.authorization})
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -62,7 +79,18 @@ func (service *Service) searchMediaSources(
 	}
 	report.RequestedMode = prepared.requestedMode
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
-	report.MediaSourceSelection, report.Coverage = true, plan.coverage()
+	coverage := plan.coverage()
+	if actual == retrieval.ModeSemantic || actual == retrieval.ModeHybrid {
+		coverage.BindingRequired = true
+		if len(plan.builds) != 0 {
+			coverage.BindingRequired = report.Coverage.BindingRequired
+			coverage.CompleteDocuments = min(coverage.CompleteDocuments, report.Coverage.CompleteDocuments)
+		}
+		if len(plan.builds) == 0 || report.Coverage.State != retrieval.CoverageComplete || coverage.CompleteDocuments != coverage.ScopedDocuments {
+			coverage.State = retrieval.CoverageIncomplete
+		}
+	}
+	report.MediaSourceSelection, report.Coverage = true, coverage
 	return report, nil
 }
 
@@ -206,7 +234,7 @@ func (plan *mediaSearchPlan) mediaSelections(
 		}
 		result = append(result, retrieval.MediaSelection{SourceID: source.SourceID,
 			SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID,
-			Origin: selected.origin, SuppliedInputID: selected.inputID,
+			Origin: selected.origin, SuppliedInputID: selected.inputID, BuildID: selected.view.Build.ID,
 			Completeness: string(selected.view.Build.Completeness)})
 	}
 	return result

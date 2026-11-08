@@ -27,5 +27,30 @@ jobs:
           cache: true
       - name: Focused production retrieval contracts
         run: go test -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api -run 'TestSelectedMedia|TestMediaSearch' -count=1 -timeout=15m
-      - name: Formatting
-        run: test -z "$(gofmt -l internal/processing/media_search.go internal/retrieval/media_selected_semantic_test.go internal/api/routes_media_test.go)"
+      - name: Formatting and vet
+        run: |
+          make fmt
+          git diff --exit-code -- '*.go'
+          go vet -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api
+  generated:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - run: npm ci --prefix frontend
+      - run: make generate-api
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: recording-api-generated
+          retention-days: 3
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts

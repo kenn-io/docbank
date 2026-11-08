@@ -1630,9 +1630,6 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			return prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
 		}
 	}
-	if request.MediaSources != nil {
-		return service.searchMediaSources(ctx, request, ids, prepared)
-	}
 	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
 		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
 		if err != nil {
@@ -1650,6 +1647,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		if prepared.rerankingAuthorizer != nil {
 			prepared.rerankingAuthorizer.queryFenceHeld = true
 		}
+	}
+	if request.MediaSources != nil {
+		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
@@ -1703,8 +1703,7 @@ func (service *Service) prepareSearch(
 		mode = retrieval.ModeAuto
 	}
 	requestedMode := mode
-	if request.MediaSources != nil && (request.Rerank ||
-		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto)) {
+	if request.MediaSources != nil && request.Rerank {
 		return preparedSearch{}, ErrMediaSearchInvalid
 	}
 	limit := request.Limit

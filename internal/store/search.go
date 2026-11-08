@@ -389,6 +389,7 @@ func SearchNeedsQuery(query string, opts SearchOptions) bool {
 // such as tag edits leave its evidence valid; each evidence item states what
 // it depends on.
 type SearchCandidateIdentity struct {
+	BuildID          string
 	NodeID           int64
 	ContentVersionID string
 	Evidence         []SearchEvidenceIdentity
@@ -652,6 +653,10 @@ func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts
 				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
 				 AND es.profile_fingerprint=? AND es.binding_id=?
 				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
+                 AND (COALESCE(json_extract(evidence.value,'$.build_id'),'')='' OR EXISTS (
+                  SELECT 1 FROM rendition_attachments selected_ra
+                  WHERE selected_ra.attachment_id=eig.attachment_id
+                   AND selected_ra.build_id=json_extract(evidence.value,'$.build_id')))
 				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
 				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `)))
 			ELSE 1 END
@@ -805,7 +810,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space string, opts SearchOptions,
 ) ([]vectorindex.RowIdentity, bool, error) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	filterSQL, filterArgs := semanticSearchFilterSQL(opts)
 	if filterSQL == "" && !opts.CollapsesPhotoDuplicates() {
 		return nil, true, nil
 	}
@@ -823,7 +828,7 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 	var lastHash string
 	var representative int64
 	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0 && len(opts.SelectedBuilds) == 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
 			if opts.CollapsesPhotoDuplicates() {
 				if hash != lastHash {
 					lastHash, representative = hash, nodeID
@@ -878,6 +883,27 @@ func currentEmbeddingHeadsSQL() string {
 		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))`
 }
 
+// semanticSearchFilterSQL fences retained embedding inputs to exact selected
+// builds before ANN scoring and candidate reduction. It deliberately retains
+// the ordinary profile/binding/current-rendition predicates.
+func semanticSearchFilterSQL(opts SearchOptions) (string, []any) {
+	filter, args := searchFilterSQL(opts)
+	if len(opts.SelectedBuilds) == 0 {
+		return filter, args
+	}
+	encoded, err := json.Marshal(opts.SelectedBuilds)
+	if err != nil {
+		panic(err)
+	}
+	filter += ` AND es.input_kind='rendition_chunk' AND EXISTS (
+  SELECT 1 FROM json_each(?) selected
+  JOIN rendition_attachments selected_ra ON selected_ra.attachment_id=eig.attachment_id
+   AND selected_ra.content_version_id=es.content_version_id
+  WHERE json_extract(selected.value,'$.content_version_id')=es.content_version_id
+   AND json_extract(selected.value,'$.build_id')=selected_ra.build_id)`
+	return filter, append(args, string(encoded))
+}
+
 func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
@@ -885,7 +911,20 @@ func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFi
 	if err != nil {
 		return 0, 0, err
 	}
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	filterSQL, filterArgs := semanticSearchFilterSQL(opts)
+	if len(opts.SelectedBuilds) != 0 {
+		encoded, err := json.Marshal(opts.SelectedBuilds)
+		if err != nil {
+			return 0, 0, err
+		}
+		// A content version is complete only when every selected build is embedded.
+		filterSQL += ` AND NOT EXISTS (SELECT 1 FROM json_each(?) selected
+   WHERE json_extract(selected.value,'$.content_version_id')=es.content_version_id
+    AND NOT EXISTS (SELECT 1 FROM rendition_attachments selected_ra
+     WHERE selected_ra.attachment_id=eig.attachment_id
+      AND selected_ra.build_id=json_extract(selected.value,'$.build_id')))`
+		filterArgs = append(filterArgs, string(encoded))
+	}
 	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
 	args = append(args, filterArgs...)
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
@@ -939,7 +978,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution,
 ) error {
 	var err error
-	filterSQL, filterArgs := searchFilterSQL(normalized)
+	filterSQL, filterArgs := semanticSearchFilterSQL(normalized)
 	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
 	representatives := make(map[string]int64)
 	prefix, walked := min(limit+1, len(neighbors)), 0

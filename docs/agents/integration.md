@@ -88,7 +88,8 @@ the sibling `/agents/integration.md` URL.
 Use `POST /api/v1/search` with `media_sources` when a transcript match must
 identify a particular recording, such as an audio message. Each selector names
 `source_id`, `source_version_id`, and `content_version_id`; include its content
-version in the request's `fence`. Use `lexical` or `auto` mode without reranking.
+version in the request's `fence`. Use `lexical`, `auto`, `semantic`, or
+`hybrid` mode without reranking.
 The [search API reference](../architecture/http-api.md#coverage-and-source-fenced-search)
 defines the selector limits and optional supplied-input restrictions.
 
@@ -98,6 +99,28 @@ to more than one source. Docbank selects the covering transcripts before
 ranking and limits. Removed or changed recordings leave coverage incomplete
 without crowding out valid matches. Read the exact transcript below to verify
 the evidence's build and supplied-input identity.
+
+For semantic or hybrid retrieval, configure a profile that already processed
+the selected transcript with a rendition-chunk embedding binding. Processing
+uses the ordinary plan, explicit consent, rendition worker and embedding
+continuation. Embedded callers can compose `NewSuppliedMediaProfile` with
+`ProfileConfig.EmbeddingProviders`, `Tokenizers`, and a matching chunk binding
+before constructing the service. The built-in supplied profiles have no
+embeddings by default. Selecting a search profile does not process or embed
+anything. Generated and supplied profiles retain separate authority; a mixed
+scope can therefore have incomplete embedding coverage even when every
+transcript is ready.
+
+`media_selections` names each selected `build_id`, its origin and supplied
+input. Semantic evidence keeps `kind: "embedding"` and its input, generation,
+set and vector-space identities. It has no lexical `segment_id`. Its excerpt
+and optional timing come from the authenticated embedding input. Hybrid
+results may combine lexical and embedding references from the same build;
+the lexical excerpt takes precedence when both contribute. Use that
+reference's timing. Docbank checks exact build authority before scoring,
+limits and coverage, and reselects source/input authority after query encoding.
+Transcript readiness cannot override missing selected-build embeddings.
+
 
 ## Read an exact media transcript
 

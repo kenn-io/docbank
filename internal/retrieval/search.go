@@ -216,17 +216,17 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		}
 	}
 	type documentKey struct {
-		nodeID  int64
-		version string
+		nodeID         int64
+		version, build string
 	}
 	set := make(map[documentKey]string, len(revalidation.Candidates))
 	for _, candidate := range revalidation.Candidates {
-		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = candidate.Path
+		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID, build: candidate.BuildID}] = candidate.Path
 	}
 	results := report.Results[:0]
 	for _, result := range report.Results {
 		if currentPath, ok := set[documentKey{nodeID: result.Document.NodeID,
-			version: result.Document.ContentVersionID}]; ok {
+			version: result.Document.ContentVersionID, build: result.Document.BuildID}]; ok {
 			result.Path = currentPath
 			results = append(results, result)
 		}
@@ -251,7 +251,7 @@ func searchCandidateIdentity(result Result) store.SearchCandidateIdentity {
 			SegmentID: reference.SegmentID, BlobHash: reference.BlobHash,
 			SourceManifestChecksum: reference.SourceManifestChecksum}
 	}
-	return store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
+	return store.SearchCandidateIdentity{NodeID: result.Document.NodeID, BuildID: result.Document.BuildID,
 		ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
 }
 
@@ -518,8 +518,11 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 				item.Excerpt = input.excerpt
 				reference.TimeSpan = input.span
 			}
-			candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
-				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
+			identity := DocumentIdentity{VaultID: item.VaultID, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
+			if len(query.Scope.SelectedBuilds) != 0 {
+				identity.BuildID = item.MediaEvidence.BuildID
+			}
+			candidates = append(candidates, Candidate{Document: identity, Lane: LaneSemantic,
 				Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
 				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}, photoBlobHash: photoFusionBlob(query.Scope, item.BlobHash)})
 		}
@@ -604,7 +607,7 @@ func laneReport(requested, actual Mode, coverage Coverage,
 	for index, candidate := range candidates {
 		contribution := 1 / float64(ReciprocalRankK+candidate.Rank)
 		result := Result{Document: candidate.Document, Rank: index + 1, Score: contribution,
-			Path: candidate.Path, Evidence: candidate.Evidence, rerankExcerpt: candidate.Excerpt,
+			Path: candidate.Path, Evidence: candidate.Evidence, Excerpt: candidate.Excerpt, rerankExcerpt: candidate.Excerpt,
 			Explanation: []Contribution{{Lane: candidate.Lane, Rank: candidate.Rank,
 				Contribution: contribution}}}
 		if candidate.Lane == LaneLexical {
