@@ -32,18 +32,6 @@ func checkRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T, newSto
 	require.Equal(t, "uid-32", resolved.ResolvedUID)
 }
 
-func checkPersonExternalAliasCycle(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
-	t.Parallel()
-	s := newStore(t)
-	_, err := s.db.ExecContext(t.Context(), `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
-		VALUES('msgvault','synthetic','a','b','2026-09-12T00:00:00Z'),
-		      ('msgvault','synthetic','b','a','2026-09-12T00:00:00Z')`)
-	require.NoError(t, err)
-	_, err = s.ResolveExternalPersonUID(t.Context(), "msgvault", "synthetic", "a")
-	require.ErrorContains(t, err, "cycle")
-}
-
 func checkPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()

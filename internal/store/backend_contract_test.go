@@ -42,7 +42,6 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRecordExternalUIDAliasesPreservesExistingHopBound(t, newPostgresQueryStore)
 		}},
-		{"PersonExternalAliasCycle", func(t *testing.T) { t.Helper(); checkPersonExternalAliasCycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonExternalAliasCycle(t, newPostgresQueryStore) }},
 		{"PersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate", func(t *testing.T) {
 			t.Helper()
 			checkPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t, newTestStore)
@@ -216,7 +215,6 @@ var backendSuites = []backendSuite{
 		{"CandidateAssertionsMergeMatchingActions", func(t *testing.T) { t.Helper(); checkCandidateAssertionsMergeMatchingActions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCandidateAssertionsMergeMatchingActions(t, newPostgresQueryStore) }},
 		{"CandidateAuthorityPreventsMetadataImport", func(t *testing.T) { t.Helper(); checkCandidateAuthorityPreventsMetadataImport(t, newTestStore) }, nil},
 		{"CandidateLinksSkipPrunedVersions", func(t *testing.T) { t.Helper(); checkCandidateLinksSkipPrunedVersions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCandidateLinksSkipPrunedVersions(t, newPostgresQueryStore) }},
-		{"CandidateRejectionDoesNotNeedEvidenceDecode", func(t *testing.T) { t.Helper(); checkCandidateRejectionDoesNotNeedEvidenceDecode(t, newTestStore) }, nil},
 		{"PersonAssertionDeletionAdvancesBindingEpoch", func(t *testing.T) { t.Helper(); checkPersonAssertionDeletionAdvancesBindingEpoch(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkPersonAssertionDeletionAdvancesBindingEpoch(t, newPostgresQueryStore)

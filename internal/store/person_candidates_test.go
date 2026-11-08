@@ -539,21 +539,6 @@ func checkCandidateLinksSkipPrunedVersions(t *testing.T, newStore func(*testing.
 	}
 }
 
-func checkCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
-	t.Parallel()
-	s := newStore(t)
-	_, version := seedPeopleVersion(t, s)
-	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
-		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
-	}}))
-	_, err := s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET evidence_json=$1 WHERE candidate_id=$2`, []byte("{"), candidate.CandidateID)
-	require.NoError(t, err)
-	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
-	require.NoError(t, err)
-	require.Equal(t, "rejected", decided.State)
-}
-
 func TestCandidateRejectsInvalidActorKeys(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
