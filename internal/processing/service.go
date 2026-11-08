@@ -2000,6 +2000,10 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
+	if len(generated.Inputs) == 0 {
+		return store.EmbeddingInputGenerationRecord{}, nil
+	}
+
 	encoded, err := document.MarshalEmbeddingInputGeneration(generated)
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err

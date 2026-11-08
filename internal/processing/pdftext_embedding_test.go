@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -55,6 +56,16 @@ func TestPDFTextOmissionOnlyCompletesWithoutEmbeddingRequests(t *testing.T) {
 	coverage, err := fixture.catalog.ProcessingCoverage(t.Context(), store.ProcessingCoverageScope{ContentVersionIDs: []string{node.CurrentVersionID}, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: []store.ProcessingCoverageBinding{{BindingID: "chunk", VectorSpaceID: profile.vectorSpaces["chunk"]}}})
 	require.NoError(t, err)
 	require.Equal(t, "complete", coverage.Embeddings[0].State)
+
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	gate := service.gate
+	service.gate = &localTextGrantGate{workerTestGate: newWorkerTestGate(), err: errors.New("unexpected empty-generation write")}
+	ids, err := service.runEmbeddings(t.Context(), version, profile, "", "", "", nil, processingRunOptions{})
+	service.gate = gate
+	require.NoError(t, err)
+	require.Empty(t, ids)
+	require.Zero(t, calls.Load())
 
 	// The same configured embedder still receives readable page text.
 	receipt, err = fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDFTextPages([]string{"synthetic readable text"}, false)))

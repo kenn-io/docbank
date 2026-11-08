@@ -119,6 +119,9 @@ makes the evidence partial. An entirely image-only PDF publishes its page
 omissions with an empty Markdown body, zero lexical segments, and empty
 navigation. Pages with native characters whose extracted text is empty or
 only whitespace and control characters record a `no_readable_text` omission.
+Extraction removes PDFium's inferred line-wrap hyphen marker (U+FFFE), joining
+wrapped words for search. Ordinary hyphens remain. Other control characters
+are removed except line feed, carriage return, and tab.
 The retained Markdown keeps its frontmatter envelope even when its body is
 empty. Older binaries refuse omission-only evidence or its empty Markdown
 body; use a version that supports local PDF text to read these results.

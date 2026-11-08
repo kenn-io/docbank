@@ -78,7 +78,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	pages, err := p.pageCount(upload, data)
+	pages, err := p.pageCount(data)
 	if err != nil {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorUnsupportedInput, "PDF is malformed or unsupported", err)
 	}
@@ -146,21 +146,7 @@ func rejected(message string) error {
 
 var _ document.RenditionProvider = (*Provider)(nil)
 
-func (p *Provider) pageCount(upload document.AuthorizedUpload, data []byte) (int64, error) {
-	if source, ok := upload.(interface {
-		CapabilityProof() document.UploadCapability
-	}); ok {
-		proof := source.CapabilityProof()
-		facts, local := proof.Facts()
-		metadata := upload.Metadata()
-		_, password := proof.PDFPassword()
-		if local && !password && facts.Checksum == metadata.CapabilityRecordChecksum &&
-			facts.SourceSHA256 == metadata.SHA256 && facts.SourceBytes == metadata.ByteLength &&
-			facts.DescriptorFingerprint == p.descriptor.Fingerprint && facts.MediaFamily == "pdf" && facts.MediaType == "application/pdf" &&
-			facts.Pages > 0 && facts.ExpandedBytes <= p.profile.MaxDocumentBytes && facts.MaxEntryBytes <= p.profile.MaxDocumentBytes && facts.Entries <= 100_000 {
-			return facts.Pages, nil
-		}
-	}
+func (p *Provider) pageCount(data []byte) (int64, error) {
 	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{TextOnly: true, MaxExpandedBytes: p.profile.MaxDocumentBytes, MaxEntryBytes: p.profile.MaxDocumentBytes, MaxEntries: 100_000})
 	if err != nil {
 		return 0, err

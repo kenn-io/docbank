@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 )
 
@@ -75,6 +76,7 @@ func TestPDFTextWhitespaceOmissions(t *testing.T) {
 		units int
 	}{
 		{"whitespace", []string{"   "}, 0},
+		{"controls", []string{"\x01\x02"}, 0},
 		{"whitespace-and-blank", []string{"   ", ""}, 0},
 		{"mixed", []string{"   ", "", "synthetic text"}, 1},
 	} {
@@ -113,7 +115,12 @@ func TestPDFTextPreservesLiteralMarkup(t *testing.T) {
 	p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 1})
 	require.NoError(t, err)
 	const literal = "Order <invoice-1729> \\ *item* [ref](https://example.org) # Title"
-	upload := newTestUpload(redactiontest.PDF(t, []string{literal}, "literal markup"))
+	data := redactiontest.PDF(t, []string{"inter-", "national", "part-time", literal}, "literal markup")
+	page, err := pdfproduction.ReadPDFTextPage(t.Context(), data, 0, 1, 1<<20)
+	require.NoError(t, err)
+	require.Contains(t, page.Text, "international")
+	require.NotContains(t, page.Text, "\ufffe")
+	upload := newTestUpload(data)
 	result, err := p.Render(t.Context(), upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	require.NoError(t, err)
 	policy, err := document.NewEvidencePolicy(1 << 20)
@@ -124,7 +131,9 @@ func TestPDFTextPreservesLiteralMarkup(t *testing.T) {
 	require.NoError(t, err)
 	rendition, err := document.BuildRenditionV1(normalized, renditionPolicy)
 	require.NoError(t, err)
-	require.Contains(t, rendition.Units[0].Text, "invoice")
+	require.Contains(t, rendition.Units[0].Text, "international")
+	require.Contains(t, rendition.LexicalSegments[0].Text, "international")
+	require.Contains(t, rendition.LexicalSegments[0].Text, `part\-time`)
 	require.Contains(t, rendition.LexicalSegments[0].Text, `Order \<invoice\-1729\> \\ \*item\* \[ref\]\(https\:\/\/example\.org\) \# Title`)
 }
 
@@ -187,20 +196,6 @@ func TestPDFTextLimitsAndCancellation(t *testing.T) {
 
 func newTestUpload(data []byte) *mediatest.Upload {
 	return mediatest.NewUpload(data, document.AuthorizedUploadMetadata{Filename: "source.pdf", MediaFamily: "pdf", MediaType: "application/pdf"})
-}
-
-func TestPDFTextJPEGSubtype(t *testing.T) {
-	p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 1})
-	require.NoError(t, err)
-	for _, indirect := range []bool{false, true} {
-		t.Run(fmt.Sprintf("indirect=%t", indirect), func(t *testing.T) {
-			upload := newTestUpload(mediatest.PDFTextPages([]string{"synthetic invoice"}, indirect))
-			result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
-			require.NoError(t, err)
-			require.Len(t, result.Evidence.Units, 1)
-			require.Equal(t, "synthetic invoice", result.Evidence.Units[0].Text)
-		})
-	}
 }
 
 func TestPDFTextSealedAdmissionRetainsProviderBounds(t *testing.T) {

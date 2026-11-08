@@ -11,7 +11,6 @@ type Facts struct {
 	MediaFamily, MediaType                                           string
 	DescriptorFingerprint, ProfileFingerprint, DisclosureFingerprint string
 	Pixels, Frames, DurationMS, Pages                                int64
-	ExpandedBytes, MaxEntryBytes, Entries                            int64
 	MaxSourceBytes, MaxPixels, MaxFrames, MaxDurationMS, MaxPages    int64
 }
 

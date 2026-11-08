@@ -20,7 +20,6 @@ func (record CapabilityRecord) UploadCapability() document.UploadCapability {
 		DescriptorFingerprint: record.DescriptorFingerprint, ProfileFingerprint: record.ProfileFingerprint,
 		DisclosureFingerprint: record.DisclosureFingerprint,
 		Pixels:                measurements.Pixels, Frames: measurements.Frames, DurationMS: measurements.DurationMS, Pages: measurements.Pages,
-		ExpandedBytes: measurements.ExpandedBytes, MaxEntryBytes: measurements.MaxEntryBytes, Entries: measurements.Entries,
 		MaxSourceBytes: policy.MaxSourceBytes, MaxPixels: policy.MaxPixels, MaxFrames: policy.MaxFrames,
 		MaxDurationMS: policy.MaxDurationMS, MaxPages: policy.MaxPages,
 	}, policy.pdfPassword)

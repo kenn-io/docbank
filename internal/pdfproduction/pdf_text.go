@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/requests"
 )
 
 // PDFTextPolicy binds extraction behavior to the pinned engine and resource policy.
-const PDFTextPolicy = "pdftext/v1:count-before-get;native-zero-omissions;empty-text-omissions;literal-markdown;per-page-lease;memory=512MiB;execution=60s;rss=1GiB;text-only-admission;" + wasmSHA256
+const PDFTextPolicy = "pdftext/v1:count-before-get;native-zero-omissions;empty-text-omissions;remove-U+FFFE-and-controls-except-LF-CR-tab;literal-markdown;per-page-lease;memory=512MiB;execution=60s;rss=1GiB;text-only-admission;" + wasmSHA256
 
 // PDFTextPage contains the native character count before any text normalization.
 type PDFTextPage struct {
@@ -70,7 +72,12 @@ func ReadPDFTextPage(ctx context.Context, data []byte, index int, maxPages int64
 		if len(text.Text) > maxBytes {
 			return errors.New("PDF text byte limit exceeded")
 		}
-		result.Text = text.Text
+		result.Text = strings.Map(func(r rune) rune {
+			if r == '\ufffe' || (unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t') {
+				return -1
+			}
+			return r
+		}, text.Text)
 		return nil
 	})
 	return result, err

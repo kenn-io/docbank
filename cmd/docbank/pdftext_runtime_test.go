@@ -95,10 +95,16 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 		name        string
 		pages, text int
 		mediaType   string
-	}{{"born", 3, 3, ""}, {"image-only", 3, 0, ""}, {"mixed", 3, 1, ""}, {"parameterized", 3, 0, "application/pdf; version=1.7"}} {
+	}{{"born", 3, 3, ""}, {"image-only", 3, 0, ""}, {"mixed", 3, 1, ""}, {"parameterized", 3, 0, "application/pdf; version=1.7"}, {"wrapped", 1, 1, ""}} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), test.name+".pdf")
-			require.NoError(t, os.WriteFile(path, mediatest.PDFTextPages(pdfTextRuntimePages(test.pages, test.text), false), 0600))
+			data := mediatest.PDFTextPages(pdfTextRuntimePages(test.pages, test.text), false)
+			query := "needle"
+			if test.name == "wrapped" {
+				data = redactiontest.PDF(t, []string{"inter-", "national", "part-time"}, "wrapped word")
+				query = "international"
+			}
+			require.NoError(t, os.WriteFile(path, data, 0600))
 			_, err := runCLI(t, "add", path, "--dest", "/pdfs")
 			require.NoError(t, err)
 			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/" + test.name + ".pdf"}})
@@ -149,9 +155,9 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 				require.Empty(t, window.Text)
 				require.True(t, window.EOF)
 			} else {
-				require.Contains(t, string(body), "needle synthetic PDF text")
+				require.Contains(t, string(body), query)
 			}
-			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Profile: "pdf", Limit: 10, Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
+			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: query, Mode: "lexical", Profile: "pdf", Limit: 10, Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
 			require.NoError(t, err)
 			if test.text == 0 {
 				require.Empty(t, search.Results)
