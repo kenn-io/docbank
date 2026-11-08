@@ -23,7 +23,7 @@ func seedFaceCandidate(t *testing.T, s *store.Store, node store.Node) {
 	require.NoError(t, err)
 	snapshot, err := s.FaceMatchingInputs(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(t.Context(), snapshot.Signature, []store.PersonMatchCandidate{candidate}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(t.Context(), snapshot, []store.PersonMatchCandidate{candidate}, false))
 }
 
 func TestFaceCandidateBrowserScopeAndDecision(t *testing.T) {

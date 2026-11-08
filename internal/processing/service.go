@@ -31,7 +31,6 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/formatcoverage"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/maintenance"
@@ -120,6 +119,12 @@ type configuredProfile struct {
 	tokenizers                map[string]document.Tokenizer
 	renderDisclosure          RuntimeDisclosure
 	embedDisclosures          map[string]RuntimeDisclosure
+}
+
+func (profile configuredProfile) hasFaces() bool {
+	return slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+		return binding.InputKind == document.EmbeddingInputFace
+	})
 }
 
 type Service struct {
@@ -682,7 +687,7 @@ func (service *Service) Shutdown(ctx context.Context) error {
 func (service *Service) Profiles() []ProfileSummary {
 	result := make([]ProfileSummary, 0, len(service.profiles))
 	for name, profile := range service.profiles {
-		if name == config.LocalFacesProfile {
+		if profile.hasFaces() {
 			continue
 		}
 		bindings := make([]string, 0, len(profile.portable.Embeddings))
@@ -1380,6 +1385,9 @@ func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerp
 	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return Status{}, err
 	}
+	if (configuredProfile{portable: profile}).hasFaces() {
+		return Status{}, ErrProfileNotConfigured
+	}
 	status := aggregateStatus(jobID, rendition, embeddings)
 	for _, binding := range profile.Embeddings {
 		if status.State == "completed" && binding.Activation == document.EmbeddingRequired &&
@@ -1608,7 +1616,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if request.AllLive != nil {
 		var ok bool
 		profile, ok = service.profiles[request.Profile]
-		if !ok {
+		if !ok || profile.hasFaces() {
 			return retrieval.Report{}, ErrProfileNotConfigured
 		}
 		searchScope, err = service.catalog.NormalizeProcessingSearchFilters(ctx, *request.AllLive)
@@ -2106,7 +2114,7 @@ func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
 
 func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
 	profile, ok := service.profiles[name]
-	if !ok {
+	if !ok || profile.hasFaces() {
 		return configuredProfile{}, nil, ErrProfileNotConfigured
 	}
 	if fence.VaultUID != service.catalog.VaultID() {
@@ -2118,7 +2126,7 @@ func (service *Service) profileFence(name string, fence SourceFence) (configured
 
 func (service *Service) resolve(ctx context.Context, selector Selector) (store.Node, store.ContentVersion, configuredProfile, error) {
 	profile, ok := service.profiles[selector.Profile]
-	if !ok || selector.Profile == config.LocalFacesProfile {
+	if !ok || profile.hasFaces() {
 		return store.Node{}, store.ContentVersion{}, configuredProfile{}, ErrProfileNotConfigured
 	}
 	if selector.NodeID <= 0 || selector.ContentVersionID == "" {

@@ -15,6 +15,7 @@ import (
 type FaceMatchingSnapshot struct {
 	Signature string
 	Sets      []FaceSuggestionSet
+	rejected  []string
 }
 type FaceVector struct {
 	Face   FaceSuggestionFace
@@ -46,14 +47,28 @@ func (s *Store) faceMatchingInputsTx(ctx context.Context, tx *sql.Tx) (FaceMatch
 	if err != nil {
 		return FaceMatchingSnapshot{}, err
 	}
+	snapshot := FaceMatchingSnapshot{Sets: sets, rejected: rejected}
+	snapshot.Signature, err = snapshot.signature(nil)
+	return snapshot, err
+}
+
+// signature projects current authority to the versions captured by a pass.
+// A nil scope includes every version; an empty scope includes none.
+func (snapshot FaceMatchingSnapshot) signature(versions map[string]bool) (string, error) {
+	sets := make([]FaceSuggestionSet, 0, len(snapshot.Sets))
+	for _, item := range snapshot.Sets {
+		if versions == nil || versions[item.Set.ContentVersionID] {
+			sets = append(sets, item)
+		}
+	}
 	data, err := json.Marshal(struct {
 		Sets     []FaceSuggestionSet
 		Rejected []string
-	}{sets, rejected}, json.Deterministic(true))
+	}{sets, snapshot.rejected}, json.Deterministic(true))
 	if err != nil {
-		return FaceMatchingSnapshot{}, err
+		return "", err
 	}
-	return FaceMatchingSnapshot{Signature: LengthPrefixedSHA256(string(data)), Sets: sets}, nil
+	return LengthPrefixedSHA256(string(data)), nil
 }
 
 // faceRankingInputsTx keeps the source and every named contribution in the
@@ -81,7 +96,7 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		}
 		decoded, err := s.faceVectorSet(ctx, reader, item.Set, indexes)
 		if errors.Is(err, ErrVectorSetUnavailable) {
-			unavailable = withUnavailableVectorSet(unavailable, err, item.Set.ContentVersionID)
+			unavailable = errors.Join(unavailable, err)
 			continue
 		}
 		if err != nil {
@@ -101,25 +116,6 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		}
 	}
 	return vectors, unavailable
-}
-
-// UnavailableVectorSetsError names each content version whose vector set a
-// read could not open. It wraps the first ErrVectorSetUnavailable.
-type UnavailableVectorSetsError struct {
-	Versions []string
-	err      error
-}
-
-func (e *UnavailableVectorSetsError) Error() string { return e.err.Error() }
-func (e *UnavailableVectorSetsError) Unwrap() error { return e.err }
-
-func withUnavailableVectorSet(prior, err error, version string) error {
-	sets, _ := errors.AsType[*UnavailableVectorSetsError](prior)
-	if sets == nil {
-		sets = &UnavailableVectorSetsError{err: err}
-	}
-	sets.Versions = append(sets.Versions, version)
-	return sets
 }
 
 func (s *Store) faceVectorSet(ctx context.Context, reader RenditionBlobReader, set EmbeddingSetRecord, indexes []*vectorindex.Generation) (document.VectorSetV1, error) {

@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"testing"
 	"uuid"
@@ -83,11 +84,15 @@ func TestUnavailableFaceBindingSharesVectorSpace(t *testing.T) {
 	profile.Embeddings = append(profile.Embeddings, second)
 	provider := x.service.profiles[config.LocalFacesProfile].embedders[config.LocalFacesProfile]
 	ctx := t.Context()
-	service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{"dual-faces": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{config.LocalFacesProfile: provider, second.Name: provider}}}})
+	service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{config.LocalFacesProfile: {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{config.LocalFacesProfile: provider, second.Name: provider}}}})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
 	x.worker.runtime = service.EmbeddingRuntimes()
-	x.f.grant(t, service, "dual-faces")
+	setup := FaceSetup{Service: service, Startup: func(context.Context) error { return nil }}
+	plan, err := setup.Plan(ctx)
+	require.NoError(t, err)
+	_, err = setup.Apply(ctx, plan.Fingerprint)
+	require.NoError(t, err)
 	for range 2 {
 		_, err := x.worker.ScanOnce(ctx)
 		require.NoError(t, err)

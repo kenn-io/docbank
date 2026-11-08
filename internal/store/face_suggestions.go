@@ -26,6 +26,7 @@ type FaceSuggestionSet struct {
 }
 
 func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, candidates string, args []any) ([]FaceSuggestionSet, error) {
+	d := metadataJSONDialect{s.postgresSchema != ""}
 	versions := `SELECT h.content_version_id FROM embedding_heads h WHERE h.input_kind='face'`
 	if faceID != "" {
 		namedPeople := ""
@@ -96,7 +97,7 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 	type eligibility struct{ attached, live bool }
 	eligible := map[string]eligibility{}
 	err = queryRows(ctx, tx, `SELECT es.embedding_set_id,`+embeddingAttachmentEligibilitySQL("es.content_version_id", "es.profile_fingerprint", "g.attachment_id")+`,EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=es.content_version_id AND n.current_version_id=v.version_id AND a.kind='photo' AND f.role IN ('image','raw') AND `+liveIncludedDisplayPredicate+`)
- FROM embedding_sets es JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id WHERE es.embedding_set_id IN (SELECT value FROM json_each($1))`, []any{string(encoded)}, func(rows *sql.Rows) error {
+ FROM embedding_sets es JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id WHERE es.embedding_set_id IN (SELECT value FROM `+d.arrayValues("$1")+`)`, []any{string(encoded)}, func(rows *sql.Rows) error {
 		var id string
 		var e eligibility
 		if err := rows.Scan(&id, &e.attached, &e.live); err != nil {
@@ -141,7 +142,7 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 	if err != nil {
 		return nil, err
 	}
-	previewRows, err := tx.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE recipe_fingerprint=$1 AND content_version_id IN (SELECT value FROM json_each($2))`, quality.GridRecipe, string(encoded))
+	previewRows, err := tx.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE recipe_fingerprint=$1 AND content_version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)`, quality.GridRecipe, string(encoded))
 	if err != nil {
 		return nil, err
 	}
@@ -164,15 +165,23 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 }
 
 // ReplaceFaceSuggestions preserves rejected evidence and supersedes open groups
-// whose membership changed, keeping any with evidence in an unavailable version.
+// whose membership changed within a complete captured source scope.
 // The captured input signature fences publication and queue admission in one transaction.
-func (s *Store) ReplaceFaceSuggestions(ctx context.Context, signature string, candidates []PersonMatchCandidate, unavailable []string) error {
+func (s *Store) ReplaceFaceSuggestions(ctx context.Context, captured FaceMatchingSnapshot, candidates []PersonMatchCandidate, incomplete bool) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		snapshot, err := s.faceMatchingInputsTx(ctx, tx)
 		if err != nil {
 			return err
 		}
-		if snapshot.Signature != signature {
+		versions := make(map[string]bool, len(captured.Sets))
+		for _, item := range captured.Sets {
+			versions[item.Set.ContentVersionID] = true
+		}
+		signature, err := snapshot.signature(versions)
+		if err != nil {
+			return err
+		}
+		if signature != captured.Signature {
 			return ErrStaleRevision
 		}
 		wanted := map[string]bool{}
@@ -184,7 +193,7 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, signature string, ca
 			candidates[i] = c
 			wanted[c.ActorKey+"\x00"+c.SuggestedPersonID+"\x00"+c.EvidenceSHA256] = true
 		}
-		ids, err := retirableFaceCandidatesTx(ctx, tx, unavailable)
+		ids, err := s.retirableFaceCandidatesTx(ctx, tx, versions, snapshot.Signature == captured.Signature, incomplete)
 		if err != nil {
 			return err
 		}
@@ -236,14 +245,21 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, signature string, ca
 	})
 }
 
-// retirableFaceCandidatesTx lists open face groups whose evidence a pass read
-// in full, so a partial snapshot cannot retire a group it could not see.
-func retirableFaceCandidatesTx(ctx context.Context, tx *sql.Tx, unavailable []string) ([]string, error) {
-	encoded, err := json.Marshal(unavailable)
+// retirableFaceCandidatesTx preserves reviews outside a completed pass's scope.
+// An incomplete pass can add healthy groups but cannot retire an existing review.
+func (s *Store) retirableFaceCandidatesTx(ctx context.Context, tx *sql.Tx, versions map[string]bool, completeScope, incomplete bool) ([]string, error) {
+	if incomplete {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(versions))
+	for version := range versions {
+		ids = append(ids, version)
+	}
+	encoded, err := json.Marshal(ids)
 	if err != nil {
 		return nil, err
 	}
-	return stringColumnTx(ctx, tx, "open face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND e.content_version_id IN (SELECT value FROM json_each($1)))`, string(encoded))
+	return stringColumnTx(ctx, tx, "open face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND (NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND e.content_version_id NOT IN (SELECT value FROM `+(metadataJSONDialect{s.postgresSchema != ""}).arrayValues("$1")+`)) OR $2)`, string(encoded), completeScope)
 }
 
 type FaceCandidate struct {

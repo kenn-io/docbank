@@ -64,6 +64,9 @@ func (runtime *ProviderEmbeddingRuntime) prepareFaces(ctx context.Context, work 
 	}
 	data, _, faces, err := facePreview(ctx, runtime.catalog, blobs, work.ContentVersionID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrSourceIneligible) {
+			return EmbeddingExecution{}, errors.Join(ErrEmbeddingWorkFenced, err)
+		}
 		return EmbeddingExecution{}, err
 	}
 	var inputs []document.EmbeddingInput

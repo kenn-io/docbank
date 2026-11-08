@@ -354,3 +354,105 @@ func TestFaceSuggestionBatchesPreserveNewFaceAssignment(t *testing.T) {
 	}
 	t.Fatal("catch-up must suggest the remaining face")
 }
+
+func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
+	t.Parallel()
+	x, _ := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
+	var imported []string
+	for cycle := range 3 {
+		require.Nil(t, x.service.faceSuggestionsPending)
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+		require.NotNil(t, x.service.faceSuggestionsPending)
+		version := x.f.addPhoto(t, fmt.Sprintf("import-%d.jpg", cycle), 700)
+		imported = append(imported, version)
+		for _, left := range []float64{.2, .201} {
+			_, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{X: left, Y: .2, Width: .001, Height: .1}, "")
+			require.NoError(t, err)
+		}
+		x.worker.reconcileAt = time.Time{}
+		n, err := x.worker.ScanOnce(ctx)
+		require.NoError(t, err)
+		require.Positive(t, n)
+		for attempt := 0; attempt < 32 && x.service.faceSuggestionsPending != nil; attempt++ {
+			require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+		}
+		require.Nil(t, x.service.faceSuggestionsPending)
+		_, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+		require.NoError(t, err)
+		require.Positive(t, total, "unchanged groups must publish while imports continue")
+	}
+	current, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature != current.Signature; attempt++ {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	require.Equal(t, current.Signature, x.service.faceSuggestionsSignature)
+	seen := map[string]bool{}
+	for offset := 0; offset < 750; offset += 250 {
+		groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+		require.NoError(t, err)
+		for _, group := range groups {
+			for _, face := range group.Faces {
+				seen[face.ContentVersionID] = true
+			}
+		}
+	}
+	for _, version := range imported {
+		require.True(t, seen[version], "catch-up must include every imported source")
+	}
+}
+
+func TestFacePublicationPreservesReturningSourceReview(t *testing.T) {
+	t.Parallel()
+	x, _ := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
+	version := x.f.addPhoto(t, "edited.jpg", 700)
+	for _, left := range []float64{.1, .101} {
+		_, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{X: left, Y: .2, Width: .001, Height: .1}, "")
+		require.NoError(t, err)
+	}
+	x.worker.reconcileAt = time.Time{}
+	_, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature == ""; attempt++ {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	var original store.FaceCandidate
+	for offset := 0; offset < 750; offset += 250 {
+		groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+		require.NoError(t, err)
+		for _, group := range groups {
+			for _, face := range group.Faces {
+				if face.ContentVersionID == version {
+					original = group
+					break
+				}
+			}
+		}
+	}
+	require.NotEmpty(t, original.CandidateID)
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{X: .997, Y: .2, Width: .001, Height: .1}, "")
+	require.NoError(t, err)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	require.NotNil(t, x.service.faceSuggestionsPending)
+	x.worker.reconcileAt = time.Time{}
+	n, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	require.Positive(t, n)
+	for attempt := 0; attempt < 32 && x.service.faceSuggestionsPending != nil; attempt++ {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	require.Nil(t, x.service.faceSuggestionsPending)
+	for offset := 0; offset < 750; offset += 250 {
+		groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+		require.NoError(t, err)
+		for _, group := range groups {
+			if group.CandidateID == original.CandidateID {
+				require.Equal(t, original.Revision, group.Revision)
+				return
+			}
+		}
+	}
+	t.Fatal("the still-current review disappeared when its source returned during a pending pass")
+}

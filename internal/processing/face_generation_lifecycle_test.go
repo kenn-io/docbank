@@ -14,8 +14,16 @@ import (
 
 func TestFaceWorkerAbandonsDisappearedSource(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"excluded", "trashed", "replaced"} {
-		t.Run(change, func(t *testing.T) {
+	for _, scenario := range []struct {
+		change      string
+		preparation bool
+	}{{"excluded", false}, {"trashed", false}, {"replaced", false}, {"excluded", true}, {"trashed", true}} {
+		name := scenario.change
+		if scenario.preparation {
+			name += " before preparation"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			x := newFaceEmbeddingFixture(t, false)
 			x.enable(t)
@@ -29,9 +37,9 @@ func TestFaceWorkerAbandonsDisappearedSource(t *testing.T) {
 			jobID := claim.AttemptID
 			require.NoError(t, x.f.catalog.ReleaseEmbeddingWork(ctx, claim, at))
 			x.worker.catalog = x.f.catalog
-			x.onRequest = func() {
+			change := func() {
 				x.onRequest = nil
-				switch change {
+				switch scenario.change {
 				case "excluded":
 					asset, err := x.f.catalog.PhotoAssetForNode(ctx, x.f.node.ID)
 					require.NoError(t, err)
@@ -47,9 +55,16 @@ func TestFaceWorkerAbandonsDisappearedSource(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
+			expectedCalls := 1
+			if scenario.preparation {
+				x.worker.catalog = &countedReconcileCatalog{Store: x.f.catalog, afterValidation: func(EmbeddingWorkClaim) { change() }}
+				expectedCalls = 0
+			} else {
+				x.onRequest = change
+			}
 			_, err = x.worker.ScanOnce(ctx)
 			require.NoError(t, err, "source changes during inference must fence and retire disposable work")
-			require.Equal(t, 1, x.calls, "source changed during the actual provider request")
+			require.Equal(t, expectedCalls, x.calls)
 			job, err := x.f.catalog.EmbeddingJobByID(ctx, jobID)
 			require.NoError(t, err)
 			assert.Equal(t, "abandoned", job.State, "obsolete work must be retired before lease expiry")

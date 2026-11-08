@@ -155,6 +155,11 @@ Run `docbank processing faces`. It reviews the local processing plan and reports
 
 The face model has its own profile and download. Setting up text search doesn't enable face suggestions. Startup reuses installed face assets; missing assets require running setup again. Faces the model can't align remain available for manual naming. Review and name suggested groups in [People](people.md#face-suggestions).
 
+Profiles that include face embeddings use this setup and background worker.
+Per-file plans, starts, consent grants, coverage, search fences, and aggregate job
+status refuse these profiles, including custom and mixed profiles supplied through
+the Go API.
+
 ## Embed photos for meaning search
 
 Image bindings serve Photos search. Documents search uses text bindings; a hybrid search with only image bindings uses filename and retained-text matches.

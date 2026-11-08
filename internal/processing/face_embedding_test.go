@@ -104,10 +104,14 @@ func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 	t.Parallel()
 	for _, unmatched := range []bool{false, true} {
 		t.Run(map[bool]string{false: "mixed", true: "all nil"}[unmatched], func(t *testing.T) {
+			t.Parallel()
 			x := newFaceEmbeddingFixture(t, unmatched)
 			ctx := t.Context()
 			x.enable(t)
 			x.worker.reconcileAt = time.Time{}
+			var jobID string
+			observed := &countedReconcileCatalog{Store: x.f.catalog, afterValidation: func(claim EmbeddingWorkClaim) { jobID = claim.AttemptID }}
+			x.worker.catalog = observed
 			n, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
 			require.Equal(t, 1, n)
@@ -120,11 +124,9 @@ func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 			sets, err := x.f.catalog.FaceMatchingInputs(ctx)
 			require.NoError(t, err)
 			if unmatched {
-				coverage, err := x.service.Coverage(ctx, config.LocalFacesProfile, SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}})
+				job, err := x.f.catalog.EmbeddingJobByID(ctx, jobID)
 				require.NoError(t, err)
-				require.Len(t, coverage.Embeddings, 1)
-				require.Equal(t, 1, coverage.Embeddings[0].Complete, "all-unmatched attempts finish processing")
-				require.Zero(t, coverage.Embeddings[0].Unavailable)
+				require.Equal(t, "completed", job.State, "all-unmatched attempts finish processing")
 				require.Empty(t, sets.Sets)
 			} else {
 				require.Len(t, sets.Sets, 1)
@@ -526,34 +528,6 @@ func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 	require.ElementsMatch(t, []string{x.inputs[0].FaceID, x.inputs[1].FaceID}, []string{page[0].Faces[0].FaceID, page[0].Faces[1].FaceID})
 }
 
-func TestFaceCoverageReportsRunningAndCompletedVectors(t *testing.T) {
-	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	ctx := t.Context()
-	x.enable(t)
-	fence := SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}
-	var running Coverage
-	var coverageErr error
-	x.onRequest = func() { running, coverageErr = x.service.Coverage(ctx, config.LocalFacesProfile, fence) }
-	_, err := x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	require.NoError(t, coverageErr)
-	require.Len(t, running.Embeddings, 1)
-	assert.Equal(t, 1, running.Embeddings[0].Rebuilding, "inference is running for this version")
-	complete, err := x.service.Coverage(ctx, config.LocalFacesProfile, fence)
-	require.NoError(t, err)
-	require.Len(t, complete.Embeddings, 1)
-	assert.Equal(t, 1, complete.Embeddings[0].Complete, "the current face vectors have published")
-	_, _, err = x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .2, Width: .1, Height: .1}, "")
-	require.NoError(t, err)
-	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
-	require.NoError(t, err)
-	require.Empty(t, sets.Sets)
-	stale, err := x.service.Coverage(ctx, config.LocalFacesProfile, fence)
-	require.NoError(t, err)
-	assert.Zero(t, stale.Embeddings[0].Complete, "a changed face generation must stop counting as complete")
-}
-
 func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
@@ -653,6 +627,7 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
+				require.ErrorIs(t, reopened.ReplaceFaceSuggestions(ctx, before, nil, false), store.ErrStaleRevision, "the captured suggestion pass must fence the same changed authority")
 				set := before.Sets[0].Set
 				err = reopened.PublishEmbeddingHead(ctx, store.EmbeddingHeadRecord{
 					FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},

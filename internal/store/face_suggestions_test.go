@@ -41,7 +41,7 @@ func TestFaceCandidateRejectionAfterSourceUnavailable(t *testing.T) {
 					}
 					group, err := NewFaceCandidate(faces, personID, name)
 					require.NoError(t, err)
-					require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+					require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 					original, _, err := s.PersonCandidates(ctx, "open", 24, 0)
 					require.NoError(t, err)
 					require.Len(t, original, 1)
@@ -76,7 +76,7 @@ func TestFaceCandidateRejectionAfterSourceUnavailable(t *testing.T) {
 					}
 					pair, err := NewFaceCandidate(faces[1:], personID, name)
 					require.NoError(t, err)
-					require.NoError(t, catalog.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, catalog), []PersonMatchCandidate{pair}, nil))
+					require.NoError(t, catalog.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, catalog), []PersonMatchCandidate{pair}, false))
 					page, total, err = catalog.FaceCandidates(ctx, 24, 0)
 					require.NoError(t, err)
 					if kind == "named" {
@@ -109,7 +109,7 @@ func TestFaceDismissedRegroupKeepsDecisionIdentity(t *testing.T) {
 	slices.Reverse(faces)
 	group, err := NewFaceCandidate(faces, "", "")
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	decideFaceForTest(t, s, nodes[2], faces[0].FaceID, "", "dismiss")
 	page, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestFaceDismissedRegroupKeepsDecisionIdentity(t *testing.T) {
 	require.NoError(t, err)
 	pair, err := NewFaceCandidate(faces[1:], "", "")
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{pair}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{pair}, false))
 	page, _, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, page)
@@ -146,7 +146,7 @@ func TestFaceConfirmedGroupReturnsAfterRetraction(t *testing.T) {
 	ctx := t.Context()
 	pair := faceCandidatePair(t, s)
 	node, first, second, group := pair.node, pair.first, pair.second, pair.group
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	page, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
@@ -154,7 +154,7 @@ func TestFaceConfirmedGroupReturnsAfterRetraction(t *testing.T) {
 	require.NoError(t, err)
 	decideFaceForTest(t, s, node, first.FaceID, "", "retract")
 	decideFaceForTest(t, s, node, second.FaceID, "", "retract")
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	page, _, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
@@ -169,7 +169,7 @@ func TestFaceSuggestionsAtomicNameAndRejection(t *testing.T) {
 			ctx := t.Context()
 			pair := faceCandidatePair(t, s)
 			node, input := pair.node, pair.group
-			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{input}, nil))
+			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{input}, false))
 			page, total, err := s.FaceCandidates(ctx, 24, 0)
 			require.NoError(t, err)
 			require.EqualValues(t, 1, total)
@@ -218,27 +218,29 @@ func TestFaceCandidateRegroupIdentityAndRevisionFences(t *testing.T) {
 	_, err := s.CreateFile(ctx, s.RootID(), "unrelated.txt", fakeHash("e1"), 12, "text/plain")
 	require.NoError(t, err)
 	require.Equal(t, signature, faceMatchingSignature(t, s))
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	require.Equal(t, signature, faceMatchingSignature(t, s))
 	page, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	original := page[0]
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), nil, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), nil, false))
 	page, _, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, page)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	page, _, err = s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.Equal(t, original.CandidateID, page[0].CandidateID)
 	require.Greater(t, page[0].Revision, original.Revision)
-	signature = faceMatchingSignature(t, s)
+	captured := faceMatchingSnapshot(t, s)
+	signature = captured.Signature
 	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, Action: "reject", FaceOnly: true})
 	require.NoError(t, err)
 	require.NotEqual(t, signature, faceMatchingSignature(t, s))
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.ErrorIs(t, s.ReplaceFaceSuggestions(ctx, captured, nil, false), ErrStaleRevision)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	retained, _, err := s.PersonCandidates(ctx, "rejected", 24, 0)
 	require.NoError(t, err)
 	require.Len(t, retained, 1)
@@ -257,14 +259,14 @@ func TestFaceCandidateConfirmationHonorsCurrentFaceDecisions(t *testing.T) {
 				require.NoError(t, err)
 				group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: pair.first}, {PhotoFace: pair.second}}, person.PersonID, person.DisplayName)
 				require.NoError(t, err)
-				require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+				require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 				decisionPerson := person.PersonID
 				if action == "dismiss" {
 					decisionPerson = ""
 				}
 				decideFaceForTest(t, s, pair.node, pair.first.FaceID, decisionPerson, action)
 				// Retained evidence must still honor a newer face decision.
-				require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+				require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 				page, _, err := s.FaceCandidates(ctx, 24, 0)
 				require.NoError(t, err)
 				require.Len(t, page, 1)
@@ -295,7 +297,7 @@ func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
 	ctx := t.Context()
 	pair := faceCandidatePair(t, s)
 	node, first, second, group := pair.node, pair.first, pair.second, pair.group
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	page, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	decision := CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, FaceOnly: true, Action: "new_person", DisplayName: "Ada", FaceIDs: []string{uuid.New().String()}}
@@ -307,7 +309,7 @@ func TestFaceCandidateConfirmationUsesSelectedFaces(t *testing.T) {
 	decision.FaceIDs = []string{second.FaceID}
 	saved, err := s.DecidePersonCandidate(ctx, decision)
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}, false))
 	retained, _, err := s.PersonCandidates(ctx, "linked", 24, 0)
 	require.NoError(t, err)
 	require.Len(t, retained, 1)
@@ -341,7 +343,7 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	require.NoError(t, err)
 	candidate, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, person.PersonID, person.DisplayName)
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{candidate}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{candidate}, false))
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
 	require.NoError(t, err)
@@ -360,7 +362,7 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	require.EqualValues(t, 1, total)
 	renamed, err := s.UpdatePerson(unlocked, person.PersonID, person.Revision, "New Name")
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{candidate}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{candidate}, false))
 	rows, _, err = s.FaceCandidates(unlocked, 24, 0)
 	require.NoError(t, err)
 	require.Equal(t, renamed.DisplayName, rows[0].DisplayName)
@@ -371,7 +373,7 @@ func TestFaceCandidatePersonVisibilityAndCurrentName(t *testing.T) {
 	// Rebuilding an old match resolves its retired person before retaining it.
 	merged, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, renamed.PersonID, "Old Name")
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{merged}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{merged}, false))
 	rows, _, err = s.FaceCandidates(unlocked, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -439,13 +441,19 @@ func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
 	require.NoError(t, err)
 	require.Empty(t, page)
 	require.Zero(t, total)
+	faceMatchingSnapshot(t, s)
 }
 
 func faceMatchingSignature(t *testing.T, s *Store) string {
 	t.Helper()
+	return faceMatchingSnapshot(t, s).Signature
+}
+
+func faceMatchingSnapshot(t *testing.T, s *Store) FaceMatchingSnapshot {
+	t.Helper()
 	snapshot, err := s.FaceMatchingInputs(t.Context())
 	require.NoError(t, err)
-	return snapshot.Signature
+	return snapshot
 }
 
 func TestUnnamedFaceCandidateRequiresTwoReviewableFaces(t *testing.T) {
@@ -456,7 +464,7 @@ func TestUnnamedFaceCandidateRequiresTwoReviewableFaces(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			pair := faceCandidatePair(t, s)
-			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{pair.group}, nil))
+			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{pair.group}, false))
 			personID := ""
 			if action == "name" {
 				person, err := s.CreatePerson(ctx, "Synthetic person", "operator")
@@ -485,7 +493,7 @@ func TestFaceSnapshotPublicationSkipsRetiredTarget(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.RetirePerson(ctx, person.PersonID, person.Revision)
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSignature(t, s), []PersonMatchCandidate{named, pair.group}, nil))
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{named, pair.group}, false))
 	page, _, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, page, 1)

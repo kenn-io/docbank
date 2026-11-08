@@ -26,8 +26,8 @@ type faceSuggestionGroup struct {
 }
 
 type faceSuggestionPass struct {
-	signature                      string
-	unavailable                    []string
+	snapshot                       store.FaceMatchingSnapshot
+	incomplete                     bool
 	vectors                        []faceVector
 	centroids                      []store.FaceCentroid
 	visibleCentroids               []store.FaceCentroid
@@ -141,15 +141,6 @@ func (p *faceSuggestionPass) candidates() ([]store.PersonMatchCandidate, error) 
 	return candidates, nil
 }
 
-// unavailableFaceVersions names each version with a set the pass could not
-// read. It is nil only when every set was read.
-func unavailableFaceVersions(err error) []string {
-	if sets, ok := errors.AsType[*store.UnavailableVectorSetsError](err); ok {
-		return sets.Versions
-	}
-	return nil
-}
-
 // rebuildFaceSuggestions publishes groups from every available vector. Its
 // signature omits payload availability and queue capacity, so a pass that left
 // either short is not cached.
@@ -168,7 +159,7 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 			return unavailable
 		}
 		pass = newFaceSuggestionPass(vectors)
-		pass.signature, pass.unavailable = snapshot.Signature, unavailableFaceVersions(unavailable)
+		pass.snapshot, pass.incomplete = snapshot, unavailable != nil
 		service.faceSuggestionsPending = pass
 	}
 	done, err := pass.advance(ctx, faceSuggestionComparisonBatch)
@@ -180,19 +171,19 @@ func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.signature, candidates, pass.unavailable); err != nil {
+	if err := service.catalog.ReplaceFaceSuggestions(ctx, pass.snapshot, candidates, pass.incomplete); err != nil {
 		if errors.Is(err, store.ErrStaleRevision) {
 			return nil
 		}
 		return err
 	}
-	if pass.unavailable != nil {
+	if pass.incomplete {
 		return store.ErrVectorSetUnavailable
 	}
 	if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full {
 		return err
 	}
-	service.faceSuggestionsSignature = pass.signature
+	service.faceSuggestionsSignature = pass.snapshot.Signature
 	return nil
 }
 func (service *Service) FaceSuggestionBackfill(ctx context.Context, logger *slog.Logger) error {
