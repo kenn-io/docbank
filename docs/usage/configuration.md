@@ -20,7 +20,8 @@ The profile graph has four named layers:
 - `[rendition_profiles.<name>]` binds a rendition adapter, its descriptor,
   document/response/unit limits, requested artifact roles, disclosure settings,
   and trust boundary. The daemon's local adapters are
-  `docbank-plaintext-rendition/v1` and `docbank-epub-rendition/v1`. Each must
+  `docbank-plaintext-rendition/v1`, `docbank-epub-rendition/v1`, and
+  `docbank-pdftext-rendition/v1`. Each must
   agree with the configured descriptor and `local_process` trust boundary.
 - `[embedding_profiles.<name>]` binds an embedding descriptor, input kind,
   optional rendition-chunk tokenizer and limits, and optionally a pinned hosted
@@ -50,6 +51,23 @@ limits through `epub.New`, then use its fingerprint as
 Filename disclosure follows `disclose_filename`. See
 [local EPUB extraction](../document-understanding.md#extract-epub-locally) for
 supported packages and virtual-unit counting.
+
+## Local PDF text rendition
+
+Use `docbank-pdftext-rendition/v1` with descriptor ID `pdftext.in-process-v1`
+and trust boundary `local_process`. Set `max_document_bytes` from 1 through
+524288000 and `max_units`, the page limit, from 1 through 1000000. Construct
+`pdftext.New(pdftext.Profile{MaxDocumentBytes: 16 << 20, MaxPages: 1000})`
+from `go.kenn.io/docbank/document/pdftext` with the same limits and copy
+`Descriptor().Fingerprint` into `descriptor_fingerprint`. Changing either
+limit changes the descriptor. Request the `structured` artifact role and
+select this rendition from a processing profile, as for EPUB.
+
+This provider reads the existing text layer. Each page with zero native
+characters records a `no_text_layer` omission. An entirely image-only PDF
+completes with an empty Markdown body and retained page omissions. Encrypted
+PDFs are refused. See [local PDF text extraction](../document-understanding.md#extract-pdf-text-locally)
+for admission and execution limits.
 
 ## Credentials and hosted runtimes
 

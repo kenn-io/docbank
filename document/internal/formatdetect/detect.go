@@ -408,6 +408,7 @@ var (
 // PDFLimits binds parser allocations and decoded stream measurements to one
 // inspection policy.
 type PDFLimits struct {
+	TextOnly         bool
 	MaxExpandedBytes int64
 	MaxEntryBytes    int64
 	MaxEntries       int64
@@ -445,8 +446,8 @@ type PDFInfoMetadata struct {
 }
 
 // InspectPDF validates the authoritative PDF object graph and measures every
-// supported stream under the supplied limits. Opaque image filters are rejected
-// because their decoded size cannot be established without rendering them.
+// supported stream under the supplied limits. Text-only inspection admits
+// opaque image streams without decoding pixels; other inspection rejects them.
 func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 	context, err := validatePDFObjectGraph(data, limits, false)
 	if err != nil {
@@ -645,6 +646,12 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bo
 			return nil, ErrPDFExpandedBytes
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
+	}
+	if limits.TextOnly {
+		if context.Encrypt != nil && !allowEmptyPassword {
+			return nil, ErrPDFEncrypted
+		}
+		return context, nil
 	}
 	return checkPDFReferences(context, allowEmptyPassword)
 }
@@ -877,6 +884,9 @@ func boundedPDFStreamBytes(stream *types.StreamDict, limits PDFLimits, expanded 
 	for _, pipeline := range stream.FilterPipeline {
 		switch pipeline.Name {
 		case filter.DCT, filter.JBIG2, filter.JPX:
+			if limits.TextOnly && stream.Subtype() != nil && *stream.Subtype() == "Image" {
+				return 0, nil
+			}
 			return 0, ErrPDFUnbounded
 		}
 	}

@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
+	"go.kenn.io/docbank/document"
 	"testing"
 	"time"
 
@@ -157,4 +159,54 @@ func TestResolveRenditionTextIgnoresFailedPhotoDescriptions(t *testing.T) {
 		ContentVersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, SourceSize: node.Size,
 		ProfileFingerprint: request.Profile.Fingerprint})
 	require.ErrorIs(t, err, ErrNotFound, "a description never produces text, so its failure is not a text failure")
+}
+
+func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	for _, corrupt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("corrupt=%t", corrupt), func(t *testing.T) {
+			s := open(t)
+			versions := seedRenditionCatalogVersions(t, s)
+			profile := catalogProcessingProfile(t, false)
+			build := catalogRenditionBuild(s, profile)
+			build.Units = nil
+			build.LexicalSegments = nil
+			build.Completeness = document.EvidencePartial
+			build.PartialSuccess = true
+			empty, _, err := document.EnvelopeRenditionV1(document.RenditionV1{Completeness: document.EvidencePartial, MarkdownChecksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, document.RenditionEnvelopeV1{
+				BuildID: build.ID, SourceSHA256: build.SourceSHA256, SourceFormat: "pdf", SourceMediaType: "application/pdf",
+				RenditionRequestFingerprint: build.RenditionRequestFingerprint, EvidenceLexicalFingerprint: build.EvidenceLexicalFingerprint,
+				NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, UnitKind: document.EvidenceUnitPage,
+			})
+			require.NoError(t, err)
+			if corrupt {
+				empty.Markdown = append(empty.Markdown, []byte("missing text")...)
+			}
+			build.MarkdownChecksum = testSHA256(empty.Markdown)
+			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+				return s.EnsureBlobTx(t.Context(), tx, build.MarkdownChecksum, int64(len(empty.Markdown)))
+			}))
+			for i := range build.Artifacts {
+				if build.Artifacts[i].Role == catalogArtifactSanitizedMarkdown {
+					build.Artifacts[i].Checksum = build.MarkdownChecksum
+					build.Artifacts[i].BlobHash = build.MarkdownChecksum
+					build.Artifacts[i].Size = int64(len(empty.Markdown))
+				}
+			}
+			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+			attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z"}
+			require.NoError(t, publishRenditionForTest(t, s, attachment, "2026-08-22T10:01:00.000000000Z", testSHA256([]byte("empty PDF generation"))))
+			node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+			require.NoError(t, err)
+			view, err := s.ResolveRenditionText(t.Context(), RenditionTextBinding{NodeID: node.ID, NodeRevision: node.Revision, ContentVersionID: versions[0], SourceSHA256: node.BlobHash, SourceSize: node.Size, ProfileFingerprint: profile.Fingerprint})
+			if corrupt {
+				require.ErrorIs(t, err, ErrRenditionTextUnavailable)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, view.Empty)
+			require.NotNil(t, view.Artifact)
+			require.Equal(t, int64(len(empty.Markdown)), view.Artifact.Size)
+		})
+	}
 }

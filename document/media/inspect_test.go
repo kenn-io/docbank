@@ -65,6 +65,7 @@ func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
 	encoded, err := json.Marshal(record, json.Deterministic(true))
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"max_text_lines":1000`)
+	assert.NotContains(t, string(encoded), `"pdf_text_only"`, "zero-valued admission policy must preserve existing fingerprints")
 	var decoded media.CapabilityRecord
 	require.NoError(t, json.Unmarshal(encoded, &decoded))
 	assert.Equal(t, policy, decoded.Policy)
@@ -2715,4 +2716,31 @@ func TestInspectPasswordProtectedPDF(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, other.Eligible)
 	require.Equal(t, record.Checksum, other.Checksum)
+}
+
+func TestInspectPDFTextOnlyAdmission(t *testing.T) {
+	for _, filter := range []string{"DCTDecode", "JBIG2Decode", "JPXDecode"} {
+		t.Run(filter, func(t *testing.T) {
+			data := mediatest.PDFObjects("opaque image and link", []string{
+				"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (https://example.org) >> >>",
+				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im 4 0 R >> >> >>",
+				"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /" + filter + " /Length 4 >>\nstream\ndata\nendstream",
+			})
+			policy := inspectionPolicy(data, "image.pdf", "application/pdf")
+			before, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.False(t, before.Eligible)
+			policy.PDFTextOnly = true
+			after, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.True(t, after.Eligible, "%+v", after)
+			require.NotEqual(t, before.PolicyFingerprint, after.PolicyFingerprint)
+			require.Equal(t, int64(1), after.Measurements.Pages)
+			policy.MaxEntryBytes = 1
+			bounded, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.False(t, bounded.Eligible)
+		})
+	}
 }

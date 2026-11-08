@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/docbank/document"
 )
 
 // ErrRenditionTextStale means one caller-supplied source, head, or generation
@@ -162,11 +164,17 @@ func (s *Store) ResolveRenditionText(
 		return RenditionTextView{}, ErrRenditionTextUnavailable
 	}
 	if len(rendition.Build.LexicalSegments) == 0 {
-		// Existing publication rejects normalized evidence without readable
-		// text. Keep the wire state available for imported/future compatible
-		// authorities, but never let omitted lexical rows hide Markdown.
 		const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-		if view.Artifact.Size != 0 || view.Artifact.BlobHash != emptySHA256 {
+		valid := view.Artifact.Size == 0 && view.Artifact.BlobHash == emptySHA256
+		if rendition.Build.Completeness == document.EvidencePartial && len(rendition.Build.Units) == 0 && version.MimeType == "application/pdf" {
+			empty, _, err := document.EnvelopeRenditionV1(document.RenditionV1{Completeness: document.EvidencePartial, MarkdownChecksum: emptySHA256}, document.RenditionEnvelopeV1{
+				BuildID: rendition.Build.ID, SourceSHA256: version.BlobHash, SourceFormat: "pdf", SourceMediaType: "application/pdf",
+				RenditionRequestFingerprint: rendition.Build.RenditionRequestFingerprint, EvidenceLexicalFingerprint: rendition.Build.EvidenceLexicalFingerprint,
+				NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, UnitKind: document.EvidenceUnitPage,
+			})
+			valid = err == nil && view.Artifact.Size == int64(len(empty.Markdown)) && view.Artifact.BlobHash == empty.MarkdownChecksum
+		}
+		if !valid {
 			return RenditionTextView{}, ErrRenditionTextUnavailable
 		}
 		view.Empty = true

@@ -963,3 +963,54 @@ func TestVerifyFreshIndependentEvidence(t *testing.T) {
 		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), input))
 	})
 }
+
+func TestPDFTextWaitingForLeaseUsesCallerContext(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		previous := wasmBacking
+		wasmBacking = newBackingManager(512 << 20)
+		defer func() { wasmBacking = previous }()
+		held, err := wasmBacking.acquire(t.Context(), uint64(QualifiedRecipe().WASMMemoryBytes))
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { _, err := ReadPDFTextPage(ctx, nil, 0, 1, 1024); result <- err }()
+		// A held renderer may run past the PDF text execution deadline. The text
+		// operation must continue waiting until its own caller's deadline.
+		synctest.Wait()
+		time.Sleep(61 * time.Second)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatalf("page deadline included lease wait: %v", err)
+		default:
+		}
+		cancel()
+		require.ErrorIs(t, <-result, context.Canceled)
+		held.release()
+	})
+}
+
+func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
+	data := redactiontest.PDF(t, []string{"shared PDF text"}, "lease handoff")
+	page, err := ReadPDFTextPage(t.Context(), data, 0, 1, 1024)
+	require.NoError(t, err)
+	require.Equal(t, "shared PDF text", page.Text)
+	// Starting a renderer after the page returns must acquire the same backing.
+	engine, err := NewPDFium(QualifiedRecipe())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	concrete, ok := engine.(*pdfiumEngine)
+	require.True(t, ok)
+	err = concrete.withInstance(t.Context(), func(instance pdfium.Pdfium) error {
+		doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
+		if err != nil {
+			return fmt.Errorf("open renderer PDF: %w", err)
+		}
+		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+		require.NoError(t, err)
+		require.Equal(t, 1, count.PageCount)
+		return nil
+	})
+	require.NoError(t, err)
+}

@@ -84,7 +84,7 @@ type RenditionEnvelopeV1 struct {
 // retained Markdown only. Units and lexical segments remain body-derived and
 // therefore never ingest frontmatter metadata.
 func EnvelopeRenditionV1(rendition RenditionV1, envelope RenditionEnvelopeV1) (RenditionV1, RenditionFrontMatterV1, error) {
-	if len(rendition.Markdown) == 0 || rendition.MarkdownChecksum != checksumBytes(rendition.Markdown) {
+	if len(rendition.Markdown) == 0 && (envelope.SourceFormat != "pdf" || envelope.SourceMediaType != "application/pdf" || envelope.UnitKind != EvidenceUnitPage || rendition.Completeness != EvidencePartial || len(rendition.Units) != 0 || len(rendition.LexicalSegments) != 0) || rendition.MarkdownChecksum != checksumBytes(rendition.Markdown) {
 		return RenditionV1{}, RenditionFrontMatterV1{}, errors.New("rendition Markdown body authority is invalid")
 	}
 	for name, value := range map[string]string{
@@ -161,7 +161,7 @@ func ParseRenditionFrontMatterV1(data []byte) (RenditionFrontMatterV1, []byte, e
 		return RenditionFrontMatterV1{}, nil, errors.New("rendition frontmatter contains multiple YAML documents")
 	}
 	frontmatter, body := envelope.Docbank, data[headerLength:]
-	if len(body) == 0 || !utf8.Valid(body) {
+	if !utf8.Valid(body) {
 		return RenditionFrontMatterV1{}, nil, errors.New("rendition Markdown body is empty or not UTF-8")
 	}
 	if err := validateRenditionFrontMatterV1(frontmatter, body); err != nil {
@@ -198,10 +198,13 @@ func validateRenditionFrontMatterV1(value RenditionFrontMatterV1, body []byte) e
 	if value.Contract != RenditionMarkdownContractV1 || value.Source.Format == "" ||
 		value.Source.MediaType == "" || value.Rendition.NormalizedEvidenceContract != NormalizedEvidenceContractV1 ||
 		!validEvidenceCompleteness(value.Rendition.Completeness) || !validEvidenceUnitKind(value.Document.UnitKind) ||
-		value.Document.UnitCount < 1 || value.Navigation.OffsetBase != RenditionNavigationOffsetBody ||
+		value.Document.UnitCount < 0 || value.Document.UnitCount == 0 && !emptyPDFFrontMatter(value) || value.Navigation.OffsetBase != RenditionNavigationOffsetBody ||
 		len(value.Navigation.Entries) > maxRenditionNavigationEntries ||
 		len(value.Navigation.Entries) > value.Document.UnitCount {
 		return errors.New("rendition frontmatter contract is invalid")
+	}
+	if (len(body) == 0) != (value.Document.UnitCount == 0) {
+		return errors.New("rendition body and unit count disagree")
 	}
 	if got := checksumBytes(body); got != value.Rendition.BodySHA256 {
 		return fmt.Errorf("rendition body SHA-256 %s differs from frontmatter %s", got, value.Rendition.BodySHA256)
@@ -238,7 +241,9 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 	navigation := RenditionMarkdownNavigationV1{OffsetBase: RenditionNavigationOffsetBody,
 		Complete: len(rendition.Units) <= maxRenditionNavigationEntries}
 	maximum := min(len(rendition.Units), maxRenditionNavigationEntries)
-	navigation.Entries = make([]RenditionNavigationEntryV1, 0, maximum)
+	if maximum > 0 {
+		navigation.Entries = make([]RenditionNavigationEntryV1, 0, maximum)
+	}
 	cursor := 0
 	for _, unit := range rendition.Units[:maximum] {
 		if unit.Text == "" {
@@ -261,9 +266,13 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 	return navigation, nil
 }
 
+func emptyPDFFrontMatter(value RenditionFrontMatterV1) bool {
+	return value.Source.Format == "pdf" && value.Source.MediaType == "application/pdf" && value.Document.UnitKind == EvidenceUnitPage && value.Rendition.Completeness == EvidencePartial && value.Navigation.Complete && len(value.Navigation.Entries) == 0 && value.Rendition.BodySHA256 == checksumBytes(nil)
+}
+
 func marshalRenditionFrontMatterV1(value RenditionFrontMatterV1) ([]byte, error) {
 	if value.Contract != RenditionMarkdownContractV1 || value.Navigation.OffsetBase != RenditionNavigationOffsetBody ||
-		value.Document.UnitCount < 1 || len(value.Navigation.Entries) > maxRenditionNavigationEntries {
+		value.Document.UnitCount < 0 || value.Document.UnitCount == 0 && !emptyPDFFrontMatter(value) || len(value.Navigation.Entries) > maxRenditionNavigationEntries {
 		return nil, errors.New("rendition frontmatter is invalid")
 	}
 	var builder strings.Builder
