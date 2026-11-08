@@ -293,6 +293,19 @@ func TestBrainServiceWindowsPairedPercentRejected(t *testing.T) {
 	}
 }
 
+func TestBrainServiceWindowsAccountSIDFamilies(t *testing.T) {
+	for _, sid := range []string{"S-1-5-21-100-200-300-1001", "S-1-12-1-100-200-300-1001"} {
+		spec := renderSpec("windows")
+		spec.UserID = sid
+		_, err := Render("windows", spec)
+		require.NoError(t, err)
+	}
+	spec := renderSpec("windows")
+	spec.UserID = "S-1-5-18"
+	_, err := Render("windows", spec)
+	require.ErrorIs(t, err, ErrInvalidSpec)
+}
+
 func TestBrainServiceSystemdRejectsUnsupportedExecutable(t *testing.T) {
 	for _, ch := range []string{`"`, `'`, `\`, `*`, `?`, `[`, `]`} {
 		spec := renderSpec("linux")

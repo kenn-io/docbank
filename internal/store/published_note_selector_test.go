@@ -131,6 +131,27 @@ func TestPublishedNotePageReadinessBindsSnapshot(t *testing.T) {
 	require.Nil(t, missing.NoteReadiness)
 }
 
+func TestPublishedNotePageReadinessTracksCurrentGeneration(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
+	generation := beginIndexFixture(t, s)
+	stageIndexFixture(t, s, generation, notes)
+	require.NoError(t, s.StageNoteIndexEdges(t.Context(), generation, "note.md", nil))
+	require.NoError(t, s.PublishNoteIndex(t.Context(), generation))
+	query := DocumentCatalogQuery{PublishedNotes: &PublishedNoteSelector{Publication: "notebook"}}
+	page, err := s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.NotNil(t, page.NoteReadiness)
+	require.Equal(t, generation.ID, page.NoteReadiness.Generation)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE note_publications SET namespace_revision=namespace_revision+1 WHERE name=$1`, "notebook")
+	require.NoError(t, err)
+	page, err = s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.NotNil(t, page.NoteReadiness)
+	require.Empty(t, page.NoteReadiness.Generation)
+}
+
 func TestPublishedNoteFinalRevalidation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

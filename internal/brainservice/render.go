@@ -37,7 +37,7 @@ var (
 	ErrInvalidSpec      = errors.New("invalid publisher launcher specification")
 	ErrPercentExpansion = errors.New("windows launcher paths cannot contain paired percent signs (Task Scheduler environment expansion)")
 	uidPattern          = regexp.MustCompile(`^[1-9][0-9]*$`)
-	sidPattern          = regexp.MustCompile(`^S-1-5-21(?:-[0-9]+){4}$`)
+	sidPattern          = regexp.MustCompile(`^S-1-(?:5-21|12-1)(?:-[0-9]+){4}$`)
 )
 
 // Render returns the exact definition and argv for inspection or dry-run. The

@@ -86,6 +86,7 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 		return errors.New("source must be a directory")
 	}
 	saved, err := c.registry.Get(ctx, cfg.Name)
+	alreadySaved := err == nil
 	if err == nil {
 		if !equalConfig(saved, cfg) {
 			return fmt.Errorf("connection already exists with different settings: %w", fs.ErrExist)
@@ -119,6 +120,9 @@ func (c *Client) Connect(ctx context.Context, cfg ConnectionConfig) error {
 			}
 			granted = true
 		}
+	}
+	if alreadySaved {
+		return nil
 	}
 	if err := c.registry.Put(ctx, cfg); err != nil {
 		if granted {
