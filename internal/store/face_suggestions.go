@@ -165,9 +165,16 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 
 // ReplaceFaceSuggestions preserves rejected evidence and supersedes open groups
 // whose membership changed, keeping any with evidence in an unavailable version.
-// Publishing and queue admission share one transaction.
-func (s *Store) ReplaceFaceSuggestions(ctx context.Context, candidates []PersonMatchCandidate, unavailable []string) error {
+// The captured input signature fences publication and queue admission in one transaction.
+func (s *Store) ReplaceFaceSuggestions(ctx context.Context, signature string, candidates []PersonMatchCandidate, unavailable []string) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		snapshot, err := s.faceMatchingInputsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if snapshot.Signature != signature {
+			return ErrStaleRevision
+		}
 		wanted := map[string]bool{}
 		for i := range candidates {
 			c, err := normalizePersonCandidate(candidates[i])

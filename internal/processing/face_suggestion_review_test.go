@@ -199,7 +199,7 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	require.NotEmpty(t, service.faceSuggestionsSignature)
 	_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
 	require.NoError(t, err)
-	require.EqualValues(t, 498, total, "current reads must hide the dismissed pair before catch-up")
+	require.EqualValues(t, 498, total, "only current evidence must reach publication")
 	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
 	for attempt := 0; attempt < 32 && service.faceSuggestionsSignature != snapshot.Signature; attempt++ {
@@ -208,7 +208,7 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	require.Equal(t, snapshot.Signature, service.faceSuggestionsSignature)
 	retired, _, err := x.f.catalog.PersonCandidates(ctx, "superseded", 24, 0)
 	require.NoError(t, err)
-	require.Len(t, retired, 1, "catch-up must supersede the snapshot's dismissed pair")
+	require.Empty(t, retired, "stale groups must never be published")
 }
 
 func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
@@ -273,8 +273,8 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 	require.NotNil(t, x.service.faceSuggestionsPending, "the lane starts with the earlier snapshot still pending")
 	current, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
-	// Both renames change inputs without changing candidate identities. The
-	// first publication therefore makes no write that could wake a stale lane.
+	// Discarding the stale pass makes no write that could wake the lane.
+	// The lane must still catch up to the second rename.
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		finished := make(chan error, 1)
@@ -284,4 +284,73 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 		synctest.Wait()
 		require.Equal(t, current.Signature, x.service.faceSuggestionsSignature, "the lane must publish the final input snapshot without another write")
 	})
+}
+
+func TestFaceSuggestionBatchesPreserveNewFaceAssignment(t *testing.T) {
+	t.Parallel()
+	x, _ := newFaceSuggestionBatchFixture(t)
+	ctx := t.Context()
+	seed := x.inputs[0]
+	if seed.Box.X > .2 {
+		seed = x.inputs[1]
+	}
+	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = x.f.catalog.DecidePhotoFace(ctx, seed.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: seed.FaceID, Revision: seed.Revision, Action: "name", PersonID: person.PersonID})
+	require.NoError(t, err)
+	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature == ""; attempt++ {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	readGroups := func() []store.FaceCandidate {
+		var groups []store.FaceCandidate
+		for offset := 0; offset < 500; offset += 250 {
+			page, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+			require.NoError(t, err)
+			groups = append(groups, page...)
+		}
+		return groups
+	}
+	groups := readGroups()
+	var named store.FaceCandidate
+	for _, group := range groups {
+		if group.SuggestedPersonID == person.PersonID {
+			named = group
+		}
+	}
+	require.Len(t, named.Faces, 2)
+	_, err = x.f.catalog.UpdatePerson(ctx, person.PersonID, person.Revision, "Ada Lovelace")
+	require.NoError(t, err)
+	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	require.NotNil(t, x.service.faceSuggestionsPending, "name the face between comparison batches")
+	face := named.Faces[0]
+	_, err = x.f.catalog.DecidePhotoFace(ctx, face.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: face.Revision, Action: "name", PersonID: person.PersonID})
+	require.NoError(t, err)
+	for attempt := 0; attempt < 32 && x.service.faceSuggestionsPending != nil; attempt++ {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	require.Nil(t, x.service.faceSuggestionsPending)
+	groups = readGroups()
+	for _, group := range groups {
+		if group.SuggestedPersonID == person.PersonID {
+			_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: group.CandidateID, ExpectedRevision: group.Revision, Action: "reject", FaceOnly: true})
+			require.NoError(t, err, "the visible remaining face must be rejectable after a background publication")
+			return
+		}
+	}
+	// A fenced pass can leave the superseded group absent until catch-up.
+	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature != snapshot.Signature; attempt++ {
+		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+	}
+	groups = readGroups()
+	for _, group := range groups {
+		if group.SuggestedPersonID == person.PersonID {
+			require.Len(t, group.Faces, 1)
+			_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: group.CandidateID, ExpectedRevision: group.Revision, Action: "reject", FaceOnly: true})
+			require.NoError(t, err)
+			return
+		}
+	}
+	t.Fatal("catch-up must suggest the remaining face")
 }

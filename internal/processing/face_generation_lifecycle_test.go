@@ -48,7 +48,7 @@ func TestFaceWorkerAbandonsDisappearedSource(t *testing.T) {
 				}
 			}
 			_, err = x.worker.ScanOnce(ctx)
-			assert.NoError(t, err, "source changes during inference must fence and retire disposable work")
+			require.NoError(t, err, "source changes during inference must fence and retire disposable work")
 			require.Equal(t, 1, x.calls, "source changed during the actual provider request")
 			job, err := x.f.catalog.EmbeddingJobByID(ctx, jobID)
 			require.NoError(t, err)
