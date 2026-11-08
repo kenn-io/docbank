@@ -11,6 +11,7 @@ import (
 // An independent boolean oracle checks every component of eligibility. Shared
 // bytes alone do not authorize a different version or mismatched source size.
 func TestPublishedNoteSelectorEligibilityProperty(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	source := seedNotePublication(t, s, "present")
 	otherVersion := noteOperationID(t)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestPublishedNoteValidationProperty(t *testing.T) {
+	t.Parallel()
 	hegel.Test(t, func(ht *hegel.T) {
 		ref := hegel.Draw(ht, hegel.Text())
 		source := NotePublicationSource{Identity: PublishedNoteIdentity{VaultID: metadataIngestID,

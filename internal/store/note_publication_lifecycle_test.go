@@ -109,8 +109,9 @@ func TestPublishedSourceArchiveChangesInvalidate(t *testing.T) {
 	node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("bc"), 4, "text/markdown")
 	require.NoError(t, err)
 	require.Equal(t, "diverged", assertInvalidated().Conflict)
-	_, _, _, err = s.RevertContent(t.Context(), node.ID, node.Revision, a.Source.Identity.ContentVersionID)
+	node, reverted, _, err := s.RevertContent(t.Context(), node.ID, node.Revision, a.Source.Identity.ContentVersionID)
 	require.NoError(t, err)
+	require.Equal(t, node.CurrentVersionID, reverted.ID)
 	require.Equal(t, "diverged", assertInvalidated().Conflict, "revert creates a new exact version even with the original digest")
 }
 

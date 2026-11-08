@@ -17,6 +17,7 @@ import (
 // inventory retires it only if this inventory never observed it. Interrupted
 // inventories preserve the last durable presence. New scans reset only seen.
 func TestNotePublicationModel(t *testing.T) {
+	t.Parallel()
 	hegel.Test(t, func(ht *hegel.T) {
 		commands := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 5)))
 		s := newTestStore(ht)
@@ -113,6 +114,7 @@ func TestNotePublicationModel(t *testing.T) {
 // The oracle tracks archive liveness, accepted identity and explicit permission,
 // rather than deriving eligibility from the implementation's conflict fields.
 func TestPublishedSourceLifecycleModel(t *testing.T) {
+	t.Parallel()
 	hegel.Test(t, func(ht *hegel.T) {
 		commands := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 6)))
 		s := newTestStore(ht)
