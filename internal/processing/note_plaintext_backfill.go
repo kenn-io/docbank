@@ -45,7 +45,12 @@ func (service *Service) NewNotePlaintextBackfill(logger *slog.Logger) (*Backfill
 			if node.CurrentVersionID != target.ContentVersionID {
 				return nil
 			}
-			return service.AdmitImportedRendition(ctx, node, NotePlaintextProfileName)
+			err = service.admitImportedRendition(ctx, node, NotePlaintextProfileName)
+			state, consentErr := processingConsentState(err)
+			if consentErr == nil && state != "active" {
+				return nil
+			}
+			return err
 		},
 		Logger: logger,
 	}, nil

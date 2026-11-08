@@ -29,6 +29,12 @@ func (service *Service) AdmitImportedRendition(ctx context.Context, node store.N
 			err = nil
 		}
 	}()
+	return service.admitImportedRendition(ctx, node, name)
+}
+
+// admitImportedRendition keeps eligibility errors available to recovery
+// workers so an unadmitted source cannot be mistaken for completed work.
+func (service *Service) admitImportedRendition(ctx context.Context, node store.Node, name string) error {
 	profile, err := service.mediaProcessingProfile(name)
 	if err != nil {
 		return err

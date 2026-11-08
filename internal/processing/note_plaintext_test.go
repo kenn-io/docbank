@@ -184,6 +184,7 @@ func TestNotePlaintextRejectsAbsentPublicationBeforeWork(t *testing.T) {
 		Name: "notes", ScanID: scan.ScanID, PolicyFingerprint: scan.PolicyFingerprint, InventoryComplete: true,
 	})
 	require.NoError(t, err)
+	require.ErrorIs(t, f.service.admitImportedRendition(t.Context(), node, NotePlaintextProfileName), store.ErrRenditionJobStaleAuthority)
 	_, err = f.worker.RunOne(t.Context())
 	require.NoError(t, err)
 	hits, _, err := f.catalog.SearchPage(t.Context(), "Removednoteuniqueword", 20)
