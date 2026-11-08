@@ -82,7 +82,6 @@
     const request = ++generation;
     loading = true;
     report = null;
-    protectionDisabled = false;
     error = "";
     try {
       const status = await generated
