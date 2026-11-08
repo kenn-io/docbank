@@ -539,6 +539,61 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 	})
 }
 
+// MCP pages vault changes over one proven socket, so a finished change read
+// must leave it reusable even when the chunk terminator trails the result.
+func TestProvenClientReusedAfterChangePage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const token = "synthetic-proof-token"
+		const head = "synthetic-change-head"
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer func() { _ = serverConn.Close() }()
+			reader := bufio.NewReader(serverConn)
+			req, err := http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading challenge request: %v", err)
+				return
+			}
+			body := challengeResponse(t, req, token)
+			if _, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+				"Content-Length: %d\r\n\r\n%s", len(body), body); err != nil {
+				t.Errorf("writing challenge response: %v", err)
+				return
+			}
+			for page := range 2 {
+				// The second page arrives only if the first left the socket open.
+				if req, err = http.ReadRequest(reader); err != nil {
+					return
+				}
+				assert.Equal(t, "/api/v1/changes", req.URL.Path)
+				record := `{"type":"result","cursor":"` + head + `"}` + "\n"
+				if _, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n"+
+					"Transfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n", len(record), record); err != nil {
+					t.Errorf("writing page %d result: %v", page, err)
+					return
+				}
+				// The daemon flushes each record and ends the stream in a later write.
+				time.Sleep(time.Second)
+				if _, err := io.WriteString(serverConn, "0\r\n\r\n"); err != nil {
+					return
+				}
+			}
+		}()
+		rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
+		c, err := newProvenClientForDial(t.Context(), rec, func(context.Context, string, string) (net.Conn, error) {
+			return clientConn, nil
+		})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, c.Close()) }()
+		limit := int64(500)
+		for range 2 {
+			cursor, err := c.WatchChanges(t.Context(), "synthetic-cursor", false, &limit, nil)
+			require.NoError(t, err)
+			require.Equal(t, head, cursor)
+		}
+	})
+}
+
 func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
 	const token = "synthetic-proof-token"
 	closed := make(chan struct{}, 1)
