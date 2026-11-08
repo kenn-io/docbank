@@ -215,16 +215,17 @@ func TestBrainServicePreservesUnownedDefinition(t *testing.T) {
 	for _, kind := range []string{"manager", "file", "modified-owned"} {
 		t.Run(kind, func(t *testing.T) {
 			driver, spec, manager := driverFixture(t)
-			if kind == "modified-owned" {
+			switch kind {
+			case "modified-owned":
 				_, err := driver.Install(t.Context(), spec)
 				require.NoError(t, err)
 				manager.foreign = true
-			} else if kind == "manager" {
+			case "manager":
 				manager.installed = true
 				manager.foreign = true
 				require.NoError(t, os.MkdirAll(filepath.Dir(manager.reg.Path), 0o700))
 				require.NoError(t, os.WriteFile(manager.reg.Path, []byte("unrelated"), 0o600))
-			} else {
+			default:
 				require.NoError(t, os.MkdirAll(filepath.Dir(manager.reg.Path), 0o700))
 				require.NoError(t, os.WriteFile(manager.reg.Path, []byte("unrelated"), 0o600))
 			}

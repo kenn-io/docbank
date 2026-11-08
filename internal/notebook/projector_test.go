@@ -160,48 +160,48 @@ func TestNoteProjectorOriginalFaults(t *testing.T) {
 	}
 }
 
-func newProjectorFixture(t testing.TB) projectorFixture {
-	t.Helper()
-	root := t.TempDir()
+func newProjectorFixture(tb testing.TB) projectorFixture {
+	tb.Helper()
+	root := tb.TempDir()
 	dbPath := filepath.Join(root, "catalog.db")
-	catalog, err := store.Open(t.Context(), dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	catalog, err := store.Open(tb.Context(), dbPath)
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, blobs.Close()) })
 	// This independent connection only inspects the synthetic derived records.
 	// ReadOnlyImmutable would miss live WAL changes.
 	db, err := store.DefaultSQLiteDriver().Open(dbPath, sqlite.OpenOptions{
 		Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
 	return projectorFixture{catalog, blobs, db}
 }
 
-func (f projectorFixture) begin(t testing.TB) store.NotePublicationScan {
-	t.Helper()
-	scan, err := f.catalog.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{
+func (f projectorFixture) begin(tb testing.TB) store.NotePublicationScan {
+	tb.Helper()
+	scan, err := f.catalog.BeginNotePublicationScan(tb.Context(), store.NotePublicationBeginRequest{
 		Name: "notebook", Destination: "/notes", PolicyFingerprint: strings.Repeat("ab", 32), OperationID: uuid.NewString(),
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return scan
 }
 
-func (f projectorFixture) accept(t testing.TB, scan store.NotePublicationScan, ref, body string, revision int64) store.PublishedNoteIdentity {
-	t.Helper()
-	receipt, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString(body))
-	require.NoError(t, err)
+func (f projectorFixture) accept(tb testing.TB, scan store.NotePublicationScan, ref, body string, revision int64) store.PublishedNoteIdentity {
+	tb.Helper()
+	receipt, err := f.blobs.WriteDetailedContext(tb.Context(), bytes.NewBufferString(body))
+	require.NoError(tb, err)
 	encoding, err := receipt.EncodingName()
-	require.NoError(t, err)
-	accepted, err := f.catalog.AcceptPublishedNote(t.Context(), store.NotePublicationUploadRequest{
+	require.NoError(tb, err)
+	accepted, err := f.catalog.AcceptPublishedNote(tb.Context(), store.NotePublicationUploadRequest{
 		Name: "notebook", ScanID: scan.ScanID, SourceRef: ref, FileName: path.Base(ref),
 		ParentPath: path.Join("/notes", path.Dir(ref)), OperationID: uuid.NewString(),
 		Hash: receipt.Hash, Size: receipt.Size, ExpectedSourceRevision: revision,
 	}, store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, MD5: receipt.MD5,
 		Created: receipt.Created, PackEligible: receipt.PackEligible})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return accepted.Source.Identity
 }
 

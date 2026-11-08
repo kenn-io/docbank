@@ -262,22 +262,24 @@ func (s *Store) NoteIndexCandidates(ctx context.Context, g NoteIndexGeneration, 
 			if err != nil {
 				return err
 			}
-			for rows.Next() {
-				var ref, version string
-				if err = rows.Scan(&ref, &version); err != nil {
-					_ = rows.Close()
-					return err
+			err = func() error {
+				defer func() { _ = rows.Close() }()
+				for rows.Next() {
+					var ref, version string
+					if err := rows.Scan(&ref, &version); err != nil {
+						return err
+					}
+					binding := noteIndexBinding(g, ref, version)
+					index, found := byBinding[binding]
+					if !found {
+						index = len(result)
+						byBinding[binding] = index
+						result = append(result, NoteLookupCandidate{Binding: binding, SourceRef: ref, Kind: "note"})
+					}
+					result[index].Keys = append(result[index].Keys, key)
 				}
-				binding := noteIndexBinding(g, ref, version)
-				index, found := byBinding[binding]
-				if !found {
-					index = len(result)
-					byBinding[binding] = index
-					result = append(result, NoteLookupCandidate{Binding: binding, SourceRef: ref, Kind: "note"})
-				}
-				result[index].Keys = append(result[index].Keys, key)
-			}
-			err = errors.Join(rows.Err(), rows.Close())
+				return errors.Join(rows.Err(), rows.Close())
+			}()
 			if err != nil {
 				return err
 			}
