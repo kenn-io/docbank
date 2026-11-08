@@ -12,7 +12,7 @@ import (
 // ValidateNoteLocalTextPlan rejects any plan outside the built-in, in-process
 // plaintext policy before the caller presents or grants ordinary consent.
 func ValidateNoteLocalTextPlan(value NoteLocalTextPlan) error {
-	invalid := errors.New("local note text plan differs from the fixed local policy")
+	invalid := errors.New("Daemon requested unsupported text indexing settings")
 	name, fixed, err := processing.NewNotePlaintextProfile()
 	if err != nil {
 		return err
