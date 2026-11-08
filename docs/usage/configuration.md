@@ -60,7 +60,7 @@ and trust boundary `local_process`. Set `max_document_bytes` from 1 through
 `pdftext.New(pdftext.Profile{MaxDocumentBytes: 16 << 20, MaxPages: 1000})`
 from `go.kenn.io/docbank/document/pdftext` with the same limits and copy
 `Descriptor().Fingerprint` into `descriptor_fingerprint`. Changing either
-limit changes the descriptor. Request the `structured` artifact role and
+limit changes the descriptor. Request the `structured_evidence` artifact role and
 select this rendition from a processing profile, as for EPUB.
 
 This provider reads the existing text layer. Each page with zero native

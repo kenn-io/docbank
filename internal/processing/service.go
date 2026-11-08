@@ -1796,6 +1796,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			if err != nil {
 				return jobIDs, err
 			}
+			if len(generation.Inputs) == 0 {
+				continue
+			}
 		default:
 			return jobIDs, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
 		}

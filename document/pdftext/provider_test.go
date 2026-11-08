@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image/color"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,7 +74,7 @@ func TestPDFTextWhitespaceOmissions(t *testing.T) {
 		{"mixed", []string{"   ", "", "synthetic text"}, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			upload := newTestUpload(pdfTextPages(test.pages))
+			upload := newTestUpload(mediatest.PDFTextPages(test.pages, false))
 			result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 			require.NoError(t, err)
 			require.Len(t, result.Evidence.Units, test.units)
@@ -185,15 +184,16 @@ func newTestUpload(data []byte) *mediatest.Upload {
 	return mediatest.NewUpload(data, document.AuthorizedUploadMetadata{Filename: "source.pdf", MediaFamily: "pdf", MediaType: "application/pdf"})
 }
 
-func pdfTextPages(pages []string) []byte {
-	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
-	var kids []string
-	for _, text := range pages {
-		pageID := len(objects) + 1
-		kids = append(kids, fmt.Sprintf("%d 0 R", pageID))
-		content := "BT /F1 12 Tf 72 720 Td (" + text + ") Tj ET"
-		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>", pageID+1), fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+func TestPDFTextJPEGSubtype(t *testing.T) {
+	p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 1})
+	require.NoError(t, err)
+	for _, indirect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indirect=%t", indirect), func(t *testing.T) {
+			upload := newTestUpload(mediatest.PDFTextPages([]string{"synthetic invoice"}, indirect))
+			result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
+			require.NoError(t, err)
+			require.Len(t, result.Evidence.Units, 1)
+			require.Equal(t, "synthetic invoice", result.Evidence.Units[0].Text)
+		})
 	}
-	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), len(pages))
-	return mediatest.PDFObjects("page text", objects)
 }

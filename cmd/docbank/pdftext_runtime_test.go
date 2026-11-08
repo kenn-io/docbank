@@ -3,13 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"image/color"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/BurntSushi/toml"
@@ -40,6 +40,7 @@ func pdfTextRuntimeConfig(t *testing.T) config.Config {
 	binding.DescriptorFingerprint = p.Descriptor().Fingerprint
 	binding.MaxDocumentBytes = 16 << 20
 	binding.MaxUnits = 1000
+	binding.RequestedArtifacts = []string{"structured_evidence"}
 	cfg.RenditionProfiles["pdf"] = binding
 	profile := cfg.ProcessingProfiles["private-text"]
 	profile.Rendition = "pdf"
@@ -47,30 +48,19 @@ func pdfTextRuntimeConfig(t *testing.T) config.Config {
 	return cfg
 }
 
-func pdfTextRuntimePDF(pages, textPages int) []byte {
-	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", ""}
-	var kids []string
-	for i := range pages {
-		kids = append(kids, fmt.Sprintf("%d 0 R", i+3))
-		contents := fmt.Sprintf(" /Contents %d 0 R", pages+5)
-		if i < textPages {
-			contents = fmt.Sprintf(" /Contents %d 0 R", pages+4)
-		}
-		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 %d 0 R >> /XObject << /Photo %d 0 R >> >>%s >>", pages+3, pages+6, contents))
+func pdfTextRuntimePages(pages, textPages int) []string {
+	text := make([]string, pages)
+	for index := range textPages {
+		text[index] = "needle synthetic PDF text"
 	}
-	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pages)
-	content := "q 8 0 0 8 72 650 cm /Photo Do Q BT /F1 12 Tf 72 720 Td (needle synthetic PDF text) Tj ET"
-	objects = append(objects, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
-	imageContent := "q 8 0 0 8 72 650 cm /Photo Do Q"
-	image := mediatest.JPEG(8, 8, color.White)
-	objects = append(objects, fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(imageContent), imageContent), fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream", len(image), image))
-	return mediatest.PDFObjects("local PDF text", objects)
+	return text
 }
 
 func TestPDFTextRuntimeDescriptorAndLimits(t *testing.T) {
 	for _, field := range []string{"descriptor", "trust", "bytes", "pages"} {
 		t.Run(field, func(t *testing.T) {
 			cfg := pdfTextRuntimeConfig(t)
+			require.NoError(t, cfg.Validate())
 			_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 			require.NoError(t, err)
 			binding := cfg.RenditionProfiles["pdf"]
@@ -108,7 +98,7 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 	}{{"born", 3, 3, ""}, {"image-only", 3, 0, ""}, {"mixed", 3, 1, ""}, {"parameterized", 3, 0, "application/pdf; version=1.7"}} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), test.name+".pdf")
-			require.NoError(t, os.WriteFile(path, pdfTextRuntimePDF(test.pages, test.text), 0600))
+			require.NoError(t, os.WriteFile(path, mediatest.PDFTextPages(pdfTextRuntimePages(test.pages, test.text), false), 0600))
 			_, err := runCLI(t, "add", path, "--dest", "/pdfs")
 			require.NoError(t, err)
 			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/" + test.name + ".pdf"}})
@@ -130,6 +120,11 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			status, err := daemon.ProcessingStatus(t.Context(), job.ID)
 			require.NoError(t, err)
 			require.Equal(t, "completed", status.State)
+			coverageJSON, err := runCLI(t, "processing", "coverage", selector.ContentVersionID, "--profile", "pdf", "--json")
+			require.NoError(t, err)
+			var coverage processingCoverageOutput
+			require.NoError(t, json.Unmarshal([]byte(coverageJSON), &coverage))
+			require.Equal(t, "complete", coverage.Coverage.Renditions.State)
 			stream, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
 			require.NoError(t, err)
 			var retained bytes.Buffer
@@ -139,6 +134,9 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			header, body, err := document.ParseRenditionFrontMatterV1(retained.Bytes())
 			require.NoError(t, err)
 			require.Equal(t, test.text, header.Document.UnitCount)
+			if test.text < test.pages {
+				require.Equal(t, document.EvidencePartial, header.Rendition.Completeness)
+			}
 			if test.text == 0 {
 				require.Empty(t, body)
 				versionID, err := uuid.Parse(node.CurrentVersionID)
@@ -146,6 +144,10 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 				receipt, err := daemon.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.ResolveRenditionTextBody{NodeID: node.ID, Revision: node.Revision, VersionID: versionID, BlobHash: node.BlobHash, Size: node.Size, Profile: new("pdf")}})
 				require.NoError(t, err)
 				require.Equal(t, "verified_empty", string(receipt.State))
+				window, err := daemon.RenditionTextWindow(t.Context(), api.RenditionWindowRequest{VaultID: plan.VaultUID, NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: stream.AttachmentID, Offset: utf8.RuneCount(retained.Bytes()), MaxChars: 100})
+				require.NoError(t, err)
+				require.Empty(t, window.Text)
+				require.True(t, window.EOF)
 			} else {
 				require.Contains(t, string(body), "needle synthetic PDF text")
 			}
@@ -192,7 +194,7 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{"large.pdf", pdfTextRuntimePDF(500, 500)},
+		{"large.pdf", mediatest.PDFTextPages(pdfTextRuntimePages(500, 500), false)},
 		{"redact.pdf", redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "preparation")},
 	} {
 		path := filepath.Join(t.TempDir(), input.name)
@@ -205,6 +207,7 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 	selector := api.ProcessingSelector{NodeID: large.ID, ContentVersionID: large.CurrentVersionID, Profile: "pdf"}
 	plan, err := daemon.API().PlanDocumentProcessing(ctx, &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 	require.NoError(t, err)
+	started := time.Now()
 	stream, err := daemon.StartProcessingStream(ctx, api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, stream.Close()) }()
@@ -240,4 +243,5 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 	status, err = daemon.ProcessingStatus(ctx, first.Job.ID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
+	t.Logf("500-page PDF processing with concurrent redaction: %s", time.Since(started))
 }

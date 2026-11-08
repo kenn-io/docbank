@@ -482,7 +482,7 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 		}
 		measurements.CompressedBytes += encodedBytes
 
-		decodedBytes, err := boundedPDFStreamBytes(stream, limits, measurements.ExpandedBytes)
+		decodedBytes, err := boundedPDFStreamBytes(context, stream, limits, measurements.ExpandedBytes)
 		if err != nil {
 			return PDFMeasurements{}, fmt.Errorf("measure PDF stream %d: %w", number, err)
 		}
@@ -874,12 +874,18 @@ func pdfStreamDictionary(object types.Object) (*types.StreamDict, bool) {
 	}
 }
 
-func boundedPDFStreamBytes(stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
+func boundedPDFStreamBytes(context *model.Context, stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
 	for _, pipeline := range stream.FilterPipeline {
 		switch pipeline.Name {
 		case filter.DCT, filter.JBIG2, filter.JPX:
-			if limits.TextOnly && stream.Subtype() != nil && *stream.Subtype() == "Image" {
-				return 0, nil
+			if limits.TextOnly {
+				subtype, err := pdfDictName(context, stream.Dict, "Subtype")
+				if err != nil {
+					return 0, err
+				}
+				if subtype == "Image" {
+					return 0, nil
+				}
 			}
 			return 0, ErrPDFUnbounded
 		}

@@ -164,6 +164,9 @@ func TestOmissionOnlyPDFEnvelope(t *testing.T) {
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &SourceEvidenceLocatorV1{Kind: EvidenceLocatorPage, IndexOrigin: EvidenceIndexOriginOne, Start: 1, End: 1}}},
 	}
 	normalized := normalizeRenditionEvidence(t, source)
+	generation, err := BuildEmbeddingInputs(normalized, testInputPolicy(t, 4, 0), testGenerationLimits())
+	require.NoError(t, err)
+	require.Empty(t, generation.Inputs)
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
 	require.NoError(t, err)
 	rendition, err := BuildRenditionV1(normalized, policy)

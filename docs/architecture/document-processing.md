@@ -391,6 +391,15 @@ artifacts up to 64 MiB, independently of navigation slots. `rendition get` can
 retrieve an attachment still active for its version; it cannot retrieve a
 superseded attachment. Navigation does not add historical bulk download.
 
+The local PDF adapter retains a Markdown envelope with an empty body when
+all pages are omitted. Zero-character pages record `no_text_layer`; pages
+whose characters decode only to whitespace or controls record
+`no_readable_text`. These builds retain page omissions and publish no lexical
+segments or chunk embedding requests. Text resolution verifies the exact empty
+envelope before reporting
+`verified_empty`. Older binaries refuse omission-only evidence or its empty
+Markdown body, so downgrading requires a version that can read these results.
+
 ## Retain, restore, or remove derived results
 
 A processing profile declares whether to retain provider Markdown, sanitized

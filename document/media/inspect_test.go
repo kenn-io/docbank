@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/upload"
 )
 
 func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
@@ -2741,6 +2742,26 @@ func TestInspectPDFTextOnlyAdmission(t *testing.T) {
 			bounded, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, bounded.Eligible)
+		})
+	}
+}
+
+func TestInspectPDFTextJPEGSubtype(t *testing.T) {
+	for _, indirect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indirect=%t", indirect), func(t *testing.T) {
+			data := mediatest.PDFTextPages([]string{"synthetic invoice"}, indirect)
+			policy := inspectionPolicy(data, "image.pdf", "application/pdf")
+			ordinary, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.False(t, ordinary.Eligible)
+			policy.PDFTextOnly = true
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.True(t, record.Eligible, "%+v", record)
+			sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir()}, record, upload.UploadMetadata{Filename: "image.pdf"})
+			require.NoError(t, err)
+			require.Equal(t, "application/pdf", sealed.Metadata().MediaType)
+			require.NoError(t, sealed.Close())
 		})
 	}
 }
