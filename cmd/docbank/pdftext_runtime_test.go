@@ -26,7 +26,7 @@ import (
 
 func pdfTextRuntimeConfig(t *testing.T) config.Config {
 	t.Helper()
-	p, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 16 << 20, MaxPages: 1000})
+	p, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 64 << 20, MaxPages: 1000})
 	require.NoError(t, err)
 	fingerprint, err := plaintextProviderForDaemonTest()
 	require.NoError(t, err)
@@ -35,7 +35,7 @@ func pdfTextRuntimeConfig(t *testing.T) config.Config {
 	binding.AdapterContract = pdftext.AdapterContract
 	binding.DescriptorID = p.Descriptor().ID
 	binding.DescriptorFingerprint = p.Descriptor().Fingerprint
-	binding.MaxDocumentBytes = 16 << 20
+	binding.MaxDocumentBytes = 64 << 20
 	binding.MaxUnits = 1000
 	binding.RequestedArtifacts = []string{"structured_evidence"}
 	cfg.RenditionProfiles["pdf"] = binding
@@ -162,8 +162,9 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{"large.pdf", mediatest.PDFTextPages(pdfTextRuntimePages(500, 500), false)},
+		{"large.pdf", mediatest.PDFTextScanPages(pdfTextRuntimePages(500, 500))},
 		{"redact.pdf", redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "preparation")},
+		{"ordinary.txt", []byte("needle plain text stays responsive")},
 	} {
 		path := filepath.Join(t.TempDir(), input.name)
 		require.NoError(t, os.WriteFile(path, input.data, 0600))
@@ -191,6 +192,20 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 	prepared, err := daemon.PrepareNativePDF(ctx, processing.RedactionPreparationRequest{Selection: store.PageBinding{NodeID: redactionNode.ID, Revision: redactionNode.Revision, Source: document.PageSource{VersionID: redactionNode.CurrentVersionID, SHA256: redactionNode.BlobHash, Size: redactionNode.Size}}})
 	require.NoError(t, err)
 	require.Equal(t, "SECRET KEEP SECRET", prepared.Map.Text)
+	status, err = daemon.ProcessingStatus(ctx, first.Job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", status.State)
+
+	plain, err := daemon.API().ResolvePath(ctx, &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/concurrent/ordinary.txt"}})
+	require.NoError(t, err)
+	plainSelector := api.ProcessingSelector{NodeID: plain.ID, ContentVersionID: plain.CurrentVersionID, Profile: "private-text"}
+	plainPlan, err := daemon.API().PlanDocumentProcessing(ctx, &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: plainSelector}})
+	require.NoError(t, err)
+	plainJob, err := daemon.StartProcessing(ctx, api.StartProcessingRequest{Selector: plainSelector, PlanFingerprint: plainPlan.Fingerprint, Consent: true}, plainPlan.ProfileFingerprint)
+	require.NoError(t, err)
+	plainStatus, err := daemon.ProcessingStatus(ctx, plainJob.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", plainStatus.State)
 	status, err = daemon.ProcessingStatus(ctx, first.Job.ID)
 	require.NoError(t, err)
 	require.Equal(t, "running", status.State)

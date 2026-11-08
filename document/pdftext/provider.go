@@ -33,7 +33,7 @@ type Provider struct {
 
 // New constructs a provider with immutable admission and extraction limits.
 func New(profile Profile) (*Provider, error) {
-	if profile.MaxDocumentBytes < 1 || profile.MaxDocumentBytes > formatdetect.MaxDocumentBytes || profile.MaxPages < 1 || profile.MaxPages > 1_000_000 {
+	if profile.MaxDocumentBytes < 1 || profile.MaxDocumentBytes > formatdetect.MaxDocumentBytes || profile.MaxPages < 1 || profile.MaxPages > 100_000 {
 		return nil, errors.New("pdftext: invalid byte or page limit")
 	}
 	identity := pdfproduction.PDFTextPolicy + "\x00" + formatdetect.DetectionImplementationID + "\x00" + strconv.FormatInt(profile.MaxDocumentBytes, 10) + "\x00" + strconv.FormatInt(profile.MaxPages, 10)

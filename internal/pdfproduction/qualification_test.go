@@ -31,6 +31,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/redactiontest"
@@ -1022,4 +1023,15 @@ func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestPDFTextLargeScanPage(t *testing.T) {
+	pages := make([]string, 100)
+	pages[99] = "synthetic scanned page"
+	data := mediatest.PDFTextScanPages(pages)
+	require.Greater(t, len(data), 30<<20)
+	page, err := ReadPDFTextPage(t.Context(), data, 99, 100, 1024)
+	require.NoError(t, err)
+	require.Equal(t, 100, page.Pages)
+	require.Equal(t, "synthetic scanned page", page.Text)
 }

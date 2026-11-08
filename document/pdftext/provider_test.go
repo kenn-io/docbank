@@ -151,3 +151,38 @@ func TestPDFTextSealedAdmissionRetainsProviderBounds(t *testing.T) {
 	require.ErrorAs(t, err, &providerError)
 	require.Equal(t, document.RenditionErrorUnsupportedInput, providerError.Code())
 }
+
+func TestPDFTextPageLimitBoundaries(t *testing.T) {
+	for _, pages := range []int64{0, 100_000, 100_001} {
+		_, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: pages})
+		if pages == 100_000 {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
+	}
+}
+
+func TestPDFTextLargeScan(t *testing.T) {
+	pages := make([]string, 100)
+	for i := range pages {
+		if i%2 == 0 {
+			pages[i] = "synthetic scanned page"
+		}
+	}
+	data := mediatest.PDFTextScanPages(pages)
+	require.Greater(t, len(data), 30<<20)
+	p, err := New(Profile{MaxDocumentBytes: 64 << 20, MaxPages: 100})
+	require.NoError(t, err)
+	upload := newTestUpload(data)
+	result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
+	require.NoError(t, err)
+	require.Len(t, result.Evidence.Units, 50)
+	require.Len(t, result.Evidence.Omissions, 50)
+	for i, unit := range result.Evidence.Units {
+		require.Equal(t, "synthetic scanned page", unit.Text)
+		require.Equal(t, int64(2*i+1), unit.Locator.Start)
+		require.Equal(t, "no_text_layer", result.Evidence.Omissions[i].Reason)
+		require.Equal(t, int64(2*i+2), result.Evidence.Omissions[i].Locator.Start)
+	}
+}

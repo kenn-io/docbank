@@ -1,6 +1,7 @@
 package pdfproduction
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -38,7 +39,7 @@ func ReadPDFTextPage(ctx context.Context, data []byte, index int, maxPages int64
 		return result, err
 	}
 	err = e.withInstanceContext(ctx, func(_ context.Context, instance pdfium.Pdfium) error {
-		doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
+		doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: bytes.NewReader(data), FileReaderSize: int64(len(data))})
 		if err != nil {
 			return fmt.Errorf("open PDF text: %w", err)
 		}

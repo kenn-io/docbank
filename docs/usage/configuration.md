@@ -56,7 +56,7 @@ supported packages and virtual-unit counting.
 
 Use `docbank-pdftext-rendition/v1` with descriptor ID `pdftext.in-process-v1`
 and trust boundary `local_process`. Set `max_document_bytes` from 1 through
-524288000 and `max_units`, the page limit, from 1 through 1000000. Construct
+524288000 and `max_units`, the page limit, from 1 through 100000. Construct
 `pdftext.New(pdftext.Profile{MaxDocumentBytes: 16 << 20, MaxPages: 1000})`
 from `go.kenn.io/docbank/document/pdftext` with the same limits and copy
 `Descriptor().Fingerprint` into `descriptor_fingerprint`. Changing either

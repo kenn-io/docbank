@@ -132,7 +132,12 @@ Other adapters keep their existing admission rules. Encrypted PDFs retain the
 `encrypted_container` refusal. Source bytes, encoded streams, ordinary decoded
 streams, page counts, text, and result bytes remain bounded.
 
-Each page uses a fresh runtime with a 512 MiB WASM memory cap, a 60-second
+Page limits range from 1 through 100,000. Parser, limit, and cancellation
+errors fail the build; omissions describe absent or unreadable text.
+Daemon processing authorizations expire after ten minutes, so a PDF can
+exceed its processing time budget within the configured page limit.
+Each page opens a seekable view of the verified source in a fresh runtime
+with a 512 MiB WASM memory cap, a 60-second
 execution deadline, and the existing process RSS watchdog. Waiting for the
 shared engine uses the job context and authorization expiry. Each completed
 page releases the engine so a waiting redaction job can acquire it.
