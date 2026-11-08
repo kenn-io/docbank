@@ -51,33 +51,6 @@ func photoDiscoveryScope(profile configuredProfile) string {
 	return ""
 }
 
-// photoEmbeddingsOnly reports a profile whose every binding reads a photo preview.
-func photoEmbeddingsOnly(profile configuredProfile) bool {
-	return len(profile.portable.Embeddings) != 0 && !slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
-		return binding.InputKind != document.EmbeddingInputImage && binding.InputKind != document.EmbeddingInputFace
-	})
-}
-
-// plannedIneligibility names why a plan's source cannot run, so a refused
-// source is shown before consent is asked for rather than after it is saved.
-func (service *Service) plannedIneligibility(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (string, error) {
-	if profile.portable.Rendition == nil {
-		if !photoEmbeddingsOnly(profile) {
-			return "", nil
-		}
-		_, _, reason, err := strippedPhotoPreview(ctx, service.catalog, service.blobs, version.ID)
-		if errors.Is(err, ErrSourceIneligible) {
-			return string(reason), nil
-		}
-		return "", err
-	}
-	capability, err := service.inspectPlannedRendition(ctx, node, version, profile)
-	if err != nil || capability.Eligible {
-		return "", err
-	}
-	return string(capability.Reason), nil
-}
-
 func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {
 	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 		return service.planPhotoDescription(ctx, version, profile)

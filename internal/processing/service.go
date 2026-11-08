@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/formatcoverage"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/maintenance"
@@ -681,6 +682,9 @@ func (service *Service) Shutdown(ctx context.Context) error {
 func (service *Service) Profiles() []ProfileSummary {
 	result := make([]ProfileSummary, 0, len(service.profiles))
 	for name, profile := range service.profiles {
+		if name == config.LocalFacesProfile {
+			continue
+		}
 		bindings := make([]string, 0, len(profile.portable.Embeddings))
 		queryBindings := make([]string, 0, len(profile.portable.Embeddings))
 		for _, binding := range profile.portable.Embeddings {
@@ -718,9 +722,15 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	ineligibleReason, err := service.plannedIneligibility(ctx, node, version, profile)
-	if err != nil {
-		return Plan{}, err
+	var ineligibleReason string
+	if profile.portable.Rendition != nil {
+		capability, err := service.inspectPlannedRendition(ctx, node, version, profile)
+		if err != nil {
+			return Plan{}, err
+		}
+		if !capability.Eligible {
+			ineligibleReason = string(capability.Reason)
+		}
 	}
 	// A ready photo preview is immutable. Inspect it before estimating its
 	// bytes so publication cannot leave an eligible plan with a stale estimate.
@@ -870,7 +880,10 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 			return Job{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 		}
 	}
-	if profile.portable.Rendition == nil && photoEmbeddingsOnly(profile) {
+	if profile.portable.Rendition == nil && len(profile.portable.Embeddings) != 0 &&
+		!slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+			return binding.InputKind != document.EmbeddingInputImage
+		}) {
 		if _, _, _, err := strippedPhotoPreview(ctx, service.catalog, service.blobs, version.ID); err != nil {
 			if errors.Is(err, ErrSourceIneligible) {
 				err = &ImageSourceIneligibleError{Err: err}
@@ -1772,7 +1785,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	for _, binding := range profile.portable.Embeddings {
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
-		case document.EmbeddingInputImage, document.EmbeddingInputFace:
+		case document.EmbeddingInputImage:
 			generation, _, err = profile.embeddingRuntimes[binding.Name].ImageGeneration(ctx, profile.record, binding, version.ID)
 			if errors.Is(err, ErrSourceIneligible) {
 				ineligibleErr = err
@@ -2105,7 +2118,7 @@ func (service *Service) profileFence(name string, fence SourceFence) (configured
 
 func (service *Service) resolve(ctx context.Context, selector Selector) (store.Node, store.ContentVersion, configuredProfile, error) {
 	profile, ok := service.profiles[selector.Profile]
-	if !ok {
+	if !ok || selector.Profile == config.LocalFacesProfile {
 		return store.Node{}, store.ContentVersion{}, configuredProfile{}, ErrProfileNotConfigured
 	}
 	if selector.NodeID <= 0 || selector.ContentVersionID == "" {

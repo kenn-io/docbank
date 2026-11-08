@@ -119,26 +119,6 @@ function jobRequests(fetchMock: ReturnType<typeof setup>["fetchMock"]): { consen
 }
 
 describe("processing dialog", () => {
-  it("keeps face suggestions out of search-indexing actions", async () => {
-    const { rerender, props } = setup({
-      "local-faces": plan("local-faces", {
-        flow: [
-          hop({ capability: "embedding", provider_id: "local-face", input_classes: ["face"] }),
-        ],
-        disclosed_classes: ["face"],
-        retained_classes: ["embedding_vector_set"],
-        estimate: { source_bytes: 128, vector_spaces: 1, provider_calls: 1 },
-      }),
-    });
-    await rerender({
-      node: { ...props.node, name: "photo.jpg", mime_type: "image/jpeg" },
-      path: "/Photos/photo.jpg",
-    });
-    await waitFor(() => expect(screen.queryByText("Checking profiles…")).toBeNull());
-    expect(screen.getByRole("dialog").getAttribute("aria-label")).not.toBe("Index for search");
-    expect(screen.queryByRole("button", { name: "Index for search" })).toBeNull();
-  });
-
   it("offers transcription when the audio plan retains only text", async () => {
     const { rerender, props } = setup({
       audio: plan("audio", { consent_required: false, consent_state: "active" }),

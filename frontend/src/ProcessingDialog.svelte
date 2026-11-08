@@ -47,11 +47,6 @@
     "unbounded_media_family",
     "photo_not_eligible",
   ]);
-  // Face suggestions run from People's own setup, not as a file action here.
-  const offered = (plan: ProcessingPlan) =>
-    !unsupportedReasons.has(plan.rendition_ineligible_reason ?? "") &&
-    !plan.flow.some((hop) => hop.input_classes.includes("face"));
-
   let options = $state<Option[]>([]);
   let profileName = $state("");
   // Profiles whose plan couldn't be built; they would otherwise vanish without a word.
@@ -146,7 +141,7 @@
           failed.push(profiles[index]!.name);
           continue;
         }
-        if (!offered(result.value)) continue;
+        if (unsupportedReasons.has(result.value.rendition_ineligible_reason ?? "")) continue;
         next.push({ name: profiles[index]!.name, plan: result.value });
       }
       const failure = planned.find((result) => result.status === "rejected");

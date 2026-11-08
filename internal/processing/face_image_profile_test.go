@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -21,7 +20,7 @@ func TestFaceProfileKeepsSourceEligibility(t *testing.T) {
 			ctx := t.Context()
 			faces := newFaceEmbeddingFixture(t, false)
 			f := faces.f
-			f.grant(t, faces.service, config.LocalFacesProfile)
+			faces.enable(t)
 			if source == "hidden" {
 				require.NoError(t, f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
 				_, err := f.catalog.SetPhotoAssetHidden(ctx, f.asset.ID, f.asset.Revision, true)

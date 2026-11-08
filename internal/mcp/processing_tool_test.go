@@ -337,7 +337,7 @@ type sdkCallResult struct {
 
 type processingToolHarness struct {
 	t               *testing.T
-	plan            api.ProcessingPlan
+	planFingerprint string
 	startHandler    func(*testing.T, http.ResponseWriter, *http.Request)
 	serverInstance  *httptest.Server
 	ensures, closes atomic.Int32
@@ -349,7 +349,7 @@ func newProcessingToolHarness(t *testing.T, planFingerprint string,
 	startHandler func(*testing.T, http.ResponseWriter, *http.Request),
 ) *processingToolHarness {
 	t.Helper()
-	harness := &processingToolHarness{t: t, plan: syntheticProcessingPlan(planFingerprint), startHandler: startHandler}
+	harness := &processingToolHarness{t: t, planFingerprint: planFingerprint, startHandler: startHandler}
 	harness.serverInstance = httptest.NewServer(http.HandlerFunc(harness.serveHTTP))
 	t.Cleanup(harness.serverInstance.Close)
 	return harness
@@ -359,7 +359,7 @@ func (harness *processingToolHarness) serveHTTP(response http.ResponseWriter, re
 	assert.Equal(harness.t, "synthetic-key", request.Header.Get("X-Api-Key"))
 	switch {
 	case request.Method == http.MethodPost && request.URL.Path == "/api/v1/processing/plans":
-		writeDaemonJSON(harness.t, response, harness.plan)
+		writeDaemonJSON(harness.t, response, syntheticProcessingPlan(harness.planFingerprint))
 	case request.Method == http.MethodPost && request.URL.Path == "/api/v1/processing/jobs":
 		harness.startCalls.Add(1)
 		if harness.startHandler == nil {
@@ -463,22 +463,20 @@ func invokeProcessingTool(
 	return executeProcessingTool(ctx, lease, plans, mustResolveSchema(output), raw)
 }
 
-func TestProcessingPlanSchemaAcceptsEmbeddingInputClass(t *testing.T) {
-	for _, kind := range []string{"image", "face", "unknown"} {
-		t.Run(kind, func(t *testing.T) {
-			plan := syntheticProcessingPlan(testProcessingPlanFingerprint)
-			plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: kind, TrustBoundary: "local_process", InputClasses: []string{kind}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
-			validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))["get_processing_plan"].OutputSchema)
-			raw, err := json.Marshal(plan)
-			require.NoError(t, err)
-			var value map[string]any
-			require.NoError(t, json.Unmarshal(raw, &value))
-			value["ttlMs"], value["cacheScope"] = 0, "private"
-			if kind == "unknown" {
-				require.Error(t, validator.Validate(&value))
-			} else {
-				require.NoError(t, validator.Validate(&value))
-			}
-		})
-	}
+func TestProcessingPlanSchemaAcceptsImageInputClass(t *testing.T) {
+	plan := syntheticProcessingPlan(testProcessingPlanFingerprint)
+	plan.Flow = []api.ProcessingFlowHop{{Capability: "embedding", ProviderID: "image", TrustBoundary: "local_process", InputClasses: []string{"image"}, RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "bridge", UltimateProcessor: "bridge", Endpoint: "stdio", Deployment: "local", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}}
+	validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))["get_processing_plan"].OutputSchema)
+	raw, err := json.Marshal(plan)
+	require.NoError(t, err)
+	var value map[string]any
+	require.NoError(t, json.Unmarshal(raw, &value))
+	value["ttlMs"], value["cacheScope"] = 0, "private"
+	require.NoError(t, validator.Validate(&value))
+	plan.Flow[0].InputClasses = []string{"unknown"}
+	raw, err = json.Marshal(plan)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &value))
+	value["ttlMs"], value["cacheScope"] = 0, "private"
+	require.Error(t, validator.Validate(&value))
 }

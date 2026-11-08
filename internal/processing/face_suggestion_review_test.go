@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/embedclient"
@@ -26,7 +25,7 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	_, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
@@ -90,7 +89,7 @@ func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 		_, _, err := x.f.catalog.CreatePhotoFace(ctx, healthy, uuid.New().String(), document.FaceBox{X: left, Y: .6, Width: .2, Height: .3}, "")
 		require.NoError(t, err)
 	}
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	for range 2 {
 		_, err := x.worker.ScanOnce(ctx)
 		require.NoError(t, err)
@@ -118,7 +117,7 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	_, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	var backup bytes.Buffer
@@ -173,7 +172,7 @@ func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.P
 			omitted = face
 		}
 	}
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	n, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -217,7 +216,7 @@ func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
 	x := newFaceEmbeddingFixture(t, false)
 	x.matchAll = true
 	ctx := t.Context()
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	_, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)

@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/config"
 )
 
 func TestFaceEmbeddingCrowdFitsDescriptorBudget(t *testing.T) {
@@ -21,7 +20,7 @@ func TestFaceEmbeddingCrowdFitsDescriptorBudget(t *testing.T) {
 			_, _, err := x.f.catalog.CreatePhotoFace(t.Context(), x.f.node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: .2, Y: .2, Width: .2, Height: .2}, "")
 			require.NoError(t, err)
 		}
-		x.f.grant(t, x.service, config.LocalFacesProfile)
+		x.enable(t)
 		x.worker.reconcileAt = time.Time{}
 		n, err := x.worker.ScanOnce(t.Context())
 		require.NoError(t, err)

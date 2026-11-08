@@ -91,13 +91,22 @@ func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture
 	require.NoError(t, err)
 	return x
 }
+func (x *faceEmbeddingFixture) enable(t *testing.T) {
+	t.Helper()
+	setup := FaceSetup{Service: x.service, Startup: func(context.Context) error { return nil }}
+	plan, err := setup.Plan(t.Context())
+	require.NoError(t, err)
+	_, err = setup.Apply(t.Context(), plan.Fingerprint)
+	require.NoError(t, err)
+}
+
 func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 	t.Parallel()
 	for _, unmatched := range []bool{false, true} {
 		t.Run(map[bool]string{false: "mixed", true: "all nil"}[unmatched], func(t *testing.T) {
 			x := newFaceEmbeddingFixture(t, unmatched)
 			ctx := t.Context()
-			x.f.grant(t, x.service, config.LocalFacesProfile)
+			x.enable(t)
 			x.worker.reconcileAt = time.Time{}
 			n, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
@@ -139,7 +148,7 @@ func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 	version := x.f.addPhoto(t, "healthy.jpg", 720)
 	_, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
 	require.NoError(t, err)
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	quality, err := document.CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)
 	generation, err := x.f.catalog.VisualPreviewGenerationByRecipe(ctx, x.f.node.CurrentVersionID, quality.GridRecipe)
@@ -174,7 +183,7 @@ func TestFaceRankingContinuationWithUnavailableVectors(t *testing.T) {
 	ctx := t.Context()
 	_, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	sets, err := x.f.catalog.FaceMatchingInputs(ctx)
@@ -232,7 +241,7 @@ func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
 		}
 		return v
 	}
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	_, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	options := store.PeopleSearchOptions{FaceID: queryFace.FaceID, FaceReader: x.f.blobs, RecentFirst: true}
@@ -283,7 +292,7 @@ func TestFacePeopleRankingObeysHiddenScope(t *testing.T) {
 		}
 		return values
 	}
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -352,7 +361,7 @@ func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 				_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
 				require.NoError(t, err)
 			}
-			x.f.grant(t, x.service, config.LocalFacesProfile)
+			x.enable(t)
 			count, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
 			if mode != "same photo" {
@@ -454,7 +463,7 @@ func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
 	queryVersion := x.f.addPhoto(t, "query.jpg", 711)
 	_, _, err = x.f.catalog.CreatePhotoFace(ctx, queryVersion, uuid.New().String(), document.FaceBox{Y: .6, Width: .2, Height: .2}, "")
 	require.NoError(t, err)
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	count, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
@@ -497,7 +506,7 @@ func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 	hiddenVersion := x.f.addPhoto(t, "private-match.jpg", 730)
 	_, _, err := x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
 	require.NoError(t, err)
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	count, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
@@ -521,7 +530,7 @@ func TestFaceCoverageReportsRunningAndCompletedVectors(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	fence := SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}}
 	var running Coverage
 	var coverageErr error
@@ -545,18 +554,14 @@ func TestFaceCoverageReportsRunningAndCompletedVectors(t *testing.T) {
 	assert.Zero(t, stale.Embeddings[0].Complete, "a changed face generation must stop counting as complete")
 }
 
-func TestFacePlanDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
+func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
-	selector := Selector{NodeID: x.f.node.ID, ContentVersionID: x.f.node.CurrentVersionID, Profile: config.LocalFacesProfile}
-	plan, err := x.service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	require.Contains(t, plan.Estimate.Scope, "throughout this vault")
-	require.Contains(t, plan.Estimate.Scope, "Hidden")
 	setup := FaceSetup{Service: x.service, Startup: func(context.Context) error { return nil }}
 	reviewed, err := setup.Plan(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, plan.Estimate.Scope, reviewed.Scope)
+	require.Contains(t, reviewed.Scope, "throughout this vault")
+	require.Contains(t, reviewed.Scope, "Hidden")
 	n, err := x.worker.ScanOnce(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, n)
@@ -575,46 +580,6 @@ func TestFacePlanDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	require.Equal(t, 1, x.calls)
-}
-
-func TestFaceAggregateStatusIncludesLiveJobs(t *testing.T) {
-	t.Parallel()
-	for _, invalid := range []bool{false, true} {
-		t.Run(map[bool]string{false: "completed", true: "partial"}[invalid], func(t *testing.T) {
-			x := newFaceEmbeddingFixture(t, false)
-			if invalid {
-				x.vectorForBox = func(embedclient.FaceBox) []float32 { return []float32{1} }
-			}
-			selector := Selector{NodeID: x.f.node.ID, ContentVersionID: x.f.node.CurrentVersionID, Profile: config.LocalFacesProfile}
-			plan, err := x.service.Plan(t.Context(), selector)
-			require.NoError(t, err)
-			var queued, running Status
-			var queuedErr, runningErr error
-			var id string
-			x.onRequest = func() { running, runningErr = x.service.Status(t.Context(), id) }
-			job, err := x.service.StartWithProgress(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, func(job Job) {
-				id = job.ID
-				queued, queuedErr = x.service.Status(t.Context(), id)
-			})
-			require.NoError(t, err)
-			require.NotEmpty(t, id)
-			require.NoError(t, queuedErr)
-			require.NoError(t, runningErr)
-			assert.Equal(t, "queued", queued.State)
-			assert.Equal(t, []string{id}, queued.EmbeddingJobIDs)
-			assert.Equal(t, "running", running.State)
-			assert.Equal(t, []string{id}, running.EmbeddingJobIDs)
-			after, err := x.service.Status(t.Context(), job.ID)
-			require.NoError(t, err)
-			if invalid {
-				assert.Equal(t, "partial", after.State)
-				assert.NotEmpty(t, after.FailureCode)
-			} else {
-				assert.Equal(t, "completed", after.State)
-				assert.Equal(t, 1, after.CompletedBindings)
-			}
-		})
-	}
 }
 
 // Exercise the consumer read after reopening independently of writer triggers.
@@ -639,7 +604,7 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			t.Parallel()
 			x := newFaceEmbeddingFixture(t, false)
 			ctx := t.Context()
-			x.f.grant(t, x.service, config.LocalFacesProfile)
+			x.enable(t)
 			_, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
 			before, err := x.f.catalog.FaceMatchingInputs(ctx)

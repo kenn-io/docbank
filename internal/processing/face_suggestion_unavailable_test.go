@@ -32,7 +32,7 @@ func TestUnavailableFacePayloadPreservesOpenReview(t *testing.T) {
 		_, _, err := x.f.catalog.CreatePhotoFace(ctx, healthy, uuid.New().String(), document.FaceBox{X: left, Y: .6, Width: .2, Height: .3}, "")
 		require.NoError(t, err)
 	}
-	x.f.grant(t, x.service, config.LocalFacesProfile)
+	x.enable(t)
 	for range 2 {
 		_, err := x.worker.ScanOnce(ctx)
 		require.NoError(t, err)
