@@ -51,7 +51,7 @@ type MediaTranscriptEvidence struct {
 // Transcript is nil unless EvidenceState is ready.
 type MediaTranscript struct {
 	ContractVersion  string
-	NodeID           string
+	NodeID           int64
 	SourceSHA256     string
 	VaultUID         string
 	SourceID         string
