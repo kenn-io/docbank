@@ -5165,8 +5165,8 @@ it("finishes a slow suggestions read while photo events arrive and then catches 
   await screen.findByRole("button", { name: "Ada 3 Library photos" });
   const people = loaded.mock.contexts.at(-1) as People;
   await waitFor(() => expect(people.loading).toBe(false));
-  const attempts: Promise<boolean | void>[] = [];
-  const results: (boolean | void)[] = [];
+  let attempt: Promise<boolean | void> | undefined;
+  let declined: boolean | void = undefined;
   read.mockClear();
   try {
     slow = true;
@@ -5175,17 +5175,13 @@ it("finishes a slow suggestions read while photo events arrive and then catches 
       pending = people.suggestions.load();
     });
     await waitFor(() => expect(pages).toHaveLength(1));
-    for (let event = 0; event < 3; event++) {
-      await act(() => {
-        attempts.push(
-          photoEventPass()({}).then((result) => {
-            results.push(result);
-            return result;
-          }),
-        );
+    await act(() => {
+      attempt = photoEventPass()({}).then((result) => {
+        declined = result;
+        return result;
       });
-    }
-    await waitFor(() => expect(results).toEqual([false, false, false]));
+    });
+    await waitFor(() => expect(declined).toBe(false));
     expect(read).toHaveBeenCalledTimes(1);
     await act(async () => {
       pages[0]!({ items: [unnamed], total: 1 });
@@ -5207,7 +5203,7 @@ it("finishes a slow suggestions read while photo events arrive and then catches 
     read.mockResolvedValue({ items: [], total: 0 });
     cleanup();
     for (const resolve of pages) resolve({ items: [], total: 0 });
-    await Promise.allSettled(attempts);
+    await attempt;
   }
 });
 

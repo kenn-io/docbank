@@ -164,8 +164,9 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 }
 
 // ReplaceFaceSuggestions preserves rejected evidence and supersedes open groups
-// whose membership changed. Publishing and queue admission share one transaction.
-func (s *Store) ReplaceFaceSuggestions(ctx context.Context, candidates []PersonMatchCandidate) error {
+// whose membership changed, keeping any with evidence in an unavailable version.
+// Publishing and queue admission share one transaction.
+func (s *Store) ReplaceFaceSuggestions(ctx context.Context, candidates []PersonMatchCandidate, unavailable []string) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		wanted := map[string]bool{}
 		for i := range candidates {
@@ -176,7 +177,7 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, candidates []PersonM
 			candidates[i] = c
 			wanted[c.ActorKey+"\x00"+c.SuggestedPersonID+"\x00"+c.EvidenceSHA256] = true
 		}
-		ids, err := stringColumnTx(ctx, tx, "open face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match'`)
+		ids, err := retirableFaceCandidatesTx(ctx, tx, unavailable)
 		if err != nil {
 			return err
 		}
@@ -226,6 +227,16 @@ func (s *Store) ReplaceFaceSuggestions(ctx context.Context, candidates []PersonM
 		}
 		return nil
 	})
+}
+
+// retirableFaceCandidatesTx lists open face groups whose evidence a pass read
+// in full, so a partial snapshot cannot retire a group it could not see.
+func retirableFaceCandidatesTx(ctx context.Context, tx *sql.Tx, unavailable []string) ([]string, error) {
+	encoded, err := json.Marshal(unavailable)
+	if err != nil {
+		return nil, err
+	}
+	return stringColumnTx(ctx, tx, "open face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND e.content_version_id IN (SELECT value FROM json_each($1)))`, string(encoded))
 }
 
 type FaceCandidate struct {

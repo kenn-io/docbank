@@ -718,15 +718,9 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	if err != nil {
 		return Plan{}, err
 	}
-	var ineligibleReason string
-	if profile.portable.Rendition != nil {
-		capability, err := service.inspectPlannedRendition(ctx, node, version, profile)
-		if err != nil {
-			return Plan{}, err
-		}
-		if !capability.Eligible {
-			ineligibleReason = string(capability.Reason)
-		}
+	ineligibleReason, err := service.plannedIneligibility(ctx, node, version, profile)
+	if err != nil {
+		return Plan{}, err
 	}
 	// A ready photo preview is immutable. Inspect it before estimating its
 	// bytes so publication cannot leave an eligible plan with a stale estimate.
@@ -876,10 +870,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 			return Job{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 		}
 	}
-	if profile.portable.Rendition == nil && len(profile.portable.Embeddings) != 0 &&
-		!slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
-			return binding.InputKind != document.EmbeddingInputImage
-		}) {
+	if profile.portable.Rendition == nil && photoEmbeddingsOnly(profile) {
 		if _, _, _, err := strippedPhotoPreview(ctx, service.catalog, service.blobs, version.ID); err != nil {
 			if errors.Is(err, ErrSourceIneligible) {
 				err = &ImageSourceIneligibleError{Err: err}

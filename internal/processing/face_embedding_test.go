@@ -693,7 +693,7 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 					FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},
 					SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: set.ProcessingProfileFingerprint, PublishedAt: set.CreatedAt,
 				})
-				require.Error(t, err, "publication must fence the same stale face or preview evidence")
+				require.ErrorIs(t, err, store.ErrEmbeddingAuthorityStale, "publication must fence the same stale face or preview evidence")
 			}
 		})
 	}

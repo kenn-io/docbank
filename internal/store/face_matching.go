@@ -1,12 +1,10 @@
 package store
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -83,7 +81,7 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		}
 		decoded, err := s.faceVectorSet(ctx, reader, item.Set, indexes)
 		if errors.Is(err, ErrVectorSetUnavailable) {
-			unavailable = fmt.Errorf("%w", cmp.Or(unavailable, err))
+			unavailable = withUnavailableVectorSet(unavailable, err, item.Set.ContentVersionID)
 			continue
 		}
 		if err != nil {
@@ -103,6 +101,25 @@ func (s *Store) FaceMatchingVectors(ctx context.Context, reader RenditionBlobRea
 		}
 	}
 	return vectors, unavailable
+}
+
+// UnavailableVectorSetsError names each content version whose vector set a
+// read could not open. It wraps the first ErrVectorSetUnavailable.
+type UnavailableVectorSetsError struct {
+	Versions []string
+	err      error
+}
+
+func (e *UnavailableVectorSetsError) Error() string { return e.err.Error() }
+func (e *UnavailableVectorSetsError) Unwrap() error { return e.err }
+
+func withUnavailableVectorSet(prior, err error, version string) error {
+	sets, _ := errors.AsType[*UnavailableVectorSetsError](prior)
+	if sets == nil {
+		sets = &UnavailableVectorSetsError{err: err}
+	}
+	sets.Versions = append(sets.Versions, version)
+	return sets
 }
 
 func (s *Store) faceVectorSet(ctx context.Context, reader RenditionBlobReader, set EmbeddingSetRecord, indexes []*vectorindex.Generation) (document.VectorSetV1, error) {
