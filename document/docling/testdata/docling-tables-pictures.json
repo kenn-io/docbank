@@ -1,0 +1,31 @@
+{
+  "status": "success",
+  "document": {
+    "filename": "agreement.pdf",
+    "md_content": "# Synthetic Supply Agreement\n\n<!-- image -->\n\nThe parties agree to the prices on the next page.\n\n## Schedule 1: Prices\n\nTable 1: Unit prices\n\n| Item | Unit | Price (EUR) |\n|---|---|---|\n| Paper | ream | 4.10 |\n| Toner | cartridge | 62.00 |\n\nPrices exclude delivery.\n",
+    "json_content": {
+      "schema_name": "DoclingDocument",
+      "version": "1.10.0",
+      "furniture": {"children": []},
+      "body": {"children": [{"$ref": "#/texts/0"}, {"$ref": "#/pictures/0"}, {"$ref": "#/texts/2"}, {"$ref": "#/texts/3"}, {"$ref": "#/tables/0"}, {"$ref": "#/texts/5"}, {"$ref": "#/texts/6"}, {"$ref": "#/tables/1"}, {"$ref": "#/tables/2"}]},
+      "texts": [
+        {"children": [], "prov": [{"page_no": 1}], "text": "Synthetic Supply Agreement"},
+        {"children": [], "prov": [{"page_no": 1}], "text": "Example Trading Co."},
+        {"children": [], "prov": [{"page_no": 1}], "text": "The parties agree to the prices on the next page."},
+        {"children": [], "prov": [{"page_no": 2}], "text": "Schedule 1: Prices"},
+        {"children": [], "prov": [{"page_no": 2}], "text": "Table 1: Unit prices"},
+        {"children": [], "prov": [{"page_no": 2}], "text": "Prices exclude delivery."},
+        {"children": [], "prov": [{"page_no": 2}], "text": "2"}
+      ],
+      "pictures": [
+        {"children": [{"$ref": "#/texts/1"}], "meta": null, "annotations": []}
+      ],
+      "tables": [
+        {"children": [{"$ref": "#/texts/4"}], "meta": null, "prov": [{"page_no": 2}], "data": {"grid": [[{"text": "Item"}, {"text": "Unit"}, {"text": "Price (EUR)"}], [{"text": "Paper"}, {"text": "ream"}, {"text": "4.10"}], [{"text": "Toner"}, {"text": "cartridge"}, {"text": "62.00"}]]}, "annotations": []},
+        {"prov": [{"page_no": 3}], "data": {"grid": [[{"text": "Delivery"}], [{"text": "Included"}]]}},
+        {"prov": [{"page_no": 4}], "data": {"grid": [[{"text": "Payment"}], [{"text": "Net 30"}]]}}
+      ],
+      "pages": {"1": {}, "2": {}, "3": {}, "4": {}}
+    }
+  }
+}

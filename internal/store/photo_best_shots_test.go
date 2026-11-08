@@ -37,11 +37,12 @@ func seedBestShots(t *testing.T, s *Store, ids []string) {
 		require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 0.9 - float64(i)*0.3}, ""))
 	}
 }
-func TestPhotoBestShotsDecisions(t *testing.T) {
+func checkPhotoBestShotsDecisions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, response := range []string{"accepted", "dismissed"} {
 		t.Run(response, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			ids := burstPhotos(t, s, 3)
 			seedBestShots(t, s, ids[:2])
@@ -61,7 +62,7 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, receipt.ReceiptID)
 			var count int
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE receipt_id=?`, receipt.ReceiptID).Scan(&count))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE receipt_id=$1`, receipt.ReceiptID).Scan(&count))
 			require.Equal(t, 1, count)
 			require.Len(t, receipt.After, len(request.Responses))
 			if response == "accepted" {
@@ -98,7 +99,7 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 		})
 	}
 	t.Run("accepted paired files", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		ids := burstPhotos(t, s, 2)
 		first, err := s.PhotoAssetByID(ctx, ids[0])
@@ -118,9 +119,10 @@ func TestPhotoBestShotsDecisions(t *testing.T) {
 		require.Len(t, receipt.After, 3)
 	})
 }
-func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
+func checkPhotoBestShotsReadsAndStaleOffers(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	ids := burstPhotos(t, s, 3)
 	seedBestShots(t, s, ids)
@@ -154,9 +156,10 @@ func TestPhotoBestShotsReadsAndStaleOffers(t *testing.T) {
 		require.Empty(t, target.Values.Flag)
 	}
 }
-func TestPhotoBestShotsFailedEnrichmentPublishesNothing(t *testing.T) {
+func checkPhotoBestShotsFailedEnrichmentPublishesNothing(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ids := burstPhotos(t, s, 2)
 	seedBestShots(t, s, ids)
 	missing, err := newUUIDv4()
@@ -166,7 +169,8 @@ func TestPhotoBestShotsFailedEnrichmentPublishesNothing(t *testing.T) {
 	require.Empty(t, stacks[0].Proposals)
 	require.Empty(t, stacks[1].Proposals)
 }
-func TestPhotoBestShotsConfirmedWinner(t *testing.T) {
+func checkPhotoBestShotsConfirmedWinner(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
@@ -177,7 +181,7 @@ func TestPhotoBestShotsConfirmedWinner(t *testing.T) {
 		{"pick non-winner", 1, "pick"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			ids := burstPhotos(t, s, 3)
 			seedBestShots(t, s, ids)

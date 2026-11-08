@@ -89,6 +89,7 @@ try {
           "test",
           "redaction-review.screenshot.ts",
           "redaction-text.screenshot.ts",
+          "redaction-numbered.screenshot.ts",
           "document-reader.screenshot.ts",
           "--config",
           "frontend/screenshots/playwright.config.ts",
@@ -108,10 +109,10 @@ try {
       const { expected, unexpected, flaky, skipped } = result.stats;
       assert.deepEqual(
         { expected, unexpected, flaky, skipped },
-        { expected: 9, unexpected: 0, flaky: 0, skipped: 0 },
-        `${mode} must execute nine passing cases`,
+        { expected: 10, unexpected: 0, flaky: 0, skipped: 0 },
+        `${mode} must execute ten passing cases`,
       );
-      console.log(`${mode}: executed=9 passed=9 skipped=0 failed=0`);
+      console.log(`${mode}: executed=10 passed=10 skipped=0 failed=0`);
     } catch (error) {
       failures.push(mode);
       keepScratch = true;

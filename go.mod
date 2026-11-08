@@ -30,14 +30,14 @@ require (
 	github.com/paulmach/orb v0.13.0
 	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/rivo/uniseg v0.4.7
-	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/shirou/gopsutil/v4 v4.26.9
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tetratelabs/wazero v1.12.0
-	github.com/yuin/goldmark v1.8.6
+	github.com/yuin/goldmark/v2 v2.1.13
 	go.kenn.io/kata v0.22.0
 	go.kenn.io/kit v0.48.4
 	golang.org/x/crypto v0.58.0

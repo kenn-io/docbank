@@ -671,7 +671,7 @@ func appendRenditionInlinesWithFallback(
 		switch inline.kind {
 		case renditionText:
 			textStart := output.checkpoint()
-			value := escapeRenditionText(inline.text)
+			value := EscapeRenditionText(inline.text)
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
 				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
 				fallback.markEscapedText(textStart, inline.text)
@@ -732,7 +732,7 @@ func appendRenditionPlainLabel(
 		switch inline.kind {
 		case renditionText, renditionInlineCode:
 			textStart := output.checkpoint()
-			value := escapeRenditionText(inline.text)
+			value := EscapeRenditionText(inline.text)
 			if available >= 0 && utf8.RuneCountInString(value) > remaining {
 				output.WriteString(truncateEscapedRenditionText(inline.text, max(0, remaining)))
 				fallback.markEscapedText(textStart, inline.text)
@@ -749,7 +749,8 @@ func appendRenditionPlainLabel(
 	return false
 }
 
-func escapeRenditionText(value string) string {
+// EscapeRenditionText preserves literal source text through Markdown serialization.
+func EscapeRenditionText(value string) string {
 	var output strings.Builder
 	for _, character := range value {
 		if isMarkdownASCIIPunctuation(character) {
@@ -803,6 +804,19 @@ func serializeRenditionCodeBlock(language, content string) string {
 		content += "\n"
 	}
 	return fence + language + "\n" + content + fence
+}
+
+// MarkdownTable renders plain-text cells as a Markdown table with the first
+// row as its header. Cell punctuation is escaped so it reads literally.
+func MarkdownTable(rows [][]string) string {
+	inlines := make([][][]renditionInline, len(rows))
+	for rowIndex, row := range rows {
+		inlines[rowIndex] = make([][]renditionInline, len(row))
+		for column, cell := range row {
+			inlines[rowIndex][column] = []renditionInline{{kind: renditionText, text: cell}}
+		}
+	}
+	return serializeRenditionTable(inlines)
 }
 
 func serializeRenditionTable(rows [][][]renditionInline) string {

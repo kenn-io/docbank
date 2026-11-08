@@ -31,7 +31,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
  photo_timeline_version_delete photo_timeline_version_change
  photo_timeline_binding_insert photo_timeline_correction_insert`},
-	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis/photo-quality-hidden contracts", `
+	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis/photo-quality-hidden/photo-review contracts", `
  photo_xmp_unsettled_refresh photo_xmp_unsettled_file_insert photo_xmp_unsettled_file_update
  photo_xmp_unsettled_file_delete photo_xmp_unsettled_asset_insert photo_xmp_unsettled_asset_update
  photo_xmp_unsettled_node_update photo_xmp_unsettled_node_insert photo_xmp_unsettled_node_delete
@@ -48,7 +48,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"photo XMP publication", "photo_xmp.go: settlePhotoXMPTx; document_maintenance.go: refreshPhotoAssetWorkTx", "photo-edit contracts; receipts are replaced rather than updated", `
  photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
 	{"photo metadata recovery", "unported: source-head recovery", "must refresh export work when heads are removed", `photo_xmp_unsettled_head_delete`},
-	{"people candidates", "unported: person candidate publication", "must update the candidate-to-face projection in the publishing transaction", `
+	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation contracts cover inserts; evidence replacement during metadata restore remains unqualified", `
  person_candidate_faces_insert person_candidate_faces_update`},
 	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
  nodes_fts_insert nodes_fts_delete nodes_fts_update

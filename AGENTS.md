@@ -273,9 +273,10 @@ release, from a breaking change to `feat` to `fix`.
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
   PostgreSQL schemas remain disposable until the first deployment whose data
-  must survive upgrades. Until then, edit canonical DDL directly, increment
-  `pgschema.SchemaVersion` whenever `schema.sql` changes, and recreate development
-  schemas on a version mismatch; setup and runtime validation must refuse them.
+  must survive upgrades. Until then, edit canonical DDL directly. Setup records
+  the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a
+  missing or different fingerprint. Recreate disposable development schemas on
+  mismatch, never retained data. No manual version bump is required.
   Before that first retained deployment, capture the current schema as migration
   1 and add CI comparison of the canonical schema with the numbered forward chain.
   After that cutoff every schema change, including indexes and defaults, needs a

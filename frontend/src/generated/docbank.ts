@@ -1146,6 +1146,17 @@ export interface BatesExportRequest {
   recipe: Recipe;
 }
 
+export interface BatesNamespaceDetail {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  namespace: BatesNamespace;
+  /**
+     * @minimum 1
+     * @maximum 10000000000
+     */
+  next_sequence: number;
+}
+
 export interface BatesNamespacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -12059,6 +12070,30 @@ return sessionJSON<BatesNamespace>(getCreateBatesNamespaceUrl(),
 
 
 
+export const getReadBatesNamespaceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/bates/namespaces/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a Bates namespace and its next sequence
+ */
+export const readBatesNamespace = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesNamespaceDetail> => {
+
+  return sessionJSON<BatesNamespaceDetail>(getReadBatesNamespaceUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getPlanBatesStampUrl = () => {
 
 
@@ -19947,6 +19982,44 @@ export const readRedactionPreviewText = (id: string, options?: Parameters<typeof
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getPublishNumberedPDFUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/publications`
+}
+
+/**
+ * @summary Publish one reviewed numbered PDF into retained storage
+ */
+export const publishNumberedPDF = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesExport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
   }
 );}
 

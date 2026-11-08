@@ -3,7 +3,7 @@
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
     vault_uid      UUID NOT NULL UNIQUE,
-    schema_version INTEGER NOT NULL
+    schema_fingerprint TEXT COLLATE "C" NOT NULL
 );
 
 -- Allocation is transactional: audit replay requires consecutive committed IDs.
@@ -2441,3 +2441,43 @@ CREATE TABLE {{schema}}.photo_face_scans (
 );
 CREATE INDEX visual_preview_generations_ready
     ON {{schema}}.visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
+
+-- Retained image indexes used by photo review. Production remains separate.
+CREATE TABLE {{schema}}.vector_index_generations (
+    generation_id TEXT COLLATE "C" PRIMARY KEY,
+    vector_space_id TEXT COLLATE "C" NOT NULL,
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    index_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    generation_bytes BYTEA NOT NULL,
+    byte_size BIGINT NOT NULL,
+    row_count BIGINT NOT NULL,
+    built_at TEXT COLLATE "C" NOT NULL
+);
+CREATE INDEX vector_index_generations_space
+    ON {{schema}}.vector_index_generations(vector_space_id, source_manifest_checksum, generation_id);
+CREATE TABLE {{schema}}.vector_index_heads (
+    vector_space_id TEXT COLLATE "C" PRIMARY KEY,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id),
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL
+);
+
+CREATE INDEX custodian_assignments_person ON {{schema}}.custodian_assignments(person_id, scope_kind);
+
+CREATE INDEX document_people_person ON {{schema}}.document_people(person_id, content_version_id);
+
+CREATE INDEX person_candidate_state
+    ON {{schema}}.person_match_candidates(state, created_at, candidate_id);
+
+CREATE INDEX person_document_assertions_person ON {{schema}}.person_document_assertions(person_id, role, action, recorded_at);
+
+CREATE INDEX person_external_alias_target
+    ON {{schema}}.person_external_uid_aliases(system, archive_id, surviving_uid);
+
+CREATE INDEX person_external_person ON {{schema}}.person_external_identities(person_id);
+
+CREATE INDEX person_identities_person ON {{schema}}.person_identities(person_id, kind);
+
+CREATE INDEX person_identities_value
+    ON {{schema}}.person_identities(value_normalized, kind, scope_kind, scope_value, person_id);
+
+CREATE INDEX photo_faces_assertion ON {{schema}}.photo_faces(assertion_id,content_version_id);

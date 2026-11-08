@@ -190,7 +190,7 @@ qualifies normalized evidence, including fractional-position Courier text.
 
 ### Native-PDF mask execution
 
-The API-key-only resolve and render routes admit a live file's exact retained
+The resolve and plain render routes admit a live file's exact retained
 version, hash and size. They do not require the observed node revision.
 Preparation still checks its own requested revision. The preparation and review
 digests use typed projections that exclude revisions; observed/admitted revisions
@@ -335,9 +335,9 @@ Authenticated preview routes are under `/api/v1/redaction/previews`:
 The random 48-hex ID is never authority by itself. Unknown, expired, retired and
 other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
 mismatch is 409 `redaction_review_changed`; an occupied cache is 503
-`redaction_preview_busy`. Only prepare, resolve and these preview operations are
-added to browser admission. Query parameters are refused. Direct render and
-reservations remain API-key-only.
+`redaction_preview_busy`. Browser admission covers prepare, resolve, these preview
+operations, and the separate reservation/publication routes. Query parameters are
+refused. The generic ZIP render remains API-key-only.
 
 One mutex protects a global building, ready or retired entry awaiting readers or
 cleanup. Ready publication is fenced against session revocation. It releases the native-PDF
@@ -433,6 +433,29 @@ keep the original reader and masks; a changed version blocks new output.
 
 ### Retained numbered native PDFs
 
+Browser publication uses `POST /api/v1/redaction/publications`, with the reviewed
+preparation, masks, review digest and required numbered allocation ID. It owns
+the shared native slot for at most ten minutes and calls the same admission,
+snapshot capture, render and first-winner publication pipeline as CLI rendering.
+It returns the existing export detail without packaging a ZIP or retaining page
+images. Body reads have a finite 60-second deadline, cleared before publication.
+Completed retries use the first verified retained PDF without a page runtime.
+Cleanup failure after commit is logged without reporting a failed publication.
+
+`GET /api/v1/bates/namespaces/{id}` reads the namespace and its advisory
+`next_sequence` together. The cursor is separate from immutable namespace objects
+embedded in recipes and receipts. It includes reserved and skipped numbers; it
+is not a global free-range guarantee. A missing or invalid cursor fails rather
+than defaulting to one. An exhausted cursor is `10^padding`. This read makes no
+snapshot, reservation or native operation and returns `private, no-store`.
+
+Browser gates allow only the exact namespace-detail GET and named reservation
+and publication POSTs without query parameters. Frozen numbering inputs and their
+controller live independently of temporary previews. Expiry removes preview
+assets but does not abort publication or change the confirmed start. The existing
+preview storage allowance remains in force alongside publication staging. There
+is no retained browser draft or implicit storage of private review files.
+
 A numbered delivery uses the existing reservation ledger and a real sealed
 collection snapshot. The snapshot's sole member and occurrence name the original
 version, hash, size and source pages; `UnstampedSHA256` remains the original's
@@ -442,7 +465,7 @@ preparation, decisions and review digests, qualified renderer, namespace, explic
 start, pages, footer policy and indefinite original retention. Revisions are
 informational and excluded from this identity.
 
-The API-key-only `POST /api/v1/redaction/reservations` requires literal
+`POST /api/v1/redaction/reservations` requires literal
 `retain_original: true`. New requests validate the review, namespace range and
 footer fit before taking permanent authority. After fresh inspection, one store
 transaction checks for an existing operation, seals the snapshot, reserves the

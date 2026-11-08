@@ -1,11 +1,17 @@
-# docbank
+<h1 align="center">docbank</h1>
 
-[![Go 1.27+](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://go.dev)
-[![CI](https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg)](https://github.com/kenn-io/docbank/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases)](https://github.com/kenn-io/docbank/releases)
+<p align="center">
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.27.3+-00ADD8?logo=go" alt="Go 1.27.3+"></a>
+  <a href="https://github.com/kenn-io/docbank/actions/workflows/ci.yml"><img src="https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/kenn-io/docbank/releases"><img src="https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases" alt="Release"></a>
+  <a href="https://docbank.ai"><img src="https://img.shields.io/badge/Docs-docbank.ai-blue" alt="Docs"></a>
+</p>
 
-> **Alpha software.** Keep your own copies of anything irreplaceable, and
-> verify a backup before you rely on it.
+<p align="center">
+  <a href="https://docbank.ai">Documentation</a> ·
+  <a href="docs/setup.md">Setup Guide</a> ·
+  <a href="docs/quickstart.md">Quickstart</a>
+</p>
 
 **Agent-native document system of record**
 
@@ -14,14 +20,19 @@ It runs on your own machine. It imports files, email, photos, and recordings,
 makes their text searchable, and keeps every version you save. When you need to
 hand records to someone else, it exports the versions you checked.
 
-![The Docbank web application browsing a synthetic vault.](https://docbank.ai/assets/generated/web-vault-browser.png)
+<p align="center">
+  <img src="https://docbank.ai/assets/generated/web-vault-browser.png" alt="The Docbank web application browsing a synthetic vault.">
+</p>
 
 Use it from the command line, a local web app, a terminal browser, or an
 authenticated HTTP API, or connect an agent with `docbank mcp`. They all talk
 to the daemon, a local background process that owns the vault. A Go application
 can instead [embed a vault of its own](docs/embedding.md).
 
-## What can I use it for?
+> **Alpha software.** Keep your own copies of anything irreplaceable, and
+> verify a backup before you rely on it.
+
+## What you can do
 
 | Task | Guide |
 | --- | --- |

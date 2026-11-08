@@ -2052,6 +2052,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    BatesNamespaceDetail:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesNamespaceDetail.json
+          format: uri
+          readOnly: true
+          type: string
+        namespace:
+          $ref: "#/components/schemas/BatesNamespace"
+        next_sequence:
+          format: int64
+          maximum: 10000000000
+          minimum: 1
+          type: integer
+      required:
+        - namespace
+        - next_sequence
+      type: object
+      x-go-type: api.BatesNamespaceDetail
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatesNamespacePage:
       additionalProperties: false
       properties:
@@ -23796,6 +23821,34 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create or find a Bates namespace
+  /api/v1/bates/namespaces/{id}:
+    get:
+      operationId: readBatesNamespace
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesNamespaceDetail"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a Bates namespace and its next sequence
   /api/v1/bates/preview:
     post:
       operationId: planBatesStamp
@@ -31147,6 +31200,93 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Preview request failed
       summary: Read verified temporary redaction output
+  /api/v1/redaction/publications:
+    post:
+      operationId: publishNumberedPDF
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedactionRenderRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesExport"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: Publish one reviewed numbered PDF into retained storage
   /api/v1/redaction/render:
     post:
       operationId: renderNativePDF

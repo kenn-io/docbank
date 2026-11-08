@@ -125,7 +125,23 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     const enabledURL = new URL(await run("web", "--no-browser"));
     enabledURL.pathname = "/photos/map";
     const beforeMap = libraryReads;
+    // Startup and stream connection both queue a refetch. Wait for a full-map
+    // read begun after connection before measuring requests caused by movement.
+    let listingsAtConnection = Infinity;
+    const connected = page
+      .waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/photos/events")
+      .then(() => {
+        listingsAtConnection = listings;
+      });
+    const initialRefresh = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/photos/assets/query") &&
+        response.request().postDataJSON()?.projection === "map" &&
+        listings > Math.max(1, listingsAtConnection),
+    );
     await page.goto(enabledURL.href);
+    await connected;
+    await initialRefresh;
     await expect(page.getByText("14 located photos", { exact: true })).toBeVisible();
     expect(libraryReads).toBe(beforeMap);
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible();

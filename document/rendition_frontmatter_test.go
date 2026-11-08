@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 
@@ -157,4 +158,35 @@ func TestEnvelopeRenditionV1FrontMatterNeverCarriesHTMLMarkup(t *testing.T) {
 func frontmatterHash(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
+}
+
+func TestOmissionOnlyPDFEnvelope(t *testing.T) {
+	source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Family: "pdf", UnitKind: EvidenceUnitPage, Completeness: EvidencePartial,
+		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &SourceEvidenceLocatorV1{Kind: EvidenceLocatorPage, IndexOrigin: EvidenceIndexOriginOne, Start: 1, End: 1}}},
+	}
+	normalized := normalizeRenditionEvidence(t, source)
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
+	require.NoError(t, err)
+	rendition, err := BuildRenditionV1(normalized, policy)
+	require.NoError(t, err)
+	require.Empty(t, rendition.Markdown)
+	require.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", rendition.MarkdownChecksum)
+	envelope := RenditionEnvelopeV1{BuildID: strings.Repeat("b", 64), SourceSHA256: "85bcc1ce42ddbdbb384839d9d7c947d3d811a52ea5bf63617ac32a3bc88053c5", SourceFormat: "pdf", SourceMediaType: "application/pdf", RenditionRequestFingerprint: strings.Repeat("e", 64), EvidenceLexicalFingerprint: strings.Repeat("f", 64), NormalizedEvidenceContract: NormalizedEvidenceContractV1, UnitKind: EvidenceUnitPage}
+	got, front, err := EnvelopeRenditionV1(rendition, envelope)
+	require.NoError(t, err)
+	fixture, err := os.ReadFile("../frontend/src/testdata/omission-only-pdf.md")
+	require.NoError(t, err)
+	require.Equal(t, string(fixture), string(got.Markdown))
+	parsed, body, err := ParseRenditionFrontMatterV1(got.Markdown)
+	require.NoError(t, err)
+	require.Equal(t, front, parsed)
+	require.Empty(t, body)
+	require.Zero(t, parsed.Document.UnitCount)
+	require.Empty(t, parsed.Navigation.Entries)
+	require.True(t, parsed.Navigation.Complete)
+	envelope.SourceFormat = "epub"
+	_, _, err = EnvelopeRenditionV1(rendition, envelope)
+	require.Error(t, err)
+	_, _, err = ParseRenditionFrontMatterV1(append(got.Markdown, []byte("unexpected")...))
+	require.ErrorContains(t, err, "body and unit count disagree")
 }

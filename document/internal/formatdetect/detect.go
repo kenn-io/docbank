@@ -408,6 +408,7 @@ var (
 // PDFLimits binds parser allocations and decoded stream measurements to one
 // inspection policy.
 type PDFLimits struct {
+	TextOnly         bool
 	MaxExpandedBytes int64
 	MaxEntryBytes    int64
 	MaxEntries       int64
@@ -445,8 +446,8 @@ type PDFInfoMetadata struct {
 }
 
 // InspectPDF validates the authoritative PDF object graph and measures every
-// supported stream under the supplied limits. Opaque image filters are rejected
-// because their decoded size cannot be established without rendering them.
+// supported stream under the supplied limits. Text-only inspection admits
+// opaque image streams without decoding pixels; other inspection rejects them.
 func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 	context, err := validatePDFObjectGraph(data, limits, false)
 	if err != nil {
@@ -481,7 +482,7 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 		}
 		measurements.CompressedBytes += encodedBytes
 
-		decodedBytes, err := boundedPDFStreamBytes(stream, limits, measurements.ExpandedBytes)
+		decodedBytes, err := boundedPDFStreamBytes(context, stream, limits, measurements.ExpandedBytes)
 		if err != nil {
 			return PDFMeasurements{}, fmt.Errorf("measure PDF stream %d: %w", number, err)
 		}
@@ -646,10 +647,10 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bo
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	return checkPDFReferences(context, allowEmptyPassword)
+	return checkPDFReferences(context, allowEmptyPassword, limits.TextOnly)
 }
 
-func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model.Context, error) {
+func checkPDFReferences(context *model.Context, allowEmptyPassword, allowExternalReferences bool) (*model.Context, error) {
 	if context.Encrypt != nil && !allowEmptyPassword {
 		return nil, ErrPDFEncrypted
 	}
@@ -660,7 +661,7 @@ func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model
 		}
 		return nil, fmt.Errorf("inspect PDF object graph: %w", err)
 	}
-	if external {
+	if external && !allowExternalReferences {
 		return nil, ErrPDFExternalReference
 	}
 	return context, nil
@@ -873,10 +874,19 @@ func pdfStreamDictionary(object types.Object) (*types.StreamDict, bool) {
 	}
 }
 
-func boundedPDFStreamBytes(stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
+func boundedPDFStreamBytes(context *model.Context, stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
 	for _, pipeline := range stream.FilterPipeline {
 		switch pipeline.Name {
 		case filter.DCT, filter.JBIG2, filter.JPX:
+			if limits.TextOnly {
+				subtype, err := pdfDictName(context, stream.Dict, "Subtype")
+				if err != nil {
+					return 0, err
+				}
+				if subtype == "Image" {
+					return 0, nil
+				}
+			}
 			return 0, ErrPDFUnbounded
 		}
 	}

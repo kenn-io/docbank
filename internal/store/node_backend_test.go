@@ -57,11 +57,24 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(display_name,display_name_folded,state,revision,updated_at,key_face_id) ON "+schema+".persons TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(person_id) ON "+schema+".person_identities TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(person_id,uid_kind,uid_state,last_seen_revision,display_name_snapshot,updated_at) ON "+schema+".person_external_identities TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(surviving_uid,observed_at) ON "+schema+".person_external_uid_aliases TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(surviving_person_id,reason,retired_at) ON "+schema+".person_aliases TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".person_merges,"+schema+".person_splits TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(person_id,raw_label,raw_label_folded,basis,source_ref,revision,recorded_at,retired_at) ON "+schema+".custodian_assignments TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(person_id,action,note,revision,photo_mark) ON "+schema+".person_document_assertions TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(suggested_person_id,state,decided_person_id,decided_at,revision) ON "+schema+".person_match_candidates TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".person_candidate_faces TO "+quotedRole+
+		"; GRANT UPDATE(assertion_id) ON "+schema+".photo_faces TO "+quotedRole)
+	require.NoError(t, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(name,starred,revision,cover_asset_id,updated_at,deleted_at) ON "+schema+".photo_sets TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_set_members TO "+quotedRole)
 	require.NoError(t, err)
 
-	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) ON "+schema+".photo_library_settings TO "+quotedRole+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds,representative_sequence) ON "+schema+".photo_library_settings TO "+quotedRole+
 		"; GRANT DELETE,UPDATE(passcode_hash) ON "+schema+".photo_hidden_credentials TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_hidden_failures TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(locked_until) ON "+schema+".photo_hidden_lockout TO "+quotedRole+
@@ -77,7 +90,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(next_attempt_at) ON "+schema+".text_extraction_queue TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".text_searchable_versions TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(extractor_version,status,error,attempts,text,extracted_at) ON "+schema+".extracted_text TO "+quotedRole+
-		"; GRANT INSERT,UPDATE(hidden_at,excluded_at,display_file_id,display_override_file_id,revision,updated_at) ON "+schema+".photo_assets TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(hidden_at,excluded_at,display_file_id,display_override_file_id,representative_rank,revision,updated_at) ON "+schema+".photo_assets TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_change_receipts TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(asset_id,role,sidecar_of_file_id,source_provenance_identity,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields,flag_owner) ON "+schema+".photo_files TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_timeline TO "+quotedRole+

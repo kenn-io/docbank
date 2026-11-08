@@ -612,7 +612,7 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			if err := s.photoAuthoredAccessTx(ctx, tx, change.AssetID); err != nil {
 				return err
 			}
-			restored, err := setPhotoRepresentativeTx(ctx, tx, change.AssetID, change.AfterRevision, change.Before)
+			restored, err := s.setPhotoRepresentativeTx(ctx, tx, change.AssetID, change.AfterRevision, change.Before)
 			if err != nil {
 				return err
 			}

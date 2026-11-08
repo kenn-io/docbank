@@ -397,7 +397,7 @@ func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver) (c
 	if err != nil {
 		return nil, fmt.Errorf("beginning temporary schema transaction: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+	if err := applySchema(ctx, tx); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("applying current schema to temporary database: %w", err), tx.Rollback(),
 		)

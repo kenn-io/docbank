@@ -447,7 +447,7 @@ func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, asse
  JOIN nodes source_node ON source_node.id=cv.node_id AND source_node.current_version_id=cv.version_id
  JOIN person_document_assertions assertion ON assertion.content_version_id=cv.version_id
  JOIN persons person ON person.person_id=assertion.person_id
- WHERE member.asset_id=? AND cv.version_id=? AND assertion.person_id=? AND person.state<>'retired'
+ WHERE member.asset_id=$1 AND cv.version_id=$2 AND assertion.person_id=$3 AND person.state<>'retired'
  AND assertion.role='depicted' AND assertion.action='assert')`, assetID, versionID, personID).Scan(&eligible)
 	if err != nil {
 		return err

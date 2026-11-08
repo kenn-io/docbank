@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-func TestOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T) {
+func checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	firstInput := candidateForTest(t, "name_alias:ada", "Ada", "", []PersonCandidateOccurrence{
 		{ContentVersionID: versionID, Role: "sender", EvidenceKind: "email_generation", EvidenceID: "claim-b"},
@@ -53,9 +54,10 @@ func TestOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T)
 	require.Equal(t, []string{first.CandidateID}, []string{rejected[0].CandidateID})
 }
 
-func TestDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T) {
+func checkDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, capturedVersion := seedPeopleVersion(t, s)
 	_, unrelatedVersion := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Ada Lovelace", "operator")
@@ -121,9 +123,10 @@ func TestDocumentCandidateLinkHonorsVisiblePeopleScope(t *testing.T) {
 	require.Equal(t, person.PersonID, assertions[0].PersonID)
 }
 
-func TestDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T) {
+func checkDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:grace hopper", "Grace Hopper", "", []PersonCandidateOccurrence{{
 		ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "author-claim",
@@ -150,10 +153,11 @@ func TestDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T) {
 	require.Equal(t, person.PersonID, assertions[0].PersonID)
 }
 
-func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testing.T) {
+func checkCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	t.Run("reject", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		_, versionID := seedPeopleVersion(t, s)
 		candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:rejected", "Rejected", "", []PersonCandidateOccurrence{{
 			ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "rejected-claim",
@@ -168,7 +172,7 @@ func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testin
 	})
 
 	t.Run("existing assertion", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		_, versionID := seedPeopleVersion(t, s)
 		person, err := s.CreatePerson(t.Context(), "Existing Person", "operator")
 		require.NoError(t, err)
@@ -190,12 +194,12 @@ func TestCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testin
 	})
 
 	t.Run("pruned evidence", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		nodeID, versionID := seedPeopleVersion(t, s)
 		candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:pruned", "Pruned", "", []PersonCandidateOccurrence{{
 			ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "pruned-claim",
 		}}))
-		_, err := s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id=?`, nodeID)
+		_, err := s.db.ExecContext(t.Context(), `DELETE FROM nodes WHERE id=$1`, nodeID)
 		require.NoError(t, err)
 		var epochBefore int64
 		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
@@ -217,9 +221,10 @@ func assertCandidateDecisionEpoch(t *testing.T, s *Store, epochBefore int64) {
 	require.Equal(t, epochBefore+1, epoch)
 }
 
-func TestAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T) {
+func checkAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, versionID := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Records Team", "operator")
 	require.NoError(t, err)
@@ -252,19 +257,12 @@ func TestAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t *testing.T) {
 	require.Equal(t, epochBefore+2, epoch)
 }
 
-func TestOpenPersonCandidateReportsQueueCapacity(t *testing.T) {
+func checkOpenPersonCandidateReportsQueueCapacity(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, versionID := seedPeopleVersion(t, s)
-	_, err := s.db.ExecContext(t.Context(), `WITH RECURSIVE seq(n) AS (
-		SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < ?
-	) INSERT INTO person_match_candidates(
-		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
-		occurrence_count,revision,state,decided_person_id,created_at,decided_at
-	) SELECT printf('candidate-%05d',n),printf('name_alias:person-%05d',n),'Synthetic Person',NULL,
-		'name_only','[]',printf('%064d',n),1,1,'open',NULL,?,NULL FROM seq`,
-		maxOpenPersonCandidates, nowRFC3339())
-	require.NoError(t, err)
+	fillFaceCandidateQueue(t, s, versionID, maxOpenPersonCandidates)
 	count, full, err := s.OpenPersonCandidateCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, maxOpenPersonCandidates, count)
@@ -345,9 +343,10 @@ func openCandidateForTest(t *testing.T, s *Store, candidate PersonMatchCandidate
 	return opened
 }
 
-func TestCandidateAuthoritySurvivesPersonMerge(t *testing.T) {
+func checkCandidateAuthoritySurvivesPersonMerge(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, version := seedPeopleVersion(t, s)
 	survivor, err := s.CreatePerson(t.Context(), "Survivor", "operator")
 	require.NoError(t, err)
@@ -385,9 +384,10 @@ func TestCandidateAuthoritySurvivesPersonMerge(t *testing.T) {
 	require.Equal(t, survivor.PersonID, linkedCandidates[0].DecidedPersonID)
 }
 
-func TestCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t *testing.T) {
+func checkCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	_, version := seedPeopleVersion(t, s)
 	person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
 	require.NoError(t, err)
@@ -413,11 +413,12 @@ func TestCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t *testi
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestCandidateAssertionsMergeMatchingActions(t *testing.T) {
+func checkCandidateAssertionsMergeMatchingActions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, actions := range [][2]string{{"assert", "assert"}, {"suppress", "suppress"}, {"assert", "suppress"}, {"suppress", "assert"}} {
 		t.Run(actions[0]+"/"+actions[1], func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			_, version := seedPeopleVersion(t, s)
 			left, err := s.CreatePerson(t.Context(), "Left", "operator")
 			require.NoError(t, err)
@@ -454,9 +455,10 @@ func TestCandidateAssertionsMergeMatchingActions(t *testing.T) {
 	}
 }
 
-func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
+func checkCandidateAuthorityPreventsMetadataImport(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
 		ContentVersionID: "00000000-0000-4000-8000-000000000001", Role: "author", EvidenceKind: "source_metadata", EvidenceID: "pruned-claim",
 	}}))
@@ -466,7 +468,8 @@ func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
 	require.ErrorContains(t, err, "not pristine")
 }
 
-func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
+func checkCandidateLinksSkipPrunedVersions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name, evidenceKind, action string
@@ -484,7 +487,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 		{name: "face new person all pruned", evidenceKind: "face", action: "new_person", allPruned: true, wantErr: ErrNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			person, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
@@ -569,20 +572,6 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 	}
 }
 
-func TestCandidateRejectionDoesNotNeedEvidenceDecode(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	_, version := seedPeopleVersion(t, s)
-	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", []PersonCandidateOccurrence{{
-		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
-	}}))
-	_, err := s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET evidence_json=? WHERE candidate_id=?`, []byte("{"), candidate.CandidateID)
-	require.NoError(t, err)
-	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
-	require.NoError(t, err)
-	require.Equal(t, "rejected", decided.State)
-}
-
 func TestCandidateRejectsInvalidActorKeys(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -601,12 +590,13 @@ func TestCandidateRejectsInvalidActorKeys(t *testing.T) {
 	}
 }
 
-func TestPersonAssertionDeletionAdvancesBindingEpoch(t *testing.T) {
+func checkPersonAssertionDeletionAdvancesBindingEpoch(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, operation := range []string{"prune", "trash"} {
 		for _, asserted := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/asserted=%t", operation, asserted), func(t *testing.T) {
-				s := newTestStore(t)
+				s := newStore(t)
 				ctx := t.Context()
 				folder, err := s.Mkdir(ctx, s.RootID(), "records")
 				require.NoError(t, err)

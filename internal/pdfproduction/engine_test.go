@@ -23,9 +23,7 @@ func TestNativeEngineRSSMonitorCause(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
 	entered := false
-	native, ok := engine.(*pdfiumEngine)
-	require.True(t, ok)
-	err = native.withInstanceContext(t.Context(), func(ctx context.Context, _ pdfium.Pdfium) error {
+	err = engine.withInstanceContext(t.Context(), func(ctx context.Context, _ pdfium.Pdfium) error {
 		entered = true
 		over.Store(true)
 		<-ctx.Done()
@@ -50,9 +48,7 @@ func TestNativeEnginePageDeadline(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, engine.Close()) }()
 	entered := false
-	native, ok := engine.(*pdfiumEngine)
-	require.True(t, ok)
-	err = native.withInstanceContext(t.Context(), func(ctx context.Context, _ pdfium.Pdfium) error {
+	err = engine.withInstanceContext(t.Context(), func(ctx context.Context, _ pdfium.Pdfium) error {
 		entered = true
 		<-ctx.Done()
 		return ctx.Err()
