@@ -1,20 +1,25 @@
 package main
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/brainclient"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/push"
 )
 
 func newBrainCmd() *cobra.Command {
 	var configRoot string
-	cmd := &cobra.Command{Use: "brain", Short: "Connect and publish a Markdown folder", GroupID: groupSources}
+	cmd := &cobra.Command{Use: "brain", Short: "Connect and publish a Markdown folder", Long: "Save a Markdown folder connection, publish changes, and inspect its status.", GroupID: groupSources}
 	cmd.PersistentFlags().StringVar(&configRoot, "config-root", "", "client configuration directory")
 	registry := func() (*brainclient.Registry, error) {
 		root := configRoot
@@ -31,7 +36,7 @@ func newBrainCmd() *cobra.Command {
 	var excludes []string
 	var indexLocal bool
 	var settle, age, interval time.Duration
-	connect := &cobra.Command{Use: "connect <local-dir>", Short: "Save a folder and its daemon target", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	connect := &cobra.Command{Use: "connect <local-dir>", Short: "Save a folder and its daemon target", Example: "  docbank brain connect ./notes --name notes --dest /notes", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if vaultRoot != "" && remote != "" {
 			return errors.New("choose either --vault-root or --to")
 		}
@@ -84,19 +89,27 @@ func newBrainCmd() *cobra.Command {
 	connect.Flags().DurationVar(&interval, "scan-interval", 5*time.Second, "scan interval")
 	_ = connect.MarkFlagRequired("name")
 	_ = connect.MarkFlagRequired("dest")
-	run := &cobra.Command{Use: "run <name>", Short: "Publish changes until stopped", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	run := &cobra.Command{Use: "run <name>", Short: "Publish changes until stopped", Example: "  docbank brain run notes", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := registry()
 		if err != nil {
 			return err
 		}
-		report, err := brainclient.New(r, brainclient.Dependencies{}).Run(cmd.Context(), args[0], nil)
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		report, err := brainclient.New(r, brainclient.Dependencies{}).Run(ctx, args[0], nil)
+		if ctx.Err() != nil && cmd.Context().Err() == nil && errors.Is(err, context.Canceled) {
+			err = nil
+			if report.Failed > 0 {
+				err = fmt.Errorf("%w: %d failed", push.ErrFilesFailed, report.Failed)
+			}
+		}
 		if err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Added %d, updated %d, unchanged %d, failed %d\n", report.Added, report.Updated, report.Skipped, report.Failed)
 		return err
 	}}
-	status := &cobra.Command{Use: "status <name>", Short: "Inspect a saved connection", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	status := &cobra.Command{Use: "status <name>", Short: "Inspect a saved connection", Example: "  docbank brain status notes", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := registry()
 		if err != nil {
 			return err
@@ -108,7 +121,7 @@ func newBrainCmd() *cobra.Command {
 		return json.MarshalWrite(cmd.OutOrStdout(), result)
 	}}
 	var expectedHead string
-	recovery := &cobra.Command{Use: "accept-local <name> <source-ref>", Short: "Allow the next local upload against an observed archive head", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	recovery := &cobra.Command{Use: "accept-local <name> <source-ref>", Short: "Allow the next local upload against an observed archive head", Example: "  docbank brain accept-local notes note.md --expected-head 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := registry()
 		if err != nil {
 			return err

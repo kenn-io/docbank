@@ -33,7 +33,7 @@ func TestBrainRegistryRoundTripProperty(t *testing.T) {
 		for i := range count {
 			suffix := hegel.Draw(ht, hegel.Text().Alphabet("abcdefghijklmnopqrstuvwxyz0123456789-_.").MinSize(1).MaxSize(20))
 			leaf := hegel.Draw(ht, hegel.Text().Alphabet("abcdefghijklmnopqrstuvwxyz αβé中-_$%&'").MinSize(1).MaxSize(30))
-			c := ConnectionConfig{Name: fmt.Sprintf("note-%d-%s", i, suffix), SourceRoot: filepath.Join(dir, "source", leaf), Destination: "/knowledge/α", Exclude: hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{".git", "cache/", "folder/child", "*.literal", "α"})).MaxSize(5)), SettleTime: time.Duration(hegel.Draw(ht, hegel.Integers(int64(0), int64(math.MaxInt64)))), MinimumAge: time.Duration(hegel.Draw(ht, hegel.Integers(int64(0), int64(math.MaxInt64)))), ScanInterval: time.Duration(hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))), IndexLocal: hegel.Draw(ht, hegel.Booleans())}
+			c := ConnectionConfig{Name: fmt.Sprintf("note-%d-%s", i, suffix), SourceRoot: filepath.Join(dir, "source", leaf), Destination: "/knowledge/α", Exclude: hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{".git", "cache/", "folder/child", "*.literal", "α"})).MaxSize(5)), SettleTime: time.Duration(hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))), MinimumAge: time.Duration(hegel.Draw(ht, hegel.Integers(int64(0), int64(math.MaxInt64)))), ScanInterval: time.Duration(hegel.Draw(ht, hegel.Integers(int64(1), int64(math.MaxInt64)))), IndexLocal: hegel.Draw(ht, hegel.Booleans())}
 			if len(c.Exclude) == 0 {
 				c.Exclude = []string{}
 			}

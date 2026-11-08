@@ -59,6 +59,7 @@ Search and text:
   search  Find files and folders by name, text, tag, type, folder, or date
 
 Email, media, photos, people:
+  brain  Connect and publish a Markdown folder
   email  Import mailboxes and inspect or render retained email
   media  Retain and inspect recordings
   people  Manage canonical people

@@ -2,6 +2,8 @@ package brainclient
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,12 +15,12 @@ import (
 func TestBrainClientExplicitIndexingDoesNotGrantWithoutReviewedPlan(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	registry, err := OpenRegistry(root)
+	registry, err := OpenRegistry(filepath.Join(root, "registry"))
 	require.NoError(t, err)
 	acquired := false
 	c := New(registry, Dependencies{Ensure: func(context.Context, string) (*daemonconn.Connection, error) {
 		acquired = true
-		return nil, nil
+		return nil, errors.New("unexpected acquisition")
 	}})
 	cfg := ConnectionConfig{Name: "notes", SourceRoot: t.TempDir(), Destination: "/notes", LocalVaultRoot: t.TempDir(),
 		SettleTime: 2 * time.Second, ScanInterval: 5 * time.Second, IndexLocal: true}
@@ -31,7 +33,7 @@ func TestBrainClientExplicitIndexingDoesNotGrantWithoutReviewedPlan(t *testing.T
 
 func TestBrainClientRunPinsTargetAndHoldsLock(t *testing.T) {
 	t.Parallel()
-	registry, err := OpenRegistry(t.TempDir())
+	registry, err := OpenRegistry(filepath.Join(t.TempDir(), "registry"))
 	require.NoError(t, err)
 	vault := t.TempDir()
 	cfg := ConnectionConfig{Name: "notes", SourceRoot: t.TempDir(), Destination: "/notes", LocalVaultRoot: vault,

@@ -20,7 +20,7 @@ import (
 // ConnectionConfig pins one named publisher's local source and daemon target.
 // KeyFile is a reference to an existing key source, never the key value.
 // Durations are stored as integer nanoseconds. Defaults are selected by the
-// caller; zero settle/minimum age remains an explicit valid choice.
+// caller; minimum age may be zero, while settle and scan intervals must be positive.
 type ConnectionConfig struct {
 	Name           string        `json:"name"`
 	SourceRoot     string        `json:"source_root"`
@@ -120,8 +120,8 @@ func (c ConnectionConfig) validate() error {
 			return errors.New("destination names must be canonical")
 		}
 	}
-	if c.SettleTime < 0 || c.MinimumAge < 0 || c.ScanInterval <= 0 {
-		return errors.New("settle/minimum age must be nonnegative and scan interval positive")
+	if c.SettleTime <= 0 || c.MinimumAge < 0 || c.ScanInterval <= 0 {
+		return errors.New("settle time and scan interval must be positive; minimum age must be nonnegative")
 	}
 
 	return ingest.ValidateOptions(ingest.Options{Exclude: c.Exclude})
