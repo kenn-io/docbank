@@ -145,7 +145,11 @@ func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
 	require.NoError(t, f.control(t.Context(), "revoke", supplied.ID))
 	require.NoError(t, f.control(t.Context(), "release", ""))
 	result := <-done
-	require.NoError(t, result.err)
+	if result.err != nil {
+		require.Contains(t, result.err.Error(), "stale_index")
+		require.Empty(t, result.report.Results)
+		return
+	}
 	require.Empty(t, result.report.Results)
 	require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
 	require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")

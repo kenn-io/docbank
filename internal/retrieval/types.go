@@ -121,10 +121,11 @@ const (
 )
 
 type Coverage struct {
-	BindingRequired   bool
-	ScopedDocuments   int
-	CompleteDocuments int
-	State             CoverageState
+	CompleteContentVersionIDs []string
+	BindingRequired           bool
+	ScopedDocuments           int
+	CompleteDocuments         int
+	State                     CoverageState
 }
 
 type Degradation string

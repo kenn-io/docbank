@@ -28,7 +28,7 @@ func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, boo
 	slices.SortFunc(identities, func(leftKey, rightKey fusionIdentity) int {
 		left, right := byDocument[leftKey].Document, byDocument[rightKey].Document
 		return cmp.Or(cmp.Compare(left.VaultID, right.VaultID),
-			cmp.Compare(left.NodeID, right.NodeID), cmp.Compare(left.ContentVersionID, right.ContentVersionID))
+			cmp.Compare(left.NodeID, right.NodeID), cmp.Compare(left.ContentVersionID, right.ContentVersionID), cmp.Compare(left.BuildID, right.BuildID))
 	})
 	// Shared fusion orders string keys before truncation. Ordinals preserve
 	// the document order, including numeric node IDs, without encoding evidence.

@@ -87,7 +87,12 @@ func (service *Service) searchMediaSources(
 		coverage.BindingRequired = true
 		if len(plan.builds) != 0 {
 			coverage.BindingRequired = report.Coverage.BindingRequired
-			coverage.CompleteDocuments = min(coverage.CompleteDocuments, report.Coverage.CompleteDocuments)
+			coverage.CompleteDocuments = 0
+			for id, complete := range plan.complete {
+				if complete && slices.Contains(report.Coverage.CompleteContentVersionIDs, id) {
+					coverage.CompleteDocuments++
+				}
+			}
 		}
 		if len(plan.builds) == 0 || report.Coverage.State != retrieval.CoverageComplete || coverage.CompleteDocuments != coverage.ScopedDocuments {
 			coverage.State = retrieval.CoverageIncomplete

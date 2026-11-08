@@ -208,6 +208,7 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		return Report{}, err
 	}
 	if revalidation.Coverage != nil {
+		report.Coverage.CompleteContentVersionIDs = revalidation.Coverage.CompleteContentVersionIDs
 		report.Coverage.ScopedDocuments = revalidation.Coverage.ScopedDocuments
 		report.Coverage.CompleteDocuments = revalidation.Coverage.CompleteDocuments
 		report.Coverage.State = CoverageComplete
@@ -342,7 +343,7 @@ func compareResults(left, right Result) int {
 	return cmp.Or(cmp.Compare(right.Score, left.Score),
 		cmp.Compare(left.Document.VaultID, right.Document.VaultID),
 		cmp.Compare(left.Document.NodeID, right.Document.NodeID),
-		cmp.Compare(left.Document.ContentVersionID, right.Document.ContentVersionID))
+		cmp.Compare(left.Document.ContentVersionID, right.Document.ContentVersionID), cmp.Compare(left.Document.BuildID, right.Document.BuildID))
 }
 
 func conservativeCoverage(reports []Report) Coverage {
