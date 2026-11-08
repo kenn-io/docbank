@@ -30,7 +30,7 @@ type NoteLocalTextPlan struct {
 func registerNotePublicationRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getNoteLocalTextPlan", Method: http.MethodGet,
-		Path: "/api/v1/note-publications/local-text-plan", Summary: "Preview local note text indexing consent",
+		Path: "/api/v1/notes/local-text-plan", Summary: "Preview local note text indexing consent",
 	}, func(ctx context.Context, _ *struct{}) (*struct{ Body NoteLocalTextPlan }, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()

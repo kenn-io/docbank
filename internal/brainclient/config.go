@@ -29,9 +29,9 @@ type ConnectionConfig struct {
 	RemoteOrigin   string        `json:"remote_origin"`
 	KeyFile        string        `json:"key_file"`
 	Exclude        []string      `json:"exclude"`
-	SettleTime     time.Duration `json:"settle_time,format:nano"`
-	MinimumAge     time.Duration `json:"minimum_age,format:nano"`
-	ScanInterval   time.Duration `json:"scan_interval,format:nano"`
+	SettleTime     time.Duration `json:"settle_time"`
+	MinimumAge     time.Duration `json:"minimum_age"`
+	ScanInterval   time.Duration `json:"scan_interval"`
 	IndexLocal     bool          `json:"index_local"`
 }
 

@@ -4,16 +4,19 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestNoteLocalTextPlanRequiresAuthenticationAndConsent(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, func(deps *api.Deps) {
+	ts, catalog := newTestServer(t, func(deps *api.Deps) {
 		name, profile, err := processing.NewNotePlaintextProfile()
 		require.NoError(t, err)
 		gate := api.NewOperationGate()
@@ -26,7 +29,7 @@ func TestNoteLocalTextPlanRequiresAuthenticationAndConsent(t *testing.T) {
 		})
 		require.NoError(t, err)
 	})
-	const route = "/api/v1/note-publications/local-text-plan"
+	const route = "/api/v1/notes/local-text-plan"
 	response, _ := do(t, ts, http.MethodGet, route, map[string]string{"X-Api-Key": ""}, nil)
 	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
 	response, body := do(t, ts, http.MethodGet, route, nil, nil)
@@ -37,4 +40,13 @@ func TestNoteLocalTextPlanRequiresAuthenticationAndConsent(t *testing.T) {
 	require.True(t, plan.Plan.ConsentRequired)
 	require.NotEmpty(t, plan.ConsentRequest.ProfileFingerprint)
 	require.Equal(t, plan.Plan.ProfileFingerprint, plan.ConsentRequest.ProfileFingerprint)
+	_, err := catalog.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{
+		Name: "local-text-plan", Destination: "/notes", PolicyFingerprint: strings.Repeat("a", 64), OperationID: uuid.NewV4().String(),
+	})
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/note-publications/local-text-plan", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var status api.NotePublicationStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	require.Equal(t, "local-text-plan", status.Name)
 }

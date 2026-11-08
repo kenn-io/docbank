@@ -22,6 +22,19 @@ import (
 
 const maxRegistryBytes = 1 << 20
 
+var registryDurationMarshalers = json.WithMarshalers(json.MarshalFunc(func(value time.Duration) ([]byte, error) {
+	return json.Marshal(int64(value))
+}))
+
+var registryDurationUnmarshalers = json.WithUnmarshalers(json.UnmarshalFunc(func(data []byte, value *time.Duration) error {
+	var nanos int64
+	if err := json.Unmarshal(data, &nanos); err != nil {
+		return err
+	}
+	*value = time.Duration(nanos)
+	return nil
+}))
+
 // ErrBusy means a connection is running or another process is changing it.
 var ErrBusy = errors.New("connection is running or being updated")
 
@@ -87,7 +100,7 @@ func (r *Registry) List(ctx context.Context) ([]ConnectionConfig, error) {
 		return nil, errors.New("client registry exceeds 1 MiB")
 	}
 	var record registryRecord
-	if err = json.Unmarshal(data, &record, json.RejectUnknownMembers(true)); err != nil {
+	if err = json.Unmarshal(data, &record, json.RejectUnknownMembers(true), registryDurationUnmarshalers); err != nil {
 		return nil, errors.New("invalid client registry JSON")
 	}
 	if record.Version != 1 || record.Connections == nil {
@@ -277,7 +290,7 @@ func (r *Registry) save(ctx context.Context, list []ConnectionConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	data, err := json.Marshal(registryRecord{Version: 1, Connections: list})
+	data, err := json.Marshal(registryRecord{Version: 1, Connections: list}, registryDurationMarshalers)
 	if err != nil {
 		return errors.New("encoding client registry failed")
 	}
