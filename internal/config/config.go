@@ -970,6 +970,9 @@ func validateProcessingProfiles(c Config) error {
 		}
 	}
 	for name, profile := range c.ProcessingProfiles {
+		if name == LocalFacesProfile {
+			return fmt.Errorf("profile %q is reserved", LocalFacesProfile)
+		}
 		prefix := fmt.Sprintf("[processing_profiles.%s]", name)
 		if err := validateProfileName(name, prefix); err != nil {
 			return err

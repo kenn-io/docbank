@@ -351,6 +351,10 @@ func TestProcessingProfilesRejectInvalidReferencesAndPolicies(t *testing.T) {
 		mutate func(*Config)
 		want   string
 	}{
+		{"reserved face profile", func(c *Config) {
+			c.ProcessingProfiles[LocalFacesProfile] = c.ProcessingProfiles["archive"]
+			delete(c.ProcessingProfiles, "archive")
+		}, `profile "local-faces" is reserved`},
 		{"unknown rendition", func(c *Config) {
 			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Rendition = "missing" })
 		}, "rendition"},

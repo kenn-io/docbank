@@ -375,9 +375,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configure local faces: %w", err)
 	}
-	if _, exists := processingProfiles[config.LocalFacesProfile]; exists {
-		return fmt.Errorf("profile %q is reserved", config.LocalFacesProfile)
-	}
 	processingProfiles[config.LocalFacesProfile] = faceProfile
 	captionName, captionProfile, err := processing.NewSuppliedCaptionProfile(s, blobs, "daemon:operator")
 	if err != nil {
