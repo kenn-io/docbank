@@ -10,6 +10,7 @@ import (
 )
 
 const notePublicationsStorageSchemaVersion = 49
+const noteSourceUnavailable = "unavailable"
 
 // PublishedNoteSelector limits a query to current, eligible authored sources.
 // An empty publication selects all active publications. A nil selector leaves
@@ -85,7 +86,7 @@ func ValidatePublishedNoteSource(source NotePublicationSource) error {
 		return errors.New("invalid published note presence")
 	}
 	switch source.Availability {
-	case "retained", "unavailable":
+	case "retained", noteSourceUnavailable:
 	default:
 		return errors.New("invalid published note availability")
 	}

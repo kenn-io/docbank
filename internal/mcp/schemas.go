@@ -1069,7 +1069,8 @@ func publishedNoteSelectorSchema() schema {
 	return objectSchema(schema{"publication": stringSchema(64)})
 }
 func publishedNoteIdentitySchema() schema {
+	const publishedNoteSizeField = "size"
 	return objectSchema(schema{
-		"vault_id": uuidSchema(), "publication": stringSchema(64), "source_ref": stringSchema(4096), "node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "hash": schema{"type": "string", "pattern": "^[0-9a-f]{64}$"}, "size": integerSchema(0, 0), "source_revision": integerSchema(1, 0), "namespace_revision": integerSchema(1, 0),
-	}, "vault_id", "publication", "source_ref", "node_id", "content_version_id", "hash", "size", "source_revision", "namespace_revision")
+		answerVaultIDField: uuidSchema(), "publication": stringSchema(64), "source_ref": stringSchema(4096), "node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "hash": schema{"type": "string", "pattern": "^[0-9a-f]{64}$"}, publishedNoteSizeField: integerSchema(0, 0), "source_revision": integerSchema(1, 0), "namespace_revision": integerSchema(1, 0),
+	}, answerVaultIDField, "publication", "source_ref", "node_id", "content_version_id", "hash", publishedNoteSizeField, "source_revision", "namespace_revision")
 }

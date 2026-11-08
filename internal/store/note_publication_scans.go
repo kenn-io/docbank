@@ -191,9 +191,9 @@ func scanPublishedNote(row scanner, vaultID string) (NotePublicationSource, erro
 	if nodeID.Valid {
 		source.ArchiveHead = &NoteArchiveHead{NodeID: nodeID.Int64, ContentVersionID: version.String, Hash: hash.String, Size: size.Int64}
 	}
-	if !nodeID.Valid || !retained.Valid || source.Availability == "unavailable" {
-		source.Availability = "unavailable"
-		source.Conflict = "unavailable"
+	if !nodeID.Valid || !retained.Valid || source.Availability == noteSourceUnavailable {
+		source.Availability = noteSourceUnavailable
+		source.Conflict = noteSourceUnavailable
 	} else if trashed.Valid {
 		source.Conflict = "trashed"
 	} else if version.String != id.ContentVersionID {
@@ -337,7 +337,7 @@ func (s *Store) AcceptPublishedNote(ctx context.Context, request NotePublication
 			return ErrPublicationSourceStale
 		}
 		if exists {
-			if previous.Availability == "unavailable" {
+			if previous.Availability == noteSourceUnavailable {
 				return ErrNoteSourceUnavailable
 			}
 			if previous.Conflict != "" && previous.Recovery == nil {
@@ -473,7 +473,7 @@ func (s *Store) AcknowledgePublishedNotes(ctx context.Context, request NotePubli
 			if !samePublishedNoteBinding(current.Identity, id) {
 				return ErrPublicationSourceStale
 			}
-			if current.Availability == "unavailable" {
+			if current.Availability == noteSourceUnavailable {
 				return ErrNoteSourceUnavailable
 			}
 			if current.Conflict != "" {

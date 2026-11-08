@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -23,10 +24,11 @@ func TestPublishedNoteSearchToolPreservesIdentity(t *testing.T) {
 			return
 		}
 		var request api.DocumentSearchRequest
-		require.NoError(t, json.UnmarshalRead(r.Body, &request))
-		require.NotNil(t, request.Scope)
-		require.NotNil(t, request.Scope.Filters.PublishedNotes)
-		require.Equal(t, "notebook", request.Scope.Filters.PublishedNotes.Publication)
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) || !assert.NotNil(t, request.Scope) || !assert.NotNil(t, request.Scope.Filters.PublishedNotes) {
+			http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, "notebook", request.Scope.Filters.PublishedNotes.Publication)
 		identity := &api.PublishedNoteIdentity{VaultID: testVaultID, Publication: "notebook", SourceRef: "folder/original.md", NodeID: 7, ContentVersionID: testVersionID, Hash: testAttachmentID, Size: 12, SourceRevision: 2, NamespaceRevision: 3}
 		writeDaemonJSON(t, w, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: api.DocumentSearchCoverage{State: "unknown"}, Degradations: []string{}, Results: []api.DocumentSearchResult{{VaultUID: testVaultID, NodeID: 7, ContentVersionID: testVersionID, Rank: 1, Score: 1, Path: "/synthetic.md", LexicalRank: 1, PublishedNote: identity, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}})
 	}))
@@ -38,7 +40,8 @@ func TestPublishedNoteSearchToolPreservesIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 	output := structuredMap(t, result.StructuredContent)
-	hits := output["results"].([]any)
+	hits, ok := output["results"].([]any)
+	require.True(t, ok)
 	require.Len(t, hits, 1)
 	hit, ok := hits[0].(map[string]any)
 	require.True(t, ok)

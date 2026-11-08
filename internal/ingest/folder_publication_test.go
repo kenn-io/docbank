@@ -276,7 +276,8 @@ func TestFolderPublicationFailureCountsOnlySources(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			failure := errors.New("synthetic terminal failure")
 			scanner, _ := publicationScanner(t, func(context.Context, FolderFile) error { return failure })
-			if mode == "root" {
+			switch mode {
+			case "root":
 				failure = ErrSourceChanged
 				root := scanner.watcher.config.Source
 				moved := root + "-moved"
@@ -287,9 +288,9 @@ func TestFolderPublicationFailureCountsOnlySources(t *testing.T) {
 					}
 					return os.Mkdir(root, 0o700)
 				}
-			} else if mode == "file" {
+			case "file":
 				require.NoError(t, os.WriteFile(filepath.Join(scanner.watcher.config.Source, "a.md"), []byte("note"), 0o600))
-			} else {
+			default:
 				calls := 0
 				scanner.ScanStatus = func(context.Context, FolderScanStatus) error {
 					calls++

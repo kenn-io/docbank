@@ -26,27 +26,27 @@ func beginNoteScan(tb testing.TB, s *Store) NotePublicationScan {
 	return scan
 }
 
-func noteUpload(t testing.TB, scan NotePublicationScan, ref, hash string, revision int64) NotePublicationUploadRequest {
-	t.Helper()
+func noteUpload(tb testing.TB, scan NotePublicationScan, ref, hash string, revision int64) NotePublicationUploadRequest {
+	tb.Helper()
 	return NotePublicationUploadRequest{Name: "notebook", ScanID: scan.ScanID, SourceRef: ref,
-		FileName: path.Base(ref), ParentPath: path.Join("/notes", path.Dir(ref)), OperationID: noteOperationID(t), Hash: hash, Size: 4,
+		FileName: path.Base(ref), ParentPath: path.Join("/notes", path.Dir(ref)), OperationID: noteOperationID(tb), Hash: hash, Size: 4,
 		ExpectedSourceRevision: revision}
 }
 
-func acceptNote(t testing.TB, s *Store, request NotePublicationUploadRequest) NotePublicationReceipt {
-	t.Helper()
-	receipt, err := s.AcceptPublishedNote(t.Context(), request,
+func acceptNote(tb testing.TB, s *Store, request NotePublicationUploadRequest) NotePublicationReceipt {
+	tb.Helper()
+	receipt, err := s.AcceptPublishedNote(tb.Context(), request,
 		BlobPhysical{Encoding: "raw", StoredBytes: request.Size, PackEligible: true, Created: true})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return receipt
 }
 
-func completeNoteScan(t testing.TB, s *Store, scan NotePublicationScan) NotePublicationStatus {
-	t.Helper()
-	status, err := s.CompleteNotePublicationScan(t.Context(), NotePublicationCompleteRequest{
+func completeNoteScan(tb testing.TB, s *Store, scan NotePublicationScan) NotePublicationStatus {
+	tb.Helper()
+	status, err := s.CompleteNotePublicationScan(tb.Context(), NotePublicationCompleteRequest{
 		Name: "notebook", ScanID: scan.ScanID, PolicyFingerprint: scan.PolicyFingerprint, InventoryComplete: true,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return status
 }
 
