@@ -163,34 +163,6 @@ func checkMissingPhotoVisualPreviewTargetsAfter(t *testing.T, open func(*testing
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.Equal(t, targets[1], page[0])
-
-	s = open(t)
-	ctx := t.Context()
-	raw, image, _, _ := faceMemberPreviewFixture(t, s)
-	grid, err := document.CurrentPhotoQualityFingerprints()
-	require.NoError(t, err)
-	targets, err = s.MissingPhotoVisualPreviewTargetsAfter(ctx, grid.GridRecipe, "", 100)
-	require.NoError(t, err)
-	require.Len(t, targets, 2)
-	var source PhotoVisualPreviewTarget
-	for _, target := range targets {
-		if target.VersionID == raw.CurrentVersionID {
-			source = target
-		}
-	}
-	require.Equal(t, raw.CurrentVersionID, source.VersionID)
-	eligible, err = s.PhotoVisualPreviewTargetEligible(ctx, source, grid.GridRecipe)
-	require.NoError(t, err)
-	require.True(t, eligible)
-	_, fit, err := document.MarshalVisualPreviewRecipeV1(visualPreviewRecipe())
-	require.NoError(t, err)
-	targets, err = s.MissingPhotoVisualPreviewTargetsAfter(ctx, fit, "", 100)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	require.Equal(t, image.CurrentVersionID, targets[0].VersionID)
-	eligible, err = s.PhotoVisualPreviewTargetEligible(ctx, source, fit)
-	require.NoError(t, err)
-	require.False(t, eligible)
 }
 
 func TestPhotoVisualPreviewTargetEligibilityRechecksListedTargets(t *testing.T) {
@@ -376,6 +348,30 @@ func checkFaceMemberGridPreviews(t *testing.T, open func(*testing.T) *Store) {
 	s := open(t)
 	ctx := t.Context()
 	raw, image, asset, faceID := faceMemberPreviewFixture(t, s)
+	grid, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	targets, err := s.MissingPhotoVisualPreviewTargetsAfter(ctx, grid.GridRecipe, "", 100)
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+	var source PhotoVisualPreviewTarget
+	for _, target := range targets {
+		if target.VersionID == raw.CurrentVersionID {
+			source = target
+		}
+	}
+	require.Equal(t, raw.CurrentVersionID, source.VersionID)
+	eligible, err := s.PhotoVisualPreviewTargetEligible(ctx, source, grid.GridRecipe)
+	require.NoError(t, err)
+	require.True(t, eligible)
+	_, fit, err := document.MarshalVisualPreviewRecipeV1(visualPreviewRecipe())
+	require.NoError(t, err)
+	targets, err = s.MissingPhotoVisualPreviewTargetsAfter(ctx, fit, "", 100)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.Equal(t, image.CurrentVersionID, targets[0].VersionID)
+	eligible, err = s.PhotoVisualPreviewTargetEligible(ctx, source, fit)
+	require.NoError(t, err)
+	require.False(t, eligible)
 	require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, image.CurrentVersionID, faceID), ErrNotFound)
 	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
 	require.NoError(t, err)

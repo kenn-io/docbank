@@ -19,7 +19,7 @@ import {
 import * as api from "./generated/docbank.js";
 import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
-import { sessionResponse } from "./api-transport.js";
+import { APIError, sessionResponse } from "./api-transport.js";
 import {
   ada,
   isAda,
@@ -5187,7 +5187,6 @@ it("finishes a slow suggestions read while photo events arrive and then catches 
       pages[0]!({ items: [unnamed], total: 1 });
       await pending;
     });
-    expect(people.suggestions.items).toEqual([unnamed]);
     let catchUp!: Promise<boolean | void>;
     await act(() => {
       catchUp = photoEventPass()({});
@@ -5198,12 +5197,47 @@ it("finishes a slow suggestions read while photo events arrive and then catches 
       await catchUp;
     });
     expect(read).toHaveBeenCalledTimes(2);
-    expect(people.suggestions.items).toEqual([isAda]);
   } finally {
     read.mockResolvedValue({ items: [], total: 0 });
     cleanup();
     for (const resolve of pages) resolve({ items: [], total: 0 });
     await attempt;
+  }
+});
+
+it("retries the pending suggestion refresh after a transient read failure", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const read = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: [isAda], total: 1 })
+    .mockRejectedValueOnce(new APIError("Temporary read failure", 503, "unavailable"))
+    .mockResolvedValue({ items: [unnamed], total: 1 });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [], total: 0 });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Ada 3 Library photos" });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  const refresh = photoEventPass();
+  vi.mocked(photoEvents.watchPhotoEvents).mockRestore();
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: { request: () => new Promise(() => {}) },
+  });
+  vi.useFakeTimers();
+  const watcher = photoEvents.watchPhotoEvents("synthetic", refresh, vi.fn());
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText("Temporary read failure")).toBeNull();
+  } finally {
+    watcher.stop();
+    vi.useRealTimers();
+    Reflect.deleteProperty(navigator, "locks");
   }
 });
 

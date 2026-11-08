@@ -37,9 +37,7 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 
 // photoDiscoveryScope discloses vault-wide photo processing and Hidden face inputs.
 func photoDiscoveryScope(profile configuredProfile) string {
-	if slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
-		return binding.InputKind == document.EmbeddingInputFace
-	}) {
+	if profile.hasFaces() {
 		return "Granting consent automatically queues eligible photos throughout this vault. Faces in Hidden photos are included."
 	}
 	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {

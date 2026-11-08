@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import ProcessingDialog from "./ProcessingDialog.svelte";
 import * as processingAPI from "./receipts.js";
 import type { ProcessingPlan } from "./generated/docbank.js";
-import { doclingHop, hop, plan, versionID } from "./processing-test-fixtures.js";
+import { doclingHop, plan, versionID } from "./processing-test-fixtures.js";
 
 afterEach(() => {
   cleanup();

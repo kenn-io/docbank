@@ -202,9 +202,6 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	require.EqualValues(t, 498, total, "only current evidence must reach publication")
 	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
-	for attempt := 0; attempt < 32 && service.faceSuggestionsSignature != snapshot.Signature; attempt++ {
-		require.NoError(t, service.rebuildFaceSuggestions(ctx))
-	}
 	require.Equal(t, snapshot.Signature, service.faceSuggestionsSignature)
 	retired, _, err := x.f.catalog.PersonCandidates(ctx, "superseded", 24, 0)
 	require.NoError(t, err)
@@ -329,15 +326,6 @@ func TestFaceSuggestionBatchesPreserveNewFaceAssignment(t *testing.T) {
 		require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 	}
 	require.Nil(t, x.service.faceSuggestionsPending)
-	groups = readGroups()
-	for _, group := range groups {
-		if group.SuggestedPersonID == person.PersonID {
-			_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: group.CandidateID, ExpectedRevision: group.Revision, Action: "reject", FaceOnly: true})
-			require.NoError(t, err, "the visible remaining face must be rejectable after a background publication")
-			return
-		}
-	}
-	// A fenced pass can leave the superseded group absent until catch-up.
 	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
 	for attempt := 0; attempt < 32 && x.service.faceSuggestionsSignature != snapshot.Signature; attempt++ {
@@ -347,6 +335,7 @@ func TestFaceSuggestionBatchesPreserveNewFaceAssignment(t *testing.T) {
 	for _, group := range groups {
 		if group.SuggestedPersonID == person.PersonID {
 			require.Len(t, group.Faces, 1)
+			require.NotEqual(t, face.FaceID, group.Faces[0].FaceID, "the named face must stay out of suggestions")
 			_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: group.CandidateID, ExpectedRevision: group.Revision, Action: "reject", FaceOnly: true})
 			require.NoError(t, err)
 			return
@@ -403,7 +392,7 @@ func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 	}
 }
 
-func TestFacePublicationPreservesReturningSourceReview(t *testing.T) {
+func TestFacePublicationPreservesReviewWhenSourceVectorsReturn(t *testing.T) {
 	t.Parallel()
 	x, _ := newFaceSuggestionBatchFixture(t)
 	ctx := t.Context()
