@@ -11,6 +11,9 @@ import (
 
 const notePublicationsStorageSchemaVersion = 49
 
+// NotePlaintextProfileName identifies the fixed local-only note rendition policy.
+const NotePlaintextProfileName = "brain-local-text"
+
 // PublishedNoteSelector limits a query to current, eligible authored sources.
 // An empty publication selects all active publications. A nil selector leaves
 // the ordinary archive view unchanged.

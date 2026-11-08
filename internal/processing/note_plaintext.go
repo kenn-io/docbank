@@ -13,7 +13,7 @@ import (
 )
 
 // NotePlaintextProfileName is reserved for explicitly consented local note text.
-const NotePlaintextProfileName = "brain-local-text"
+const NotePlaintextProfileName = store.NotePlaintextProfileName
 
 // NewNotePlaintextProfile builds the fixed in-process text profile. Construction
 // neither grants consent nor enrolls an embedding or network provider.

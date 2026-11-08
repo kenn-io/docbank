@@ -23,6 +23,7 @@ func checkNotePublicationScanBackend(t *testing.T, s *Store) {
 	scan := beginNoteScan(t, s)
 	request := noteUpload(t, scan, "nested/note.md", fakeHash("bc"), 0)
 	first := acceptNote(t, s, request)
+	require.NoError(t, requirePublishedNoteVersionTx(t.Context(), s.db, first.Source.Identity.ContentVersionID))
 	_, err := s.AcceptPublishedNote(t.Context(), noteUpload(t, scan, "nested/note.md", fakeHash("cd"), 0))
 	require.ErrorIs(t, err, ErrPublicationSourceStale)
 	replayed, err := s.AcceptPublishedNote(t.Context(), request)
@@ -39,6 +40,7 @@ func checkNotePublicationScanBackend(t *testing.T, s *Store) {
 	status := completeNoteScan(t, s, beginNoteScan(t, s))
 	require.EqualValues(t, 1, status.Absent)
 	require.EqualValues(t, 0, status.Present)
+	require.ErrorIs(t, requirePublishedNoteVersionTx(t.Context(), s.db, first.Source.Identity.ContentVersionID), ErrRenditionJobStaleAuthority)
 }
 
 func checkNotePublicationLifecycleSQLite(t *testing.T) {

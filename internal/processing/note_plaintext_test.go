@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -52,10 +53,27 @@ func newNotePlaintextFixture(t testing.TB) notePlaintextFixture {
 }
 
 func (f notePlaintextFixture) note(t testing.TB, name, text string) store.Node {
+	return f.publish(t, name, text, 0)
+}
+
+func (f notePlaintextFixture) publish(t testing.TB, name, text string, revision int64) store.Node {
 	t.Helper()
 	receipt, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString(text))
 	require.NoError(t, err)
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, receipt.Hash, receipt.Size, "text/markdown", processingBlobPhysical(t, receipt))
+	scan, err := f.catalog.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{
+		Name: "notes", Destination: "/", PolicyFingerprint: strings.Repeat("a", 64), OperationID: uuid.NewV4().String(),
+	})
+	require.NoError(t, err)
+	accepted, err := f.catalog.AcceptPublishedNote(t.Context(), store.NotePublicationUploadRequest{
+		Name: "notes", ScanID: scan.ScanID, SourceRef: name, FileName: name, ParentPath: "/",
+		OperationID: uuid.NewV4().String(), Hash: receipt.Hash, Size: receipt.Size, ExpectedSourceRevision: revision,
+	}, processingBlobPhysical(t, receipt))
+	require.NoError(t, err)
+	_, err = f.catalog.CompleteNotePublicationScan(t.Context(), store.NotePublicationCompleteRequest{
+		Name: "notes", ScanID: scan.ScanID, PolicyFingerprint: scan.PolicyFingerprint, InventoryComplete: true,
+	})
+	require.NoError(t, err)
+	node, err := f.catalog.NodeByID(t.Context(), accepted.Source.Identity.NodeID)
 	require.NoError(t, err)
 	return node
 }
@@ -147,6 +165,30 @@ func TestNotePlaintextRequiresLiveConsent(t *testing.T) {
 	require.Equal(t, node.CurrentVersionID, hits[0].Node.CurrentVersionID)
 	require.Empty(t, f.service.profiles[NotePlaintextProfileName].embedders)
 	require.Empty(t, f.service.profiles[NotePlaintextProfileName].embeddingRuntimes)
+}
+
+func TestNotePlaintextRejectsAbsentPublicationBeforeWork(t *testing.T) {
+	t.Parallel()
+	f := newNotePlaintextFixture(t)
+	node := f.note(t, "removed.md", "Removednoteuniqueword\n")
+	_, request, err := f.service.NoteLocalTextPlan(t.Context())
+	require.NoError(t, err)
+	_, err = f.catalog.GrantProcessingConsent(t.Context(), request)
+	require.NoError(t, err)
+	require.NoError(t, f.service.AdmitImportedRendition(t.Context(), node, NotePlaintextProfileName))
+	scan, err := f.catalog.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{
+		Name: "notes", Destination: "/", PolicyFingerprint: strings.Repeat("a", 64), OperationID: uuid.NewV4().String(),
+	})
+	require.NoError(t, err)
+	_, err = f.catalog.CompleteNotePublicationScan(t.Context(), store.NotePublicationCompleteRequest{
+		Name: "notes", ScanID: scan.ScanID, PolicyFingerprint: scan.PolicyFingerprint, InventoryComplete: true,
+	})
+	require.NoError(t, err)
+	_, err = f.worker.RunOne(t.Context())
+	require.NoError(t, err)
+	hits, _, err := f.catalog.SearchPage(t.Context(), "Removednoteuniqueword", 20)
+	require.NoError(t, err)
+	require.Empty(t, hits)
 }
 
 func TestNotePlaintextRevocation(t *testing.T) {
@@ -276,11 +318,7 @@ func TestNotePlaintextReadinessBindsExactVersion(t *testing.T) {
 		SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
 	require.NoError(t, err)
 	require.Equal(t, 1, coverage.Renditions.Complete)
-	receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader("Secondversionword source\n"))
-	require.NoError(t, err)
-	changed, _, err := f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, receipt.Hash, receipt.Size,
-		"text/markdown", processingBlobPhysical(t, receipt))
-	require.NoError(t, err)
+	changed := f.publish(t, "versioned.md", "Secondversionword source\n", 1)
 	require.NotEqual(t, node.CurrentVersionID, changed.CurrentVersionID)
 	coverage, err = f.service.Coverage(t.Context(), NotePlaintextProfileName,
 		SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{changed.CurrentVersionID}})

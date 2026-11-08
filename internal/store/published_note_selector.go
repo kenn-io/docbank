@@ -36,6 +36,22 @@ func publishedNoteEligibilitySQLParameter(selector *PublishedNoteSelector, param
  AND pns.presence='present' AND pns.availability='retained' AND np.active=1` + name + `)`, args
 }
 
+// requirePublishedNoteVersionTx fences automatic note processing to an exact
+// live accepted version at the same transactional boundary as admission.
+func requirePublishedNoteVersionTx(ctx context.Context, q metadataQuerier, versionID string) error {
+	predicate, _ := publishedNoteEligibilitySQLParameter(&PublishedNoteSelector{}, "")
+	var exists bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions cv
+ JOIN nodes n ON n.id=cv.node_id WHERE cv.version_id=$1 AND `+predicate+`)`, versionID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("checking published note rendition authority: %w", err)
+	}
+	if !exists {
+		return ErrRenditionJobStaleAuthority
+	}
+	return nil
+}
+
 func normalizePublishedNoteSelector(selector *PublishedNoteSelector) (*PublishedNoteSelector, error) {
 	if selector == nil {
 		return nil, nil //nolint:nilnil // nil is the meaningful unscoped selector.

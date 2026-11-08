@@ -221,6 +221,11 @@ func (s *Store) EnqueueRenditionJob(
 	var job RenditionJob
 	var waiter RenditionJobWaiter
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if executableProfile.Rendition.Name == NotePlaintextProfileName {
+			if err := requirePublishedNoteVersionTx(ctx, tx, request.ContentVersionID); err != nil {
+				return err
+			}
+		}
 		var sourceSHA256, filename string
 		var currentSource, liveSource bool
 		if err := tx.QueryRowContext(ctx,
@@ -1954,6 +1959,15 @@ func renditionWaiterAuthorizationTx(
 	pdf, err := emailPDFBinding(ProcessingProfileRecord{CanonicalProfile: []byte(profileJSON)})
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition profile authority: %w", err)
+	}
+	var profile document.ProcessingProfileV1
+	if err := json.Unmarshal([]byte(profileJSON), &profile, json.RejectUnknownMembers(true)); err != nil {
+		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition profile: %w", err)
+	}
+	if profile.Rendition != nil && profile.Rendition.Name == NotePlaintextProfileName {
+		if err := requirePublishedNoteVersionTx(ctx, tx, versionID); err != nil {
+			return ProviderOperationAuthorizationRequest{}, err
+		}
 	}
 	if !liveSource || !currentSource && pdf == nil ||
 		execution.Authorization.DiscloseFilename && execution.Upload.Filename != filename ||
