@@ -375,6 +375,7 @@ type Coverage struct {
 }
 
 type SearchRequest struct {
+	AsOf                            string
 	AllLive                         *store.SearchOptions
 	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
@@ -1587,6 +1588,11 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
+	asOf, err := document.ResolveValidityDate(request.AsOf)
+	if err != nil {
+		return retrieval.Report{}, fmt.Errorf("%w: %w", store.ErrInvalidSupersession, err)
+	}
+	request.AsOf = asOf
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
 		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
@@ -1597,7 +1603,6 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	var profile configuredProfile
 	var ids []string
 	var searchScope store.SearchOptions
-	var err error
 	if request.AllLive != nil {
 		var ok bool
 		profile, ok = service.profiles[request.Profile]
@@ -1627,7 +1632,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			if err != nil {
 				return retrieval.Report{}, err
 			}
-			return prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
+			report, err := prepared.searcher.SearchEmpty(ctx, prepared.mode, binding.Activation == document.EmbeddingRequired)
+			report.AsOf = asOf
+			return report, err
 		}
 	}
 	if request.MediaSources != nil {
@@ -1656,15 +1663,25 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		searchScope.EmbeddingDescriptor = &descriptor
 		searchScope.VectorSpaceID = profile.vectorSpaces[prepared.bindingID]
 	}
+	candidateLimit := min(profile.portable.Retrieval.LexicalLimit+profile.portable.Retrieval.VectorLimit, document.MaxRetrievalCandidateLimit)
 	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
-		Limit: prepared.limit, Scope: searchScope, ContentFirst: request.ContentFirst,
+		Limit: candidateLimit, Scope: searchScope, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
 	if err != nil {
 		return retrieval.Report{}, err
 	}
+	err = service.applyValidity(ctx, &report, searchScope, asOf)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	if len(report.Results) > prepared.limit {
+		report.Results = report.Results[:prepared.limit]
+		report.Truncated = true
+	}
 	report.RequestedMode = prepared.requestedMode
+	report.AsOf = asOf
 	return report, nil
 }
 

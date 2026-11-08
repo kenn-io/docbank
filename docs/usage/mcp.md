@@ -256,7 +256,7 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
-| `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Optional `as_of` evaluates declared validity on a `YYYY-MM-DD` date; omission uses the daemon's local date. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `find_conflicts` | Requires a processing profile and uses the query, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
@@ -349,19 +349,36 @@ With no profile, `auto` tries hybrid search through the same query bindings as `
 
 An unknown profile returns `processing_profile_unavailable` with the available names. When no query binding was attempted, `hybrid` and profile-free `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. An unknown binding returns `not_found`. Selecting an image binding with `hybrid` returns keyword results and names a usable text-query binding when the profile has one. With `semantic`, the same selection returns `semantic_unavailable` and names that text-query binding. When all query candidates fail, lexical fallback reports the first failure code and adds guidance for consent or index setup. `semantic` preserves `consent_required` when consent is missing, expired, or revoked. Other `semantic` failures return `semantic_unavailable` with the failure cause or setup guidance.
 
+Search reports the evaluation date in top-level `as_of`. Each hit with a
+declared validity includes `validity.state` (`current`, `superseded`,
+`expired`, or `not_yet_effective`), its optional `effective_from` and
+`effective_to` dates, and up to 16 `superseded_by` entries with a current
+successor's `node_id`, `path`, and optional `effective_from`. Hits without a
+validity declaration omit `validity`. Validity ordering keeps in-force hits
+ahead of out-of-force hits while leaving each result's scores and
+`rerank_relevance` attached to it.
+
+When an explicit version list resolves to an empty current source fence, MCP
+validates the request without issuing an unscoped search. It echoes an
+explicitly supplied `as_of`; if `as_of` was omitted, the output omits that field
+because no search report supplied the daemon's default date.
+
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
 reranking consent grant. `search_documents` reports `openWorldHint: true`
 because a reranked search can send the query and excerpts to a provider.
 The optional `reranking` receipt reports `applied`,
 `skipped`, or `degraded`, the candidate count, and any failure cause. When the
-receipt is `applied`, the first `candidate_count` hits include `rerank_relevance`
-equal to their `score`, including zero. Later hits omit `rerank_relevance`.
-Applied searches use different `score` scales, provider relevance for the first
-`candidate_count` hits and search scores for later hits, so clients must not
-sort the whole list by `score`.
-A degraded search retains its original order and adds
-`reranking_degraded` to skipped reasons, unless the profile fails closed.
+receipt is `applied`, `candidate_count` counts the reranked pool before validity
+ordering and the final result limit, so it can exceed the returned hit count.
+Returned reranked hits include `rerank_relevance` equal to their `score`,
+including zero. Other hits omit
+`rerank_relevance`. Out-of-force hits are listed after in-force ones, so the
+reranked hits can appear anywhere in the returned list. Applied searches use
+different `score` scales, provider relevance for reranked hits and search scores
+for the others, so clients must not sort the whole list by `score`.
+A degraded search still applies validity ordering before the final result limit
+and adds `reranking_degraded` to skipped reasons, unless the profile fails closed.
 MCP returns `reranking_unavailable` when no reranker is configured and
 `reranking_failed` when reranking fails under a fail-closed policy; these
 errors omit provider bodies, credentials, query text, and excerpts.

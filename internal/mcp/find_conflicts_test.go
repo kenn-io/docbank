@@ -110,7 +110,7 @@ func TestFindConflictsRejectsRetrievalOptions(t *testing.T) {
 	for _, option := range []struct {
 		key   string
 		value any
-	}{{"mode", "semantic"}, {"binding_id", "synthetic-binding"}, {"explain", true}, {"rerank", true}, {"limit", 21}} {
+	}{{"mode", "semantic"}, {"binding_id", "synthetic-binding"}, {"explain", true}, {"rerank", true}, {"limit", 21}, {"as_of", "2024-06-01"}} {
 		t.Run(option.key+fmt.Sprint(option.value), func(t *testing.T) {
 			args := map[string]any{"query": "cooling period", "profile": "local", "filters": map[string]any{}, option.key: option.value}
 			wire := callToolWire(t, "find_conflicts", args)

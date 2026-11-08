@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -20,10 +19,6 @@ func photoCookie(cookies []string) func(context.Context, *http.Request) error {
 		}
 		return nil
 	}
-}
-
-func revisionIfMatch(revision int64) string {
-	return strconv.Quote(strconv.FormatInt(revision, 10))
 }
 
 // validatePhotoAssetResponse checks identity, supported encoding, bounds, and ETag; graph and product policy stay in the store.
@@ -45,24 +40,14 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 			return errors.New("photo response has unsupported confirmation bits")
 		}
 	}
-	return validatePhotoETag(etag, asset.Revision)
-}
-
-func validatePhotoETag(etag string, revision int64) error {
-	if etag == "" {
-		return errors.New("photo response is missing ETag")
-	}
-	if etag != revisionIfMatch(revision) {
-		return fmt.Errorf("photo response ETag %q, expected %q", etag, revisionIfMatch(revision))
-	}
-	return nil
+	return validateRevisionETag(etag, asset.Revision)
 }
 
 func validatePhotoSettingsResponse(settings api.PhotoSettings, etag string) error {
 	if settings.Revision < 1 || settings.BurstGapSeconds < 1 || settings.BurstGapSeconds > 30 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
 		return errors.New("photo settings response is invalid")
 	}
-	return validatePhotoETag(etag, settings.Revision)
+	return validateRevisionETag(etag, settings.Revision)
 }
 
 // mutationRequestError classifies a failure after a 2xx status as a

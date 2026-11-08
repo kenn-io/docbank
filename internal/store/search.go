@@ -864,6 +864,10 @@ func liveSearchScopeSQL(filterSQL string, filterArgs []any) (string, []any) {
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL ` + filterSQL, filterArgs
 }
 
+func liveSearchScopeSQLForBackend(opts SearchOptions, postgres bool, offset int) (string, []any) {
+	return liveSearchScopeSQL(searchFilterSQLForBackend(opts, postgres, offset))
+}
+
 // currentEmbeddingHeadsSQL keeps coverage and semantic retrieval on the same
 // current-source, binding and rendition authority.
 func currentEmbeddingHeadsSQL() string {
@@ -2758,6 +2762,10 @@ func searchCandidateFiltersSQL(opts SearchOptions) (names, content string, args 
 }
 
 func searchFilterSQL(opts SearchOptions) (string, []any) {
+	return searchFilterSQLForBackend(opts, false, 0)
+}
+
+func searchFilterSQLForBackend(opts SearchOptions, postgres bool, offset int) (string, []any) {
 	var (
 		clauses []string
 		args    []any
@@ -2778,9 +2786,7 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		if err != nil {
 			panic(err)
 		}
-		clauses = append(clauses, `AND cv.version_id IN (
-			SELECT value FROM json_each(?)
-		)`)
+		clauses = append(clauses, `AND cv.version_id IN (SELECT value FROM (`+jsonArrayRowsSQL(postgres, "?")+`) j)`)
 		args = append(args, string(encoded))
 	}
 	if opts.TagID != "" {
@@ -2790,10 +2796,11 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		args = append(args, opts.TagID)
 	}
 	if opts.MIMEType != "" {
-		clauses = append(clauses, `AND lower(trim(CASE
-			WHEN instr(cv.mime_type, ';')=0 THEN cv.mime_type
-			ELSE substr(cv.mime_type, 1, instr(cv.mime_type, ';')-1)
-		END))=?`)
+		position := "instr(cv.mime_type, ';')"
+		if postgres {
+			position = "strpos(cv.mime_type, ';')"
+		}
+		clauses = append(clauses, `AND lower(trim(CASE WHEN `+position+`=0 THEN cv.mime_type ELSE substr(cv.mime_type, 1, `+position+`-1) END))=?`)
 		args = append(args, opts.MIMEType)
 	}
 	if opts.UnderNodeID != 0 {
@@ -2803,7 +2810,7 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		// Live directories therefore suffice and use nodes_live_children.
 		clauses = append(clauses, `AND n.parent_id IN (
 			WITH RECURSIVE directories(id) AS (
-				SELECT ?
+				SELECT CAST(? AS BIGINT)
 				UNION ALL
 				SELECT child.id FROM nodes child
 				JOIN directories parent ON child.parent_id=parent.id
@@ -2821,7 +2828,13 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		clauses = append(clauses, `AND n.modified_at<?`)
 		args = append(args, opts.ModifiedBefore)
 	}
-	return strings.Join(clauses, "\n"), args
+	sql := strings.Join(clauses, "\n")
+	if postgres {
+		for i := range args {
+			sql = strings.Replace(sql, "?", fmt.Sprintf("$%d", offset+i+1), 1)
+		}
+	}
+	return sql, args
 }
 
 // CollapsesPhotoDuplicates reports whether photo retrieval groups copies by content.

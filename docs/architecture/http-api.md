@@ -838,6 +838,8 @@ without an active generation returns `409 index_unavailable`, so clients can try
 another binding while preserving `404 not_found` for invalid selections. Daemon
 protocol revision 123 requires these distinct errors for MCP profile selection.
 
+Optional `as_of` is a calendar date in `YYYY-MM-DD` form and defaults to today. The report returns the resolved `as_of`. Invalid dates return 422. Processing search ranks documents in force first after reranking and before applying the result limit. Out-of-force matches fill any remaining slots and include reasons. Reranking receives the candidate pool, bounded by the profile’s `MaxCandidates`, so its receipt may count candidates omitted from the returned page. Results with declarations include `validity` with `state`, optional `effective_from` and `effective_to`, and `superseded_by` objects containing `node_id`, `path`, and optional `effective_from`. Only direct, live successors within the fence or filtered scope count. Search does not traverse replacement chains. See [Search by effective date](../usage/search.md#search-by-effective-date) for candidate bounds. This contract uses daemon protocol revision 125.
+
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
 Each object names `source_id`, `source_version_id`, and `content_version_id`. Every
@@ -880,6 +882,9 @@ the trace). An opted-in request also returns a `reranking` receipt with
 `applied`, `degraded`, or `skipped`, a bounded candidate count, and a cause for
 degradation. Each result retains its vault, node, and content-version identity
 with bounded evidence references. The source fence applies before retrieval.
+When reranking is applied, each reranked result includes `rerank_relevance`,
+equal to its `score` even when zero; other results omit it. Validity ordering
+can move reranked results past the first `candidate_count` positions.
 Vector scoring uses only eligible rows from current, live attachments.
 Semantic and hybrid search revalidate the complete result set after query
 embedding, including lexical matches without embeddings. Trashed or replaced
@@ -897,8 +902,9 @@ The reranking degradation causes are `authorization_denied`, `timed_out`,
 `malformed_output`, and `unavailable`. `malformed_output` covers invalid provider
 scores and local inputs that cannot be reranked: a candidate with no readable
 excerpt or a query that exceeds the reranking size limit. Those local failures
-occur before any reranking provider call. Under `degrade`, the response keeps
-the original ordering and includes `reranking_degraded` in `degradations`.
+occur before any reranking provider call. Under `degrade`, search still applies
+validity ordering before the final result limit and includes
+`reranking_degraded` in `degradations`.
 Under `fail_closed`, the request fails with `reranking_failed`.
 
 #### Processing errors and derivative purge
@@ -1831,6 +1837,50 @@ origin as an additional fact instead.
 
 The encoded request body may be at most 1 MiB (1,048,576 bytes). A larger body
 receives `413` before the append runs.
+
+### Document validity declarations
+
+Owners can record that one live file replaces another, independently of content
+versions and provenance facts. These routes do not change search order.
+
+| Route | Behavior | Revision guarded by `If-Match` |
+| --- | --- | --- |
+| `PUT /nodes/{id}/supersedes/{predecessor_id}` | Declare that `{id}` replaces `{predecessor_id}`; body `{"note": "optional explanation"}` | Predecessor |
+| `DELETE /nodes/{id}/supersedes/{predecessor_id}` | Remove the link; no request body | Predecessor |
+| `PUT /nodes/{id}/effective-window` | Set `effective_from`, `effective_to`, or both | Node |
+| `DELETE /nodes/{id}/effective-window` | Clear the window; no request body | Node |
+| `GET /nodes/{id}/validity?as_of=YYYY-MM-DD` | Inspect the node, direct live links, window and evaluated standing | None |
+
+On `PUT /nodes/{id}/supersedes/{predecessor_id}`, omitting `note` or setting it
+to `null` preserves an existing declaration's note and defaults to empty for a
+new declaration. Set `note` to an empty string to clear it.
+
+Mutation responses contain `node` and `changed`, with an ETag matching the
+returned node revision. The receipt describes the guarded node: the predecessor
+for a link, or the node whose effective window changed.
+A changed declaration advances the guarded revision
+once. Repeating the same declaration, removing an absent link, or clearing an
+absent window leaves it unchanged, but still requires the current revision.
+Missing `If-Match` returns `428`; a malformed value returns `400`; a stale
+revision returns `412`.
+
+Dates are inclusive calendar dates in `YYYY-MM-DD` form. Omit a boundary to
+leave that end open; use DELETE to clear both. The inspection date defaults to
+the daemon host's local date and is echoed in `as_of`. The response `state` is
+`not_yet_effective` when the node's start is later than that date, then
+`superseded` when a live successor has started, then `expired` when the node's
+end has passed, otherwise `current`. An undated successor applies after the predecessor's own end date, or at every inspection date if that end is open, and sets `undated` to true. A successor whose effective window
+has ended still marks its predecessor superseded once its start applies, unless
+the predecessor is itself not yet effective.
+
+Declaring links requires distinct live file endpoints. Setting windows also requires a live file. Removing links and clearing windows accept trashed files. Notes may contain at most 1024
+UTF-8 bytes. Each node may have at most 16 direct predecessors and successors;
+cycles are rejected. Graph validation visits
+at most 4096 nodes and fails explicitly on overflow. Invalid
+declarations return `422` with code `invalid_supersession`. Links remain stored
+when an endpoint is trashed, but trashed successors do not change standing.
+Purging an endpoint removes its links. Audited vaults reject declaration
+mutations with `409` and code `audit_mutation_unsupported`.
 
 ### Email metadata and exact parts
 

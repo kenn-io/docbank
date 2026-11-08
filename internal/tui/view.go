@@ -725,7 +725,14 @@ func (m Model) naturalWhyLines(item row, width int) []string {
 	if len(item.evidence) > 0 {
 		why += " · " + strings.Join(item.evidence, ", ")
 	}
-	return appendWrapped(nil, why, width, m.styles.muted)
+	return appendWrapped(nil, why+validitySuffix(item.validity), width, m.styles.muted)
+}
+
+func validitySuffix(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return " · " + reason
 }
 
 func (m Model) naturalRerankStatus() string {
