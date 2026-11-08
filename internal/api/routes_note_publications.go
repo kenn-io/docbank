@@ -12,13 +12,34 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
 const notePublicationBase = "/api/v1/note-publications/{name}"
 
+// NoteLocalTextPlan describes the fixed local-only policy and the exact
+// ordinary consent request required to enable it.
+type NoteLocalTextPlan struct {
+	Plan           ProcessingPlan                    `json:"plan"`
+	ConsentRequest document.ProcessingConsentRequest `json:"consent_request"`
+}
+
 func registerNotePublicationRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getNoteLocalTextPlan", Method: http.MethodGet,
+		Path: "/api/v1/note-publications/local-text-plan", Summary: "Preview local note text indexing consent",
+	}, func(ctx context.Context, _ *struct{}) (*struct{ Body NoteLocalTextPlan }, error) {
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		plan, consent, err := d.Processing.NoteLocalTextPlan(ctx)
+		if err != nil {
+			return nil, fromProcessingError(err)
+		}
+		return &struct{ Body NoteLocalTextPlan }{NoteLocalTextPlan{Plan: fromProcessingPlan(plan), ConsentRequest: consent}}, nil
+	})
 	huma.Register(api, huma.Operation{
 		OperationID: "getNotePublicationSource", Method: http.MethodGet, Path: notePublicationBase + "/sources/current",
 		Summary: "Read an accepted source and current archive head without beginning an inventory",
