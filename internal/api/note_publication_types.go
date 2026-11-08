@@ -64,6 +64,11 @@ type NotePublicationSourcesPage struct {
 	Next  string                  `json:"next,omitzero"`
 }
 
+type NotePublicationSourceSnapshot struct {
+	DatabaseEpoch string                `json:"database_epoch"`
+	Source        NotePublicationSource `json:"source"`
+}
+
 // NotePublicationUploadRequest describes the multipart query and digest headers.
 type NotePublicationUploadRequest struct {
 	Name                   string `json:"name"`

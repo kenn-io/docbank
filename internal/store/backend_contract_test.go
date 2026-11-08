@@ -991,6 +991,7 @@ var backendSuites = []backendSuite{
 		{"WatchAndPush", nil, checkWatchAndPushPostgres},
 		{"NotePublicationScan", checkNotePublicationScanSQLite, checkNotePublicationScanPostgres},
 		{"NotePublicationLifecycle", checkNotePublicationLifecycleSQLite, checkNotePublicationLifecyclePostgres},
+		{"NotePublicationSourceSnapshot", checkNotePublicationSourceSnapshotSQLite, checkNotePublicationSourceSnapshotPostgres},
 		{"NoteProjection", checkNoteProjectionSQLite, checkNoteProjectionPostgres},
 		{"NoteIndex", checkNoteIndexSQLite, checkNoteIndexPostgres},
 		{"PublishedNoteIdentities", checkPublishedNoteIdentitiesSQLite, checkPublishedNoteIdentitiesPostgres},

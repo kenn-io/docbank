@@ -20,6 +20,28 @@ const notePublicationBase = "/api/v1/note-publications/{name}"
 
 func registerNotePublicationRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
+		OperationID: "getNotePublicationSource", Method: http.MethodGet, Path: notePublicationBase + "/sources/current",
+		Summary: "Read an accepted source and current archive head without beginning an inventory",
+	}, func(ctx context.Context, in *struct {
+		Name      string `path:"name" maxLength:"64"`
+		SourceRef string `query:"source_ref" required:"true" maxLength:"4096"`
+	}) (*struct{ Body NotePublicationSourceSnapshot }, error) {
+		if err := validateNoteRoute(d, in.Name); err != nil {
+			return nil, err
+		}
+		if store.ValidatePushRef(in.SourceRef) != nil {
+			return nil, invalidNoteRequest()
+		}
+		snapshot, err := d.Store.NotePublicationSource(ctx, in.Name, in.SourceRef)
+		if err != nil {
+			return nil, notePublicationError(err)
+		}
+		return &struct{ Body NotePublicationSourceSnapshot }{NotePublicationSourceSnapshot{
+			DatabaseEpoch: snapshot.DatabaseEpoch, Source: fromPublishedNoteSource(snapshot.Source),
+		}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "beginNotePublicationScan", Method: http.MethodPost, Path: notePublicationBase + "/scans",
 		Summary: "Begin or replay a managed note inventory", MaxBodyBytes: 16 << 10,
 	}, func(ctx context.Context, in *struct {
