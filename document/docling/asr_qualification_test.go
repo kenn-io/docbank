@@ -1,6 +1,7 @@
 package docling
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -28,7 +29,7 @@ func TestDoclingASRRealM4AQualification(t *testing.T) {
 	}, MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
 	require.NoError(t, err)
 	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
+	require.NoError(t, err, "synthetic ASR cause: %v", errors.Unwrap(err))
 	require.Len(t, result.Artifacts, 1)
 	artifact, err := mediatranscript.Unmarshal(result.Artifacts[0].Payload)
 	require.NoError(t, err)

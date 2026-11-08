@@ -771,8 +771,8 @@ upload before granting consent with `docbank processing build`.
 ### Supplied audio transcription
 
 The daemon can transcribe supplied WAV, MP3, and M4A audio through a configured
-Docling Serve deployment with speech recognition installed. The profile's descriptor, artifact policy, filename
-disclosure, and trust boundary are portable. The endpoint, transport policy,
+Docling Serve deployment with speech recognition installed. The profile's
+descriptor, artifact policy, filename disclosure, and trust boundary are portable. The endpoint, transport policy,
 and secret binding stay local to the daemon.
 
 Use `adapter_contract = "docbank-docling-asr/v2"` for M4A/AAC alongside WAV and
@@ -782,7 +782,9 @@ a reviewed processing plan, and fresh consent. Existing grants never gain
 permission to upload another format implicitly.
 
 The deployment needs Docling Serve 1.32.0, Docling 2.124.0 with its ASR
-requirements, Docling Core 2.93.0, and an audio decoder such as FFmpeg. Merely
+requirements, Docling Core 2.105.0, and an audio decoder such as FFmpeg.
+The earlier WAV/MP3 qualification used Core 2.93.0, which rejects M4A MIME
+metadata; do not use that deployment for v2. Merely
 running a document conversion endpoint does not provide speech recognition.
 The adapter requests `from_formats=audio`, JSON output, and in-body results;
 it accepts only timed tracks in document schema 1.10.0. It does not select or
@@ -798,8 +800,7 @@ and include `audio/mp4` in the descriptor alongside `audio/wav` and
 and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
 A v1 descriptor cannot authorize that upload.
 
-Set
-`credential_binding = "credential:<name>"` on the rendition profile. Its
+Set `credential_binding = "credential:<name>"` on the rendition profile. Its
 `runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
 `poll_interval`, `max_poll_attempts`, `allowed_cidrs`, `proxy_mode`, and the
 transport timeout fields. `spki_sha256` can pin the deployment certificate.
