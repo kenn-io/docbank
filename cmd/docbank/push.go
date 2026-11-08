@@ -28,9 +28,8 @@ func newPushCmd() *cobra.Command {
 		Short: "Push a local folder to a remote daemon",
 		Long: `Archive a local folder into the vault of the daemon at --to, usually
 through an SSH tunnel. The daemon needs no copy of the folder. --name and each
-file's relative path identify the file: reruns upload only changed files, and
-a change adds a version to the same document. Local deletions never delete
-archived documents.
+file's relative path identify it. Changed files add versions; local deletions
+never delete archived documents.
 
 The API key comes from DOCBANK_API_KEY or --api-key-file. Each connection must
 prove it holds that key before push sends the key or any file. Rejected files
