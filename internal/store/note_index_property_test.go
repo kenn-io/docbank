@@ -14,6 +14,7 @@ import (
 // SQL builder or resolver under test. Each query must expose the first two
 // distinct bindings per key and preserve all their matching queried keys.
 func TestNoteIndexEvidencePermutationProperty(t *testing.T) {
+	t.Parallel()
 	type row struct {
 		ref, body string
 		keys      []NoteLookupKey

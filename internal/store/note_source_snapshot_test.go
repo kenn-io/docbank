@@ -72,11 +72,13 @@ func checkNotePublicationSourceSnapshot(t *testing.T, s *Store) {
 }
 
 func checkNotePublicationSourceSnapshotSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNotePublicationSourceSnapshot(t, newTestStore(t))
 }
 
 func checkNotePublicationSourceSnapshotPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNotePublicationSourceSnapshot(t, newPostgresQueryStore(t))
 }
