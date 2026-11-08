@@ -17,6 +17,8 @@
     onauthfailure,
     onclose,
     startReview = false,
+    onpublished,
+    onproductions,
   }: {
     session: string;
     source: SelectedSource;
@@ -26,6 +28,8 @@
     onauthfailure: (cause: unknown) => void;
     onclose: () => void;
     startReview?: boolean;
+    onpublished?: () => void;
+    onproductions?: () => void;
   } = $props();
   let redacting = $state(untrack(() => startReview));
   let review = $state<ReturnType<typeof RedactionReview>>();
@@ -58,6 +62,8 @@
           {source}
           bind:authorizationRevision
           {onauthfailure}
+          {onpublished}
+          {onproductions}
           onworkspaceclose={onclose}
           onclose={() => {
             redacting = false;

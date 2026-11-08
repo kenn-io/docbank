@@ -4976,6 +4976,8 @@
           <aside class="detail" aria-label="Document inspector">
             {#if selectedSnapshot}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5056,6 +5058,8 @@
               </DocumentInspector>
             {:else if !snapshotActive && selected}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5188,6 +5192,11 @@
     </div>
     {#if reader}
       <DocumentReader
+        onpublished={() => productionsDiscoveryRevision++}
+        onproductions={() => {
+          closeReader();
+          openDocsPage("productions");
+        }}
         session={webSession}
         source={reader.source}
         authorizationRevision={reader.revision}
