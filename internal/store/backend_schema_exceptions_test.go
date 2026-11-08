@@ -8,8 +8,6 @@ var sqliteOnlyBackendTables = map[string]string{
 	"photo_xmp_unsettled_pending":       "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
 	"storage_operation_stores":          "multi-store operations are unqualified",
 	"vector_index_build_jobs":           "vector index lifecycle is unqualified",
-	"vector_index_generations":          "vector index lifecycle is unqualified",
-	"vector_index_heads":                "vector index lifecycle is unqualified",
 	"vector_index_reader_leases":        "vector index lifecycle is unqualified",
 	"vector_index_unavailable_coverage": "vector index lifecycle is unqualified",
 }

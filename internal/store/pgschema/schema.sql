@@ -2441,3 +2441,22 @@ CREATE TABLE {{schema}}.photo_face_scans (
 );
 CREATE INDEX visual_preview_generations_ready
     ON {{schema}}.visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
+
+-- Retained image indexes used by photo review. Production remains separate.
+CREATE TABLE {{schema}}.vector_index_generations (
+    generation_id TEXT COLLATE "C" PRIMARY KEY,
+    vector_space_id TEXT COLLATE "C" NOT NULL,
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    index_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    generation_bytes BYTEA NOT NULL,
+    byte_size BIGINT NOT NULL,
+    row_count BIGINT NOT NULL,
+    built_at TEXT COLLATE "C" NOT NULL
+);
+CREATE INDEX vector_index_generations_space
+    ON {{schema}}.vector_index_generations(vector_space_id, source_manifest_checksum, generation_id);
+CREATE TABLE {{schema}}.vector_index_heads (
+    vector_space_id TEXT COLLATE "C" PRIMARY KEY,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id),
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL
+);

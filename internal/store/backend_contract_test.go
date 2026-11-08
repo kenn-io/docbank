@@ -22,6 +22,45 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "photo-review", postgres: "native operations", scope: "Explicit-selection grouping, keeper and representative decisions, best-shot responses and undo; query browsing and people curation remain separate.", scenarios: []backendScenario{
+		{"PhotoStackTimeRules", func(t *testing.T) { t.Helper(); checkPhotoStackTimeRules(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackTimeRules(t, newPostgresQueryStore) }},
+		{"PhotoStackCameraSerialMatching", func(t *testing.T) { t.Helper(); checkPhotoStackCameraSerialMatching(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackCameraSerialMatching(t, newPostgresQueryStore) }},
+		{"PhotoStackDecisionAfterSidecarPublication", func(t *testing.T) { t.Helper(); checkPhotoStackDecisionAfterSidecarPublication(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackDecisionAfterSidecarPublication(t, newPostgresQueryStore)
+		}},
+		{"PhotoStackRejectsStaleMembershipAndTargetsWithoutWrites", func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t, newPostgresQueryStore)
+		}},
+		{"PhotoStackAutomaticDecisionsPreserveCompanionFlags", func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackAutomaticDecisionsPreserveCompanionFlags(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackAutomaticDecisionsPreserveCompanionFlags(t, newPostgresQueryStore)
+		}},
+		{"PhotoRepresentativeDecisionKeepsDefaultSettings", func(t *testing.T) { t.Helper(); checkPhotoRepresentativeDecisionKeepsDefaultSettings(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoRepresentativeDecisionKeepsDefaultSettings(t, newPostgresQueryStore)
+		}},
+		{"PhotoStackDecisionsRefuseStaleMetadata", func(t *testing.T) { t.Helper(); checkPhotoStackDecisionsRefuseStaleMetadata(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackDecisionsRefuseStaleMetadata(t, newPostgresQueryStore) }},
+		{"PhotoBestShotsDecisions", func(t *testing.T) { t.Helper(); checkPhotoBestShotsDecisions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBestShotsDecisions(t, newPostgresQueryStore) }},
+		{"PhotoBestShotsReadsAndStaleOffers", func(t *testing.T) { t.Helper(); checkPhotoBestShotsReadsAndStaleOffers(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBestShotsReadsAndStaleOffers(t, newPostgresQueryStore) }},
+		{"PhotoBestShotsFailedEnrichmentPublishesNothing", func(t *testing.T) { t.Helper(); checkPhotoBestShotsFailedEnrichmentPublishesNothing(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoBestShotsFailedEnrichmentPublishesNothing(t, newPostgresQueryStore)
+		}},
+		{"PhotoBestShotsConfirmedWinner", func(t *testing.T) { t.Helper(); checkPhotoBestShotsConfirmedWinner(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBestShotsConfirmedWinner(t, newPostgresQueryStore) }},
+		{"PhotoReviewRepresentatives", func(t *testing.T) { t.Helper(); checkPhotoReviewRepresentatives(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoReviewRepresentatives(t, newPostgresQueryStore) }},
+		{"PhotoReviewHidden", func(t *testing.T) { t.Helper(); checkPhotoReviewHidden(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoReviewHidden(t, newPostgresQueryStore) }},
+		{"PhotoReviewRollback", nil, checkPhotoReviewRollbackPostgres},
+		{"PhotoReviewSnapshot", nil, checkPhotoReviewSnapshotPostgres},
+		{"PhotoReviewRetainedVectors", nil, checkPhotoReviewRetainedVectorsPostgres},
+	}},
 	{name: "photo-albums", postgres: "native operations", scope: "Album lifecycle, explicit membership and cover summaries; query selection and snapshot delivery remain unqualified.", scenarios: []backendScenario{
 		{"PhotoSetLifecycle", func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newPostgresQueryStore) }},
 		{"PhotoSetCovers", nil, func(t *testing.T) {
@@ -1187,7 +1226,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "People curation, best-shot/representative choices and photo review remain unqualified. Photo query selection is covered by the search boundary."},
+	{name: "photo-editing", postgres: "unqualified", scope: "People curation and query-driven photo review remain unqualified. Explicit-selection decisions are covered by photo-review; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
