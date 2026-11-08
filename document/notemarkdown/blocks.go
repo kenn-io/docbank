@@ -44,7 +44,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
 		if paragraph && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start {
-			check, candidate, _, err := definitionBoundary(ctx, raw, containers, b)
+			check, candidate, _, _, err := definitionBoundary(ctx, raw, containers, b)
 			if err != nil {
 				return nil, err
 			}
@@ -67,8 +67,21 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 							if err != nil {
 								return nil, err
 							}
-							if p != line.Start+candidate && len(bytes.Trim(original[part.Start:part.End], " \t>")) == 0 {
-								title = false
+							if p != line.Start+candidate {
+								lineText := original[part.Start:part.End]
+								_, start, _, matched, err := definitionBoundary(ctx, lineText, containers, b)
+								if err != nil {
+									return nil, err
+								}
+								if !matched || len(bytes.Trim(lineText[start:], " \t")) == 0 {
+									title = false
+								} else {
+									interrupt, err := blockInterrupt(ctx, lineText[start:], 0, b)
+									if err != nil {
+										return nil, err
+									}
+									title = !interrupt
+								}
 							}
 							p = after
 						}
@@ -425,32 +438,32 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 	return blocks, nil
 }
 
-func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, int, error) {
+func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, int, bool, error) {
 	pos, virtual := 0, 0
 	for _, container := range containers {
 		end, columns, err := leadingIndent(ctx, raw, pos, b)
 		if err != nil {
-			return false, 0, 0, err
+			return false, 0, 0, false, err
 		}
 		columns += virtual
 		if container.kind == 'q' {
 			if columns > 3 || end == len(raw) || raw[end] != '>' {
-				return true, end, columns, nil
+				return true, end, columns, false, nil
 			}
 			pos, virtual, err = quoteSpace(ctx, raw, end+1, b)
 			if err != nil {
-				return false, 0, 0, err
+				return false, 0, 0, false, err
 			}
 			continue
 		}
 		if columns < container.indent {
-			return true, end, columns, nil
+			return true, end, columns, false, nil
 		}
 		used := min(virtual, container.indent)
 		virtual -= used
 		column, err := visualColumn(ctx, raw, pos, b)
 		if err != nil {
-			return false, 0, 0, err
+			return false, 0, 0, false, err
 		}
 		for pos < end && used < container.indent {
 			width := 1
@@ -465,11 +478,11 @@ func definitionBoundary(ctx context.Context, raw []byte, containers []blockConta
 	}
 	end, indent, err := leadingIndent(ctx, raw, pos, b)
 	if err != nil {
-		return false, 0, 0, err
+		return false, 0, 0, false, err
 	}
 	indent += virtual
 	_, list := listMarker(raw, end)
-	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, indent, nil
+	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, indent, true, nil
 }
 
 func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, first int, nonDefinitions map[int]bool, probes map[int]*definitionProbe, b *budget) (bool, error) {
@@ -652,8 +665,44 @@ func invalidDefinitionDestination(ctx context.Context, text []byte, b *budget) (
 		return false, err
 	}
 	scanner := linkScanner{ctx: ctx, src: text, b: b}
-	_, _, ok, err := scanner.destination(i, line.End)
-	return !ok && line.End < len(text), err
+	dest, tail, ok, err := scanner.destination(i, line.End)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return line.End < len(text), nil
+	}
+	if dest.Start == dest.End && text[i] != '<' {
+		return true, nil
+	}
+	beforeSpace := tail
+	for tail < line.End && (text[tail] == ' ' || text[tail] == '\t') {
+		if err := b.step(ctx, 1); err != nil {
+			return false, err
+		}
+		tail++
+	}
+	if tail == line.End {
+		return false, nil
+	}
+	if tail == beforeSpace || text[tail] != '\'' && text[tail] != '"' && text[tail] != '(' {
+		return true, nil
+	}
+	finish, complete, err := scanner.title(tail, len(text))
+	if err != nil || !complete {
+		return false, err
+	}
+	titleLine, _, err := sourceLineAt(ctx, text, finish, b)
+	if err != nil {
+		return false, err
+	}
+	for finish < titleLine.End && (text[finish] == ' ' || text[finish] == '\t') {
+		if err := b.step(ctx, 1); err != nil {
+			return false, err
+		}
+		finish++
+	}
+	return finish != titleLine.End, nil
 }
 
 type definitionProbe struct {

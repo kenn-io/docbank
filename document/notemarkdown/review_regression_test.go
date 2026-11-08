@@ -384,3 +384,29 @@ func TestReviewInvalidDestinationDoesNotRepeatWork(t *testing.T) {
 	_, err := Parse(t.Context(), []byte(src))
 	require.NoError(t, err)
 }
+
+func TestReviewTitleLookaheadStopsAtHeading(t *testing.T) {
+	src := "[r]: note.md\n    \"unclosed [hidden](ghost.md)\n# Heading\nend\"\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+	require.Len(t, n.Headings, 1)
+}
+
+func TestReviewInvalidReferenceTailBudget(t *testing.T) {
+	for _, start := range []string{"> [r]: note.md trailing\n", "> [r]: note.md \"title\" trailing\n"} {
+		_, err := Parse(t.Context(), []byte(start+strings.Repeat("> 2. item\n", 1200)))
+		require.NoError(t, err)
+	}
+}
+
+func TestReviewTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
+	for _, src := range []string{
+		"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n```\nend\"\n```\n",
+		"> [r]: note.md\n>     \"unclosed [hidden](ghost.md)\n# Outside\nend\"\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err, src)
+		require.Empty(t, n.Links, src)
+	}
+}
