@@ -292,6 +292,20 @@ func TestNoteProjectorOriginalBytes(t *testing.T) {
 
 // Catches sealing only a page, inventing an empty basename for .md, or choosing
 // one alias match when the bounded evidence represents three distinct notes.
+func TestNoteProjectorEmptyAliasDoesNotBlockNamespace(t *testing.T) {
+	t.Parallel()
+	f := newProjectorFixture(t)
+	scan := f.begin(t)
+	f.accept(t, scan, "empty.md", "---\naliases: ['']\n---\n# Heading\n", 0)
+	f.accept(t, scan, "link.md", "[[empty]]", 0)
+	f.complete(t, scan)
+	require.NoError(t, NewProjector(f.catalog, f.blobs).Process(t.Context(), f.target(t)))
+	require.NotEmpty(t, f.currentHead(t))
+	edges := f.edges(t, "link.md")
+	require.Len(t, edges, 1)
+	require.Equal(t, "resolved", edges[0].State)
+}
+
 func TestNoteProjectorCompleteNamespace(t *testing.T) {
 	t.Parallel()
 	f := newProjectorFixture(t)

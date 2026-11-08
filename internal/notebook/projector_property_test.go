@@ -56,7 +56,7 @@ func TestNoteProjectorEdgePermutationProperty(t *testing.T) {
 			require.NoError(t, json.Unmarshal(record.Artifact, &note))
 		}
 		require.NoError(t, f.catalog.StageNoteIndexSource(t.Context(), generation,
-			store.NotePublicationSource{Identity: id}, record, lookupKeys(ref, note)))
+			store.NotePublicationSource{Identity: id}, record, store.NoteIndexKeys(ref, note)))
 	}
 	require.NoError(t, f.catalog.SealNoteIndexKeys(t.Context(), generation))
 	heading := notemarkdown.Span{Start: len(prefix), End: len(prefix) + len("# Target\n")}

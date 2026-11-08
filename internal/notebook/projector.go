@@ -8,9 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"path"
-	"slices"
-	"strings"
 
 	"go.kenn.io/docbank/document/notemarkdown"
 	"go.kenn.io/docbank/internal/blob"
@@ -108,7 +105,7 @@ func (p *Projector) Process(ctx context.Context, target store.NoteIndexTarget) e
 		if err != nil {
 			return err
 		}
-		return p.catalog.StageNoteIndexSource(ctx, g, source, record, lookupKeys(source.Identity.SourceRef, note))
+		return p.catalog.StageNoteIndexSource(ctx, g, source, record, store.NoteIndexKeys(source.Identity.SourceRef, note))
 	}); err != nil {
 		return err
 	}
@@ -238,20 +235,6 @@ func parseArtifact(record store.NoteParseRecord) (notemarkdown.Note, error) {
 		}
 	}
 	return note, nil
-}
-
-func lookupKeys(sourceRef string, note notemarkdown.Note) []store.NoteLookupKey {
-	keys := []store.NoteLookupKey{{Kind: "path", Value: sourceRef}}
-	if basename := strings.TrimSuffix(path.Base(sourceRef), path.Ext(sourceRef)); basename != "" {
-		keys = append(keys, store.NoteLookupKey{Kind: "basename", Value: basename})
-	}
-	for _, alias := range note.Metadata.Aliases {
-		key := store.NoteLookupKey{Kind: "alias", Value: alias}
-		if !slices.Contains(keys, key) {
-			keys = append(keys, key)
-		}
-	}
-	return keys
 }
 
 func (p *Projector) edges(ctx context.Context, g store.NoteIndexGeneration, sourceRef string, links []notemarkdown.Link) ([]store.NoteIndexEdge, error) {

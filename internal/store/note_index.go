@@ -102,14 +102,15 @@ func (s *Store) BeginNoteIndex(ctx context.Context, target NoteIndexTarget, pars
 	return g, nil
 }
 
-func noteIndexKeys(sourceRef string, note notemarkdown.Note) []NoteLookupKey {
+// NoteIndexKeys derives the bounded lookup keys staged for an authored note.
+func NoteIndexKeys(sourceRef string, note notemarkdown.Note) []NoteLookupKey {
 	keys := []NoteLookupKey{{"path", sourceRef}}
 	if basename := strings.TrimSuffix(path.Base(sourceRef), path.Ext(sourceRef)); basename != "" {
 		keys = append(keys, NoteLookupKey{"basename", basename})
 	}
 	for _, alias := range note.Metadata.Aliases {
 		key := NoteLookupKey{"alias", alias}
-		if !slices.Contains(keys, key) {
+		if validNoteLookupKey(key) && !slices.Contains(keys, key) {
 			keys = append(keys, key)
 		}
 	}
@@ -191,7 +192,7 @@ func (s *Store) StageNoteIndexSource(ctx context.Context, g NoteIndexGeneration,
 		if err != nil {
 			return err
 		}
-		if !sameNoteKeys(keys, noteIndexKeys(id.SourceRef, note)) {
+		if !sameNoteKeys(keys, NoteIndexKeys(id.SourceRef, note)) {
 			return ErrInvalidNoteProjection
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO note_index_sources(generation_id,source_ref,node_id,content_version_id,source_revision,parse_generation_id,edges_done) SELECT $1,$2,$3,$4,$5,generation_id,0 FROM note_parse_bindings WHERE content_version_id=$4 AND recipe=$6 ON CONFLICT(generation_id,source_ref) DO NOTHING`, g.ID, id.SourceRef, id.NodeID, id.ContentVersionID, id.SourceRevision, g.ParserRecipe)
