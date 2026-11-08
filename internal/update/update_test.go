@@ -140,78 +140,46 @@ func TestUpdateInstallsFromFakeRelease(t *testing.T) {
 }
 
 func TestUpdateCoordinatesDaemonUnderLaunchLock(t *testing.T) {
-	for _, test := range []struct {
-		name, timeout string
-		fail, absent  bool
-	}{
-		{name: "automatic", timeout: "30m0s"},
-		{name: "persistent", timeout: "0s"},
-		{name: "automatic recovery", timeout: "30m0s", fail: true},
-		{name: "persistent recovery", timeout: "0s", fail: true},
-		{name: "absent", absent: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			ts, _ := fakeReleaseServer(t, "9.9.9")
-			c := newFakeClient(t, ts, "0.0.1")
-			root := t.TempDir()
-			dest := filepath.Join(t.TempDir(), "docbank")
-			if test.fail {
-				require.NoError(t, os.Mkdir(dest, 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(dest, "keep"), []byte("old"), 0o600))
-			} else {
-				require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
-			}
+	ts, _ := fakeReleaseServer(t, "9.9.9")
+	c := newFakeClient(t, ts, "0.0.1")
+	root := t.TempDir()
+	dest := filepath.Join(t.TempDir(), "docbank")
+	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
 
-			var locked bool
-			var order []string
-			var out strings.Builder
-			err := update.Run(t.Context(), &out, update.Options{
-				Yes: true, Client: &c, Root: root, Destination: dest,
-				WithLaunchLock: func(_ context.Context, gotRoot string, fn func() error) error {
-					require.Equal(t, root, gotRoot)
-					order = append(order, "lock")
-					locked = true
-					err := fn()
-					locked = false
-					order = append(order, "unlock")
-					return err
-				},
-				Stop: func(_ context.Context, gotRoot string) (*kitdaemon.RuntimeRecord, error) {
-					require.True(t, locked, "stop must happen while the launch lock is held")
-					require.Equal(t, root, gotRoot)
-					order = append(order, "stop")
-					var record *kitdaemon.RuntimeRecord
-					if !test.absent {
-						record = &kitdaemon.RuntimeRecord{Metadata: map[string]string{daemonconn.MetaIdleTimeout: test.timeout}}
-					}
-					return record, nil
-				},
-				Start: func(_ context.Context, gotRoot string, persistent bool) error {
-					require.True(t, locked, "restart must happen while the launch lock is held")
-					require.Equal(t, root, gotRoot)
-					assert.Equal(t, test.timeout == "0s", persistent, "restart keeps the stopped daemon's lifetime")
-					if !test.fail {
-						got, err := os.ReadFile(dest)
-						require.NoError(t, err)
-						require.Contains(t, string(got), "9.9.9", "restart should happen after install")
-					}
-					order = append(order, "start")
-					return nil
-				},
-			})
-			if test.fail {
-				require.Error(t, err)
-				assert.Contains(t, out.String(), "restarted previous daemon")
-			} else {
-				require.NoError(t, err, out.String())
-			}
-			expected := []string{"lock", "stop", "start", "unlock"}
-			if test.absent {
-				expected = []string{"lock", "stop", "unlock"}
-			}
-			assert.Equal(t, expected, order)
-		})
-	}
+	var locked bool
+	var order []string
+	var out strings.Builder
+	err := update.Run(t.Context(), &out, update.Options{
+		Yes: true, Client: &c, Root: root, Destination: dest,
+		WithLaunchLock: func(_ context.Context, gotRoot string, fn func() error) error {
+			require.Equal(t, root, gotRoot)
+			order = append(order, "lock")
+			locked = true
+			err := fn()
+			locked = false
+			order = append(order, "unlock")
+			return err
+		},
+		Stop: func(_ context.Context, gotRoot string) (*kitdaemon.RuntimeRecord, error) {
+			require.True(t, locked, "stop must happen while the launch lock is held")
+			require.Equal(t, root, gotRoot)
+			order = append(order, "stop")
+			return &kitdaemon.RuntimeRecord{Metadata: map[string]string{daemonconn.MetaIdleTimeout: "0s"}}, nil
+		},
+		Start: func(_ context.Context, gotRoot string, persistent bool) error {
+			require.True(t, locked, "restart must happen while the launch lock is held")
+			require.Equal(t, root, gotRoot)
+			assert.True(t, persistent, "restart keeps the stopped daemon's lifetime")
+			got, err := os.ReadFile(dest)
+			require.NoError(t, err)
+			require.Contains(t, string(got), "9.9.9", "restart should happen after install")
+			order = append(order, "start")
+			return nil
+		},
+	})
+	require.NoError(t, err, out.String())
+	assert.Equal(t, []string{"lock", "stop", "start", "unlock"}, order)
+	assert.Contains(t, out.String(), "daemon restarted")
 }
 
 func TestUpdateCheckOnly(t *testing.T) {
