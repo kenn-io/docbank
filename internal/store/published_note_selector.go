@@ -14,12 +14,16 @@ import (
 // supply nodes n and its retained current content_versions cv. This predicate
 // belongs before ranking, limits and aggregates, never on a returned page.
 func publishedNoteEligibilitySQL(selector *PublishedNoteSelector) (string, []any) {
+	return publishedNoteEligibilitySQLParameter(selector, "?")
+}
+
+func publishedNoteEligibilitySQLParameter(selector *PublishedNoteSelector, parameter string) (string, []any) {
 	if selector == nil {
 		return "", nil
 	}
 	name, args := "", []any(nil)
 	if selector.Publication != "" {
-		name = " AND np.name=?"
+		name = " AND np.name=" + parameter
 		args = append(args, selector.Publication)
 	}
 	return `EXISTS(SELECT 1 FROM published_note_sources pns
@@ -71,7 +75,7 @@ func publishedNotesRevisionTx(ctx context.Context, q metadataQuerier, selector *
 	_, _ = fmt.Fprintf(digest, "%q\n", epoch)
 	where, args := "", []any(nil)
 	if selector.Publication != "" {
-		where = " AND name=?"
+		where = " AND name=$1"
 		args = append(args, selector.Publication)
 	}
 	rows, err := q.QueryContext(ctx, `SELECT name,namespace_revision FROM note_publications WHERE active=1`+where+` ORDER BY name`, args...)
@@ -120,6 +124,7 @@ func (s *Store) publishedNoteIdentitiesTx(ctx context.Context, q metadataQuerier
 	type binding struct {
 		NodeID  int64  `json:"node_id"`
 		Version string `json:"version"`
+		Ordinal int    `json:"ordinal"`
 	}
 	payload := make([]binding, len(identities))
 	for i, id := range identities {
@@ -129,15 +134,16 @@ func (s *Store) publishedNoteIdentitiesTx(ctx context.Context, q metadataQuerier
 		if err := validateUUIDv4(id.ContentVersionID); err != nil {
 			return nil, err
 		}
-		payload[i] = binding{id.NodeID, id.ContentVersionID}
+		payload[i] = binding{id.NodeID, id.ContentVersionID, i}
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	predicate, args := publishedNoteEligibilitySQL(selector)
+	predicate, args := publishedNoteEligibilitySQLParameter(selector, "$2")
 	args = append([]any{string(encoded)}, args...)
-	rows, err := q.QueryContext(ctx, `WITH requested AS (SELECT json_extract(value,'$.node_id') node_id,json_extract(value,'$.version') version_id,CAST(key AS INTEGER) ordinal FROM json_each(?))
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	rows, err := q.QueryContext(ctx, `WITH requested AS (SELECT `+d.number("value", "node_id")+` node_id,`+d.text("value", "version")+` version_id,`+d.number("value", "ordinal")+` ordinal FROM `+d.arrayValues("$1")+`)
  SELECT p.publication_name,p.source_ref,n.id,cv.version_id,cv.blob_hash,cv.size,p.source_revision,np.namespace_revision
  FROM requested r CROSS JOIN `+nodeFrom+`
  JOIN published_note_sources p ON p.node_id=n.id JOIN note_publications np ON np.name=p.publication_name

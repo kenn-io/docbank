@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 type NotePublicationAcceptLocalRequest struct {
@@ -104,7 +103,7 @@ func invalidateNotePublicationsTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		for i, id := range nodeIDs[start:end] {
 			args[i] = id
 		}
-		ids := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+		ids := numberedPlaceholders(len(args), 0)
 		cte := `WITH RECURSIVE affected(id) AS (SELECT id FROM nodes WHERE id IN (` + ids + `) UNION SELECT n.id FROM nodes n JOIN affected a ON n.parent_id=a.id) `
 		names, err := func() (names []string, resultErr error) {
 			rows, err := tx.QueryContext(ctx, cte+`SELECT DISTINCT publication_name FROM published_note_sources WHERE node_id IN (SELECT id FROM affected)`, args...)
