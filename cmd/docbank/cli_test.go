@@ -837,6 +837,7 @@ func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
 			var status map[string]any
 			require.NoError(t, json.Unmarshal([]byte(out), &status))
 			assert.Equal(t, persistent, status["persistent"])
+			assert.Equal(t, persistent, status["explicit_start"])
 		})
 	}
 }

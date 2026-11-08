@@ -1084,7 +1084,6 @@ dialogs and returns it to sign-in.
    [server]
    api_port = 7777
    api_key = "output-of-openssl-rand-hex-32"
-   idle_timeout = "0"
 
    [web]
    public_origin = "https://archive.example.test"
@@ -1100,7 +1099,8 @@ dialogs and returns it to sign-in.
    loopback backend authority, or an exact entry in `[web] allowed_hosts`.
    Docbank also admits these authorities through the server Host allowlist.
    Entries are `host[:port]` values; schemes and wildcards are rejected.
-3. Open the public origin and enter the API key. Use HTTPS for remote access.
+3. Run `docbank daemon start` to keep the daemon available until stopped. After changing a running daemon's configuration, use `docbank daemon restart`.
+4. Open the public origin and enter the API key. Use HTTPS for remote access.
    An HTTP origin is accepted on loopback; non-loopback HTTP requires
    `trust_private_network = true`, which explicitly trusts the private
    network and its proxy with the key and browser credentials.

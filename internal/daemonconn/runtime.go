@@ -17,6 +17,8 @@ const (
 	EnvBackgroundDaemon = "DOCBANK_BACKGROUND_DAEMON"
 	// EnvPersistentDaemon carries explicit launch intent to a detached child.
 	EnvPersistentDaemon = "DOCBANK_PERSISTENT_DAEMON"
+	// MetaExplicitStart records a request to stay running across replacements.
+	MetaExplicitStart = "explicit_start"
 	// MetaIdleTimeout records the effective idle timeout, or 0s when disabled.
 	MetaIdleTimeout     = "idle_timeout"
 	metaShutdownToken   = "shutdown_token"
@@ -42,6 +44,11 @@ type EnsureResult struct {
 // Persistent reports whether the daemon's effective lifetime has no idle exit.
 func Persistent(rec kitdaemon.RuntimeRecord) bool {
 	return rec.Metadata[MetaIdleTimeout] == "0s"
+}
+
+// Explicit reports whether a user requested a daemon that stays running.
+func Explicit(rec kitdaemon.RuntimeRecord) bool {
+	return rec.Metadata[MetaExplicitStart] == "true"
 }
 
 // RuntimeStore returns the kit runtime-record store rooted at root.

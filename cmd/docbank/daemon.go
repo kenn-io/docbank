@@ -607,6 +607,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
 	record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
+	record.Metadata[daemonconn.MetaExplicitStart] = strconv.FormatBool(persistent)
 	if localListener != nil {
 		record.Metadata["network_address"] = listener.Addr().String()
 	}

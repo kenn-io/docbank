@@ -82,6 +82,9 @@ var daemonStatusCmd = &cobra.Command{
 				out["address"] = rec.Address
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
+				if rec.Metadata[daemonconn.MetaExplicitStart] != "" {
+					out["explicit_start"] = daemonconn.Explicit(rec)
+				}
 				if timeout := rec.Metadata[daemonconn.MetaIdleTimeout]; timeout != "" {
 					out["idle_timeout"] = timeout
 					out["persistent"] = daemonconn.Persistent(rec)
@@ -97,15 +100,18 @@ var daemonStatusCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "running: pid %d at %s (%s), up %s\n",
 			rec.PID, rec.Address, info.Version, time.Since(rec.StartedAt).Round(time.Second))
 		if timeout, err := time.ParseDuration(rec.Metadata[daemonconn.MetaIdleTimeout]); err == nil {
-			if timeout == 0 {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Stays running until docbank daemon stop")
-			} else {
+			lifetime := "Stays running until docbank daemon stop"
+			if timeout > 0 {
 				duration := timeout.String()
 				if timeout%time.Minute == 0 {
 					duration = fmt.Sprintf("%dm", timeout/time.Minute)
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Exits after %s idle\n", duration)
+				lifetime = fmt.Sprintf("Exits after %s idle", duration)
 			}
+			if rec.Metadata[daemonconn.MetaExplicitStart] == "false" {
+				lifetime += " (started automatically)"
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
 		}
 		return nil
 	},

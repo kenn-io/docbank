@@ -359,8 +359,8 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 
 // EnsureDaemon converges the vault on exactly one version- and
 // protocol-matched daemon: it returns the running daemon when it is compatible
-// with this binary and stays up when persistent, and otherwise stops it under
-// the launch lock and starts a fresh one. `daemon start`, `daemon restart`, and the data commands'
+// with this binary and stays up when requested, and otherwise replaces it
+// under the launch lock. `daemon start`, `daemon restart`, and data commands'
 // auto-start all share this path, so there is a single replacement policy and
 // no command ever leaves a stale daemon behind.
 func EnsureDaemon(ctx context.Context, root string, persistent bool) (EnsureResult, error) {
@@ -394,7 +394,7 @@ func ensureDaemonWithOptions(
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
-	if ok && (!persistent || Persistent(rec)) {
+	if ok && (!persistent || Explicit(rec)) {
 		res.Record = rec
 		return res, nil
 	}
@@ -406,6 +406,12 @@ func ensureDaemonWithOptions(
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
 		if ok && (!persistent || Persistent(rec)) {
+			if persistent && !Explicit(rec) {
+				rec.Metadata[MetaExplicitStart] = "true"
+				if _, err := RuntimeStore(root).Write(rec); err != nil {
+					return fmt.Errorf("recording explicit daemon start: %w", err)
+				}
+			}
 			res.Record = rec
 			return nil
 		}
@@ -452,7 +458,7 @@ func ensureDaemonWithOptions(
 			}
 		}
 
-		res.Record, err = startFn(ctx, root, persistent || (res.Replaced != nil && Persistent(*res.Replaced)))
+		res.Record, err = startFn(ctx, root, persistent || (res.Replaced != nil && Explicit(*res.Replaced)))
 		res.Started = err == nil
 		return err
 	})

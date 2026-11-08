@@ -166,7 +166,7 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		}
 		if err := c.Install(ctx, info, selfupdate.InstallOptions{DestinationPath: dest}); err != nil {
 			if rec != nil {
-				if rerr := startFn(ctx, root, daemonconn.Persistent(*rec)); rerr != nil {
+				if rerr := startFn(ctx, root, daemonconn.Explicit(*rec)); rerr != nil {
 					return fmt.Errorf("install failed (%w) and daemon restart failed: %w", err, rerr)
 				}
 				_, _ = fmt.Fprintln(out, "install failed; restarted previous daemon")
@@ -175,7 +175,7 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 		}
 		_, _ = fmt.Fprintf(out, "installed %s -> %s\n", info.LatestVersion, dest)
 		if rec != nil {
-			if err := startFn(ctx, root, daemonconn.Persistent(*rec)); err != nil {
+			if err := startFn(ctx, root, daemonconn.Explicit(*rec)); err != nil {
 				return fmt.Errorf("daemon restart after update failed (start it with docbank daemon start): %w", err)
 			}
 			_, _ = fmt.Fprintln(out, "daemon restarted")

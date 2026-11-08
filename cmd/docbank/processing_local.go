@@ -52,16 +52,11 @@ func newProcessingLocalCommand() *cobra.Command {
 			}
 			stopped, err := daemonconn.Stop(cmd.Context(), layout.Root)
 			if err == nil {
-				_, err = daemonconn.EnsureDaemon(cmd.Context(), layout.Root, stopped != nil && daemonconn.Persistent(*stopped))
+				_, err = daemonconn.EnsureDaemon(cmd.Context(), layout.Root, stopped != nil && daemonconn.Explicit(*stopped))
 			}
 			if err != nil {
 				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
 			}
-			reconnected, err := daemonconn.Ensure(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
-			}
-			defer func() { _ = reconnected.Close() }()
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Text indexing enabled for this vault and new imports.")
 			if err != nil {
 				return fmt.Errorf("write text indexing result: %w", err)
