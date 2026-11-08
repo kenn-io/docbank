@@ -136,6 +136,24 @@ func TestNormalizedEvidenceV1CanonicalizesUnorderedCollections(t *testing.T) {
 	assert.Equal(t, first, second)
 }
 
+func TestNormalizedEvidenceV1CanonicalizesOmissionOnlyPDFOrder(t *testing.T) {
+	source := document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1, Family: "pdf", UnitKind: document.EvidenceUnitPage, Completeness: document.EvidencePartial,
+		Omissions: []document.SourceEvidenceOmissionV1{
+			{Kind: document.EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}},
+			{Kind: document.EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 2, End: 2}},
+		},
+	}
+	policy, err := document.NewEvidencePolicy(1)
+	require.NoError(t, err)
+	first, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	slices.Reverse(source.Omissions)
+	second, err := document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+}
+
 func TestNormalizedEvidenceV1CanonicalizesRangeOmissionScope(t *testing.T) {
 	rangeOmission := document.SourceEvidenceOmissionV1{
 		Kind: document.EvidenceOmissionRange, Range: &document.EvidenceTextRangeV1{Start: 0, End: 3},

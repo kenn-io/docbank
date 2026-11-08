@@ -351,11 +351,18 @@ func omissionOnlyPDF(family string, kind EvidenceUnitKind, completeness Evidence
 }
 
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
+	ordered := slices.Clone(omitted)
+	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
+		if result := cmp.Compare(left.Start, right.Start); result != 0 {
+			return result
+		}
+		return cmp.Compare(left.End, right.End)
+	})
 	if !sequence.seen && sequence.emptyPages {
 		if len(omitted) == 0 {
 			return errors.New("empty evidence requires page omissions")
 		}
-		for index, locator := range omitted {
+		for index, locator := range ordered {
 			if locator.Kind != EvidenceLocatorPage || locator.IndexOrigin != EvidenceIndexOriginOne || locator.Start != int64(index+1) || locator.End != locator.Start || locator.Name != "" {
 				return errors.New("empty evidence requires contiguous one-based page omissions")
 			}
@@ -396,13 +403,6 @@ func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceL
 		// Gaps between timed cues do not imply omitted speech.
 		return nil
 	}
-	ordered := slices.Clone(omitted)
-	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
-		if result := cmp.Compare(left.Start, right.Start); result != 0 {
-			return result
-		}
-		return cmp.Compare(left.End, right.End)
-	})
 	omissionIndex := 0
 	for _, gap := range sequence.gaps {
 		cursor := gap.Start

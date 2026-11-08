@@ -4,9 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +21,7 @@ import (
 )
 
 type testUpload struct {
-	reader   *bytes.Reader
+	reader   *mediatest.Upload
 	metadata document.AuthorizedUploadMetadata
 	reads    int
 	closes   int
@@ -31,17 +29,10 @@ type testUpload struct {
 }
 
 func newTestUpload(data []byte) *testUpload {
-	digest := sha256.Sum256(data)
-	return &testUpload{
-		reader: bytes.NewReader(data),
-		metadata: document.AuthorizedUploadMetadata{
-			Filename: "book.epub", MediaFamily: "ebook", MediaType: "application/epub+zip",
-			ByteLength: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
-			CapabilityRecordChecksum: strings.Repeat("2", 64),
-			ProviderMetadataChecksum: strings.Repeat("3", 64),
-			InputKind:                document.RenditionInputOriginalFile,
-		},
-	}
+	source := mediatest.NewUpload(data, document.AuthorizedUploadMetadata{
+		Filename: "book.epub", MediaFamily: "ebook", MediaType: "application/epub+zip",
+	})
+	return &testUpload{reader: source, metadata: source.Metadata()}
 }
 
 func (upload *testUpload) Read(buffer []byte) (int, error) {
