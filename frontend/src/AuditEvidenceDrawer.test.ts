@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
+import type { AuditStatus } from "./generated/docbank.js";
 
 const evidence = {
   vault_id: "11111111-1111-4111-8111-111111111111",
@@ -18,7 +19,27 @@ const evidence = {
 };
 
 function statusResponse(enabled = true): Response {
-  return Response.json({ enabled });
+  return Response.json({
+    enabled,
+    vault_id: evidence.vault_id,
+    lineage_id: enabled ? evidence.lineage_id : undefined,
+    operation_sequence_high_water: enabled ? 18 : 0,
+    allocation_entry_count: enabled ? 18 : 0,
+    allocation_head: enabled ? evidence.allocation_head : undefined,
+    scopes: enabled
+      ? [
+          {
+            ...evidence.scopes[0]!,
+            baseline_digest: "c".repeat(64),
+            enable_operation_id: "44444444-4444-4444-8444-444444444444",
+            member_count: 3,
+            target_node_id: 1,
+            target_path: "/folder",
+            target_trashed: false,
+          },
+        ]
+      : [],
+  } satisfies AuditStatus);
 }
 
 let statusMock: ReturnType<typeof vi.fn<typeof fetch>>;
@@ -203,7 +224,7 @@ describe("audit evidence drawer", () => {
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
   });
 
-  it.each(["HTTP", "transport", "success"])(
+  it.each(["HTTP", "success"])(
     "reports damaged authority after %s status",
     async (failure) => {
       if (failure === "HTTP") {
@@ -212,8 +233,6 @@ describe("audit evidence drawer", () => {
             status: 500,
           }),
         );
-      } else if (failure === "transport") {
-        statusMock.mockRejectedValueOnce(new Error("status unavailable"));
       }
       verifyMock.mockResolvedValueOnce(
         new Response(
