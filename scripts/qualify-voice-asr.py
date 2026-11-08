@@ -43,7 +43,7 @@ with (output / "service.log").open("w") as log:
         env = dict(os.environ, DOCBANK_CI_ASR_URL="http://127.0.0.1:5001")
         subprocess.run([
             "go", "test", "-tags", "fts5", "-count=1", "-v", "-timeout", "8m",
-            "./document/docling", "-run", "^TestDoclingASRRealM4AQualification$",
+            "./document/docling", "-run", "^TestDoclingASRRealAudioQualification$",
         ], cwd=root, env=env, check=True)
         source = (output / "asr-spoken.m4a").read_bytes()
         transcript = (output / "media-transcript.json").read_bytes()
@@ -57,6 +57,7 @@ with (output / "service.log").open("w") as log:
             "source": "synthetic asr-spoken.wav transcoded to AAC/M4A",
             "source_sha256": hashlib.sha256(source).hexdigest(),
             "artifact_sha256": hashlib.sha256(transcript).hexdigest(),
+            "mp3_artifact_sha256": hashlib.sha256((output / "mp3-transcript.json").read_bytes()).hexdigest(),
             "versions": versions,
             "decoder": json.loads(probe.stdout),
             "adapter": "docbank-docling-asr/v2",
