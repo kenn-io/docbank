@@ -43,6 +43,7 @@ import (
 	"go.kenn.io/docbank/internal/mailbox"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	docmcp "go.kenn.io/docbank/internal/mcp"
+	"go.kenn.io/docbank/internal/notebook"
 	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
@@ -930,6 +931,10 @@ func startProcessingJobs(
 	spoolParent string,
 	runtimes *processing.RenditionRuntimeRegistry, renditionWorkers int, gate *api.OperationGate, logger *slog.Logger,
 ) error {
+	notes := notebook.NewBackfill(notebook.NewProjector(s, blobs), gate.MutateContext, logger)
+	if err := supervisor.StartWorker("derive:notes", notes.Run); err != nil {
+		return fmt.Errorf("starting note projection backfill: %w", err)
+	}
 	if runtimes.Ready() {
 		for index := range renditionWorkers {
 			name := "process:renditions"
