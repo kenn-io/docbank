@@ -355,13 +355,16 @@ reranking consent grant. `search_documents` reports `openWorldHint: true`
 because a reranked search can send the query and excerpts to a provider.
 The optional `reranking` receipt reports `applied`,
 `skipped`, or `degraded`, the candidate count, and any failure cause. When the
-receipt is `applied`, the first `candidate_count` hits include `rerank_relevance`
-equal to their `score`, including zero. Later hits omit `rerank_relevance`.
-Applied searches use different `score` scales, provider relevance for the first
-`candidate_count` hits and search scores for later hits, so clients must not
-sort the whole list by `score`.
-A degraded search retains its original order and adds
-`reranking_degraded` to skipped reasons, unless the profile fails closed.
+receipt is `applied`, `candidate_count` counts the reranked pool before validity
+ordering and the final result limit, so it can exceed the returned hit count.
+Returned reranked hits include `rerank_relevance` equal to their `score`,
+including zero. Other hits omit
+`rerank_relevance`. Out-of-force hits are listed after in-force ones, so the
+reranked hits can appear anywhere in the returned list. Applied searches use
+different `score` scales, provider relevance for reranked hits and search scores
+for the others, so clients must not sort the whole list by `score`.
+A degraded search still applies validity ordering before the final result limit
+and adds `reranking_degraded` to skipped reasons, unless the profile fails closed.
 MCP returns `reranking_unavailable` when no reranker is configured and
 `reranking_failed` when reranking fails under a fail-closed policy; these
 errors omit provider bodies, credentials, query text, and excerpts.

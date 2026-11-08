@@ -553,7 +553,7 @@ func searchDocuments(
 		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence,
-			RerankRelevance: searchRerankRelevance(item, index, output.Reranking)}
+			RerankRelevance: item.RerankRelevance}
 	}
 	return output, documentResourceLinks(result.vaultID, result.documents), nil
 }
@@ -599,14 +599,6 @@ func runDocumentSearch(ctx context.Context, c documentClient, input searchDocume
 		return documentSearchResponse{}, callErr
 	}
 	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
-}
-
-// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
-func searchRerankRelevance(item api.DocumentSearchResult, index int, reranking *api.DocumentSearchRerankingReceipt) *float64 {
-	if reranking != nil && reranking.Outcome == "applied" && index < reranking.CandidateCount {
-		return &item.Score
-	}
-	return nil
 }
 
 func encodeSearchEvidenceIDs(evidence []api.DocumentEvidenceReference) ([]string, error) {

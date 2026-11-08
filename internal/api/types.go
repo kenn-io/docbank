@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"errors"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
@@ -245,6 +246,8 @@ type DocumentSearchScope struct {
 }
 
 type DocumentSearchRequest struct {
+	AsOf string `json:"as_of,omitzero" format:"date" maxLength:"10"`
+
 	Scope        *DocumentSearchScope `json:"scope,omitzero"`
 	MediaSources MediaSearchSources   `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
 	Query        string               `json:"query" minLength:"1" maxLength:"8192"`
@@ -374,12 +377,47 @@ type DocumentSearchTrace struct {
 	Count int    `json:"count" minimum:"0"`
 }
 
+type DocumentResultValidity struct {
+	State         string                      `json:"state" enum:"current,superseded,expired,not_yet_effective"`
+	SupersededBy  []DocumentValiditySuccessor `json:"superseded_by" maxItems:"16"`
+	EffectiveFrom string                      `json:"effective_from,omitzero" format:"date"`
+	EffectiveTo   string                      `json:"effective_to,omitzero" format:"date"`
+}
+
+// Reason says why a search result is out of force, or "" when it is in force.
+func (v *DocumentResultValidity) Reason() string {
+	if v == nil {
+		return ""
+	}
+	switch v.State {
+	case "expired":
+		return "expired"
+	case "not_yet_effective":
+		return "not yet effective"
+	case "superseded":
+		names := []string{}
+		for _, next := range v.SupersededBy {
+			names = append(names, next.Path)
+		}
+		return "superseded by " + strings.Join(names, ", ")
+	}
+	return ""
+}
+
+type DocumentValiditySuccessor struct {
+	NodeID        int64  `json:"node_id" minimum:"1"`
+	Path          string `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
+	EffectiveFrom string `json:"effective_from,omitzero" format:"date"`
+}
+
 type DocumentSearchResult struct {
+	Validity         *DocumentResultValidity     `json:"validity,omitzero"`
 	VaultUID         string                      `json:"vault_uid" format:"uuid"`
 	NodeID           int64                       `json:"node_id" minimum:"1"`
 	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
 	Rank             int                         `json:"rank" minimum:"1"`
 	Score            float64                     `json:"score"`
+	RerankRelevance  *float64                    `json:"rerank_relevance,omitzero"`
 	Path             string                      `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
 	Excerpt          string                      `json:"excerpt,omitzero" maxLength:"512"`
 	LexicalRank      int                         `json:"lexical_rank,omitzero"`
@@ -410,6 +448,7 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	AsOf                 string                          `json:"as_of" format:"date"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`

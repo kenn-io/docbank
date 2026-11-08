@@ -2232,6 +2232,36 @@ export interface DocumentPage {
   source_present?: boolean;
 }
 
+export type DocumentResultValidityState = typeof DocumentResultValidityState[keyof typeof DocumentResultValidityState];
+
+
+export const DocumentResultValidityState = {
+  current: 'current',
+  superseded: 'superseded',
+  expired: 'expired',
+  not_yet_effective: 'not_yet_effective',
+} as const;
+
+export interface DocumentValiditySuccessor {
+  effective_from?: string;
+  /** @minimum 1 */
+  node_id: number;
+  /**
+     * @minLength 2
+     * @maxLength 16384
+     * @pattern ^/
+     */
+  path: string;
+}
+
+export interface DocumentResultValidity {
+  effective_from?: string;
+  effective_to?: string;
+  state: DocumentResultValidityState;
+  /** @maxItems 16 */
+  superseded_by: DocumentValiditySuccessor[];
+}
+
 export interface DocumentSearchCoverage {
   binding_required: boolean;
   /** @minimum 0 */
@@ -2267,8 +2297,11 @@ export interface DocumentSearchResult {
   path: string;
   /** @minimum 1 */
   rank: number;
+  /** @nullable */
+  rerank_relevance?: number | null;
   score: number;
   semantic_rank?: number;
+  validity?: DocumentResultValidity;
   vault_uid: string;
 }
 
@@ -2282,6 +2315,7 @@ export interface DocumentSearchReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   actual_mode: string;
+  as_of: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
   /** @maxItems 4096 */
@@ -2339,6 +2373,8 @@ export interface DocumentSearchScope {
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxLength 10 */
+  as_of?: string;
   /** @maxLength 128 */
   binding_id?: string;
   content_first?: boolean;
@@ -2616,6 +2652,13 @@ export interface DuplicatePage {
   total: number;
   /** @minimum 0 */
   total_references: number;
+}
+
+export interface EffectiveWindowRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  effective_from?: string;
+  effective_to?: string;
 }
 
 export interface EmailAddressV1 {
@@ -4368,6 +4411,36 @@ export interface NodePage {
   limit: number;
   offset: number;
   total: number;
+}
+
+export type NodeValidityState = typeof NodeValidityState[keyof typeof NodeValidityState];
+
+
+export const NodeValidityState = {
+  current: 'current',
+  superseded: 'superseded',
+  expired: 'expired',
+  not_yet_effective: 'not_yet_effective',
+} as const;
+
+export interface SupersessionLink {
+  note: string;
+  predecessor_id: number;
+  recorded_at: string;
+  successor_id: number;
+}
+
+export interface NodeValidity {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  as_of: string;
+  effective_from?: string;
+  effective_to?: string;
+  node: Node;
+  predecessors: SupersessionLink[];
+  state: NodeValidityState;
+  successors: SupersessionLink[];
+  undated: boolean;
 }
 
 export interface NumberedFooter {
@@ -8601,6 +8674,13 @@ export interface Summary {
   unresolved_dates: number;
 }
 
+export interface SupersessionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  note?: string | null;
+}
+
 export interface Tag {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -8993,6 +9073,13 @@ export interface UploadReceipt {
   ingest_id?: string;
   node: Node;
   status: UploadReceiptStatus;
+}
+
+export interface ValidityReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  changed: boolean;
+  node: Node;
 }
 
 export interface VaultIdentity {
@@ -9695,6 +9782,14 @@ export type ReplaceNodeContentHeaders = {
 'X-Docbank-Blob-Size': string;
 };
 
+export type DeleteEffectiveWindowHeaders = {
+'If-Match': string;
+};
+
+export type PutEffectiveWindowHeaders = {
+'If-Match': string;
+};
+
 export type ListNodeProvenanceParams = {
 /**
  * @minimum 1
@@ -9716,6 +9811,14 @@ export type RestoreNodeHeaders = {
 };
 
 export type RevertNodeContentHeaders = {
+'If-Match': string;
+};
+
+export type DeleteSupersessionHeaders = {
+'If-Match': string;
+};
+
+export type PutSupersessionHeaders = {
 'If-Match': string;
 };
 
@@ -9741,6 +9844,13 @@ export type AssignTagHeaders = {
 
 export type TrashNodeHeaders = {
 'If-Match': string;
+};
+
+export type GetNodeValidityParams = {
+/**
+ * Evaluation date (YYYY-MM-DD); defaults to the daemon's local calendar date.
+ */
+as_of?: string;
 };
 
 export type VerifyNodeContentHeaders = {
@@ -14963,6 +15073,87 @@ return sessionJSON<ContentReplacementReceipt>(getReplaceNodeContentUrl(id),
 
 
 
+export const getDeleteEffectiveWindowUrl = (id: number,) => {
+
+
+
+
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/effective-window`
+}
+
+/**
+ * If-Match guards the node revision.
+ * @summary Clear a document effective window
+ */
+export const deleteEffectiveWindow = async (id: number,
+    headers: DeleteEffectiveWindowHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ValidityReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ValidityReceipt>(getDeleteEffectiveWindowUrl(id),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getPutEffectiveWindowUrl = (id: number,) => {
+
+
+
+
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/effective-window`
+}
+
+/**
+ * Dates are inclusive calendar dates; If-Match guards the node revision.
+ * @summary Set a document effective window
+ */
+export const putEffectiveWindow = async (id: number,
+    effectiveWindowRequest: NonReadonly<EffectiveWindowRequest>,
+    headers: PutEffectiveWindowHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ValidityReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ValidityReceipt>(getPutEffectiveWindowUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(effectiveWindowRequest)
+  }
+);}
+
+
+
 export const getListNodeProvenanceUrl = (id: number,
     params?: ListNodeProvenanceParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -15118,6 +15309,91 @@ return sessionJSON<ContentReversionReceipt>(getRevertNodeContentUrl(id),
 
 
 
+export const getDeleteSupersessionUrl = (id: number,
+    predecessorId: number,) => {
+
+
+
+
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/supersedes/${encodeURIComponent(String(predecessorId))}`
+}
+
+/**
+ * If-Match guards the predecessor's revision.
+ * @summary Remove a document replacement
+ */
+export const deleteSupersession = async (id: number,
+    predecessorId: number,
+    headers: DeleteSupersessionHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ValidityReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ValidityReceipt>(getDeleteSupersessionUrl(id,predecessorId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getPutSupersessionUrl = (id: number,
+    predecessorId: number,) => {
+
+
+
+
+  return `/api/v1/nodes/${encodeURIComponent(String(id))}/supersedes/${encodeURIComponent(String(predecessorId))}`
+}
+
+/**
+ * If-Match guards the predecessor's revision. If note is omitted or null, an existing declaration's note is preserved and a new declaration defaults to empty; an explicit empty note clears it.
+ * @summary Declare a document replacement
+ */
+export const putSupersession = async (id: number,
+    predecessorId: number,
+    supersessionRequest: NonReadonly<SupersessionRequest>,
+    headers: PutSupersessionHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<ValidityReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ValidityReceipt>(getPutSupersessionUrl(id,predecessorId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(supersessionRequest)
+  }
+);}
+
+
+
 export const getListNodeTagsUrl = (id: number,
     params?: ListNodeTagsParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -15267,6 +15543,39 @@ return sessionJSON<Node>(getTrashNodeUrl(id),
     ...options,
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getGetNodeValidityUrl = (id: number,
+    params?: GetNodeValidityParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(id))}/validity?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(id))}/validity`
+}
+
+/**
+ * @summary Inspect declared document validity
+ */
+export const getNodeValidity = async (id: number,
+    params?: GetNodeValidityParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NodeValidity> => {
+
+  return sessionJSON<NodeValidity>(getGetNodeValidityUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
 
   }
 );}

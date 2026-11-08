@@ -866,7 +866,7 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 					hit := map[string]any{"vault_uid": testVaultID, "node_id": 7, "content_version_id": testVersionID, "rank": 1, "score": 1.0 / 61, "path": "/synthetic.md", "lexical_rank": 1, "evidence": []any{map[string]any{"kind": "node_name"}}}
 					report := map[string]any{"requested_mode": "lexical", "actual_mode": "lexical", "coverage": map[string]any{"binding_required": false, "scoped_documents": len(versions), "complete_documents": len(versions), "state": "complete"}, "degradations": []any{}, "results": []any{hit}, "trace": []any{}, "truncated": false}
 					if tc.outcome == "applied" {
-						hit["score"] = 0.0
+						hit["score"], hit["rerank_relevance"] = 0.0, 0.0
 						report["results"] = []any{hit, map[string]any{"vault_uid": testVaultID, "node_id": 8, "content_version_id": secondVersionID, "rank": 2, "score": 1.0 / 62, "path": "/second.md", "lexical_rank": 2, "evidence": []any{map[string]any{"kind": "node_name"}}}}
 						report["reranking"] = map[string]any{"outcome": "applied", "candidate_count": 1}
 					}

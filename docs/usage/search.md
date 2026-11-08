@@ -64,6 +64,16 @@ Removed candidates make the report `truncated`, and surviving result ranks and c
 reflect the final check. This applies to automatic and explicit semantic/hybrid
 search, including when expansion and reranking are disabled.
 
+## Search by effective date
+
+Processing search ranks documents in force ahead of superseded, expired, and future documents before applying the result limit. It keeps their retrieval scores. The PATH column explains each out-of-force result, for example `(superseded by /leases/lease-2025.pdf)`. Agent output includes `validity` and `validity_reason` fields.
+
+Use `docbank search renewal --as-of 2024-06-01` to evaluate declarations on a chosen date. This also works with explicit processing search. Omitting the date uses today. Only live successors within the search's source fence or filters affect standing or appear in explanations. An undated successor applies after the predecessor's inclusive end date, or on every inspection date if that end is open. See [Document validity](organizing.md#document-validity) to declare replacements and effective dates.
+
+Profile lane limits bound the candidate pool, up to 1,000 documents. Retrieval reranks that pool within the profile’s `MaxCandidates` before validity ordering and the result limit. The reranking receipt may count candidates omitted from the returned page. In-force matches take the limited slots first; out-of-force matches fill any remaining slots, with reasons. With `--limit 1`, an in-force match is returned ahead of an out-of-force match in the pool.
+
+`--as-of` requires automatic hybrid search or explicit processing search. If automatic search cannot run or fails, the command returns an error. Ordinary lexical search without a processing profile keeps its usual order.
+
 ## Choose exact versions and a profile
 
 Explicit processing search uses rendition text (text derived from a document
@@ -134,9 +144,9 @@ does not grant consent itself.
 Human output shows the reranking outcome and candidate count. `--json` includes
 a `reranking` receipt whether or not you pass `--explain`. In the receipt,
 `applied` means reranking succeeded, `skipped` means there were no candidates,
-and `degraded` means the search kept its original ordering after a reranking
-failure. The configured `degrade` failure policy returns that original
-ordering. `fail_closed` returns `reranking_failed` instead. See the
+and `degraded` means reranking failed. Under the configured `degrade` failure
+policy, search still applies validity ordering before the final result limit.
+`fail_closed` returns `reranking_failed` instead. See the
 [search response contract](../architecture/http-api.md#coverage-and-source-fenced-search)
 for receipt fields and degradation causes.
 

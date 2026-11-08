@@ -99,17 +99,30 @@ type Contribution struct {
 	Contribution float64
 }
 
+type ResultValidity struct {
+	State                      document.ValidityState
+	SupersededBy               []ValiditySuccessor
+	EffectiveFrom, EffectiveTo string
+}
+
+type ValiditySuccessor struct {
+	NodeID              int64
+	Path, EffectiveFrom string
+}
+
 type Result struct {
-	Document      DocumentIdentity
-	Rank          int
-	Score         float64
-	Path          string
-	Excerpt       string
-	LexicalRank   int
-	SemanticRank  int
-	Evidence      []EvidenceReference
-	Explanation   []Contribution
-	rerankExcerpt string
+	Validity        *ResultValidity
+	Document        DocumentIdentity
+	Rank            int
+	Score           float64
+	RerankRelevance *float64
+	Path            string
+	Excerpt         string
+	LexicalRank     int
+	SemanticRank    int
+	Evidence        []EvidenceReference
+	Explanation     []Contribution
+	rerankExcerpt   string
 }
 
 type CoverageState string
@@ -155,6 +168,7 @@ type MediaSelection struct {
 }
 
 type Report struct {
+	AsOf                 string
 	MediaSelections      []MediaSelection
 	MediaSourceSelection bool
 	RequestedMode        Mode

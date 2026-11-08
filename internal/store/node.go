@@ -427,9 +427,13 @@ func (s *Store) pathsOf(ctx context.Context, q rowsQuerier, ids []int64) ([]stri
 // and values. Traversal and result assembly stay shared; only the engine's JSON
 // table function differs. One parameter avoids a bind limit on large batches.
 func (s *Store) jsonArrayRowsSQL() string {
-	if s.postgresSchema != "" {
+	return jsonArrayRowsSQL(s.postgresSchema != "", "$1")
+}
+
+func jsonArrayRowsSQL(postgres bool, placeholder string) string {
+	if postgres {
 		return `SELECT ordinality - 1 AS position, value
-			FROM json_array_elements_text(CAST($1 AS json)) WITH ORDINALITY AS items(value, ordinality)`
+			FROM json_array_elements_text(CAST(` + placeholder + ` AS json)) WITH ORDINALITY AS items(value, ordinality)`
 	}
-	return `SELECT key AS position, value FROM json_each($1)`
+	return `SELECT key AS position, value FROM json_each(` + placeholder + `)`
 }

@@ -9,7 +9,7 @@ describe("processing receipts", () => {
     const request: DocumentSearchRequest = {
       query: "synthetic description",
       mode: "lexical",
-      limit: 20,
+      limit: 1,
       profile: "private",
       fence: { vault_uid: vault, content_version_ids: [versions[0]] },
       rerank: true,
@@ -41,6 +41,19 @@ describe("processing receipts", () => {
       reranking: { outcome: "applied", candidate_count: 1 },
     };
     expect(validateDocumentSearchReport(report, request).reranking?.outcome).toBe("applied");
+    for (const candidate_count of [2, 1000]) {
+      const reranking = { outcome: "applied", candidate_count };
+      const response = { ...report, truncated: true, reranking };
+      expect(validateDocumentSearchReport(response, request).reranking).toEqual(reranking);
+      for (const invalidCount of [-1, 1001]) {
+        expect(() =>
+          validateDocumentSearchReport(
+            { ...response, reranking: { ...reranking, candidate_count: invalidCount } },
+            request,
+          ),
+        ).toThrow();
+      }
+    }
     expect(() =>
       validateDocumentSearchReport({ ...report, reranking: undefined }, request),
     ).toThrow();
@@ -113,6 +126,7 @@ describe("search result authority", () => {
     fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
   };
   const valid = (): DocumentSearchReport => ({
+    as_of: "2025-01-01",
     requested_mode: "semantic",
     actual_mode: "semantic",
     coverage: {

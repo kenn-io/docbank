@@ -29,6 +29,31 @@ func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSe
 	}
 }
 
+func TestNaturalSearchExplainsExpiredMatch(t *testing.T) {
+	fake := newFakeBackend()
+	readme := fake.nodes["/README.txt"]
+	fake.naturalSearch = naturalSearchReport(readme.ID, readme.CurrentVersionID, "Solar maintenance schedule")
+	fake.naturalSearch.Results[0].Validity = &api.DocumentResultValidity{State: "expired"}
+	model, err := New(t.Context(), fake)
+	require.NoError(t, err)
+	model.width, model.height = 112, 18
+	model.styles = newStyles(false)
+	model.mode = modeSearch
+	model.naturalMode = naturalLexical
+	model.naturalProfiles = fake.profiles
+	model.requestID, model.naturalSearchID = 7, 3
+
+	base, ok := model.loadNaturalSearch("solar maintenance", model.requestID)().(naturalSearchBaseLoadedMsg)
+	require.True(t, ok)
+	require.NoError(t, base.err)
+	model, _ = updateModel(t, model, base)
+	require.Len(t, model.rows, 1)
+
+	rendered := ansi.Strip(model.render())
+	assert.Contains(t, rendered, "Solar maintenance schedule")
+	assert.Contains(t, rendered, "expired")
+}
+
 func TestEmptyNaturalSearchSkipsRerank(t *testing.T) {
 	fake := newFakeBackend()
 	fake.profiles[0].RerankingAvailable = true
