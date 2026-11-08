@@ -5129,6 +5129,7 @@ it("refreshes open People cards after another client changes people", async () =
   });
   render(App);
   await screen.findByRole("button", { name: "Ada 1 Library photo" });
+  await waitFor(() => expect(screen.queryByText("Loading suggestions…")).toBeNull());
   // Another client renames Ada and removes Grace's last photo.
   rows = [{ ...ada, display_name: "Ada Lovelace", revision: 5 }];
   await act(() => photoEventPass()({}));
@@ -5223,7 +5224,7 @@ it("rejects a photo event pass when suggestions fail", async () => {
   });
   render(App);
   await screen.findByRole("button", { name: "Ada 3 Library photos" });
-  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  await screen.findByRole("button", { name: /Is this Ada/ });
   await act(async () => {
     await expect(photoEventPass()({})).rejects.toThrow("Temporary read failure");
   });

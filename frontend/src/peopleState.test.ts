@@ -891,6 +891,7 @@ it.each(["initial load", "refresh"])(
     people.suggestions.started = entry === "refresh";
     if (entry === "refresh") people.suggestions.items = [isAda];
     const refresh = entry === "refresh" ? people.refresh() : people.load();
+    await vi.advanceTimersByTimeAsync(0);
     let locked = false;
     const lock = access.lock().then((result) => (locked = result));
     try {
@@ -925,41 +926,52 @@ it.each(["initial load", "refresh"])(
   },
 );
 
-it("updates person cards while suggestion refresh remains pending", async () => {
-  vi.mocked(api.listFaceCandidates).mockRestore();
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
-  let finish!: (response: Response) => void;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      () =>
-        new Promise<Response>((resolve) => {
+it.each(["initial load", "refresh"])(
+  "updates person cards while suggestions remain pending on %s",
+  async (entry) => {
+    vi.mocked(api.listFaceCandidates).mockRestore();
+    const cards = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+    if (entry === "refresh") cards.mockResolvedValueOnce({ items: [ada], next_cursor: "next" });
+    let finish!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        expect(url).toBe("/api/v1/people/face-candidates?limit=24&offset=0");
+        return new Promise<Response>((resolve) => {
           finish = resolve;
-        }),
-    ),
-  );
-  const people = new People("session", vi.fn());
-  people.items = [ada];
-  people.suggestions.started = true;
-  people.suggestions.items = [isAda];
-  let refreshed = false;
-  const pending = people.refresh().then(() => {
-    refreshed = true;
-  });
-  try {
-    await vi.waitFor(() => expect(people.items).toEqual([grace]));
-    expect(refreshed).toBe(false);
-    expect(people.suggestions.loading).toBe(true);
-    expect(people.suggestions.items).toEqual([isAda]);
-    finish(Response.json({ items: [unnamed], total: 1 }));
-    await pending;
-    expect(refreshed).toBe(true);
-    expect(people.suggestions.items).toEqual([unnamed]);
-    expect(people.suggestions.error).toBe("");
-  } finally {
-    people.dispose();
-    finish?.(Response.json({ items: [], total: 0 }));
-    await pending;
-    vi.unstubAllGlobals();
-  }
-});
+        });
+      }),
+    );
+    const access = new HiddenAccess("session", vi.fn());
+    const people = new People("session", vi.fn(), access);
+    people.items = [ada];
+    people.suggestions.started = entry === "refresh";
+    people.suggestions.items = entry === "refresh" ? [isAda] : [];
+    let refreshed = false;
+    const pending = (entry === "refresh" ? people.refresh() : people.load()).then(() => {
+      refreshed = true;
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(people.items).toEqual(entry === "refresh" ? [ada, grace] : [grace]),
+      );
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      expect(refreshed).toBe(entry === "initial load");
+      expect(people.suggestions.loading).toBe(true);
+      expect(people.suggestions.items).toEqual(entry === "refresh" ? [isAda] : []);
+      finish(Response.json({ items: [unnamed], total: 1 }));
+      await pending;
+      await access.settled();
+      await vi.waitFor(() => expect(people.suggestions.loading).toBe(false));
+      expect(refreshed).toBe(true);
+      expect(people.suggestions.items).toEqual([unnamed]);
+      expect(people.suggestions.error).toBe("");
+    } finally {
+      people.dispose();
+      access.dispose();
+      finish?.(Response.json({ items: [], total: 0 }));
+      await pending;
+      vi.unstubAllGlobals();
+    }
+  },
+);

@@ -14,7 +14,6 @@ import {
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
-import { settleReads } from "./photoEvents.js";
 import { uuidV4Pattern as uuid } from "./query.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
@@ -127,15 +126,16 @@ export class People {
     this.loading = true;
     this.error = "";
     this.cursorExpired = false;
-    if (!more && !this.suggestions.started) void this.suggestions.load();
     try {
-      const page = await this.run(() => {
+      const reading = this.run(() => {
         request.signal.throwIfAborted();
         return listPeople(
           { query, limit: peoplePageSize, photo_summary: true, ...(cursor ? { cursor } : {}) },
           { session: this.session, signal: request.signal },
         );
       });
+      if (!more && !this.suggestions.started) void this.suggestions.load();
+      const page = await reading;
       if (!request.signal.aborted) {
         this.items = [
           ...new Map(
@@ -160,12 +160,11 @@ export class People {
   // as another tab's rename or merge. It keeps the search, at least as many
   // cards as were loaded, and the selection, with fresh names and revisions.
   // A failure keeps the current cards and throws so the photo event pass
-  // retries. The pass waits for suggestions and cards to finish together.
+  // retries. Suggestions follow all card pages, and the pass waits for both.
   async refresh() {
-    await settleReads([
+    await this.refreshCards().finally(() =>
       this.suggestions.started ? this.suggestions.load() : undefined,
-      this.refreshCards(),
-    ]);
+    );
   }
   async refreshCards() {
     if (this.disposed || this.loading || this.access?.lockError) return;
