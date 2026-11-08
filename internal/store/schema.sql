@@ -3341,6 +3341,11 @@ CREATE TABLE IF NOT EXISTS note_parse_bindings (
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     recipe TEXT NOT NULL,
     generation_id TEXT NOT NULL REFERENCES note_parse_generations(generation_id) ON DELETE CASCADE,
+    text_epoch TEXT,
+    text_source_revision BIGINT,
+    text_grant_id TEXT,
+    text_incarnation_id TEXT,
+    text_revocation_fence BIGINT,
     PRIMARY KEY(content_version_id,recipe)
 );
 CREATE INDEX IF NOT EXISTS note_parse_bindings_generation ON note_parse_bindings(generation_id);

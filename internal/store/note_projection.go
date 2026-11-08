@@ -185,6 +185,45 @@ func (s *Store) NoteIndexTargets(ctx context.Context, after string, limit int) (
 	return result, rows.Err()
 }
 
+// NoteTextTarget is one exact current published version needing admission.
+type NoteTextTarget struct {
+	ContentVersionID string
+	NodeID           int64
+}
+
+// NoteTextTargets pages eligible versions whose current source and consent
+// authority has not already been submitted to the rendition queue.
+func (s *Store) NoteTextTargets(ctx context.Context, profile string, authority ProviderOperationAuthorization, after string, limit int) ([]NoteTextTarget, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, ErrInvalidNoteProjection
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT cv.version_id,n.id FROM published_note_sources p
+ JOIN note_publications np ON np.name=p.publication_name
+ JOIN nodes n ON n.id=p.node_id JOIN content_versions cv ON cv.version_id=n.current_version_id
+ JOIN note_parse_bindings b ON b.content_version_id=cv.version_id AND b.recipe=$1
+ CROSS JOIN note_publication_state st
+ WHERE np.active=1 AND p.presence='present' AND p.availability='retained'
+ AND n.kind='file' AND n.trashed_at IS NULL AND p.content_version_id=cv.version_id
+ AND p.blob_hash=cv.blob_hash AND p.size=cv.size AND cv.version_id>$2
+ AND NOT EXISTS(SELECT 1 FROM rendition_heads h WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=$3)
+ AND (COALESCE(b.text_epoch,'')<>st.database_epoch OR COALESCE(b.text_source_revision,-1)<>p.source_revision
+ OR COALESCE(b.text_grant_id,'')<>$4 OR COALESCE(b.text_incarnation_id,'')<>$5 OR COALESCE(b.text_revocation_fence,-1)<>$6)
+ ORDER BY cv.version_id LIMIT $7`, notemarkdown.Recipe, after, profile, authority.GrantID, authority.ProcessingIncarnationID, authority.RevocationFence, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := make([]NoteTextTarget, 0, min(limit, 64))
+	for rows.Next() {
+		var item NoteTextTarget
+		if err := rows.Scan(&item.ContentVersionID, &item.NodeID); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) EligibleNoteSources(ctx context.Context, publication, after string, limit int) ([]NotePublicationSource, error) {
 	if err := ValidatePushName(publication); err != nil {
 		return nil, err

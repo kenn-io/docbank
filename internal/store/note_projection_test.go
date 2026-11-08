@@ -165,6 +165,23 @@ func checkNoteProjectionBackend(t *testing.T, s *Store) {
 	targets, err := s.NoteIndexTargets(t.Context(), "", 64)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
+	authority := ProviderOperationAuthorization{GrantID: "synthetic-grant", ProcessingIncarnationID: "synthetic-incarnation", RevocationFence: 1}
+	text, err := s.NoteTextTargets(t.Context(), "synthetic-profile", authority, "", 64)
+	require.NoError(t, err)
+	require.Len(t, text, 1)
+	require.Equal(t, record.ContentVersionID, text[0].ContentVersionID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE note_parse_bindings SET
+ text_epoch=(SELECT database_epoch FROM note_publication_state WHERE singleton=1),
+ text_source_revision=$1,text_grant_id=$2,text_incarnation_id=$3,text_revocation_fence=$4
+ WHERE content_version_id=$5`, sources[0].Identity.SourceRevision, authority.GrantID, authority.ProcessingIncarnationID, authority.RevocationFence, record.ContentVersionID)
+	require.NoError(t, err)
+	text, err = s.NoteTextTargets(t.Context(), "synthetic-profile", authority, "", 64)
+	require.NoError(t, err)
+	require.Empty(t, text)
+	authority.RevocationFence++
+	text, err = s.NoteTextTargets(t.Context(), "synthetic-profile", authority, "", 64)
+	require.NoError(t, err)
+	require.Len(t, text, 1, "a fresh consent fence must recover work")
 }
 
 func TestNoteProjectionRejectsAlteredAuthorityLayout(t *testing.T) {

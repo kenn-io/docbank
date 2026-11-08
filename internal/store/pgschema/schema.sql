@@ -2526,6 +2526,11 @@ CREATE TABLE {{schema}}.note_parse_bindings (
     content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
     recipe TEXT COLLATE "C" NOT NULL,
     generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_parse_generations(generation_id) ON DELETE CASCADE,
+    text_epoch TEXT COLLATE "C",
+    text_source_revision BIGINT,
+    text_grant_id TEXT COLLATE "C",
+    text_incarnation_id TEXT COLLATE "C",
+    text_revocation_fence BIGINT,
     PRIMARY KEY(content_version_id,recipe)
 );
 CREATE INDEX note_parse_bindings_generation ON {{schema}}.note_parse_bindings(generation_id);

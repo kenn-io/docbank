@@ -328,6 +328,15 @@ func (s *Store) EnqueueRenditionJob(
 		if err != nil {
 			return err
 		}
+		if executableProfile.Rendition.Name == NotePlaintextProfileName {
+			if _, err := tx.ExecContext(ctx, `UPDATE note_parse_bindings SET
+ text_epoch=(SELECT database_epoch FROM note_publication_state WHERE singleton=1),
+ text_source_revision=(SELECT source_revision FROM published_note_sources WHERE content_version_id=$1 AND presence='present' AND availability='retained'),
+ text_grant_id=$2,text_incarnation_id=$3,text_revocation_fence=$4
+ WHERE content_version_id=$1`, request.ContentVersionID, admissionAuthorization.GrantID, admissionAuthorization.ProcessingIncarnationID, admissionAuthorization.RevocationFence); err != nil {
+				return fmt.Errorf("recording note rendition admission: %w", err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_jobs(
 				job_id,vault_uid,source_sha256,rendition_request_fingerprint,

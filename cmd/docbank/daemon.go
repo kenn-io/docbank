@@ -436,6 +436,13 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	); err != nil {
 		return err
 	}
+	noteText, err := processingService.NewNotePlaintextBackfill(logger)
+	if err != nil {
+		return fmt.Errorf("configuring note text recovery: %w", err)
+	}
+	if err := jobSupervisor.StartWorker("process:note-local-text", noteText.Run); err != nil {
+		return fmt.Errorf("starting note text recovery: %w", err)
+	}
 	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
 		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
 		WriteRevision: s.WriteRevision,
