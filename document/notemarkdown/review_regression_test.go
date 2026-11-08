@@ -371,3 +371,16 @@ func TestReviewLazySetextDoesNotEndParagraph(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
+
+func TestReviewInvalidContinuationTitleDoesNotHideCode(t *testing.T) {
+	src := "[r]: note.md\n    \"title\" trailing [hidden](ghost.md)\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+}
+
+func TestReviewInvalidDestinationDoesNotRepeatWork(t *testing.T) {
+	src := "> [r]: <unfinished\n" + strings.Repeat("> 2. item\n", 1200)
+	_, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+}

@@ -57,9 +57,20 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					title := false
 					if candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
 						scanner := linkScanner{ctx: ctx, src: original, b: b}
-						_, title, err = scanner.title(line.Start+candidate, len(original))
+						var finish int
+						finish, title, err = scanner.definitionTitle(line.Start+candidate, len(original))
 						if err != nil {
 							return nil, err
+						}
+						for p := line.Start + candidate; title && p < finish; {
+							part, after, err := sourceLineAt(ctx, original, p, b)
+							if err != nil {
+								return nil, err
+							}
+							if p != line.Start+candidate && len(bytes.Trim(original[part.Start:part.End], " \t>")) == 0 {
+								title = false
+							}
+							p = after
 						}
 					}
 					if !title {
@@ -560,7 +571,14 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 		if err == nil && end < blocks[last].content.End && !couldBeDefinition(src[end:blocks[last].content.End]) {
 			nonDefinitions[key] = true
 		} else if err == nil && end < blocks[last].content.End {
-			probe.wait, err = pendingDefinitionDelimiter(ctx, src[end:blocks[last].content.End], b)
+			suffix := src[end:blocks[last].content.End]
+			var invalid bool
+			invalid, err = invalidDefinitionDestination(ctx, suffix, b)
+			if invalid {
+				nonDefinitions[key] = true
+			} else if err == nil {
+				probe.wait, err = pendingDefinitionDelimiter(ctx, suffix, b)
+			}
 			probe.waitBlock, probe.waitOffset = last, blocks[last].content.End
 		}
 		return end >= blocks[last].content.End, err
@@ -586,10 +604,56 @@ func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBl
 	if err == nil && position < content.End && !couldBeDefinition(view[position:content.End]) {
 		nonDefinitions[key] = true
 	} else if err == nil && position < content.End {
-		probe.wait, err = pendingDefinitionDelimiter(ctx, view[position:content.End], b)
+		suffix := view[position:content.End]
+		var invalid bool
+		invalid, err = invalidDefinitionDestination(ctx, suffix, b)
+		if invalid {
+			nonDefinitions[key] = true
+		} else if err == nil {
+			probe.wait, err = pendingDefinitionDelimiter(ctx, suffix, b)
+		}
 		probe.waitBlock, probe.waitOffset = last, blocks[last].content.End
 	}
 	return position >= content.End, err
+}
+
+// Once a destination fails at a physical line ending, later paragraph lines
+// cannot complete it. A destination that has not started may use the next line.
+func invalidDefinitionDestination(ctx context.Context, text []byte, b *budget) (bool, error) {
+	text = bytes.TrimLeft(text, " \t\r\n")
+	if len(text) == 0 || text[0] != '[' {
+		return false, nil
+	}
+	i := 1
+	for i < len(text) && text[i] != ']' {
+		if err := b.step(ctx, 1); err != nil {
+			return false, err
+		}
+		if text[i] == '\\' && i+1 < len(text) {
+			i++
+		}
+		i++
+	}
+	if i+1 >= len(text) || text[i+1] != ':' {
+		return false, nil
+	}
+	i += 2
+	for i < len(text) && linkSpace(text[i]) {
+		if err := b.step(ctx, 1); err != nil {
+			return false, err
+		}
+		i++
+	}
+	if i == len(text) {
+		return false, nil
+	}
+	line, _, err := sourceLineAt(ctx, text, i, b)
+	if err != nil {
+		return false, err
+	}
+	scanner := linkScanner{ctx: ctx, src: text, b: b}
+	_, _, ok, err := scanner.destination(i, line.End)
+	return !ok && line.End < len(text), err
 }
 
 type definitionProbe struct {
