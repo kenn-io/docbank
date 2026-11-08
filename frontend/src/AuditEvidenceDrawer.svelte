@@ -88,8 +88,7 @@
       const status = await generated
         .auditStatus({}, { session: session, signal: active.signal })
         .catch((cause) => {
-          if (active.signal.aborted || (cause instanceof APIError && cause.status === 401))
-            throw cause;
+          if (cause instanceof APIError && cause.status === 401) throw cause;
           return null;
         });
       if (request !== generation) return;

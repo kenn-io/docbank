@@ -18,10 +18,7 @@ const evidence = {
 };
 
 function statusResponse(enabled = true): Response {
-  return new Response(JSON.stringify({ enabled }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  return Response.json({ enabled });
 }
 
 let statusMock: ReturnType<typeof vi.fn<typeof fetch>>;
