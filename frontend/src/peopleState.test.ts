@@ -718,7 +718,6 @@ it("refreshes suggestions with the cards and reports a failure", async () => {
   expect(people.suggestions.items).toEqual([unnamed]);
   await expect(people.refresh()).resolves.toBeUndefined();
   await vi.waitFor(() => expect(people.suggestions.error).toBe("Unavailable"));
-  expect(people.suggestions.error).toBe("Unavailable");
   expect(people.suggestions.items).toEqual([unnamed]);
   expect(list).toHaveBeenCalledTimes(3);
   people.dispose();
@@ -771,7 +770,6 @@ it.each(["named", "unnamed subset", "unnamed all"])(
         expect(list).toHaveBeenCalledTimes(2);
         return;
       }
-      expect(faceDecision).not.toHaveBeenCalled();
       await people.suggestions.load();
       expect(reviewFaces(people.suggestions.review!).map((face) => face.face_id)).toEqual([
         f2.face_id,
@@ -783,6 +781,7 @@ it.each(["named", "unnamed subset", "unnamed all"])(
         expect(faceDecision).not.toHaveBeenCalled();
         return;
       }
+      expect(faceDecision).not.toHaveBeenCalled();
       await people.suggestions.decide({ action: "new_person", display_name: "Morgan" });
       expect(decide).toHaveBeenCalledWith(
         unnamed.candidate_id,

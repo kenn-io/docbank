@@ -263,7 +263,7 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 	assert.Zero(t, artifacts)
 }
 
-func TestEmbeddingCatalogSnapshotValidationChecksStoredRows(t *testing.T) {
+func TestEmbeddingCatalogRejectsCorruptStoredRows(t *testing.T) {
 	t.Parallel()
 	for _, damage := range []string{"manifest", "input count"} {
 		t.Run(damage, func(t *testing.T) {
@@ -284,7 +284,7 @@ func TestEmbeddingCatalogSnapshotValidationChecksStoredRows(t *testing.T) {
 					_, err := loadInputGenerationTx(t.Context(), tx, record.InputGeneration.ID)
 					return err
 				})
-				require.ErrorContains(t, err, "count")
+				require.EqualError(t, err, "embedding input generation count is corrupt")
 				return
 			}
 			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {

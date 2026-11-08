@@ -400,19 +400,32 @@ func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
 	faces := make([]FaceSuggestionFace, 2)
 	for i := range faces {
 		faces[i].PhotoFace = PhotoFace{FaceID: uuid.New().String(), ContentVersionID: node.CurrentVersionID, Box: document.FaceBox{X: float64(i) * .5, Width: .2, Height: .2}, Revision: 1}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES($1,$2,$3,0,0.2,0.2,1,$4)`, faces[i].FaceID, node.CurrentVersionID, faces[i].Box.X, "2026-01-01T00:00:00Z")
-		require.NoError(t, err)
+		if postgres {
+			_, err = s.db.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,x,y,width,height,revision,created_at) VALUES($1,$2,$3,0,0.2,0.2,1,$4)`, faces[i].FaceID, node.CurrentVersionID, faces[i].Box.X, "2026-01-01T00:00:00Z")
+			require.NoError(t, err)
+		} else {
+			faces[i].PhotoFace, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, faces[i].FaceID, faces[i].Box, "")
+			require.NoError(t, err)
+		}
 	}
 	candidate, err := NewFaceCandidate(faces, "", "")
 	require.NoError(t, err)
-	candidate, err = normalizePersonCandidate(candidate)
-	require.NoError(t, err)
 	id := uuid.New().String()
-	_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at) VALUES($1,$2,$3,'face_match',$4,$5,2,1,'open',$6)`, id, candidate.ActorKey, candidate.DisplayName, string(candidate.Evidence), candidate.EvidenceSHA256, "2026-01-01T00:00:00Z")
-	require.NoError(t, err)
-	for _, face := range faces {
-		_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_candidate_faces(candidate_id,face_id,content_version_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, face.FaceID, face.ContentVersionID)
+	if postgres {
+		candidate, err = normalizePersonCandidate(candidate)
 		require.NoError(t, err)
+		_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at) VALUES($1,$2,$3,'face_match',$4,$5,2,1,'open',$6)`, id, candidate.ActorKey, candidate.DisplayName, string(candidate.Evidence), candidate.EvidenceSHA256, "2026-01-01T00:00:00Z")
+		require.NoError(t, err)
+		for _, face := range faces {
+			_, err = seed.ExecContext(ctx, `INSERT INTO `+prefix+`person_candidate_faces(candidate_id,face_id,content_version_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, face.FaceID, face.ContentVersionID)
+			require.NoError(t, err)
+		}
+	} else {
+		require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{candidate}, false))
+		rows, _, err := s.PersonCandidates(ctx, "open", 24, 0)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		id = rows[0].CandidateID
 	}
 	page, total, err := s.FaceCandidates(ctx, 24, 0)
 	require.NoError(t, err)
@@ -441,7 +454,9 @@ func checkFaceCandidateCatalogReads(t *testing.T, postgres bool) {
 	require.NoError(t, err)
 	require.Empty(t, page)
 	require.Zero(t, total)
-	faceMatchingSnapshot(t, s)
+	if postgres {
+		faceMatchingSnapshot(t, s)
+	}
 }
 
 func faceMatchingSignature(t *testing.T, s *Store) string {
