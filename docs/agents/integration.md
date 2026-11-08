@@ -104,7 +104,17 @@ For semantic or hybrid retrieval, configure a profile that already processed
 the selected transcript with a rendition-chunk embedding binding. Processing
 uses the ordinary plan, explicit consent, rendition worker and embedding
 continuation. The built-in supplied profiles have no
-embeddings by default. Selecting a search profile does not process or embed
+embeddings by default. To compose supplied transcript embeddings, set
+`supplied_media_embedding_profile` to an existing executable processing profile
+whose bindings all use `rendition_chunk`. The daemon copies only those embedding
+bindings and runtimes into `supplied-transcript`; its local supplied provider,
+source-input binding, retention and evidence policies stay authoritative.
+Embedded callers use `ProcessingOptions.SuppliedMediaEmbeddingProfile` with a
+configured donor in `Profiles`. Captions keep their lexical default. Review
+and grant the new composed processing plan before retrying a transcript.
+Changing the donor creates a new profile identity and requires new consent;
+retained work from another fingerprint is fenced across restart.
+Selecting a search profile does not process or embed
 anything. Generated and supplied profiles retain separate authority; a mixed
 scope can therefore have incomplete embedding coverage even when every
 transcript is ready.

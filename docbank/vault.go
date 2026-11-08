@@ -358,6 +358,16 @@ func openVaultWithRootOpener(
 	if err != nil {
 		return nil, err
 	}
+	if name := config.Processing.SuppliedMediaEmbeddingProfile; name != "" {
+		donor, ok := profiles[name]
+		if !ok {
+			return nil, fmt.Errorf("supplied media embedding profile %q is not configured", name)
+		}
+		suppliedProfile, err = internalprocessing.WithSuppliedMediaEmbeddings(suppliedProfile, donor)
+		if err != nil {
+			return nil, fmt.Errorf("configuring supplied media embeddings: %w", err)
+		}
+	}
 	if _, exists := profiles[suppliedName]; exists {
 		return nil, fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}

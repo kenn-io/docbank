@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 // This fixture replaces only the external transcription/embedding boundary.
@@ -60,6 +61,7 @@ type mediaQualificationManifest struct {
 }
 
 type mediaQualificationFixture struct {
+	gate     *api.OperationGate
 	manifest mediaQualificationManifest
 	catalog  *testStore
 	service  *processing.Service
@@ -271,19 +273,22 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 	f.server, f.catalog = newTestServer(t, func(deps *api.Deps) {
 		deps.Cfg.Server.APIKey = f.manifest.APIKey
 		gate := api.NewOperationGate()
+		f.gate = gate
 		deps.Gate = gate
 		name, supplied, err := processing.NewSuppliedMediaProfile(deps.Store, deps.Blobs, "daemon:operator")
 		require.NoError(t, err)
 		descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{ID: "synthetic.media-transcription", ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: processingTestHash("qualification-transcription"), TrustBoundary: document.RenditionTrustLocalProcess, SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile}}, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
 		require.NoError(t, err)
 		generated := processing.ProfileConfig{Profile: processingTestProfile(descriptor), RenditionProvider: mediaQualificationTranscriber{descriptor: descriptor}}
-		for _, cfg := range []*processing.ProfileConfig{&supplied, &generated} {
+		for _, cfg := range []*processing.ProfileConfig{&generated} {
 			d := encoder.descriptor
 			cfg.Profile.Embeddings = []document.EmbeddingBindingV1{{Activation: document.EmbeddingRequired, AuthorizationFingerprint: processingTestHash("qualification-embedding-auth"), CompatibilityID: d.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: d.ID, Fingerprint: d.Fingerprint}, Dimensions: d.Dimension, DisclosureFingerprint: processingTestHash("qualification-embedding-disclosure"), DocumentFormatter: d.DocumentFormatter, InputKind: document.EmbeddingInputRenditionChunk, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxInputTokens: 512, MaxResponseBytes: 1 << 20, Metric: d.Metric, ModelInput: d.ModelInput, Model: d.Model, Name: "semantic", Normalization: d.Normalization, QueryFormatter: d.QueryFormatter, ScalarEncoding: d.ScalarEncoding, TrustBoundary: string(d.TrustBoundary), Chunk: &document.EmbeddingChunkPolicyV1{ContextFingerprint: processingTestHash("qualification-context"), Formatter: "qualification/v1", MaxTokens: 512, OverlapTokens: 0, Tokenizer: "qualification", TokenizerRevision: "v1", TruncationPolicy: document.TruncationPolicyReject}}}
 			cfg.EmbeddingProviders = map[string]document.EmbeddingProvider{"semantic": encoder}
 			cfg.Tokenizers = map[string]document.Tokenizer{"semantic": mediaQualificationTokenizer{}}
 			cfg.Profile.Retrieval.LexicalLimit, cfg.Profile.Retrieval.VectorLimit = 100, 100
 		}
+		supplied, err = processing.WithSuppliedMediaEmbeddings(supplied, generated)
+		require.NoError(t, err)
 		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, Principal: "daemon:operator", SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: map[string]processing.ProfileConfig{name: supplied, "qualification-generated": generated}})
 		require.NoError(t, err)
 		t.Cleanup(service.Stop)
@@ -353,6 +358,24 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 func (f *mediaQualificationFixture) control(ctx context.Context, action, id string) error {
 	if action == "arm" || action == "wait" || action == "release" {
 		return f.encoder.barrier(ctx, action)
+	}
+	if action == "refresh" {
+		worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog.Store, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+			return f.catalog.ReadVectorIndexVectorSet(ctx, f.catalog.Blobs, member)
+		}, Mutate: f.gate.MutateContext, Owner: "qualification-refresh", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
+		if err != nil {
+			return err
+		}
+		spaces, err := f.catalog.ListVectorIndexSpaces(ctx)
+		if err != nil {
+			return err
+		}
+		for _, space := range spaces {
+			if _, err := worker.Rebuild(ctx, space); err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+		}
+		return nil
 	}
 	if action == "stop" {
 		f.stopOnce.Do(func() { close(f.stop) })

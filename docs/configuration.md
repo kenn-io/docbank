@@ -897,6 +897,19 @@ the endpoint, transport policy, or environment binding.
 
 ### Embedding workers and credentials
 
+Set the top-level `supplied_media_embedding_profile` to an existing executable
+processing profile to give `supplied-transcript` that profile's chunk embedding
+bindings. Every donor binding must use `rendition_chunk`; missing, empty or
+unavailable donors fail setup. The built-in supplied rendition provider and its
+source-input, retention and evidence policies remain authoritative. The
+composed profile needs its own reviewed processing consent. Changing the donor
+changes that fingerprint and fences old work across restart. The default is
+empty, so supplied transcripts and captions remain lexical until explicitly
+configured. This option applies to transcripts only. See
+[recording search integration](agents/integration.md#search-transcripts-for-exact-recordings)
+for retrieval and coverage behavior.
+
+
 Moving an embedding endpoint or changing its timeout still requires the updated descriptor fingerprint and consent for the current profile. Docbank reuses compatible saved vectors after consent. An unchanged configuration keeps its existing vector space across upgrades. Legacy BGE-M3 and Qwen3 profiles may require recomputation on their first policy change because their old records omit deployment revisions.
 
 The daemon runs retained embedding jobs for its configured OpenAI-compatible

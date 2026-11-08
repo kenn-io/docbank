@@ -76,6 +76,10 @@ type DocumentPeopleCoverage struct {
 // implementations. Secrets remain inside the provider values; profiles and
 // plans contain only immutable non-secret identity.
 type ProcessingOptions struct {
+	// SuppliedMediaEmbeddingProfile copies only chunk embedding bindings and
+	// runtimes from this configured profile into built-in supplied-transcript.
+	// Empty preserves the lexical-only default. Captions are not affected.
+	SuppliedMediaEmbeddingProfile string
 	// MediaMaxBytes lowers the streaming media source ceiling. Zero defaults to
 	// 4 GiB; values above 4 GiB or below zero are rejected.
 	MediaMaxBytes int64

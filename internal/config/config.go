@@ -428,23 +428,24 @@ type EmailPDFConfig struct {
 
 // Config is the full contents of config.toml.
 type Config struct {
-	Integrations       IntegrationsConfig                 `toml:"integrations"`
-	Media              MediaConfig                        `toml:"media"`
-	PageRuntime        *pagerender.Profile                `toml:"page_runtime"`
-	EmailPDF           *EmailPDFConfig                    `toml:"email_pdf"`
-	Server             ServerConfig                       `toml:"server"`
-	Web                WebConfig                          `toml:"web"`
-	MCP                MCPConfig                          `toml:"mcp"`
-	Backup             BackupConfig                       `toml:"backup"`
-	Storage            StorageConfig                      `toml:"storage"`
-	StoreBindings      map[string]StoreBindingConfig      `toml:"store_bindings"`
-	RenditionProfiles  map[string]RenditionProfileConfig  `toml:"rendition_profiles"`
-	EmbeddingProfiles  map[string]EmbeddingProfileConfig  `toml:"embedding_profiles"`
-	CredentialBindings map[string]CredentialBindingConfig `toml:"credential_bindings"`
-	MediaOrigins       map[string]MediaOriginConfig       `toml:"media_origins"`
-	RetrievalProfiles  map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
-	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
-	Watches            []WatchConfig                      `toml:"watch"`
+	SuppliedMediaEmbeddingProfile string                             `toml:"supplied_media_embedding_profile"`
+	Integrations                  IntegrationsConfig                 `toml:"integrations"`
+	Media                         MediaConfig                        `toml:"media"`
+	PageRuntime                   *pagerender.Profile                `toml:"page_runtime"`
+	EmailPDF                      *EmailPDFConfig                    `toml:"email_pdf"`
+	Server                        ServerConfig                       `toml:"server"`
+	Web                           WebConfig                          `toml:"web"`
+	MCP                           MCPConfig                          `toml:"mcp"`
+	Backup                        BackupConfig                       `toml:"backup"`
+	Storage                       StorageConfig                      `toml:"storage"`
+	StoreBindings                 map[string]StoreBindingConfig      `toml:"store_bindings"`
+	RenditionProfiles             map[string]RenditionProfileConfig  `toml:"rendition_profiles"`
+	EmbeddingProfiles             map[string]EmbeddingProfileConfig  `toml:"embedding_profiles"`
+	CredentialBindings            map[string]CredentialBindingConfig `toml:"credential_bindings"`
+	MediaOrigins                  map[string]MediaOriginConfig       `toml:"media_origins"`
+	RetrievalProfiles             map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
+	ProcessingProfiles            map[string]ProcessingProfileConfig `toml:"processing_profiles"`
+	Watches                       []WatchConfig                      `toml:"watch"`
 
 	EffectiveProfiles map[string]ResolvedProcessingProfile `toml:"-"`
 }
@@ -765,6 +766,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateProcessingProfiles(c); err != nil {
+		return err
+	}
+	if err := validateSuppliedMediaEmbeddingProfile(c); err != nil {
 		return err
 	}
 	if err := validateMCPConfig(c); err != nil {

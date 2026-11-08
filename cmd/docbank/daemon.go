@@ -362,7 +362,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			}
 		}
 	}
-	suppliedName, suppliedProfile, err := processing.NewSuppliedMediaProfile(s, blobs, "daemon:operator")
+	suppliedName, suppliedProfile, err := configuredSuppliedMediaProfile(cfg, s, blobs, "daemon:operator", processingProfiles)
 	if err != nil {
 		return fmt.Errorf("configuring supplied media profile: %w", err)
 	}

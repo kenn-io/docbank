@@ -26,7 +26,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Focused production retrieval contracts
-        run: go test -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api ./internal/config ./docbank -run 'TestSelectedMedia|TestMediaSearch' -count=1 -timeout=15m
+        run: go test -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api ./internal/config ./docbank ./cmd/docbank -run 'TestSelectedMedia|TestMediaSearch|FuzzSelectedMedia' -count=1 -timeout=15m
       - name: Formatting and vet
         run: |
           make fmt
