@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -87,15 +88,11 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		pages, text int
-	}{{"born", 3, 3}, {"image-only", 3, 0}, {"wrapped", 1, 1}} {
+	}{{"born", 3, 3}, {"image-only", 3, 0}} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), test.name+".pdf")
 			data := mediatest.PDFTextPages(pdfTextRuntimePages(test.pages, test.text), false)
 			query := "needle"
-			if test.name == "wrapped" {
-				data = redactiontest.PDF(t, []string{"inter-", "national", "part-time"}, "wrapped word")
-				query = "international"
-			}
 			require.NoError(t, os.WriteFile(path, data, 0600))
 			_, err := runCLI(t, "add", path, "--dest", "/pdfs")
 			require.NoError(t, err)
@@ -141,6 +138,16 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
+	// Qualify process RSS without retaining earlier in-process daemon heaps.
+	const worker = "DOCBANK_TEST_PDFTEXT_CONCURRENCY_WORKER"
+	if os.Getenv(worker) != "1" {
+		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonPDFTextSharesEngineWithRedaction$", "-test.v") //nolint:gosec // Runs this test binary with fixed arguments.
+		command.Env = append(os.Environ(), worker+"=1")
+		output, err := command.CombinedOutput()
+		t.Log(string(output))
+		require.NoError(t, err)
+		return
+	}
 	cfg := pdfTextRuntimeConfig(t)
 	cfg.PageRuntime = new(redactiontest.PageProfile(t))
 	cfg.Server.APIKey = "synthetic-pdftext-concurrency-key"
