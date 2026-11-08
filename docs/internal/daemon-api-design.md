@@ -555,6 +555,23 @@ version is still the live archive head before applying result limits. These
 routes and selectors are the authority foundation; they do not by themselves
 install a local publisher or provide authored-note graph context.
 
+## Derived note state
+
+The note projector reads the exact original version accepted by a publication.
+It caches bounded parser output by content and recipe, stages all lookup keys
+before resolving links, and publishes a graph generation only while its
+database epoch and namespace revision remain current. Failed or interrupted
+staging leaves no new current graph. Empty aliases do not create lookup keys.
+
+The built-in `brain-local-text` profile uses the in-process plaintext renderer.
+Previewing its plan grants no consent. Its recovery worker checks the ordinary
+processing grant before admitting a current published version and the
+rendition worker checks authority again before execution. Derived admission
+markers bind the source revision and consent fence so quiet scans settle and a
+reappearing source or new grant can be reconsidered. Derived state is omitted
+from metadata exports and rebuilt after restore. Context retrieval and client
+setup are separate capabilities.
+
 ## Manual remote recording publication
 
 `POST /api/v1/media/sources` accepts a JSON reference before any recording
