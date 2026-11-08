@@ -28,53 +28,53 @@ type notePlaintextFixture struct {
 	worker  *RenditionWorker
 }
 
-func newNotePlaintextFixture(t testing.TB) notePlaintextFixture {
-	t.Helper()
-	root := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(root, "catalog.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+func newNotePlaintextFixture(tb testing.TB) notePlaintextFixture {
+	tb.Helper()
+	root := tb.TempDir()
+	catalog, err := store.Open(tb.Context(), filepath.Join(root, "catalog.db"))
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, blobs.Close()) })
 	name, profile, err := NewNotePlaintextProfile()
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	gate := newWorkerTestGate()
-	require.NoError(t, os.Mkdir(filepath.Join(root, "spool"), 0o700))
-	s, err := NewService(t.Context(), ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: gate,
+	require.NoError(tb, os.Mkdir(filepath.Join(root, "spool"), 0o700))
+	s, err := NewService(tb.Context(), ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: gate,
 		Profiles: map[string]ProfileConfig{name: profile}, Principal: "synthetic:publisher", Scope: "synthetic-note-scope",
 		SpoolDirectory: filepath.Join(root, "spool")})
-	require.NoError(t, err)
-	t.Cleanup(s.Stop)
+	require.NoError(tb, err)
+	tb.Cleanup(s.Stop)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: catalog, Blobs: blobs,
 		Runtime: s.renditions, Gate: gate, Owner: "synthetic-note-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return notePlaintextFixture{catalog, blobs, s, worker}
 }
 
-func (f notePlaintextFixture) note(t testing.TB, name, text string) store.Node {
-	return f.publish(t, name, text, 0)
+func (f notePlaintextFixture) note(tb testing.TB, name, text string) store.Node {
+	return f.publish(tb, name, text, 0)
 }
 
-func (f notePlaintextFixture) publish(t testing.TB, name, text string, revision int64) store.Node {
-	t.Helper()
-	receipt, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewBufferString(text))
-	require.NoError(t, err)
-	scan, err := f.catalog.BeginNotePublicationScan(t.Context(), store.NotePublicationBeginRequest{
+func (f notePlaintextFixture) publish(tb testing.TB, name, text string, revision int64) store.Node {
+	tb.Helper()
+	receipt, err := f.blobs.WriteDetailedContext(tb.Context(), bytes.NewBufferString(text))
+	require.NoError(tb, err)
+	scan, err := f.catalog.BeginNotePublicationScan(tb.Context(), store.NotePublicationBeginRequest{
 		Name: "notes", Destination: "/", PolicyFingerprint: strings.Repeat("a", 64), OperationID: uuid.NewV4().String(),
 	})
-	require.NoError(t, err)
-	accepted, err := f.catalog.AcceptPublishedNote(t.Context(), store.NotePublicationUploadRequest{
+	require.NoError(tb, err)
+	accepted, err := f.catalog.AcceptPublishedNote(tb.Context(), store.NotePublicationUploadRequest{
 		Name: "notes", ScanID: scan.ScanID, SourceRef: name, FileName: name, ParentPath: "/",
 		OperationID: uuid.NewV4().String(), Hash: receipt.Hash, Size: receipt.Size, ExpectedSourceRevision: revision,
-	}, processingBlobPhysical(t, receipt))
-	require.NoError(t, err)
-	_, err = f.catalog.CompleteNotePublicationScan(t.Context(), store.NotePublicationCompleteRequest{
+	}, processingBlobPhysical(tb, receipt))
+	require.NoError(tb, err)
+	_, err = f.catalog.CompleteNotePublicationScan(tb.Context(), store.NotePublicationCompleteRequest{
 		Name: "notes", ScanID: scan.ScanID, PolicyFingerprint: scan.PolicyFingerprint, InventoryComplete: true,
 	})
-	require.NoError(t, err)
-	node, err := f.catalog.NodeByID(t.Context(), accepted.Source.Identity.NodeID)
-	require.NoError(t, err)
+	require.NoError(tb, err)
+	node, err := f.catalog.NodeByID(tb.Context(), accepted.Source.Identity.NodeID)
+	require.NoError(tb, err)
 	return node
 }
 
