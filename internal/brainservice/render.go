@@ -22,6 +22,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 type Spec struct{ Name, Executable, ConfigRoot, UserID, UserHome, UserConfigRoot string }
@@ -35,7 +37,6 @@ var (
 	ErrUnsupported      = errors.New("publisher launchers unsupported on this platform")
 	ErrInvalidSpec      = errors.New("invalid publisher launcher specification")
 	ErrPercentExpansion = errors.New("Windows launcher paths cannot contain paired percent signs (Task Scheduler environment expansion)")
-	namePattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	uidPattern          = regexp.MustCompile(`^[1-9][0-9]*$`)
 	sidPattern          = regexp.MustCompile(`^S-1-5-21(?:-[0-9]+){4}$`)
 )
@@ -46,7 +47,7 @@ func Render(goos string, spec Spec) (Registration, error) {
 	if goos != "linux" && goos != "darwin" && goos != "windows" {
 		return Registration{}, ErrUnsupported
 	}
-	if !namePattern.MatchString(spec.Name) {
+	if store.ValidatePushName(spec.Name) != nil {
 		return Registration{}, ErrInvalidSpec
 	}
 	for _, v := range []string{spec.Name, spec.Executable, spec.ConfigRoot, spec.UserID, spec.UserHome, spec.UserConfigRoot} {

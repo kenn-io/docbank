@@ -176,6 +176,22 @@ func TestBrainServiceRenderArgv(t *testing.T) {
 	}
 }
 
+func TestBrainServiceRenderUsesPublisherNameRules(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, name := range []string{"_notes", ".notes", "-notes"} {
+			spec := renderSpec(goos)
+			spec.Name = name
+			reg, err := Render(goos, spec)
+			require.NoError(t, err)
+			require.Equal(t, name, reg.Argv[len(reg.Argv)-1])
+		}
+		spec := renderSpec(goos)
+		spec.Name = "Uppercase"
+		_, err := Render(goos, spec)
+		require.ErrorIs(t, err, ErrInvalidSpec)
+	}
+}
+
 func TestBrainServiceRenderRejectsUnrepresentable(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		for _, bad := range []string{"\x00", "\n", "\r", "\t"} {

@@ -221,6 +221,9 @@ func TestBrainServicePreservesUnownedDefinition(t *testing.T) {
 				manager.foreign = true
 			} else if kind == "manager" {
 				manager.installed = true
+				manager.foreign = true
+				require.NoError(t, os.MkdirAll(filepath.Dir(manager.reg.Path), 0o700))
+				require.NoError(t, os.WriteFile(manager.reg.Path, []byte("unrelated"), 0o600))
 			} else {
 				require.NoError(t, os.MkdirAll(filepath.Dir(manager.reg.Path), 0o700))
 				require.NoError(t, os.WriteFile(manager.reg.Path, []byte("unrelated"), 0o600))
