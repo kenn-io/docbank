@@ -128,6 +128,9 @@ the lexical excerpt takes precedence when both contribute. Use that
 reference's timing. Docbank checks exact build authority before scoring,
 limits and coverage, and reselects source/input authority after query encoding.
 Transcript readiness cannot override missing selected-build embeddings.
+If vector-index authority changes while a query runs, Docbank returns
+`409 stale_index` and no results. Retry after the ordinary index worker has
+published current authority; do not relax the selector or substitute a build.
 
 
 ## Read an exact media transcript

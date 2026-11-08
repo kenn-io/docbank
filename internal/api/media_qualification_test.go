@@ -235,8 +235,21 @@ func (p mediaQualificationTranscriber) Render(_ context.Context, _ document.Auth
 	}, nil
 }
 
-func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
+type mediaQualificationOptions struct {
+	TranscriptA string
+	ChunkTokens int
+}
+
+func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOptions) *mediaQualificationFixture {
 	t.Helper()
+	require.LessOrEqual(t, len(options), 1)
+	option := mediaQualificationOptions{ChunkTokens: 512}
+	if len(options) != 0 {
+		option = options[0]
+		if option.ChunkTokens == 0 {
+			option.ChunkTokens = 512
+		}
+	}
 	f := &mediaQualificationFixture{stop: make(chan struct{})}
 	var worker renditionTestWorker
 	encoder := &mediaQualificationEncoder{}
@@ -282,7 +295,7 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 		generated := processing.ProfileConfig{Profile: processingTestProfile(descriptor), RenditionProvider: mediaQualificationTranscriber{descriptor: descriptor}}
 		for _, cfg := range []*processing.ProfileConfig{&generated} {
 			d := encoder.descriptor
-			cfg.Profile.Embeddings = []document.EmbeddingBindingV1{{Activation: document.EmbeddingRequired, AuthorizationFingerprint: processingTestHash("qualification-embedding-auth"), CompatibilityID: d.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: d.ID, Fingerprint: d.Fingerprint}, Dimensions: d.Dimension, DisclosureFingerprint: processingTestHash("qualification-embedding-disclosure"), DocumentFormatter: d.DocumentFormatter, InputKind: document.EmbeddingInputRenditionChunk, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxInputTokens: 512, MaxResponseBytes: 1 << 20, Metric: d.Metric, ModelInput: d.ModelInput, Model: d.Model, Name: "semantic", Normalization: d.Normalization, QueryFormatter: d.QueryFormatter, ScalarEncoding: d.ScalarEncoding, TrustBoundary: string(d.TrustBoundary), Chunk: &document.EmbeddingChunkPolicyV1{ContextFingerprint: processingTestHash("qualification-context"), Formatter: "qualification/v1", MaxTokens: 512, OverlapTokens: 0, Tokenizer: "qualification", TokenizerRevision: "v1", TruncationPolicy: document.TruncationPolicyReject}}}
+			cfg.Profile.Embeddings = []document.EmbeddingBindingV1{{Activation: document.EmbeddingRequired, AuthorizationFingerprint: processingTestHash("qualification-embedding-auth"), CompatibilityID: d.CompatibilityID, CredentialBinding: "credential:synthetic", Descriptor: document.ProviderDescriptorV1{ID: d.ID, Fingerprint: d.Fingerprint}, Dimensions: d.Dimension, DisclosureFingerprint: processingTestHash("qualification-embedding-disclosure"), DocumentFormatter: d.DocumentFormatter, InputKind: document.EmbeddingInputRenditionChunk, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxInputTokens: option.ChunkTokens, MaxResponseBytes: 1 << 20, Metric: d.Metric, ModelInput: d.ModelInput, Model: d.Model, Name: "semantic", Normalization: d.Normalization, QueryFormatter: d.QueryFormatter, ScalarEncoding: d.ScalarEncoding, TrustBoundary: string(d.TrustBoundary), Chunk: &document.EmbeddingChunkPolicyV1{ContextFingerprint: processingTestHash("qualification-context"), Formatter: "qualification/v1", MaxTokens: option.ChunkTokens, OverlapTokens: 0, Tokenizer: "qualification", TokenizerRevision: "v1", TruncationPolicy: document.TruncationPolicyReject}}}
 			cfg.EmbeddingProviders = map[string]document.EmbeddingProvider{"semantic": encoder}
 			cfg.Tokenizers = map[string]document.Tokenizer{"semantic": mediaQualificationTokenizer{}}
 			cfg.Profile.Retrieval.LexicalLimit, cfg.Profile.Retrieval.VectorLimit = 100, 100
@@ -307,6 +320,9 @@ func newMediaQualificationFixture(t *testing.T) *mediaQualificationFixture {
 		{"b-v1", "The observatory receives its new telescope on Friday at 3 PM.", true},
 		{"c-v1", "The grocery delivery arrives Friday at three.", false},
 	} {
+		if item.id == "a-v1" && option.TranscriptA != "" {
+			item.text = option.TranscriptA
+		}
 		raw := mediatest.WAV()
 		raw[len(raw)-1] = byte(i + 1)
 		receipt, err := client.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{OperationID: uuid.New().String(), Filename: item.id + ".wav", MediaType: "audio/wav", SHA256: processingTestHash(string(raw)), ByteLength: int64(len(raw)), Occurrence: api.MediaOccurrenceBody{Ref: item.id, Revision: "1"}}, bytes.NewReader(raw))

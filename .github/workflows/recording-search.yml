@@ -50,7 +50,11 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
       - run: kit-retry 3 5 npm ci --prefix frontend
       - run: make generate-api
+      - run: npm --prefix frontend run fmt
+      - run: npm --prefix frontend run check
+      - run: npm --prefix frontend test -- src/generated-requests.test.ts
       - uses: actions/upload-artifact@v7.0.2
+        if: always()
         with:
           name: recording-api-generated
           retention-days: 3
@@ -58,3 +62,5 @@ jobs:
             internal/api/openapi.yaml
             internal/apiclient/client.gen.go
             frontend/src/generated/docbank.ts
+            frontend/orval.config.ts
+            frontend/src/generated-requests.test.ts

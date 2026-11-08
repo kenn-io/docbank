@@ -4,7 +4,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func (f *mediaQualificationFixture) request(profile, mode string, records ...mediaQualificationRecord) api.DocumentSearchRequest {
@@ -79,10 +82,16 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 		}
 		request := f.request(supplied.Profile, mode, supplied)
 		request.MediaSources[0].SuppliedInputIDs = []string{}
+		f.encoder.mu.Lock()
+		before := f.encoder.calls
+		f.encoder.mu.Unlock()
 		report, err = client.SearchDocuments(t.Context(), request)
 		require.NoError(t, err)
 		require.Empty(t, report.Results)
 		require.Equal(t, "incomplete", report.Coverage.State)
+		f.encoder.mu.Lock()
+		require.Equal(t, before, f.encoder.calls, "ineligible scope must not encode query")
+		f.encoder.mu.Unlock()
 	}
 }
 
@@ -154,4 +163,46 @@ func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
 	require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
 	require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")
 	require.Equal(t, "incomplete", result.report.Coverage.State)
+}
+
+func TestSelectedMediaSearchRequiresQueryConsent(t *testing.T) {
+	t.Parallel()
+	f := newMediaQualificationFixture(t)
+	_, err := f.service.RevokeConsent(t.Context())
+	require.NoError(t, err)
+	f.encoder.mu.Lock()
+	before := f.encoder.calls
+	f.encoder.mu.Unlock()
+	record := f.manifest.Records[0]
+	_, err = daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "consent")
+	f.encoder.mu.Lock()
+	defer f.encoder.mu.Unlock()
+	require.Equal(t, before, f.encoder.calls, "denied query must not reach encoder")
+}
+
+func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
+	t.Parallel()
+	text := strings.Repeat("观测星空🌌 ", 300)
+	f := newMediaQualificationFixture(t, mediaQualificationOptions{TranscriptA: text, ChunkTokens: 8192})
+	record := f.manifest.Records[0]
+	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
+	for _, mode := range []string{"semantic", "hybrid"} {
+		report, err := client.SearchDocuments(t.Context(), f.request(record.Profile, mode, record))
+		require.NoError(t, err)
+		require.Len(t, report.Results, 1)
+		excerpt := report.Results[0].Excerpt
+		require.NotEmpty(t, excerpt)
+		require.True(t, utf8.ValidString(excerpt))
+		require.LessOrEqual(t, utf8.RuneCountInString(excerpt), 512)
+		require.LessOrEqual(t, len(excerpt), 2048)
+		require.True(t, strings.HasPrefix(text, excerpt))
+		require.Equal(t, "embedding", report.Results[0].Evidence[0].Kind)
+		require.Equal(t, report.MediaSelections[0].BuildID, report.Results[0].Evidence[0].BuildID)
+		require.Nil(t, report.Results[0].Evidence[0].TimeSpan, "untimed source stays untimed")
+	}
+	transcript, err := f.service.MediaTranscript(t.Context(), processing.MediaTranscriptRequest{SourceID: record.SourceID, SourceVersionID: record.SourceVersionID, ContentVersionID: record.ContentVersionID})
+	require.NoError(t, err)
+	require.Equal(t, text, transcript.Transcript.Units[0].Text, "display bound must not truncate retained evidence")
 }

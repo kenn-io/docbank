@@ -877,6 +877,9 @@ selection lacks ready evidence or any selected build lacks its embeddings. Pendi
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
+A vector-index authority change during a semantic or hybrid request returns
+`409 stale_index` with no results. Retry after normal index publication;
+source reselection never authorizes another build as a substitute.
 
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence
