@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -88,7 +87,7 @@ func (r *Registry) List(ctx context.Context) ([]ConnectionConfig, error) {
 		return nil, errors.New("client registry exceeds 1 MiB")
 	}
 	var record registryRecord
-	if err = json.Unmarshal(data, &record, json.RejectUnknownMembers(true), jsonv1.FormatDurationAsNano(true)); err != nil {
+	if err = json.Unmarshal(data, &record, json.RejectUnknownMembers(true)); err != nil {
 		return nil, errors.New("invalid client registry JSON")
 	}
 	if record.Version != 1 || record.Connections == nil {
@@ -278,7 +277,7 @@ func (r *Registry) save(ctx context.Context, list []ConnectionConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	data, err := json.Marshal(registryRecord{Version: 1, Connections: list}, jsonv1.FormatDurationAsNano(true))
+	data, err := json.Marshal(registryRecord{Version: 1, Connections: list})
 	if err != nil {
 		return errors.New("encoding client registry failed")
 	}

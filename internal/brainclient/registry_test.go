@@ -64,6 +64,8 @@ func TestBrainRegistryRoundTripAndValidation(t *testing.T) {
 	before, err := os.ReadFile(filepath.Join(root, "connections.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(before), `"source_root"`)
+	require.Contains(t, string(before), `"settle_time":2000000000`)
+	require.Contains(t, string(before), `"scan_interval":5000000000`)
 	require.NotContains(t, string(before), "synthetic-file-key")
 	var record struct {
 		Version     int                `json:"version"`
