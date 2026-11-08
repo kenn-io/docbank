@@ -115,3 +115,21 @@ func TestReviewSetextAfterReferenceDefinition(t *testing.T) {
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 	require.Equal(t, "target.md", string(src[n.Links[0].DestinationSpan.Start:n.Links[0].DestinationSpan.End]))
 }
+
+func TestReviewListTabResidualIndent(t *testing.T) {
+	for _, src := range []string{
+		"-\t  [hidden](bad.md)\n\n# Visible\n",
+		">  -\t  [hidden](bad.md)\n\n# Visible\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src))
+		require.NoError(t, err, src)
+		require.Empty(t, n.Links, src)
+		require.Len(t, n.Headings, 1, src)
+	}
+}
+
+func TestReviewListTabNormalPadding(t *testing.T) {
+	n, err := Parse(t.Context(), []byte(" -\t[shown](one.md)\n\n>  -\t[shown](two.md)\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
+}

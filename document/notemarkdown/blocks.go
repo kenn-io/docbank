@@ -39,6 +39,8 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		raw := original[line.Start:line.End]
 		blank := len(bytes.TrimSpace(raw)) == 0
 		content := 0
+		// A partially consumed tab can leave spaces before the next byte.
+		virtualIndent := 0
 		matched := 0
 		lazy := false
 		for matched < len(containers) {
@@ -48,7 +50,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				if err != nil {
 					return nil, err
 				}
+				columns += virtualIndent
 				if columns <= 3 && end < len(raw) && raw[end] == '>' {
+					virtualIndent = 0
 					content = end + 1
 					if content < len(raw) && (raw[content] == ' ' || raw[content] == '\t') {
 						content++
@@ -71,16 +75,26 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				if err != nil {
 					return nil, err
 				}
+				columns += virtualIndent
 				if columns >= c.indent {
-					used := 0
+					used := min(virtualIndent, c.indent)
+					virtualIndent -= used
+					column, err := visualColumn(ctx, raw, content, b)
+					if err != nil {
+						return nil, err
+					}
 					for content < end && used < c.indent {
 						if raw[content] == '\t' {
-							used += 4 - used%4
+							width := 4 - column%4
+							used += width
+							column += width
 						} else {
 							used++
+							column++
 						}
 						content++
 					}
+					virtualIndent += used - c.indent
 				} else if interrupt, err := blockInterrupt(ctx, raw[content:], c.marker, b); err != nil {
 					return nil, err
 				} else if paragraph && !interrupt {
@@ -121,6 +135,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				if err != nil {
 					return nil, err
 				}
+				columns += virtualIndent
 				if columns >= 4 {
 					break
 				}
@@ -128,6 +143,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				after := end
 				if end < len(raw) && raw[end] == '>' {
 					c.kind = 'q'
+					virtualIndent = 0
 					after++
 					if after < len(raw) && (raw[after] == ' ' || raw[after] == '\t') {
 						after++
@@ -148,6 +164,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					c.kind = 'l'
 					c.marker = raw[markerEnd-1]
 					after = markerEnd
+					virtualIndent = 0
 					padEnd, padding, err := leadingIndent(ctx, raw, after, b)
 					if err != nil {
 						return nil, err
@@ -155,6 +172,13 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					if padding == 0 {
 						padding = 1
 					} else if padding > 4 {
+						if raw[after] == '\t' {
+							column, err := visualColumn(ctx, raw, after, b)
+							if err != nil {
+								return nil, err
+							}
+							virtualIndent = 3 - column%4
+						}
 						padding = 1
 						padEnd = after + 1
 					}
@@ -196,7 +220,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			continue
 		}
 		if fenceChar != 0 {
-			_, indent, err := leadingIndent(ctx, text, 0, b)
+			_, indent, err := leadingIndent(ctx, raw, content, b)
 			if err != nil {
 				return nil, err
 			}
@@ -204,7 +228,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			if err != nil {
 				return nil, err
 			}
-			if indent <= 3 && n >= fenceWidth && len(bytes.TrimSpace(trimmed[n:])) == 0 {
+			if indent+virtualIndent <= 3 && n >= fenceWidth && len(bytes.TrimSpace(trimmed[n:])) == 0 {
 				fenceChar = 0
 			}
 			pos = next
@@ -215,6 +239,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		if err != nil {
 			return nil, err
 		}
+		indent += virtualIndent
 		if indent >= 4 && !paragraph {
 			pos = next
 			continue
@@ -352,19 +377,44 @@ func leadingDefinitionsEnd(ctx context.Context, src []byte, content Span, b *bud
 
 func leadingIndent(ctx context.Context, raw []byte, start int, b *budget) (end, columns int, err error) {
 	end = start
+	column, err := visualColumn(ctx, raw, start, b)
+	if err != nil {
+		return 0, 0, err
+	}
 	for end < len(raw) && (raw[end] == ' ' || raw[end] == '\t') {
 		if err := b.step(ctx, 1); err != nil {
 			return 0, 0, err
 		}
 		if raw[end] == '\t' {
-			columns += 4 - columns%4
+			width := 4 - column%4
+			columns += width
+			column += width
 		} else {
 			columns++
+			column++
 		}
 		end++
 	}
 	return
 }
+
+// Container prefixes contain only ASCII markers and whitespace. Count their
+// columns so tabs after a marker use the tab stop of the original line.
+func visualColumn(ctx context.Context, raw []byte, end int, b *budget) (int, error) {
+	column := 0
+	for i := 0; i < end; i++ {
+		if err := b.step(ctx, 1); err != nil {
+			return 0, err
+		}
+		if raw[i] == '\t' {
+			column += 4 - column%4
+		} else {
+			column++
+		}
+	}
+	return column, nil
+}
+
 func listMarker(raw []byte, start int) (int, bool) {
 	if start >= len(raw) {
 		return 0, false
