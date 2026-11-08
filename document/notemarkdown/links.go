@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark/util"
 )
@@ -105,7 +106,7 @@ func definitionNext(src []byte, end int) int {
 func linkSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
 func (s *linkScanner) referenceKey(start, end int) (string, error) {
-	if end-start > 999 || start == end {
+	if end-start > 4*999 || start == end || utf8.RuneCount(s.src[start:end]) > 999 {
 		return "", nil
 	}
 	if err := s.b.step(s.ctx, end-start); err != nil {
@@ -128,7 +129,7 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		return 0, false, nil
 	}
 	label := i + 1
-	for i++; i < blockEnd && i-label <= 999; i++ {
+	for i++; i < blockEnd && i-label <= 4*999; i++ {
 		if err := s.b.step(s.ctx, 1); err != nil {
 			return 0, false, err
 		}
@@ -332,6 +333,37 @@ func (s *linkScanner) title(start, end int) (int, bool, error) {
 }
 
 func (s *linkScanner) inlineTarget(start, end int) (Span, int, bool, error) {
+	dest, finish, ok, err := s.inlineTargetWithDestination(start, end)
+	if err != nil || ok {
+		return dest, finish, ok, err
+	}
+	i := start + 1
+	for i < end && linkSpace(s.src[i]) {
+		if err := s.b.step(s.ctx, 1); err != nil {
+			return Span{}, 0, false, err
+		}
+		i++
+	}
+	if i == start+1 {
+		return Span{}, 0, false, nil
+	}
+	finish, ok, err = s.title(i, end)
+	if err != nil || !ok {
+		return Span{}, 0, false, err
+	}
+	for finish < end && linkSpace(s.src[finish]) {
+		if err := s.b.step(s.ctx, 1); err != nil {
+			return Span{}, 0, false, err
+		}
+		finish++
+	}
+	if finish < end && s.src[finish] == ')' {
+		return Span{i, i}, finish + 1, true, nil
+	}
+	return Span{}, 0, false, nil
+}
+
+func (s *linkScanner) inlineTargetWithDestination(start, end int) (Span, int, bool, error) {
 	i := start + 1 // opening parenthesis
 	for i < end && linkSpace(s.src[i]) {
 		if err := s.b.step(s.ctx, 1); err != nil {
@@ -581,7 +613,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, str
 	labelStart, labelEnd, finish := op.label, closing, closing+1
 	if finish < end && s.src[finish] == '[' {
 		j := finish + 1
-		for j < end && j-finish <= 1000 && s.src[j] != ']' && s.src[j] != '[' {
+		for j < end && j-finish <= 4*999+1 && s.src[j] != ']' && s.src[j] != '[' {
 			if err := s.b.step(s.ctx, 1); err != nil {
 				return Span{}, 0, "", false, err
 			}
@@ -595,8 +627,6 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, str
 				labelStart, labelEnd = finish+1, j
 			}
 			finish = j + 1
-		} else {
-			return Span{}, 0, "", false, nil
 		}
 	}
 	key, err := s.referenceKey(labelStart, labelEnd)

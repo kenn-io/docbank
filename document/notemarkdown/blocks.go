@@ -45,6 +45,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		lazy := false
 		for matched < len(containers) {
 			c := containers[matched]
+			remainingBlank := len(bytes.Trim(raw[content:], " \t")) == 0
 			if c.kind == 'q' {
 				end, columns, err := leadingIndent(ctx, raw, content, b)
 				if err != nil {
@@ -52,14 +53,13 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				}
 				columns += virtualIndent
 				if columns <= 3 && end < len(raw) && raw[end] == '>' {
-					virtualIndent = 0
-					content = end + 1
-					if content < len(raw) && (raw[content] == ' ' || raw[content] == '\t') {
-						content++
+					content, virtualIndent, err = quoteSpace(ctx, raw, end+1, b)
+					if err != nil {
+						return nil, err
 					}
 				} else if interrupt, err := blockInterrupt(ctx, raw[content:], 0, b); err != nil {
 					return nil, err
-				} else if paragraph && !blank && !interrupt {
+				} else if paragraph && !remainingBlank && !interrupt {
 					lazy = true
 					matched = len(containers)
 					break
@@ -67,7 +67,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					break
 				}
 			} else {
-				if blank {
+				if remainingBlank {
 					matched++
 					continue
 				}
@@ -129,15 +129,20 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			pos = next
 			continue
 		}
-		// A paragraph containing only reference definitions does not prevent a
-		// list marker (including a non-1 ordered marker) from opening a block.
-		if paragraph && len(containers) == 0 && len(blocks) > 0 {
+		// Reference definitions alone do not keep a paragraph open for block
+		// interruption, including inside a container.
+		if paragraph && !lazy && fenceChar == 0 && !inHTML && len(blocks) > 0 {
 			previous := &blocks[len(blocks)-1]
 			start, indent, err := leadingIndent(ctx, raw, content, b)
 			if err != nil {
 				return nil, err
 			}
-			if _, ok := listMarker(raw, start); ok && indent <= 3 && previous.paragraph && previous.span.End == line.Start {
+			_, list := listMarker(raw, start)
+			_, html, err := htmlBlockStart(ctx, bytes.Trim(raw[start:], " \t"), true, b)
+			if err != nil {
+				return nil, err
+			}
+			if (list || html) && indent+virtualIndent <= 3 && previous.paragraph && previous.depth == len(containers) && previous.span.End == line.Start {
 				end, err := leadingDefinitionsEnd(ctx, original, previous.content, b)
 				if err != nil {
 					return nil, err
@@ -161,10 +166,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				after := end
 				if end < len(raw) && raw[end] == '>' {
 					c.kind = 'q'
-					virtualIndent = 0
-					after++
-					if after < len(raw) && (raw[after] == ' ' || raw[after] == '\t') {
-						after++
+					after, virtualIndent, err = quoteSpace(ctx, raw, after+1, b)
+					if err != nil {
+						return nil, err
 					}
 				} else if markerEnd, ok := listMarker(raw, end); ok && (!paragraph || listCanInterrupt(raw, end, markerEnd)) {
 					candidate := bytes.Trim(raw[end:], " \t")
@@ -340,11 +344,15 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 						previous.content.End = headingStart
 						previous.span.End = headingStart
 						blocks = append(blocks, sourceBlock{span: Span{headingStart, next}, content: Span{headingStart, end}, root: true, level: setext})
+					} else {
+						paragraph = false
 					}
 				}
-				paragraph = false
-				pos = next
-				continue
+				if paragraph {
+					paragraph = false
+					pos = next
+					continue
+				}
 			}
 		}
 		thematic, err := thematicBreak(ctx, trimmed, b)
@@ -374,6 +382,20 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		pos = next
 	}
 	return blocks, nil
+}
+
+func quoteSpace(ctx context.Context, raw []byte, pos int, b *budget) (int, int, error) {
+	if pos >= len(raw) || raw[pos] != ' ' && raw[pos] != '\t' {
+		return pos, 0, nil
+	}
+	if raw[pos] == ' ' {
+		return pos + 1, 0, nil
+	}
+	column, err := visualColumn(ctx, raw, pos, b)
+	if err != nil {
+		return 0, 0, err
+	}
+	return pos + 1, 3 - column%4, nil
 }
 
 // Leading reference definitions belong to the paragraph, not its heading.

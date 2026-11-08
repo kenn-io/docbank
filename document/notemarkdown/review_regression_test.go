@@ -192,3 +192,73 @@ func TestReviewDefinitionDoesNotInterruptList(t *testing.T) {
 	require.Empty(t, n.Headings)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
+
+func TestReviewReferenceShortcutIncompleteSuffix(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[foo][\n\n[foo]: note.md\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}
+
+func TestReviewUnicodeReferenceLabelLimit(t *testing.T) {
+	label := strings.Repeat("é", 500)
+	n, err := Parse(t.Context(), []byte("[use]["+label+"]\n\n["+label+"]: note.md\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}
+
+func TestReviewEmptyDestinationWithTitle(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[x]( \"my title\")"))
+	require.NoError(t, err)
+	require.Equal(t, []string{""}, linkTargets(n.Links))
+}
+
+func TestReviewShortHTMLComments(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("text <!--> [x](note.md) <!-- tail -->"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}
+
+func TestReviewRawHTMLBlockEnd(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("<pre>\n</style>\n# Visible\n"))
+	require.NoError(t, err)
+	require.Len(t, n.Headings, 1)
+}
+
+func TestReviewYAMLPlainApostrophes(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("---\nowner's: value\naliases: [O'Brien]\ntitle: Good\n---\n"))
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, []string{"O'Brien"}, n.Metadata.Aliases)
+}
+
+func TestReviewYAMLNullAndUnicode(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("---\n{title: Good, unknown: , aliases: [\u00a0Name\u00a0]}\n---\n"))
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, []string{"\u00a0Name\u00a0"}, n.Metadata.Aliases)
+}
+
+func TestReviewQuoteBlankInsideListFence(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("> - ```\n>\n>   [hidden](ghost.md)\n>   ```\n"))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+}
+
+func TestReviewQuoteTabIndent(t *testing.T) {
+	n, err := Parse(t.Context(), []byte(">\t  [hidden](ghost.md)\n"))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+}
+
+func TestReviewReferenceOnlyBeforeHTML(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[r]: n.md\n<span>\n[x](ghost.md)\n"))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+}
+
+func TestReviewDefinitionOnlySetext(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[r]: target.md\n===\n---\n"))
+	require.NoError(t, err)
+	require.Len(t, n.Headings, 1)
+	require.Equal(t, "===", n.Headings[0].Text)
+}
