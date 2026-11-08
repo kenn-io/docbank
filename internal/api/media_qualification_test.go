@@ -362,7 +362,23 @@ func (f *mediaQualificationFixture) control(ctx context.Context, action, id stri
 		if record.ID == id {
 			switch action {
 			case "replace":
-				return f.catalog.PublishMediaSourceVersion(ctx, store.MediaSourceVersionInput{ID: uuid.New().String(), SourceID: record.SourceID, Revision: 2, ExpectedHeadRevision: 1, ContentVersionID: record.ContentVersionID, CaptureJSON: "{}"})
+				node, err := f.catalog.NodeByID(ctx, record.nodeID)
+				if err != nil {
+					return err
+				}
+				donor := f.manifest.Records[1]
+				if donor.ContentVersionID == record.ContentVersionID {
+					donor = f.manifest.Records[0]
+				}
+				version, err := f.catalog.ContentVersionByID(ctx, donor.ContentVersionID)
+				if err != nil {
+					return err
+				}
+				_, replacement, err := f.catalog.ReplaceContent(ctx, node.ID, node.Revision, version.BlobHash, version.Size, version.MimeType)
+				if err != nil {
+					return err
+				}
+				return f.catalog.PublishMediaSourceVersion(ctx, store.MediaSourceVersionInput{ID: uuid.New().String(), SourceID: record.SourceID, Revision: 2, ExpectedHeadRevision: 1, ContentVersionID: replacement.ID, CaptureJSON: "{}"})
 			case "hide":
 				node, err := f.catalog.NodeByID(ctx, record.nodeID)
 				if err != nil {

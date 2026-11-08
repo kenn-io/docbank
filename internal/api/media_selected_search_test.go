@@ -142,7 +142,7 @@ func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
 		require.NoError(t, early.err)
 		t.Fatal("query finished before entering the encoder barrier")
 	}
-	require.NoError(t, f.control(t.Context(), "replace", supplied.ID))
+	require.NoError(t, f.control(t.Context(), "revoke", supplied.ID))
 	require.NoError(t, f.control(t.Context(), "release", ""))
 	result := <-done
 	require.NoError(t, result.err)

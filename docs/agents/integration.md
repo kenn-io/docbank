@@ -103,9 +103,7 @@ the evidence's build and supplied-input identity.
 For semantic or hybrid retrieval, configure a profile that already processed
 the selected transcript with a rendition-chunk embedding binding. Processing
 uses the ordinary plan, explicit consent, rendition worker and embedding
-continuation. Embedded callers can compose `NewSuppliedMediaProfile` with
-`ProfileConfig.EmbeddingProviders`, `Tokenizers`, and a matching chunk binding
-before constructing the service. The built-in supplied profiles have no
+continuation. The built-in supplied profiles have no
 embeddings by default. Selecting a search profile does not process or embed
 anything. Generated and supplied profiles retain separate authority; a mixed
 scope can therefore have incomplete embedding coverage even when every
