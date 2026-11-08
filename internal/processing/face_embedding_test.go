@@ -683,11 +683,15 @@ func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
 			reopened, err := store.Open(ctx, x.f.databasePath)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+			contractError := "embedding vector-set contract version is unsupported"
+			if table == "embedding_vector_spaces" {
+				contractError = "embedding vector-space contract version is unsupported"
+			}
 			_, err = reopened.FaceMatchingInputs(ctx)
-			require.Error(t, err, "unsupported stored authority must remain an error")
+			require.ErrorContains(t, err, contractError)
 			_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
-			require.Error(t, err, "ranked search must reject unsupported authority")
-			require.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
+			require.ErrorContains(t, err, contractError)
+			require.ErrorContains(t, x.service.rebuildFaceSuggestions(ctx), contractError)
 		})
 	}
 }

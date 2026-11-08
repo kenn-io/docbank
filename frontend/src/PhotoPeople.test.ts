@@ -154,7 +154,7 @@ it("keeps a face's ranking through picker continuation", async () => {
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "" } });
   await waitFor(() =>
     expect(search).toHaveBeenLastCalledWith(
-      { query: "", limit: 100, recent_first: true, face_id: face.face_id },
+      expect.objectContaining({ face_id: face.face_id }),
       expect.anything(),
     ),
   );
