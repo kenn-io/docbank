@@ -119,6 +119,26 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 	if (page.PublishedNotes == nil) != (query.PublishedNotes == nil) || (page.PublishedNotes != nil && page.PublishedNotes.Publication != query.PublishedNotes.Publication) {
 		return errors.New("document catalog response does not bind its publication")
 	}
+	if page.NoteReadiness != nil {
+		readiness := page.NoteReadiness
+		if query.PublishedNotes == nil || query.PublishedNotes.Publication == "" ||
+			!validNoteStatus(readiness.Publisher, query.PublishedNotes.Publication) ||
+			readiness.Parse.State != "unknown" || readiness.Coverage != nil || readiness.CoverageSelection != nil || readiness.CoverageObservedAt != "" {
+			return errors.New("document catalog response has invalid note readiness")
+		}
+		switch readiness.Graph.State {
+		case "ready":
+			if !validUUIDv4(readiness.Graph.Generation) {
+				return errors.New("document catalog response has invalid graph generation")
+			}
+		case "pending":
+			if readiness.Graph.Generation != "" {
+				return errors.New("document catalog response has unexpected graph generation")
+			}
+		default:
+			return errors.New("document catalog response has invalid graph state")
+		}
+	}
 	if page.SourcePresent != normalized.SourcePresent ||
 		page.PathPrefix != normalized.PathPrefix || page.Sort != string(normalized.Sort) ||
 		page.Direction != string(normalized.Direction) || page.PageSize != normalized.PageSize ||
@@ -133,6 +153,9 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 	for index, item := range page.Items {
 		if err := validatePublishedNoteIdentity(item.PublishedNote, query.PublishedNotes, item.NodeID, item.ContentVersionID, "", item.Size); err != nil {
 			return err
+		}
+		if page.NoteReadiness != nil && item.PublishedNote.NamespaceRevision != page.NoteReadiness.Publisher.NamespaceRevision {
+			return errors.New("document catalog response has inconsistent note revision")
 		}
 		if err := validateDocumentSummary(item, index); err != nil ||
 			!clientDocumentPathWithinPrefix(item.Path, page.PathPrefix) {

@@ -51,6 +51,7 @@ type DocumentSummaryResolveResponse struct {
 
 type DocumentPage struct {
 	PublishedNotes *PublishedNoteSelector `json:"published_notes,omitzero"`
+	NoteReadiness  *NoteReadiness         `json:"note_readiness,omitzero"`
 	SourcePresent  bool                   `json:"source_present,omitzero"`
 	PathPrefix     string                 `json:"path_prefix"`
 	Sort           string                 `json:"sort" enum:"path,name,modified_at,size,media_type"`

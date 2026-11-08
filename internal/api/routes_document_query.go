@@ -113,6 +113,14 @@ func (service *documentQueryService) toDocumentPage(
 		PathPrefix: page.Query.PathPrefix, Sort: string(page.Query.Sort),
 		Direction: string(page.Query.Direction), PageSize: page.Query.PageSize,
 		Items: documentSummariesFromStore(page.Items)}
+	if page.NoteReadiness != nil {
+		wire.NoteReadiness = &NoteReadiness{Publisher: fromNotePublicationStatus(page.NoteReadiness.Publisher),
+			Parse: NoteProjectionReadiness{State: "unknown"}, Graph: NoteProjectionReadiness{State: "pending"}}
+		if page.NoteReadiness.Generation != "" {
+			wire.NoteReadiness.Graph.State = "ready"
+			wire.NoteReadiness.Graph.Generation = page.NoteReadiness.Generation
+		}
+	}
 	requests := make([]documentCursorRequest, 0, 2)
 	if page.HasNext {
 		requests = append(requests, documentCursorRequest{

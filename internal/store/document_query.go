@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"go.kenn.io/docbank/document/notemarkdown"
 )
 
 const (
@@ -90,11 +92,19 @@ type DocumentCatalogIdentity struct {
 
 type DocumentCatalogPage struct {
 	Query         DocumentCatalogQuery
+	NoteReadiness *DocumentNoteReadiness
 	Items         []DocumentSummary
 	FirstPosition DocumentCatalogPosition
 	LastPosition  DocumentCatalogPosition
 	HasPrevious   bool
 	HasNext       bool
+}
+
+// DocumentNoteReadiness binds publication and graph observations to the same
+// read transaction as the document page. Parse aggregation is not yet exposed.
+type DocumentNoteReadiness struct {
+	Publisher  NotePublicationStatus
+	Generation string
 }
 
 // ListDocuments returns one flattened page of current, live file nodes. The
@@ -125,7 +135,7 @@ func (s *Store) ListDocuments(
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return DocumentCatalogPage{}, fmt.Errorf("starting document catalog page: %w", err)
 	}
@@ -159,6 +169,24 @@ func (s *Store) ListDocuments(
 		}
 		for i := range page.Items {
 			page.Items[i].PublishedNote = &bindings[i]
+		}
+		if normalized.PublishedNotes.Publication != "" {
+			status, err := notePublicationStatusTx(ctx, tx, normalized.PublishedNotes.Publication)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return DocumentCatalogPage{}, err
+			}
+			if err == nil {
+				readiness := &DocumentNoteReadiness{Publisher: status}
+				err = tx.QueryRowContext(ctx, `SELECT g.generation_id FROM note_index_heads h
+JOIN note_index_generations g ON g.generation_id=h.generation_id
+WHERE h.publication_name=$1 AND g.completed=1 AND g.database_epoch=$2 AND g.namespace_revision=$3
+AND g.parser_recipe=$4 AND g.resolver_recipe=$5`, status.Name, status.DatabaseEpoch,
+					status.NamespaceRevision, notemarkdown.Recipe, notemarkdown.ResolverRecipe).Scan(&readiness.Generation)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return DocumentCatalogPage{}, err
+				}
+				page.NoteReadiness = readiness
+			}
 		}
 	}
 	page.Query = normalized

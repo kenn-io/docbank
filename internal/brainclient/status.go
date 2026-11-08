@@ -17,8 +17,8 @@ type Status struct {
 	ProblemCode       string             `json:"problem_code,omitzero"`
 }
 
-// Status does not start a local daemon. Until the atomic publication readiness
-// snapshot is available, indexing stays unknown rather than inferred.
+// Status does not start a local daemon. Publication readiness comes from the
+// document page snapshot; consent is a separate live observation.
 func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 	cfg, err := c.registry.Get(ctx, name)
 	if err != nil {
@@ -38,7 +38,8 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 		return status, nil
 	}
 	defer func() { _ = conn.Close() }()
-	if _, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: name}, PageSize: 1}); err != nil {
+	page, err := conn.ListDocuments(ctx, api.DocumentQuery{PublishedNotes: &api.PublishedNoteSelector{Publication: name}, PageSize: 1})
+	if err != nil {
 		if ctx.Err() != nil {
 			return status, ctx.Err()
 		}
@@ -46,5 +47,23 @@ func (c *Client) Status(ctx context.Context, name string) (Status, error) {
 		return status, nil
 	}
 	status.ConnectionState = "connected"
+	status.Readiness = page.NoteReadiness
+	plan, err := conn.NoteLocalTextPlan(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return status, ctx.Err()
+		}
+		status.ProblemCode = "indexing_status_unavailable"
+		return status, nil
+	}
+	if err := api.ValidateNoteLocalTextPlan(plan); err != nil {
+		status.ProblemCode = "indexing_plan_unrecognized"
+		return status, nil
+	}
+	if plan.Plan.ConsentState == "active" {
+		status.BodyIndexingState = "authorized"
+	} else {
+		status.BodyIndexingState = "consent_" + plan.Plan.ConsentState
+	}
 	return status, nil
 }

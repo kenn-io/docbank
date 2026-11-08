@@ -112,6 +112,25 @@ func TestPublishedNoteSelectorCursorRevision(t *testing.T) {
 	}
 }
 
+func TestPublishedNotePageReadinessBindsSnapshot(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedNotePublication(t, s, "present")
+	page, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{PublishedNotes: &PublishedNoteSelector{Publication: "notebook"}}, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.NotNil(t, page.NoteReadiness)
+	require.Equal(t, "notebook", page.NoteReadiness.Publisher.Name)
+	require.Equal(t, page.Items[0].PublishedNote.NamespaceRevision, page.NoteReadiness.Publisher.NamespaceRevision)
+	require.Empty(t, page.NoteReadiness.Generation)
+	unscoped, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{}, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.Nil(t, unscoped.NoteReadiness)
+	missing, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{PublishedNotes: &PublishedNoteSelector{Publication: "missing"}}, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.Nil(t, missing.NoteReadiness)
+}
+
 func TestPublishedNoteFinalRevalidation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
