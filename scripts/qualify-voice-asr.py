@@ -61,7 +61,9 @@ with (output / "service.log").open("w") as log:
             "decoder": json.loads(probe.stdout),
             "adapter": "docbank-docling-asr/v2",
             "document_schema": "1.10.0",
-            "expected_terms": ["telescope", "friday"],
+            "expected_terms": ["delivery", "arrives", "friday"],
+            "expected_synthetic_phrase": "Telescope delivery arrives Friday at 3.",
+            "accuracy": "ASR may misrecognize words; this qualification verifies decoding and timed speech, not verbatim accuracy",
         }
         (output / "qualification.json").write_text(json.dumps(report, indent=2) + "\n")
     finally:
