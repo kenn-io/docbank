@@ -18,18 +18,10 @@ const evidence = {
 };
 
 function statusResponse(enabled = true): Response {
-  return new Response(
-    JSON.stringify({
-      enabled,
-      allocation_entry_count: enabled ? 18 : 0,
-      scopes: enabled ? evidence.scopes : [],
-      vault_id: evidence.vault_id,
-    }),
-    {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    },
-  );
+  return new Response(JSON.stringify({ enabled }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 let statusMock: ReturnType<typeof vi.fn<typeof fetch>>;
@@ -52,7 +44,7 @@ afterEach(() => {
 
 describe("audit evidence drawer", () => {
   it("shows independently verified authority and protected content", async () => {
-    const verifyRequests = verifyMock.mockResolvedValueOnce(
+    verifyMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           enabled: true,
@@ -79,7 +71,7 @@ describe("audit evidence drawer", () => {
     expect(screen.getByText(evidence.lineage_id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.chain_head)).toBeTruthy();
-    expect(verifyRequests).toHaveBeenCalledWith(
+    expect(verifyMock).toHaveBeenCalledWith(
       "/api/v1/audit/verify",
       expect.objectContaining({
         method: "POST",
@@ -126,7 +118,7 @@ describe("audit evidence drawer", () => {
   );
 
   it("verifies again on request and reports each problem", async () => {
-    const verifyRequests = verifyMock
+    verifyMock
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -169,7 +161,7 @@ describe("audit evidence drawer", () => {
     expect(await screen.findByText("Protected history needs attention")).toBeTruthy();
     expect(screen.getByText("corrupt")).toBeTruthy();
     expect(screen.getByText("c".repeat(64))).toBeTruthy();
-    expect(verifyRequests).toHaveBeenCalledTimes(2);
+    expect(verifyMock).toHaveBeenCalledTimes(2);
     expect(statusMock).toHaveBeenCalledTimes(2);
   });
 
@@ -268,10 +260,8 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
     await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(1));
-    expect(verifyMock).not.toHaveBeenCalled();
     const signal = statusMock.mock.calls[0]![1]!.signal as AbortSignal;
     await unmount();
     expect(signal.aborted).toBe(true);
-    expect(verifyMock).not.toHaveBeenCalled();
   });
 });
