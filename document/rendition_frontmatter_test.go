@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 
@@ -170,9 +171,12 @@ func TestOmissionOnlyPDFEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, rendition.Markdown)
 	require.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", rendition.MarkdownChecksum)
-	envelope := RenditionEnvelopeV1{BuildID: frontmatterHash("build"), SourceSHA256: frontmatterHash("source"), SourceFormat: "pdf", SourceMediaType: "application/pdf", RenditionRequestFingerprint: frontmatterHash("request"), EvidenceLexicalFingerprint: frontmatterHash("lexical"), NormalizedEvidenceContract: NormalizedEvidenceContractV1, UnitKind: EvidenceUnitPage}
+	envelope := RenditionEnvelopeV1{BuildID: strings.Repeat("b", 64), SourceSHA256: "85bcc1ce42ddbdbb384839d9d7c947d3d811a52ea5bf63617ac32a3bc88053c5", SourceFormat: "pdf", SourceMediaType: "application/pdf", RenditionRequestFingerprint: strings.Repeat("e", 64), EvidenceLexicalFingerprint: strings.Repeat("f", 64), NormalizedEvidenceContract: NormalizedEvidenceContractV1, UnitKind: EvidenceUnitPage}
 	got, front, err := EnvelopeRenditionV1(rendition, envelope)
 	require.NoError(t, err)
+	fixture, err := os.ReadFile("../frontend/src/testdata/omission-only-pdf.md")
+	require.NoError(t, err)
+	require.Equal(t, string(fixture), string(got.Markdown))
 	parsed, body, err := ParseRenditionFrontMatterV1(got.Markdown)
 	require.NoError(t, err)
 	require.Equal(t, front, parsed)

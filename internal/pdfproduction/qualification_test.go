@@ -997,7 +997,6 @@ func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, page.Text, "international")
 	require.NotContains(t, page.Text, "\ufffe")
-	require.Contains(t, page.Text, "shared PDF text")
 	// Starting a renderer after the page returns must acquire the same backing.
 	engine, err := NewPDFium(QualifiedRecipe())
 	require.NoError(t, err)

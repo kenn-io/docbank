@@ -3,12 +3,13 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"go.kenn.io/docbank/document"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/document"
 )
 
 func checkResolveRenditionTextReportsExactFailedAttempts(t *testing.T, open func(*testing.T) *Store) {
@@ -221,25 +222,29 @@ func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T
 			require.True(t, view.Empty)
 			require.NotNil(t, view.Artifact)
 			require.Equal(t, int64(len(empty.Markdown)), view.Artifact.Size)
-			if test.name != "plain" {
-				return
+			if test.name == "plain" {
+				checkEmptyPDFChunkSettlement(t, s, node, profile.Fingerprint)
 			}
-
-			coverage, err := s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{ContentVersionIDs: []string{versions[0]}, ProcessingProfileFingerprint: profile.Fingerprint, Bindings: []ProcessingCoverageBinding{{BindingID: "chunk"}, {BindingID: "optional"}}})
-			require.NoError(t, err)
-			require.Equal(t, "complete", coverage.Embeddings[0].State)
-			require.Equal(t, "unavailable", coverage.Embeddings[1].State)
-			targets, err := s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 4, 100)
-			require.NoError(t, err)
-			require.Contains(t, targets, DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}, "original-file bindings still need work")
-			targets, err = s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 2, 100)
-			require.NoError(t, err)
-			require.NotContains(t, targets, DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}, "both chunk bindings have a retained empty outcome")
-			node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType)
-			require.NoError(t, err)
-			targets, err = s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 2, 100)
-			require.NoError(t, err)
-			require.Contains(t, targets, DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}, "a new source version needs its own outcome")
 		})
 	}
+}
+
+func checkEmptyPDFChunkSettlement(t *testing.T, s *Store, node Node, profileFingerprint string) {
+	t.Helper()
+
+	coverage, err := s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{ContentVersionIDs: []string{node.CurrentVersionID}, ProcessingProfileFingerprint: profileFingerprint, Bindings: []ProcessingCoverageBinding{{BindingID: "chunk"}, {BindingID: "optional"}}})
+	require.NoError(t, err)
+	require.Equal(t, "complete", coverage.Embeddings[0].State)
+	require.Equal(t, "unavailable", coverage.Embeddings[1].State)
+	targets, err := s.MissingProcessingTargetsAfter(t.Context(), profileFingerprint, "", 4, 100)
+	require.NoError(t, err)
+	require.Contains(t, targets, DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}, "original-file bindings still need work")
+	targets, err = s.MissingProcessingTargetsAfter(t.Context(), profileFingerprint, "", 2, 100)
+	require.NoError(t, err)
+	require.NotContains(t, targets, DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}, "both chunk bindings have a retained empty outcome")
+	node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType)
+	require.NoError(t, err)
+	targets, err = s.MissingProcessingTargetsAfter(t.Context(), profileFingerprint, "", 2, 100)
+	require.NoError(t, err)
+	require.Contains(t, targets, DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name}, "a new source version needs its own outcome")
 }

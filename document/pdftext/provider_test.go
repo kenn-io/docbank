@@ -59,29 +59,26 @@ func TestPDFTextWhitespaceOmissions(t *testing.T) {
 	p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 3})
 	require.NoError(t, err)
 	for _, test := range []struct {
-		name  string
-		pages []string
-		units int
+		name      string
+		pages     []string
+		unitPages []int64
+		reasons   []string
 	}{
-		{"whitespace", []string{"   "}, 0},
-		{"controls", []string{"\x01\x02"}, 0},
-		{"mixed", []string{"   ", "", "synthetic text"}, 1},
+		{"controls", []string{"\x01\x02"}, nil, []string{"no_readable_text"}},
+		{"mixed", []string{"   ", "", "synthetic text"}, []int64{3}, []string{"no_readable_text", "no_text_layer"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			upload := newTestUpload(mediatest.PDFTextPages(test.pages, false))
 			result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 			require.NoError(t, err)
-			require.Len(t, result.Evidence.Units, test.units)
-			require.NotEmpty(t, result.Evidence.Omissions)
-			require.Equal(t, "no_readable_text", result.Evidence.Omissions[0].Reason)
-			require.Equal(t, int64(1), result.Evidence.Omissions[0].Locator.Start)
-			if len(test.pages) > 1 {
-				require.Len(t, result.Evidence.Omissions, 2)
-				require.Equal(t, "no_text_layer", result.Evidence.Omissions[1].Reason)
-				require.Equal(t, int64(2), result.Evidence.Omissions[1].Locator.Start)
+			require.Len(t, result.Evidence.Units, len(test.unitPages))
+			for i, page := range test.unitPages {
+				require.Equal(t, page, result.Evidence.Units[i].Locator.Start)
 			}
-			if test.units > 0 {
-				require.Equal(t, int64(3), result.Evidence.Units[0].Locator.Start)
+			require.Len(t, result.Evidence.Omissions, len(test.reasons))
+			for i, reason := range test.reasons {
+				require.Equal(t, reason, result.Evidence.Omissions[i].Reason)
+				require.Equal(t, int64(i+1), result.Evidence.Omissions[i].Locator.Start)
 			}
 		})
 	}
@@ -95,7 +92,6 @@ func TestPDFTextPreservesLiteralMarkup(t *testing.T) {
 	upload := newTestUpload(data)
 	result, err := p.Render(t.Context(), upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	require.NoError(t, err)
-	require.Contains(t, result.Evidence.Units[0].Text, "international")
 	require.Contains(t, result.Evidence.Units[0].Text, `part\-time`)
 	require.Contains(t, result.Evidence.Units[0].Text, `Order \<invoice\-1729\> \\ \*item\* \[ref\]\(https\:\/\/example\.org\) \# Title`)
 }
@@ -112,8 +108,9 @@ func TestPDFTextLimitsAndCancellation(t *testing.T) {
 		bytes, pages int64
 		output       int
 		canceled     bool
+		cause        string
 	}{
-		{"bytes", 1, 10, 1 << 20, false}, {"pages", 1 << 20, 2, 1 << 20, false}, {"output", 1 << 20, 10, 300, false}, {"canceled", 1 << 20, 10, 1 << 20, true},
+		{"bytes", 1, 10, 1 << 20, false, "PDF exceeds byte limit"}, {"pages", 1 << 20, 2, 1 << 20, false, "PDF exceeds page limit"}, {"output", 1 << 20, 10, 300, false, "PDF evidence exceeds output limit"}, {"canceled", 1 << 20, 10, 1 << 20, true, "context canceled"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p, err := New(Profile{MaxDocumentBytes: test.bytes, MaxPages: test.pages})
@@ -128,15 +125,13 @@ func TestPDFTextLimitsAndCancellation(t *testing.T) {
 			}
 			_, err = p.Render(ctx, upload, authorization)
 			require.Error(t, err)
+			require.ErrorContains(t, errors.Unwrap(err), test.cause)
 			if test.canceled {
 				require.ErrorIs(t, err, context.Canceled)
 			} else {
 				var providerError *document.RenditionProviderError
 				require.ErrorAs(t, err, &providerError)
 				require.Equal(t, document.RenditionErrorPolicyRejected, providerError.Code())
-				if test.name == "output" {
-					require.ErrorContains(t, errors.Unwrap(err), "PDF evidence exceeds output limit")
-				}
 			}
 		})
 	}

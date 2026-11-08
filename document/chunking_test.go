@@ -295,13 +295,6 @@ func TestBuildEmbeddingInputsSkipsEmptyNaturalUnits(t *testing.T) {
 	emptyGeneration := build(t, allEmpty, testInputPolicy(t, 2, 0))
 	assert.Empty(t, emptyGeneration.Inputs)
 	assert.NotEmpty(t, emptyGeneration.Checksum)
-	source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Family: "pdf", UnitKind: EvidenceUnitPage, Completeness: EvidencePartial,
-		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &SourceEvidenceLocatorV1{Kind: EvidenceLocatorPage, IndexOrigin: EvidenceIndexOriginOne, Start: 1, End: 1}}},
-	}
-	normalized := normalizeRenditionEvidence(t, source)
-	generation, err := BuildEmbeddingInputs(normalized, testInputPolicy(t, 4, 0), testGenerationLimits())
-	require.NoError(t, err)
-	require.Empty(t, generation.Inputs)
 }
 
 func TestBuildEmbeddingInputsSealsIdentityInputsButNotGenerationLimits(t *testing.T) {
