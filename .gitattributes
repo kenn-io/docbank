@@ -33,6 +33,9 @@ document/internal/scanfixture/testdata/*.pdf binary
 internal/production/testdata/native-geometry-control.pdf binary
 # Transfer canonical bytes must survive Windows checkout unchanged.
 document/transfer/testdata/msgvault-transfer-v1.golden.jsonl -text
+# The embedded schema uses LF blank lines to separate executable groups.
+internal/store/schema.sql text eol=lf
+internal/store/testdata/schema-*.sql text eol=lf
 # Generated API artifacts and dependency resolution output.
 internal/api/openapi.yaml linguist-generated=true
 internal/apiclient/*.gen.go linguist-generated=true
