@@ -1,0 +1,31 @@
+name: Recording search qualification
+on:
+  push:
+    branches: [feat/recording-semantic-search]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: recording-search-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  focused:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['1', '0']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Focused production retrieval contracts
+        run: go test -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api -run 'TestSelectedMedia|TestMediaSearch' -count=1 -timeout=15m
+      - name: Formatting
+        run: test -z "$(gofmt -l internal/processing/media_search.go internal/retrieval/media_selected_semantic_test.go internal/api/routes_media_test.go)"
