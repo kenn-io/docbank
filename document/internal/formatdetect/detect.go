@@ -647,16 +647,10 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bo
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	if limits.TextOnly {
-		if context.Encrypt != nil && !allowEmptyPassword {
-			return nil, ErrPDFEncrypted
-		}
-		return context, nil
-	}
-	return checkPDFReferences(context, allowEmptyPassword)
+	return checkPDFReferences(context, allowEmptyPassword, limits.TextOnly)
 }
 
-func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model.Context, error) {
+func checkPDFReferences(context *model.Context, allowEmptyPassword, allowExternalReferences bool) (*model.Context, error) {
 	if context.Encrypt != nil && !allowEmptyPassword {
 		return nil, ErrPDFEncrypted
 	}
@@ -667,7 +661,7 @@ func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model
 		}
 		return nil, fmt.Errorf("inspect PDF object graph: %w", err)
 	}
-	if external {
+	if external && !allowExternalReferences {
 		return nil, ErrPDFExternalReference
 	}
 	return context, nil

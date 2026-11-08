@@ -10,7 +10,7 @@ import (
 )
 
 // PDFTextPolicy binds extraction behavior to the pinned engine and resource policy.
-const PDFTextPolicy = "pdftext/v1:count-before-get;native-zero-omissions;literal-markdown;per-page-lease;memory=512MiB;execution=60s;rss=1GiB;text-only-admission;" + wasmSHA256
+const PDFTextPolicy = "pdftext/v1:count-before-get;native-zero-omissions;empty-text-omissions;literal-markdown;per-page-lease;memory=512MiB;execution=60s;rss=1GiB;text-only-admission;" + wasmSHA256
 
 // PDFTextPage contains the native character count before any text normalization.
 type PDFTextPage struct {

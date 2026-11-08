@@ -64,7 +64,9 @@ limit changes the descriptor. Request the `structured` artifact role and
 select this rendition from a processing profile, as for EPUB.
 
 This provider reads the existing text layer. Each page with zero native
-characters records a `no_text_layer` omission. An entirely image-only PDF
+characters records a `no_text_layer` omission. Pages whose extracted text is
+empty or only whitespace and control characters record a `no_readable_text`
+omission. An entirely image-only PDF
 completes with an empty Markdown body and retained page omissions. Encrypted
 PDFs are refused. See [local PDF text extraction](../document-understanding.md#extract-pdf-text-locally)
 for admission and execution limits.

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
@@ -103,7 +104,8 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		pages, text int
-	}{{"born", 3, 3}, {"image-only", 3, 0}, {"mixed", 3, 1}} {
+		mediaType   string
+	}{{"born", 3, 3, ""}, {"image-only", 3, 0, ""}, {"mixed", 3, 1, ""}, {"parameterized", 3, 0, "application/pdf; version=1.7"}} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), test.name+".pdf")
 			require.NoError(t, os.WriteFile(path, pdfTextRuntimePDF(test.pages, test.text), 0600))
@@ -111,6 +113,14 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			require.NoError(t, err)
 			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/" + test.name + ".pdf"}})
 			require.NoError(t, err)
+			if test.mediaType != "" {
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				replacement, err := daemon.ReplaceContent(t.Context(), node.ID, node.Revision, test.mediaType, node.BlobHash, node.Size, bytes.NewReader(data))
+				require.NoError(t, err)
+				node = &replacement.Node
+				require.Equal(t, test.mediaType, node.MimeType)
+			}
 			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "pdf"}
 			plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 			require.NoError(t, err)
@@ -131,6 +141,11 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			require.Equal(t, test.text, header.Document.UnitCount)
 			if test.text == 0 {
 				require.Empty(t, body)
+				versionID, err := uuid.Parse(node.CurrentVersionID)
+				require.NoError(t, err)
+				receipt, err := daemon.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.ResolveRenditionTextBody{NodeID: node.ID, Revision: node.Revision, VersionID: versionID, BlobHash: node.BlobHash, Size: node.Size, Profile: new("pdf")}})
+				require.NoError(t, err)
+				require.Equal(t, "verified_empty", string(receipt.State))
 			} else {
 				require.Contains(t, string(body), "needle synthetic PDF text")
 			}

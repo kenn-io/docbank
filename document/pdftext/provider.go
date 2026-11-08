@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/formatdetect"
@@ -99,9 +101,15 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		}
 		locator := document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(index + 1), End: int64(index + 1)}
 		var observation any
+		reason := ""
 		if page.Characters == 0 {
+			reason = "no_text_layer"
+		} else if strings.TrimFunc(page.Text, func(character rune) bool { return unicode.IsSpace(character) || unicode.IsControl(character) }) == "" {
+			reason = "no_readable_text"
+		}
+		if reason != "" {
 			evidence.Completeness = document.EvidencePartial
-			evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &locator})
+			evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionUnit, Reason: reason, Locator: &locator})
 			observation = evidence.Omissions[len(evidence.Omissions)-1]
 		} else {
 			text := document.EscapeRenditionText(page.Text)
@@ -126,9 +134,6 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 		return document.RenditionResult{}, err
 	}
 	result := document.RenditionResult{Evidence: evidence, Receipt: receipt}
-	if err := document.ValidateRenditionResult(p.descriptor, authorization, result); err != nil {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "PDF result exceeds its authorization", err)
-	}
 	if err := operation.Check(); err != nil {
 		return document.RenditionResult{}, err
 	}

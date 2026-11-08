@@ -163,10 +163,26 @@ func TestResolveRenditionTextIgnoresFailedPhotoDescriptions(t *testing.T) {
 
 func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
-	for _, corrupt := range []bool{false, true} {
-		t.Run(fmt.Sprintf("corrupt=%t", corrupt), func(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mediaType string
+		corrupt   bool
+	}{
+		{name: "plain", mediaType: "application/pdf"},
+		{name: "parameterized", mediaType: "application/pdf; version=1.7"},
+		{name: "corrupt", mediaType: "application/pdf", corrupt: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			s := open(t)
 			versions := seedRenditionCatalogVersions(t, s)
+			node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+			require.NoError(t, err)
+			if test.mediaType != node.MimeType {
+				var version ContentVersion
+				node, version, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, test.mediaType)
+				require.NoError(t, err)
+				versions[0] = version.ID
+			}
 			profile := catalogProcessingProfile(t, false)
 			build := catalogRenditionBuild(s, profile)
 			build.Units = nil
@@ -179,7 +195,7 @@ func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T
 				NormalizedEvidenceContract: document.NormalizedEvidenceContractV1, UnitKind: document.EvidenceUnitPage,
 			})
 			require.NoError(t, err)
-			if corrupt {
+			if test.corrupt {
 				empty.Markdown = append(empty.Markdown, []byte("missing text")...)
 			}
 			build.MarkdownChecksum = testSHA256(empty.Markdown)
@@ -196,10 +212,8 @@ func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T
 			require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 			attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z"}
 			require.NoError(t, publishRenditionForTest(t, s, attachment, "2026-08-22T10:01:00.000000000Z", testSHA256([]byte("empty PDF generation"))))
-			node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
-			require.NoError(t, err)
 			view, err := s.ResolveRenditionText(t.Context(), RenditionTextBinding{NodeID: node.ID, NodeRevision: node.Revision, ContentVersionID: versions[0], SourceSHA256: node.BlobHash, SourceSize: node.Size, ProfileFingerprint: profile.Fingerprint})
-			if corrupt {
+			if test.corrupt {
 				require.ErrorIs(t, err, ErrRenditionTextUnavailable)
 				return
 			}

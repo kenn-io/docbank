@@ -117,8 +117,8 @@ Present units retain one-based page locations. A page with zero native
 text-layer characters becomes a `no_text_layer` unit omission. Any omission
 makes the evidence partial. An entirely image-only PDF publishes its page
 omissions with an empty Markdown body, zero lexical segments, and empty
-navigation. Characters that normalize to unreadable text keep the existing
-rendition rejection.
+navigation. Pages with native characters whose extracted text is empty or
+only whitespace and control characters record a `no_readable_text` omission.
 
 Text-only admission accepts DCT, JBIG2, and JPX image streams without decoding
 pixels and permits external references. Extraction opens no external resource.
