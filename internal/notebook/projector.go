@@ -250,6 +250,10 @@ func (p *Projector) edges(ctx context.Context, g store.NoteIndexGeneration, sour
 		}
 		query, err := notemarkdown.PlanTarget(sourceRef, link)
 		if err != nil {
+			if errors.Is(err, notemarkdown.ErrLimit) {
+				edges = append(edges, store.NoteIndexEdge{Ordinal: int64(i), Link: link, State: "unsupported"})
+				continue
+			}
 			return nil, err
 		}
 		keys := make([]store.NoteLookupKey, 0, len(query.Keys))
