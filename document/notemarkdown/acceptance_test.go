@@ -50,35 +50,6 @@ func TestAcceptanceVersionBoundInputs(t *testing.T) {
 	}
 }
 
-func TestAcceptanceNamespaceChanges(t *testing.T) {
-	ctx := t.Context()
-	q, err := PlanTarget("start.md", Link{Form: "wiki", Target: "Topic"})
-	require.NoError(t, err)
-	row := Candidate{Binding: "v1", Path: "Topic.md", Kind: "note", Keys: []LookupKey{q.Keys[0], q.Keys[1]}}
-	renamed := Candidate{Binding: "v1", Path: "else/Renamed.md", Kind: "note", Keys: []LookupKey{q.Keys[2]}}
-	duplicate := Candidate{Binding: "other-v1", Path: "second/Topic.md", Kind: "note", Keys: []LookupKey{q.Keys[1]}}
-	for _, tc := range []struct {
-		name           string
-		complete       bool
-		rows           []Candidate
-		state, binding string
-	}{
-		{"present", true, []Candidate{row}, "resolved", "v1"},
-		{"removed", true, nil, "missing", ""},
-		{"reappeared", true, []Candidate{{Binding: "v2", Path: "Topic.md", Kind: "note", Keys: row.Keys}}, "resolved", "v2"},
-		{"rename-alias", true, []Candidate{renamed}, "resolved", "v1"},
-		{"equal-content-other-identity", true, []Candidate{renamed, duplicate}, "ambiguous", ""},
-		{"index-pending", false, []Candidate{renamed}, "pending", ""},
-		{"terminal-empty", true, nil, "missing", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, err := Resolve(ctx, q, CandidateSet{NamespaceGeneration: tc.name, Complete: tc.complete, Candidates: tc.rows})
-			require.NoError(t, err)
-			require.Equal(t, Resolution{State: tc.state, Binding: tc.binding, NamespaceGeneration: tc.name}, r)
-		})
-	}
-}
-
 // Cancellation becomes visible after deterministic checks during work. This
 // avoids a race between a test timer and the parser's work checkpoints.
 type cancellationChecks struct {

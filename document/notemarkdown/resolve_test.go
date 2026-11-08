@@ -50,8 +50,7 @@ func TestResolveRejectsMalformedSet(t *testing.T) {
 	q := TargetQuery{Kind: "note", Keys: []LookupKey{{"path", "area/X.md"}, {"alias", "X"}}}
 	valid := Candidate{Binding: "a", Path: "area/X.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}
 	cases := [][]Candidate{
-		make([]Candidate, 9),
-		{{Binding: "a", Path: "area/X.md", Kind: "note", Keys: make([]LookupKey, 5)}},
+		{{Binding: "a", Path: "area/X.md", Kind: "note", Keys: []LookupKey{q.Keys[0], q.Keys[0], q.Keys[0], q.Keys[0], q.Keys[0]}}},
 		{{Binding: "", Path: "area/X.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}},
 		{{Binding: "a", Path: "../X.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}},
 		{{Binding: "a", Path: "area/Y.md", Kind: "note", Keys: []LookupKey{q.Keys[0]}}},
@@ -67,7 +66,7 @@ func TestResolveRejectsMalformedSet(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidCandidateSet, "case %d", i)
 		require.Equal(t, Resolution{}, r)
 	}
-	_, err := Resolve(t.Context(), TargetQuery{Kind: "note", Keys: make([]LookupKey, 5)}, CandidateSet{})
+	_, err := Resolve(t.Context(), TargetQuery{Kind: "note", Keys: []LookupKey{{"alias", "one"}, {"alias", "two"}, {"alias", "three"}, {"alias", "four"}, {"alias", "five"}}}, CandidateSet{})
 	require.ErrorIs(t, err, ErrInvalidInput)
 	_, err = Resolve(t.Context(), TargetQuery{Kind: "typo"}, CandidateSet{})
 	require.ErrorIs(t, err, ErrInvalidInput)

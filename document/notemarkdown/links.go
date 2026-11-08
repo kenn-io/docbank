@@ -116,11 +116,11 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		return 0, false, nil
 	}
 	label := i + 1
-	for i++; i < line.End; i++ {
+	for i++; i < blockEnd && i-label <= 999; i++ {
 		if err := s.b.step(s.ctx, 1); err != nil {
 			return 0, false, err
 		}
-		if s.src[i] == '\\' && i+1 < line.End {
+		if s.src[i] == '\\' && i+1 < blockEnd {
 			i++
 			continue
 		}
@@ -130,6 +130,12 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		if s.src[i] != ']' {
 			continue
 		}
+		closingLine, _, err := sourceLineAt(s.ctx, s.src, i, s.b)
+		if err != nil {
+			return 0, false, err
+		}
+		closingLine.End = min(closingLine.End, blockEnd)
+		line = closingLine
 		if i+1 >= line.End || s.src[i+1] != ':' {
 			return 0, false, nil
 		}
@@ -190,31 +196,21 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 				for k < titleLine.End && linkSpace(s.src[k]) {
 					k++
 				}
-				finish, yes, err := s.title(k, titleLine.End)
+				finish, yes, err := s.definitionTitle(k, blockEnd)
 				if err != nil {
 					return 0, false, err
 				}
 				if yes {
-					for finish < titleLine.End && linkSpace(s.src[finish]) {
-						finish++
-					}
-					if finish == titleLine.End {
-						definitionEnd = titleLine.End
-					}
+					definitionEnd = finish
 				}
 			}
 		}
 		if tail < line.End {
-			finish, yes, err := s.title(tail, line.End)
+			finish, yes, err := s.definitionTitle(tail, blockEnd)
 			if err != nil || !yes {
 				return 0, false, err
 			}
-			for finish < line.End && linkSpace(s.src[finish]) {
-				finish++
-			}
-			if finish != line.End {
-				return 0, false, nil
-			}
+			definitionEnd = finish
 		}
 		if _, exists := s.refs[key]; !exists {
 			s.refs[key] = referenceDefinition{dest}
@@ -222,6 +218,26 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 		return definitionEnd, true, nil
 	}
 	return 0, false, nil
+}
+
+// definitionTitle returns the end of the title's final physical line.
+func (s *linkScanner) definitionTitle(start, blockEnd int) (int, bool, error) {
+	finish, ok, err := s.title(start, blockEnd)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	line, _, err := sourceLineAt(s.ctx, s.src, finish, s.b)
+	if err != nil {
+		return 0, false, err
+	}
+	line.End = min(line.End, blockEnd)
+	for finish < line.End && (s.src[finish] == ' ' || s.src[finish] == '\t') {
+		if err := s.b.step(s.ctx, 1); err != nil {
+			return 0, false, err
+		}
+		finish++
+	}
+	return finish, finish == line.End, nil
 }
 
 // destination recognizes an angle destination or balanced bare destination.

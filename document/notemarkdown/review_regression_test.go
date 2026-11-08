@@ -93,3 +93,15 @@ func TestReviewEmptyListCannotInterruptParagraph(t *testing.T) {
 	require.Equal(t, "Heading", n.Headings[0].Text)
 	require.Equal(t, 2, n.Headings[0].Level)
 }
+
+func TestReviewMultilineReferenceLabel(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[use][long label]\n\n[long\nlabel]: target.md\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
+}
+
+func TestReviewMultilineReferenceTitle(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("[use][ref]\n\n[ref]: target.md \"first\n[hidden](wrong.md)\"\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
+}
