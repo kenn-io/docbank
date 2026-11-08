@@ -133,6 +133,18 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 						after++
 					}
 				} else if markerEnd, ok := listMarker(raw, end); ok && (!paragraph || listCanInterrupt(raw, end, markerEnd)) {
+					candidate := bytes.TrimSpace(raw[end:])
+					setext, err := setextLevel(ctx, candidate, b)
+					if err != nil {
+						return nil, err
+					}
+					thematic, err := thematicBreak(ctx, candidate, b)
+					if err != nil {
+						return nil, err
+					}
+					if thematic || paragraph && setext > 0 {
+						break
+					}
 					c.kind = 'l'
 					c.marker = raw[markerEnd-1]
 					after = markerEnd
@@ -263,12 +275,14 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		if err != nil {
 			return nil, err
 		}
-		if root && paragraph && len(blocks) > 0 && setext > 0 && indent <= 3 {
+		if paragraph && len(blocks) > 0 && setext > 0 && indent <= 3 {
 			previous := &blocks[len(blocks)-1]
-			if previous.root && previous.level == 0 && previous.span.End == line.Start {
-				previous.paragraph = false
-				previous.level = setext
-				previous.span.End = next
+			if previous.depth == depth && previous.level == 0 && previous.span.End == line.Start {
+				if root {
+					previous.paragraph = false
+					previous.level = setext
+					previous.span.End = next
+				}
 				paragraph = false
 				pos = next
 				continue
@@ -340,6 +354,9 @@ func listMarker(raw []byte, start int) (int, bool) {
 // Call only after listMarker validates the bounded (at most nine digits) marker.
 // CommonMark's start number is numeric, so 01. may interrupt just like 1.
 func listCanInterrupt(raw []byte, start, end int) bool {
+	if len(bytes.TrimSpace(raw[end:])) == 0 {
+		return false
+	}
 	if raw[start] < '0' || raw[start] > '9' {
 		return true
 	}

@@ -68,3 +68,28 @@ func TestReviewSelfClosingScriptBlock(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, n.Headings, 1)
 }
+
+func TestReviewSetextAndThematicPrecedence(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("Heading\n---\n\n* * *\n\n# Next\n"))
+	require.NoError(t, err)
+	require.Len(t, n.Headings, 2)
+	require.Equal(t, "Heading", n.Headings[0].Text)
+	require.Equal(t, 2, n.Headings[0].Level)
+	require.Equal(t, "Next", n.Headings[1].Text)
+}
+
+func TestReviewContainerSetextEndsParagraph(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("> [unfinished\n> ---\n> ](bad.md)\n\n# Root\n"))
+	require.NoError(t, err)
+	require.Empty(t, n.Links)
+	require.Len(t, n.Headings, 1)
+	require.Equal(t, "Root", n.Headings[0].Text)
+}
+
+func TestReviewEmptyListCannotInterruptParagraph(t *testing.T) {
+	n, err := Parse(t.Context(), []byte("Heading\n-\n\n# Next\n"))
+	require.NoError(t, err)
+	require.Len(t, n.Headings, 2)
+	require.Equal(t, "Heading", n.Headings[0].Text)
+	require.Equal(t, 2, n.Headings[0].Level)
+}
