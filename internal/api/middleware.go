@@ -96,6 +96,12 @@ func timeoutExempt(method, path string) bool {
 		}
 	}
 	if method == http.MethodPost {
+		if rest, ok := strings.CutPrefix(path, "/api/v1/note-publications/"); ok {
+			name, action, found := strings.Cut(rest, "/")
+			if found && name != "" && action == "uploads" {
+				return true
+			}
+		}
 		if rest, ok := strings.CutPrefix(path, "/api/v1/photos/checkouts/"); ok {
 			id, action, found := strings.Cut(rest, "/")
 			if found && (id == "{id}" || validPageJobPathID(id)) && (action == "scan" || action == "rebind" || action == "commit") {

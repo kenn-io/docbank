@@ -8,8 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -217,21 +217,37 @@ func TestFolderPublicationEmptyAndExcludedScopeCompletes(t *testing.T) {
 }
 
 func TestFolderPublicationAfterScanJoinsWorkers(t *testing.T) {
-	var processed atomic.Int64
-	scanner, _ := publicationScanner(t, func(context.Context, FolderFile) error { processed.Add(1); return nil })
-	for _, ref := range []string{"a.md", "b.md", "c.md"} {
-		require.NoError(t, os.WriteFile(filepath.Join(scanner.watcher.config.Source, ref), []byte("note"), 0o600))
-	}
-	var afterCalled bool
-	scanner.AfterScan = func(_ context.Context, result FolderScanResult) error {
-		afterCalled = true
-		assert.EqualValues(t, 3, processed.Load())
-		assert.EqualValues(t, 3, result.Observed)
-		assert.True(t, result.Complete)
-		return nil
-	}
-	require.NoError(t, scanner.ScanOnce(t.Context(), 3))
-	assert.True(t, afterCalled)
+	synctest.Test(t, func(t *testing.T) {
+		entered, release, after := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		scanner, _ := publicationScanner(t, func(context.Context, FolderFile) error {
+			close(entered)
+			<-release
+			return nil
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(scanner.watcher.config.Source, "a.md"), []byte("note"), 0o600))
+		scanner.AfterScan = func(_ context.Context, result FolderScanResult) error {
+			assert.EqualValues(t, 1, result.Observed)
+			assert.True(t, result.Complete)
+			close(after)
+			return nil
+		}
+		done := make(chan error, 1)
+		go func() { done <- scanner.ScanOnce(t.Context(), 3) }()
+		<-entered
+		synctest.Wait()
+		select {
+		case <-after:
+			t.Error("inventory completed before the final worker exited")
+		default:
+		}
+		close(release)
+		require.NoError(t, <-done)
+		select {
+		case <-after:
+		default:
+			t.Error("completed scan did not report inventory")
+		}
+	})
 }
 
 // A change after the completion receipt belongs to the next scan. It must not

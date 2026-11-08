@@ -50,6 +50,44 @@ func completeNoteScan(t testing.TB, s *Store, scan NotePublicationScan) NotePubl
 	return status
 }
 
+func TestNotePublicationUnicodeSourcePath(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	scan := beginNoteScan(t, s)
+	request := noteUpload(t, scan, "cafe\u0301/note\u0301.md", fakeHash("ab"), 0)
+	request.FileName = "noté.md"
+	request.ParentPath = "/notes/café"
+	receipt := acceptNote(t, s, request)
+	require.Equal(t, "cafe\u0301/note\u0301.md", receipt.Source.Identity.SourceRef)
+	completeNoteScan(t, s, scan)
+}
+
+func TestNotePublicationSeenMarksRetired(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first := beginNoteScan(t, s)
+	receipt := acceptNote(t, s, noteUpload(t, first, "note.md", fakeHash("ab"), 0))
+	countSeen := func(scanID string) int {
+		var count int
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM note_publication_seen WHERE scan_id=$1`, scanID).Scan(&count))
+		return count
+	}
+	require.Equal(t, 1, countSeen(first.ScanID))
+	completeNoteScan(t, s, first)
+	require.Zero(t, countSeen(first.ScanID))
+	completeNoteScan(t, s, first) // Sealed completion still replays without marks.
+
+	second := beginNoteScan(t, s)
+	_, err := s.AcknowledgePublishedNotes(t.Context(), NotePublicationSeenRequest{Name: "notebook", ScanID: second.ScanID, Bindings: []PublishedNoteIdentity{receipt.Source.Identity}})
+	require.NoError(t, err)
+	require.Equal(t, 1, countSeen(second.ScanID))
+	third := beginNoteScan(t, s)
+	require.Zero(t, countSeen(second.ScanID))
+	_, err = s.CompleteNotePublicationScan(t.Context(), NotePublicationCompleteRequest{Name: "notebook", ScanID: second.ScanID, PolicyFingerprint: second.PolicyFingerprint, InventoryComplete: true})
+	require.ErrorIs(t, err, ErrPublicationScanSuperseded)
+	completeNoteScan(t, s, third)
+}
+
 func TestNotePublicationScanCASReplayAndSeal(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
