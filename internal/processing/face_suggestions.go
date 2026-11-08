@@ -147,6 +147,9 @@ func (p *faceSuggestionPass) candidates() ([]store.PersonMatchCandidate, error) 
 func (service *Service) rebuildFaceSuggestions(ctx context.Context) error {
 	pass := service.faceSuggestionsPending
 	if pass == nil {
+		if _, full, err := service.catalog.OpenPersonCandidateCount(ctx); err != nil || full {
+			return err
+		}
 		snapshot, err := service.catalog.FaceMatchingInputs(ctx)
 		if err != nil {
 			return err
