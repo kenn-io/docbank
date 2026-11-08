@@ -360,7 +360,15 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		// The recent walk adds its own photo check, reusing its evidence joins.
 		prefix := document.FoldPersonName(query)
 		photosOnly := options.PhotoSummary && !options.RecentFirst
-		usePhotoSet := hideLocked && scope.Configured
+		// Per-person checks slow down when the people they walk have only
+		// Hidden photos, so locked pages with Hidden photos use the full set.
+		// Look for them only with a passcode; the scan costs every page.
+		usePhotoSet := false
+		if photosOnly && hideLocked && scope.Configured {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets WHERE hidden_at IS NOT NULL)`).Scan(&usePhotoSet); err != nil {
+				return err
+			}
+		}
 		candidates, args := peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
 		if photosOnly && !usePhotoSet {
 			joins, where := personPhotoSource(!hideLocked)
