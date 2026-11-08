@@ -106,7 +106,7 @@ func configureRenditionProviders(cfg config.Config) (
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case vision.AdapterContract:
 			provider, disclosures[name], err = configureVision(cfg, name, registered)
-		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
+		case config.DoclingASRAdapterContract, config.DoclingASRM4AAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
 			provider, disclosures[name], err = configureExternalRendition(cfg, name, registered)
 		default:
 			continue
@@ -231,7 +231,7 @@ func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolved
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return mistral.NewRenditionProvider(profile, secrets, client)
 			}}, nil
-	case config.DoclingASRAdapterContract:
+	case config.DoclingASRAdapterContract, config.DoclingASRM4AAdapterContract:
 		profile, err := configuredDoclingASRProfile(configured)
 		if err != nil {
 			return resolvedRenditionAdapter{}, err
@@ -275,18 +275,26 @@ func configuredDoclingTransportProfile(configured config.RenditionProfileConfig,
 }
 
 func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docling.ASRProfile, error) {
+	allowM4A := configured.AdapterContract == config.DoclingASRM4AAdapterContract
 	policyFingerprint, err := docling.ASRPolicyFingerprint(configured.MaxTranscriptChars)
+	if allowM4A {
+		policyFingerprint, err = docling.ASRM4APolicyFingerprint(configured.MaxTranscriptChars)
+	}
 	if err != nil {
 		return docling.ASRProfile{}, err
+	}
+	formats := []document.RenditionFormatCapability{
+		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+	}
+	if allowM4A {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
 	}
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: policyFingerprint,
 		TrustBoundary:     document.RenditionTrustBoundary(configured.TrustBoundary),
-		SupportedFormats: []document.RenditionFormatCapability{
-			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
-			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
-		},
+		SupportedFormats:  formats,
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 	})
@@ -294,7 +302,7 @@ func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docl
 		return docling.ASRProfile{}, err
 	}
 	return docling.ASRProfile{Profile: configuredDoclingTransportProfile(configured, descriptor),
-		MaxTranscriptChars: configured.MaxTranscriptChars}, nil
+		MaxTranscriptChars: configured.MaxTranscriptChars, AllowM4A: allowM4A}, nil
 }
 
 func configuredRenditionRequestFingerprints(cfg config.Config, renditionName string) (map[string]struct{}, error) {
