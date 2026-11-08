@@ -71,7 +71,7 @@ counts from cumulative upload totals. `current` is one server snapshot with
 its own `last-complete` freshness and `incomplete` flag. Retry, conflict,
 polling degradation, and verification due/lag are independent of byte-upload
 success. Uploading a note does not mean its search index or graph is ready.
-Diagnostic examples contain only bounded reason codes and relative source
+Diagnostic examples contain only bounded reason messages and relative source
 references; excess examples are counted.
 
 The client reports `completing` before requesting a completed inventory, so a

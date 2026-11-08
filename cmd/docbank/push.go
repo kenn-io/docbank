@@ -204,8 +204,10 @@ func writePublicationStatus(w io.Writer, s push.PublicationStatus) error {
 
 func publicationFailureMessage(code string) string {
 	switch code {
-	case "published_source_diverged", "publication_source_stale":
-		return "archive changed"
+	case "published_source_diverged":
+		return "archive diverged; review with brain accept-local"
+	case "publication_source_stale":
+		return "publication changed; rescan required"
 	case "note_source_unavailable":
 		return "archived source unavailable"
 	case "publication_scan_superseded":

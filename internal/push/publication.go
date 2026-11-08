@@ -30,6 +30,7 @@ type publicationPublisher struct {
 	localScan        ingest.FolderScan
 	sources          map[string]api.NotePublicationSource
 	seen             []api.PublishedNoteIdentity
+	rejected         map[string]struct{}
 	report           Report
 	status           api.NotePublicationStatus
 	current          *api.NotePublicationStatus
@@ -92,6 +93,7 @@ func (p *publicationPublisher) beforeScan(ctx context.Context, scan ingest.Folde
 	p.scan = api.NotePublicationScan{}
 	p.failed = false
 	p.seen = nil
+	p.rejected = nil
 	request := api.NotePublicationBeginRequest{Name: p.opts.Folder.Name, Destination: p.opts.Folder.Destination, PolicyFingerprint: p.policy, OperationID: uuid.NewV4().String()}
 	var remote api.NotePublicationScan
 	if err := p.retry(ctx, func() error {
@@ -428,6 +430,15 @@ func (p *publicationPublisher) reject(ctx context.Context, ref string, err error
 }
 func (p *publicationPublisher) rejectLocked(ctx context.Context, ref string, err error) error {
 	p.failed = true
+	if ref != "" {
+		if _, exists := p.rejected[ref]; exists {
+			return nil
+		}
+		if p.rejected == nil {
+			p.rejected = make(map[string]struct{})
+		}
+		p.rejected[ref] = struct{}{}
+	}
 	p.report.Failed++
 	p.progress.Failed++
 	p.recordFailure(ref, err)

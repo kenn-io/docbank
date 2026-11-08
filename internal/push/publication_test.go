@@ -631,11 +631,119 @@ func TestPublicationSeenConflictKeepsWatchAndHealthyAcknowledgements(t *testing.
 	require.True(t, p.failed)
 	require.Equal(t, 1, p.report.Skipped)
 	require.Equal(t, 1, p.report.Failed)
+	// The scanner may reach this file after an overflow flush already rejected it.
+	require.NoError(t, p.reject(t.Context(), "conflict.md", &publicationSourceError{Code: "published_source_diverged"}))
+	require.Equal(t, 1, p.report.Failed)
+	require.Equal(t, 1, p.progress.Failed)
 	require.NoError(t, p.afterScan(t.Context(), ingest.FolderScanResult{Complete: true}))
 	status, err := s.NotePublicationStatus(t.Context(), "research")
 	require.NoError(t, err)
 	require.True(t, status.Incomplete)
 	require.EqualValues(t, 2, status.Present)
+}
+
+func TestPublicationSeenConflictDisappearsBeforeRefresh(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "healthy.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	cfg, policy, err := publicationPolicy(opts.Folder)
+	require.NoError(t, err)
+	opts.Folder, opts.Watch = cfg, true
+	p := &publicationPublisher{connection: c, opts: opts, policy: policy}
+	require.NoError(t, p.beforeScan(t.Context(), ingest.FolderScan{}))
+	p.seen = append(p.seen, p.sources["healthy.md"].Identity)
+	// The server's earlier conflict has disappeared before the refresh.
+	p.failed = true
+	require.NoError(t, p.reconcileSeenConflicts(t.Context()))
+	require.Empty(t, p.seen)
+	require.Equal(t, 1, p.report.Failed)
+	require.Equal(t, "publication_source_stale", p.progress.Errors[0].Code)
+	require.NoError(t, p.afterScan(t.Context(), ingest.FolderScanResult{Complete: true}))
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.True(t, status.Incomplete)
+}
+
+func TestPublicationSeenUnavailableLeavesHealthySourceAcknowledged(t *testing.T) {
+	t.Parallel()
+	c, s := newPushTestDaemon(t, nil)
+	root := t.TempDir()
+	writePublicationFile(t, root, "unavailable.md")
+	writePublicationFile(t, root, "healthy.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	cfg, policy, err := publicationPolicy(opts.Folder)
+	require.NoError(t, err)
+	opts.Folder, opts.Watch = cfg, true
+	p := &publicationPublisher{connection: c, opts: opts, policy: policy}
+	require.NoError(t, p.beforeScan(t.Context(), ingest.FolderScan{}))
+	for _, source := range p.sources {
+		p.seen = append(p.seen, source.Identity)
+	}
+	node, err := s.NodeByID(t.Context(), p.sources["unavailable.md"].Identity.NodeID)
+	require.NoError(t, err)
+	node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType)
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(t.Context(), node.ID, node.Revision, store.VersionPruneSelector{KeepNewest: 1}, true)
+	require.NoError(t, err)
+	require.NoError(t, p.flushSeen(t.Context()))
+	require.Equal(t, 1, p.report.Failed)
+	require.Equal(t, 1, p.report.Skipped)
+	var unavailable bool
+	for _, failure := range p.progress.Errors {
+		unavailable = unavailable || (failure.SourceRef == "unavailable.md" && failure.Code == "note_source_unavailable")
+	}
+	require.True(t, unavailable)
+	require.NoError(t, p.afterScan(t.Context(), ingest.FolderScanResult{Complete: true}))
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.True(t, status.Incomplete)
+}
+
+func TestPublicationSeenBindingChangedDuringReplay(t *testing.T) {
+	t.Parallel()
+	var inject atomic.Bool
+	c, s := newPublicationTestDaemon(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if strings.HasSuffix(r.URL.Path, "/seen") && inject.CompareAndSwap(true, false) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"title":"Conflict","status":409,"code":"publication_source_stale"}`)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	root := t.TempDir()
+	writePublicationFile(t, root, "changed.md")
+	writePublicationFile(t, root, "healthy.md")
+	opts := publicationOptions(root)
+	_, err := Run(t.Context(), c, opts)
+	require.NoError(t, err)
+	cfg, policy, err := publicationPolicy(opts.Folder)
+	require.NoError(t, err)
+	opts.Folder, opts.Watch = cfg, true
+	p := &publicationPublisher{connection: c, opts: opts, policy: policy}
+	require.NoError(t, p.beforeScan(t.Context(), ingest.FolderScan{}))
+	for _, source := range p.sources {
+		p.seen = append(p.seen, source.Identity)
+	}
+	node, err := s.NodeByID(t.Context(), p.sources["changed.md"].Identity.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, node.BlobHash, node.Size, node.MimeType)
+	require.NoError(t, err)
+	inject.Store(true)
+	require.NoError(t, p.flushSeen(t.Context()))
+	require.Equal(t, 1, p.report.Failed)
+	require.Equal(t, 1, p.report.Skipped)
+	require.True(t, p.failed)
+	require.NoError(t, p.afterScan(t.Context(), ingest.FolderScanResult{Complete: true}))
+	status, err := s.NotePublicationStatus(t.Context(), "research")
+	require.NoError(t, err)
+	require.True(t, status.Incomplete)
 }
 func TestPublicationNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
 	t.Parallel()

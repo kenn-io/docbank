@@ -262,6 +262,18 @@ func TestNotePlaintextRejectsChangedProfile(t *testing.T) {
 	}
 }
 
+func TestNotePlaintextMissingProviderRejectedAtConstruction(t *testing.T) {
+	t.Parallel()
+	f := newNotePlaintextFixture(t)
+	name, profile, err := NewNotePlaintextProfile()
+	require.NoError(t, err)
+	profile.RenditionProvider = nil
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+		Profiles: map[string]ProfileConfig{name: profile}, SpoolDirectory: t.TempDir()})
+	require.Error(t, err)
+	require.Nil(t, service)
+}
+
 func TestNotePlaintextConsentScopeAndOtherConnection(t *testing.T) {
 	t.Parallel()
 	f := newNotePlaintextFixture(t)
