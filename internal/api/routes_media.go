@@ -505,14 +505,14 @@ func fromMediaReceipt(value processing.MediaReceipt) MediaReceipt {
 }
 
 func fromMediaTranscript(value processing.MediaTranscript) MediaTranscript {
-	result := MediaTranscript{VaultUID: value.VaultUID, SourceID: value.SourceID,
+	result := MediaTranscript{ContractVersion: value.ContractVersion, NodeID: value.NodeID, SourceSHA256: value.SourceSHA256, VaultUID: value.VaultUID, SourceID: value.SourceID,
 		SourceVersionID: value.SourceVersionID, ContentVersionID: value.ContentVersionID,
 		EvidenceState: value.EvidenceState, CoverageState: value.CoverageState,
 		OperationState: value.OperationState}
 	if value.Transcript == nil {
 		return result
 	}
-	result.Transcript = &MediaTranscriptEvidence{BuildID: value.Transcript.BuildID,
+	result.Transcript = &MediaTranscriptEvidence{ProfileFingerprint: value.Transcript.ProfileFingerprint, EvidenceChecksum: value.Transcript.EvidenceChecksum, ArtifactSHA256: value.Transcript.ArtifactSHA256, SpeechState: value.Transcript.SpeechState, Language: value.Transcript.Language, BuildID: value.Transcript.BuildID,
 		SuppliedInputID: value.Transcript.SuppliedInputID, Origin: value.Transcript.Origin,
 		Completeness: value.Transcript.Completeness, Truncated: value.Transcript.Truncated,
 		HasOmissions: value.Transcript.HasOmissions,

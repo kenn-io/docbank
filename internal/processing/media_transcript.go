@@ -33,18 +33,26 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	BuildID         string
-	SuppliedInputID string
-	Origin          string
-	Completeness    string
-	Truncated       bool
-	HasOmissions    bool
-	Units           []MediaTranscriptUnit
+	BuildID            string
+	ProfileFingerprint string
+	EvidenceChecksum   string
+	ArtifactSHA256     string
+	SpeechState        string
+	Language           string
+	SuppliedInputID    string
+	Origin             string
+	Completeness       string
+	Truncated          bool
+	HasOmissions       bool
+	Units              []MediaTranscriptUnit
 }
 
 // MediaTranscript is the result of an exact retained-evidence read.
 // Transcript is nil unless EvidenceState is ready.
 type MediaTranscript struct {
+	ContractVersion  string
+	NodeID           string
+	SourceSHA256     string
 	VaultUID         string
 	SourceID         string
 	SourceVersionID  string
@@ -73,7 +81,9 @@ func (service *Service) MediaTranscript(
 	if evidence.Checksum != view.Build.EvidenceChecksum {
 		return result, errors.New("normalized evidence disagrees with its build checksum")
 	}
-	transcript := MediaTranscriptEvidence{BuildID: view.Build.ID, SuppliedInputID: selected.inputID,
+	transcript := MediaTranscriptEvidence{BuildID: view.Build.ID,
+		ProfileFingerprint: view.Attachment.Profile.Fingerprint, EvidenceChecksum: evidence.Checksum,
+		SpeechState: transcriptSpeechState(evidence, view.Build.Truncated), SuppliedInputID: selected.inputID,
 		Origin: origin, Completeness: string(view.Build.Completeness),
 		Truncated: view.Build.Truncated, HasOmissions: len(evidence.Omissions) > 0,
 		Units: make([]MediaTranscriptUnit, len(evidence.Units))}
@@ -84,6 +94,9 @@ func (service *Service) MediaTranscript(
 		}
 		transcript.Units[i] = MediaTranscriptUnit{Text: unit.Text, TimeSpan: span, Speaker: unit.Speaker}
 		transcript.HasOmissions = transcript.HasOmissions || len(unit.Omissions) > 0
+	}
+	if err := service.mediaTranscriptArtifactIdentity(ctx, view.Build, &transcript); err != nil {
+		return result, err
 	}
 	result.EvidenceState, result.Transcript = mediaTranscriptEvidenceReady, &transcript
 	return result, nil
@@ -103,7 +116,7 @@ type renditionLookup func(
 func (service *Service) selectMediaTranscript(
 	ctx context.Context, request MediaTranscriptRequest,
 ) (mediaTranscriptSelection, error) {
-	result := MediaTranscript{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID,
+	result := MediaTranscript{ContractVersion: "media-transcript-read/v1", SourceID: request.SourceID, SourceVersionID: request.SourceVersionID,
 		ContentVersionID: request.ContentVersionID, EvidenceState: mediaTranscriptEvidenceUnavailable}
 	if service == nil || service.catalog == nil || service.blobs == nil {
 		return mediaTranscriptSelection{result: result}, ErrMediaCapabilityUnavailable
@@ -137,7 +150,7 @@ func (service *Service) selectMediaTranscripts(
 	}
 	result := make(map[MediaTranscriptRequest]mediaTranscriptSelection, len(requests))
 	for i, request := range requests {
-		base := MediaTranscript{VaultUID: service.catalog.VaultID(), SourceID: request.SourceID,
+		base := MediaTranscript{ContractVersion: "media-transcript-read/v1", VaultUID: service.catalog.VaultID(), SourceID: request.SourceID,
 			SourceVersionID: request.SourceVersionID, ContentVersionID: request.ContentVersionID,
 			EvidenceState: mediaTranscriptEvidenceUnavailable}
 		selected := mediaTranscriptSelection{result: base}
@@ -187,6 +200,7 @@ func (service *Service) selectMediaTranscriptItem(
 	if err != nil {
 		return mediaTranscriptSelection{result: result}, err
 	}
+	result.NodeID, result.SourceSHA256 = version.NodeID, version.BlobHash
 	node, err := service.catalog.NodeByID(ctx, version.NodeID)
 	if err != nil {
 		return mediaTranscriptSelection{result: result}, err

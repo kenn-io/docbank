@@ -50,9 +50,11 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 	}{
 		{name: "WAV", filename: "recording.wav", mediaType: "audio/wav", extension: ".wav", content: mediatest.WAV()},
 		{name: "MP3", filename: "recording.mp3", mediaType: "audio/mpeg", extension: ".mp3", content: mediatest.MP3()},
+		{name: "M4A AAC", filename: "recording.m4a", mediaType: "audio/mp4", extension: ".m4a", content: mediatest.AACM4A()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := newDaemonDoclingServer(t)
+			provider.allowM4A = test.mediaType == "audio/mp4"
 			provider.resultGate = make(chan struct{})
 			_, daemon, _ := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 
@@ -74,7 +76,11 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, plan.Flow, 1)
 			assert.Equal(t, provider.URL(), plan.Flow[0].RuntimeDisclosure.Endpoint)
-			assert.Equal(t, "docbank-docling-asr/v1", plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+			wantAdapter := docling.ASRAdapterContract
+			if provider.allowM4A {
+				wantAdapter = docling.ASRM4AAdapterContract
+			}
+			assert.Equal(t, wantAdapter, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
 			assert.Equal(t, "docling.serve-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
 			_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 				Selector: selector, PlanFingerprint: plan.Fingerprint,
@@ -103,6 +109,21 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.Equal(t, "succeeded", completed.OperationState, "%+v", completed)
 			require.Equal(t, "transcribed", completed.CoverageState)
 			require.Equal(t, receipt.ContentVersionID, completed.ContentVersionID)
+			transcript, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
+			require.NoError(t, err)
+			require.Equal(t, "media-transcript-read/v1", transcript.ContractVersion)
+			require.Equal(t, sha, transcript.SourceSHA256)
+			require.Equal(t, node.ID, transcript.NodeID)
+			require.NotNil(t, transcript.Transcript)
+			require.Equal(t, "complete", transcript.Transcript.SpeechState)
+			require.Equal(t, "partial", transcript.Transcript.Completeness)
+			require.True(t, transcript.Transcript.HasOmissions)
+			require.Len(t, transcript.Transcript.ArtifactSHA256, 64)
+			require.Len(t, transcript.Transcript.EvidenceChecksum, 64)
+			require.NotEmpty(t, transcript.Transcript.ProfileFingerprint)
+			repeated, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
+			require.NoError(t, err)
+			require.Equal(t, transcript, repeated)
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())
 			assert.Zero(t, provider.authFailures.Load())
@@ -764,7 +785,8 @@ type daemonDoclingTask struct {
 }
 
 type daemonDoclingServer struct {
-	server *httptest.Server
+	server   *httptest.Server
+	allowM4A bool
 
 	mu                  sync.Mutex
 	tasks               map[string]daemonDoclingTask
@@ -967,6 +989,9 @@ func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret stri
 		root = existingRoot[0]
 	}
 	cfg, _ := doclingASRProcessingConfig(t, provider.URL())
+	if provider.allowM4A {
+		enableDaemonASRM4A(t, &cfg)
+	}
 	cfg.Server.APIKey = daemonASRAPIKey
 	asrProfile := cfg.RenditionProfiles["asr"]
 	asrProfile.DiscloseFilename = true
@@ -1107,4 +1132,15 @@ func closeProviderResultGate(provider *daemonDoclingServer) {
 			close(provider.resultGate)
 		}
 	}
+}
+
+func enableDaemonASRM4A(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	profile := cfg.RenditionProfiles["asr"]
+	profile.AdapterContract = config.DoclingASRM4AAdapterContract
+	resolved, err := configuredDoclingASRProfile(profile)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
+	profile.DisclosureFingerprint = docling.ASRDisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = profile
 }

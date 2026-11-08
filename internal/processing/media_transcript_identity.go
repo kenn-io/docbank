@@ -1,0 +1,73 @@
+package processing
+
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/mediatranscript"
+	"go.kenn.io/docbank/internal/store"
+)
+
+// Speech completeness excludes only the explicitly documented non-speech field.
+// It does not upgrade the evidence's completeness or erase its omissions.
+func transcriptSpeechState(evidence document.NormalizedEvidenceV1, truncated bool) string {
+	if truncated || evidence.UnitKind != document.EvidenceUnitSegment || len(evidence.Units) == 0 {
+		return "partial"
+	}
+	allowed := func(omissions []document.EvidenceOmissionV1) bool {
+		for _, omission := range omissions {
+			if omission.Kind != document.EvidenceOmissionField || omission.Field != "non_speech_content" || omission.Locator != nil || omission.Range != nil {
+				return false
+			}
+		}
+		return true
+	}
+	if !allowed(evidence.Omissions) {
+		return "partial"
+	}
+	for _, unit := range evidence.Units {
+		if strings.TrimSpace(unit.Text) == "" || !allowed(unit.Omissions) {
+			return "partial"
+		}
+	}
+	return "complete"
+}
+
+// Read metadata only from the verified retained artifact. Legacy/supplied text
+// can have another artifact contract and keeps its existing read behavior.
+func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, build store.RenditionBuildRecord, transcript *MediaTranscriptEvidence) error {
+	for _, artifact := range build.Artifacts {
+		if artifact.Role != string(document.EvidenceArtifactTranscript) {
+			continue
+		}
+		if artifact.State != store.RenditionArtifactVerified || artifact.BlobHash != artifact.Checksum || artifact.Size < 1 || artifact.Size > mediatranscript.MaxArtifactBytes {
+			return errors.New("retained transcript artifact authority is invalid")
+		}
+		transcript.ArtifactSHA256 = artifact.Checksum
+		if transcript.Origin != "generated" {
+			return nil
+		}
+		stream, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+		if err != nil {
+			return err
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(stream, artifact.Size+1))
+		verifyErr := stream.Verify()
+		closeErr := stream.Close()
+		if size != artifact.Size || int64(len(raw)) != artifact.Size || readErr != nil || verifyErr != nil || closeErr != nil {
+			return errors.Join(errors.New("retained transcript artifact could not be read exactly"), readErr, verifyErr, closeErr)
+		}
+		timed, err := mediatranscript.Unmarshal(raw)
+		if err != nil {
+			return err
+		}
+		transcript.Language = timed.Language
+		return nil
+	}
+	// Older profiles can retain normalized evidence without the typed artifact.
+	// Such evidence remains readable but is insufficient for the consumer's new contract.
+	return nil
+}

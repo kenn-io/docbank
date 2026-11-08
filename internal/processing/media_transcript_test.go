@@ -280,16 +280,16 @@ func TestMediaTranscriptSpeechCompleteness(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		truncated bool
-		omissions []document.SourceEvidenceOmissionV1
+		omissions []document.EvidenceOmissionV1
 		want      string
 	}{
 		{name: "speech only", want: "complete"},
-		{name: "non speech", omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "non_speech_content"}}, want: "complete"},
+		{name: "non speech", omissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "non_speech_content"}}, want: "complete"},
 		{name: "truncated", truncated: true, want: "partial"},
-		{name: "missing speech", omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}, want: "partial"},
+		{name: "missing speech", omissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}, want: "partial"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			evidence := document.NormalizedEvidenceV1{Omissions: tc.omissions}
+			evidence := document.NormalizedEvidenceV1{UnitKind: document.EvidenceUnitSegment, Units: []document.NormalizedEvidenceUnitV1{{Text: "synthetic speech"}}, Omissions: tc.omissions}
 			require.Equal(t, tc.want, transcriptSpeechState(evidence, tc.truncated))
 		})
 	}
