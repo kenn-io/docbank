@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -112,6 +113,63 @@ func TestBrainConnectLocalConsent(t *testing.T) {
 				require.Empty(t, saved)
 			} else {
 				require.Len(t, saved, 1)
+			}
+		})
+	}
+}
+
+func TestBrainStatusObservesConsentAndTransportFailure(t *testing.T) {
+	for _, disconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disconnect=%t", disconnect), func(t *testing.T) {
+			const key = "synthetic-key"
+			plan := syntheticLocalTextPlan(t, "active")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case daemonauth.KeyChallengePath:
+					nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+					if err != nil {
+						http.Error(w, "bad nonce", http.StatusBadRequest)
+						return
+					}
+					_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
+				case "/api/v1/documents":
+					_ = json.MarshalWrite(w, api.DocumentPage{PublishedNotes: &api.PublishedNoteSelector{Publication: "notes"}, PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 1, Items: []api.DocumentSummary{}})
+				case "/api/v1/notes/local-text-plan":
+					if disconnect {
+						hijacker, ok := w.(http.Hijacker)
+						if !ok {
+							http.Error(w, "no hijacker", http.StatusInternalServerError)
+							return
+						}
+						conn, _, err := hijacker.Hijack()
+						if err == nil {
+							_ = conn.Close()
+						}
+						return
+					}
+					_ = json.MarshalWrite(w, plan)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			r, err := OpenRegistry(filepath.Join(t.TempDir(), "registry"))
+			require.NoError(t, err)
+			cfg := ConnectionConfig{Name: "notes", SourceRoot: t.TempDir(), Destination: "/notes", LocalVaultRoot: t.TempDir(), SettleTime: time.Second, ScanInterval: time.Second}
+			require.NoError(t, r.Put(t.Context(), cfg))
+			client := New(r, Dependencies{Running: func(context.Context, string) (*daemonconn.Connection, bool, error) {
+				conn, err := daemonconn.NewPushConnection(server.URL, key)
+				return conn, err == nil, err
+			}})
+			status, err := client.Status(t.Context(), "notes")
+			require.NoError(t, err)
+			if disconnect {
+				require.Equal(t, "unknown", status.ConnectionState)
+				require.Equal(t, "daemon_unavailable", status.ProblemCode)
+			} else {
+				require.Equal(t, "connected", status.ConnectionState)
+				require.Equal(t, "authorized", status.BodyIndexingState)
 			}
 		})
 	}
