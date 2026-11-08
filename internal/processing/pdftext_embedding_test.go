@@ -49,6 +49,13 @@ func TestPDFTextOmissionOnlyCompletesWithoutEmbeddingRequests(t *testing.T) {
 	require.Len(t, evidence.Omissions, 1)
 	require.Equal(t, "no_text_layer", evidence.Omissions[0].Reason)
 
+	targets, err := fixture.catalog.MissingProcessingTargetsAfter(t.Context(), profile.record.Fingerprint, "", 1, 100)
+	require.NoError(t, err)
+	require.Empty(t, targets)
+	coverage, err := fixture.catalog.ProcessingCoverage(t.Context(), store.ProcessingCoverageScope{ContentVersionIDs: []string{node.CurrentVersionID}, ProcessingProfileFingerprint: profile.record.Fingerprint, Bindings: []store.ProcessingCoverageBinding{{BindingID: "chunk", VectorSpaceID: profile.vectorSpaces["chunk"]}}})
+	require.NoError(t, err)
+	require.Equal(t, "complete", coverage.Embeddings[0].State)
+
 	// The same configured embedder still receives readable page text.
 	receipt, err = fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDFTextPages([]string{"synthetic readable text"}, false)))
 	require.NoError(t, err)

@@ -186,7 +186,7 @@ func validateSourceUnit(
 			return fmt.Errorf("source evidence unit %d speaker contains NUL", index)
 		}
 	}
-	if err := validateSourceLocator(source.Family, source.UnitKind, source.Completeness, unit.Locator); err != nil {
+	if err := validateSourceLocator(source.UnitKind, unit.Locator); err != nil {
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
 	for headingIndex, heading := range unit.HeadingPath {
@@ -213,18 +213,10 @@ func validateSourceUnit(
 	return nil
 }
 
-func validateSourceLocator(
-	family string,
-	unitKind EvidenceUnitKind,
-	completeness EvidenceCompleteness,
-	locator SourceEvidenceLocatorV1,
-) error {
+func validateSourceLocator(unitKind EvidenceUnitKind, locator SourceEvidenceLocatorV1) error {
 	want := locatorKindForUnit(unitKind)
 	if locator.Kind != want {
 		return fmt.Errorf("%s locator is required for unit kind %q", want, unitKind)
-	}
-	if err := validateFamilyUnitKindForCompleteness(family, unitKind, completeness); err != nil {
-		return err
 	}
 	if locator.Name != "" {
 		if err := validateBoundedUTF8(locator.Name, maxEvidenceIdentifierBytes, "locator name"); err != nil {
@@ -1207,7 +1199,7 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		}
 		textMaps[index] = textMap
 		if err := validateSourceLocator(
-			evidence.Family, evidence.UnitKind, evidence.Completeness,
+			evidence.UnitKind,
 			SourceEvidenceLocatorV1{
 				End: unit.Locator.End, IndexOrigin: unit.Locator.IndexOrigin, Kind: unit.Locator.Kind,
 				Name: unit.Locator.Name, Start: unit.Locator.Start,

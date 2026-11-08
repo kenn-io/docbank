@@ -60,7 +60,7 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		result.Warnings = append(result.Warnings, RenditionWarningV1{Code: "truncated"})
 	}
 
-	if len(markdownUnits) == 0 && (len(evidence.Units) != 0 || !omissionOnlyPDF(evidence.Family, evidence.UnitKind, evidence.Completeness, len(evidence.Omissions))) {
+	if len(markdownUnits) == 0 && len(evidence.Units) != 0 {
 		return RenditionV1{}, invalidRenditionError("evidence produced no readable text")
 	}
 	if len(markdownUnits) > 0 {

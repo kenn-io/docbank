@@ -78,17 +78,17 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{TextOnly: true, MaxExpandedBytes: p.profile.MaxDocumentBytes, MaxEntryBytes: p.profile.MaxDocumentBytes, MaxEntries: 100_000})
+	pages, err := p.pageCount(upload, data)
 	if err != nil {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorUnsupportedInput, "PDF is malformed or unsupported", err)
 	}
-	if measurements.Pages > p.profile.MaxPages {
+	if pages > p.profile.MaxPages {
 		return document.RenditionResult{}, rejected("PDF exceeds page limit")
 	}
 	evidence := document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Family: "pdf", UnitKind: document.EvidenceUnitPage, Completeness: document.EvidenceComplete}
 	remaining := authorization.MaxTotalResultBytes
 	resultBudget := int64(authorization.MaxTotalResultBytes)
-	for index := range int(measurements.Pages) {
+	for index := range int(pages) {
 		page, err := pdfproduction.ReadPDFTextPage(ctx, data, index, p.profile.MaxPages, min(remaining, 4_000_000))
 		if err != nil {
 			if operationErr := operation.Check(); operationErr != nil {
@@ -96,7 +96,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 			}
 			return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "extract PDF text", err)
 		}
-		if int64(page.Pages) != measurements.Pages {
+		if int64(page.Pages) != pages {
 			return document.RenditionResult{}, rejected("PDF page counts disagree")
 		}
 		locator := document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: int64(index + 1), End: int64(index + 1)}
@@ -128,7 +128,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	}
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: metadata.SHA256,
 		OperationID: "pdftext-" + authorization.RenditionRequestFingerprint, StartedAt: started, CompletedAt: time.Now().UTC(),
-		Usage: document.RenditionUsage{Requests: 1, InputBytes: int64(len(data)), OutputBytes: int64(authorization.MaxTotalResultBytes - remaining), Units: measurements.Pages},
+		Usage: document.RenditionUsage{Requests: 1, InputBytes: int64(len(data)), OutputBytes: int64(authorization.MaxTotalResultBytes - remaining), Units: pages},
 	})
 	if err != nil {
 		return document.RenditionResult{}, err
@@ -145,3 +145,25 @@ func rejected(message string) error {
 }
 
 var _ document.RenditionProvider = (*Provider)(nil)
+
+func (p *Provider) pageCount(upload document.AuthorizedUpload, data []byte) (int64, error) {
+	if source, ok := upload.(interface {
+		CapabilityProof() document.UploadCapability
+	}); ok {
+		proof := source.CapabilityProof()
+		facts, local := proof.Facts()
+		metadata := upload.Metadata()
+		_, password := proof.PDFPassword()
+		if local && !password && facts.Checksum == metadata.CapabilityRecordChecksum &&
+			facts.SourceSHA256 == metadata.SHA256 && facts.SourceBytes == metadata.ByteLength &&
+			facts.DescriptorFingerprint == p.descriptor.Fingerprint && facts.MediaFamily == "pdf" && facts.MediaType == "application/pdf" &&
+			facts.Pages > 0 && facts.ExpandedBytes <= p.profile.MaxDocumentBytes && facts.MaxEntryBytes <= p.profile.MaxDocumentBytes && facts.Entries <= 100_000 {
+			return facts.Pages, nil
+		}
+	}
+	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{TextOnly: true, MaxExpandedBytes: p.profile.MaxDocumentBytes, MaxEntryBytes: p.profile.MaxDocumentBytes, MaxEntries: 100_000})
+	if err != nil {
+		return 0, err
+	}
+	return measurements.Pages, nil
+}

@@ -1,15 +1,20 @@
 package pdftext
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image/color"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/scanfixture"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/redactiontest"
 )
 
@@ -194,6 +199,43 @@ func TestPDFTextJPEGSubtype(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Evidence.Units, 1)
 			require.Equal(t, "synthetic invoice", result.Evidence.Units[0].Text)
+		})
+	}
+}
+
+func TestPDFTextSealedAdmissionRetainsProviderBounds(t *testing.T) {
+	for _, test := range []struct {
+		name, text string
+		rejected   bool
+	}{{"readable", "synthetic text", false}, {"expanded", strings.Repeat(" ", 16384), true}} {
+		t.Run(test.name, func(t *testing.T) {
+			text := test.text
+			data := redactiontest.PDF(t, []string{text}, "sealed PDF")
+			p, err := New(Profile{MaxDocumentBytes: int64(len(data)), MaxPages: 1})
+			require.NoError(t, err)
+			metadata := newTestUpload(data).Metadata()
+			authorization := mediatest.Authorization(p.Descriptor(), metadata)
+			record, err := media.InspectCapability(bytes.NewReader(data), media.InspectionPolicy{
+				Filename: metadata.Filename, DeclaredMediaType: metadata.MediaType, ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
+				DescriptorFingerprint: p.Descriptor().Fingerprint, ProfileFingerprint: strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile, PDFTextOnly: true,
+				MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
+				MaxNestingDepth: 1, MaxTextLines: 1000, MaxCharacters: 1 << 20, MaxRecords: 1000, MaxSlides: 100, MaxSheets: 100, MaxCells: 1000, MaxSpineItems: 100, MaxResources: 100,
+			})
+			require.NoError(t, err)
+			require.True(t, record.Eligible)
+			sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir()}, record, upload.UploadMetadata{Filename: metadata.Filename})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sealed.Close()) })
+			authorization.CapabilityRecordChecksum = sealed.Metadata().CapabilityRecordChecksum
+			authorization.ProviderMetadataChecksum = sealed.Metadata().ProviderMetadataChecksum
+			result, err := document.RenderRendition(t.Context(), p, sealed, authorization)
+			if test.rejected {
+				require.Greater(t, record.Measurements.ExpandedBytes, int64(len(data)))
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Contains(t, result.Evidence.Units[0].Text, text)
+			}
 		})
 	}
 }
