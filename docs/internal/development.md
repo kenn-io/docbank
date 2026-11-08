@@ -626,12 +626,17 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schemas are disposable until the first deployment whose data must
 survive upgrades. An ordinary Docbank release does not establish that boundary:
 the public vault lifecycle still opens only SQLite. Edit
-`internal/store/pgschema/schema.sql` directly and increment `pgschema.SchemaVersion`
-whenever it changes, including indexes and column defaults. No migrations are
-needed during this period. `Setup` records the version in `vault_metadata` in the
-installation transaction. Both `Setup` and runtime `Validate` reject a missing or
-different version with a "recreate this schema" error; neither repairs it. Recreate
+`internal/store/pgschema/schema.sql` directly; no manual version bump or migration
+is needed during this period. The build hashes the exact embedded SQL template
+with SHA-256 once at package initialization, before substituting the vault schema
+name. `Setup` records this fingerprint in `vault_metadata` in the installation
+transaction. Both `Setup` and runtime `Validate` reject a missing or different
+fingerprint with a "recreate this schema" error; neither repairs it. Any SQL-file
+change, including comments or formatting, changes the fingerprint. Existing
+development schemas with the older integer version are also refused. Recreate
 only disposable development schemas with the current build, never retained data.
+Go-written seed rows in `Setup` are outside the fingerprint; an incompatible seed
+change must also change the SQL template so existing development schemas are refused.
 
 Before the first retained deployment, establish the current schema as migration
 1 (`000001_initial_schema.up.sql`) and add a CI check that installs the numbered
@@ -687,7 +692,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; development versions reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; schema fingerprints reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 

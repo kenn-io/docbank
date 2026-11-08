@@ -4,6 +4,7 @@ package pgschema
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	_ "embed"
 	"errors"
@@ -21,9 +22,9 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// SchemaVersion identifies disposable development schemas. Increment it whenever
-// schema.sql changes. Retained deployments will start a numbered migration chain.
-const SchemaVersion = 4
+// Hash the template before schema-name substitution so vault names do not affect
+// compatibility. Retained deployments will start a numbered migration chain.
+var schemaFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL)))
 
 // Config names an application's dedicated schema and its setup role. The
 // operator provisions roles and grants; this package never creates roles or
@@ -88,7 +89,7 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(schemaSQL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
 			return uuid.Nil(), fmt.Errorf("install postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata(singleton, vault_uid, schema_version) VALUES (1,$1,$2)`, uuid.New(), SchemaVersion); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata(singleton, vault_uid, schema_fingerprint) VALUES (1,$1,$2)`, uuid.New(), schemaFingerprint); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres vault identity: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.node_allocation(singleton, high_water) VALUES (1,1)`); err != nil {
@@ -209,7 +210,7 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_attribute WHERE attrelid=$1 AND attnum>0 AND NOT attisdropped
 		AND attnotnull AND ((attname='singleton' AND atttypid='int2'::regtype)
 		OR (attname='vault_uid' AND atttypid='uuid'::regtype)
-		OR (attname='schema_version' AND atttypid='int4'::regtype))`, relation).Scan(&columns)
+		OR (attname='schema_fingerprint' AND atttypid='text'::regtype))`, relation).Scan(&columns)
 	if err != nil {
 		return uuid.Nil(), err
 	}
@@ -223,19 +224,20 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	if columns != 3 || keys != 2 {
 		return uuid.Nil(), errors.New("postgres vault identity has an unsupported table layout; recreate this schema with the current build")
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_version FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
+	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_fingerprint FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
 	if err != nil {
 		return uuid.Nil(), fmt.Errorf("read postgres vault identity: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var id uuid.UUID
-	var singleton, count, version int
+	var singleton, count int
+	var fingerprint string
 	for rows.Next() {
 		count++
 		if count > 1 {
 			return uuid.Nil(), errors.New("postgres metadata has multiple vault identities")
 		}
-		if err := rows.Scan(&singleton, &id, &version); err != nil {
+		if err := rows.Scan(&singleton, &id, &fingerprint); err != nil {
 			return uuid.Nil(), err
 		}
 	}
@@ -245,8 +247,8 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	if count != 1 || singleton != 1 || id == uuid.Nil() || id[6]>>4 != 4 || id[8]>>6 != 2 {
 		return uuid.Nil(), errors.New("postgres metadata has no valid vault identity")
 	}
-	if version != SchemaVersion {
-		return uuid.Nil(), fmt.Errorf("postgres metadata schema version %d does not match this build's version %d; recreate this schema with the current build", version, SchemaVersion)
+	if fingerprint != schemaFingerprint {
+		return uuid.Nil(), errors.New("postgres metadata schema fingerprint does not match this build; recreate this schema with the current build")
 	}
 	return id, nil
 }

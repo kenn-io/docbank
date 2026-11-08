@@ -37,6 +37,8 @@ document/transfer/testdata/msgvault-transfer-v1.golden.jsonl -text
 # The embedded schema uses LF blank lines to separate executable groups.
 internal/store/schema.sql text eol=lf
 internal/store/testdata/schema-*.sql text eol=lf
+# Development schema identity hashes the exact embedded SQL on every platform.
+internal/store/pgschema/schema.sql -text
 # Generated API artifacts and dependency resolution output.
 internal/api/openapi.yaml linguist-generated=true
 internal/apiclient/*.gen.go linguist-generated=true
