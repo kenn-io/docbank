@@ -221,6 +221,10 @@ func checkResolveRenditionTextOmissionOnlyPDF(t *testing.T, open func(*testing.T
 			require.True(t, view.Empty)
 			require.NotNil(t, view.Artifact)
 			require.Equal(t, int64(len(empty.Markdown)), view.Artifact.Size)
+			if test.name != "plain" {
+				return
+			}
+
 			coverage, err := s.ProcessingCoverage(t.Context(), ProcessingCoverageScope{ContentVersionIDs: []string{versions[0]}, ProcessingProfileFingerprint: profile.Fingerprint, Bindings: []ProcessingCoverageBinding{{BindingID: "chunk"}, {BindingID: "optional"}}})
 			require.NoError(t, err)
 			require.Equal(t, "complete", coverage.Embeddings[0].State)

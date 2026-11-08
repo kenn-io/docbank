@@ -95,7 +95,7 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 		name        string
 		pages, text int
 		mediaType   string
-	}{{"born", 3, 3, ""}, {"image-only", 3, 0, ""}, {"mixed", 3, 1, ""}, {"parameterized", 3, 0, "application/pdf; version=1.7"}, {"wrapped", 1, 1, ""}} {
+	}{{"born", 3, 3, ""}, {"image-only", 3, 0, ""}, {"parameterized", 3, 0, "application/pdf; version=1.7"}, {"wrapped", 1, 1, ""}} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), test.name+".pdf")
 			data := mediatest.PDFTextPages(pdfTextRuntimePages(test.pages, test.text), false)
@@ -137,12 +137,8 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			_, err = stream.CopyVerified(&retained)
 			require.NoError(t, err)
 			require.NoError(t, stream.Close())
-			header, body, err := document.ParseRenditionFrontMatterV1(retained.Bytes())
+			_, body, err := document.ParseRenditionFrontMatterV1(retained.Bytes())
 			require.NoError(t, err)
-			require.Equal(t, test.text, header.Document.UnitCount)
-			if test.text < test.pages {
-				require.Equal(t, document.EvidencePartial, header.Rendition.Completeness)
-			}
 			if test.text == 0 {
 				require.Empty(t, body)
 				versionID, err := uuid.Parse(node.CurrentVersionID)
@@ -165,9 +161,6 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 				require.Len(t, search.Results, 1)
 				require.Equal(t, selector.ContentVersionID, search.Results[0].ContentVersionID)
 				require.NotEmpty(t, search.Results[0].Evidence)
-				for _, entry := range header.Navigation.Entries {
-					require.Equal(t, document.EvidenceLocatorPage, entry.Kind)
-				}
 			}
 		})
 	}

@@ -992,10 +992,12 @@ func TestPDFTextWaitingForLeaseUsesCallerContext(t *testing.T) {
 }
 
 func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
-	data := redactiontest.PDF(t, []string{"shared PDF text"}, "lease handoff")
+	data := redactiontest.PDF(t, []string{"inter-", "national", "shared PDF text"}, "lease handoff")
 	page, err := ReadPDFTextPage(t.Context(), data, 0, 1, 1024)
 	require.NoError(t, err)
-	require.Equal(t, "shared PDF text", page.Text)
+	require.Contains(t, page.Text, "international")
+	require.NotContains(t, page.Text, "\ufffe")
+	require.Contains(t, page.Text, "shared PDF text")
 	// Starting a renderer after the page returns must acquire the same backing.
 	engine, err := NewPDFium(QualifiedRecipe())
 	require.NoError(t, err)

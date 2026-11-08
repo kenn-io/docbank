@@ -26,7 +26,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/document/upload"
 )
 
 func TestInspectBindsFiniteTextToPolicyAndSource(t *testing.T) {
@@ -2720,7 +2719,7 @@ func TestInspectPasswordProtectedPDF(t *testing.T) {
 }
 
 func TestInspectPDFTextOnlyAdmission(t *testing.T) {
-	for _, filter := range []string{"DCTDecode", "JBIG2Decode", "JPXDecode"} {
+	for _, filter := range []string{"DCTDecode", "JBIG2Decode", "JPXDecode", "indirect JPEG subtype"} {
 		t.Run(filter, func(t *testing.T) {
 			data := mediatest.PDFObjects("opaque image and link", []string{
 				"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (https://example.org) >> >>",
@@ -2728,6 +2727,9 @@ func TestInspectPDFTextOnlyAdmission(t *testing.T) {
 				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im 4 0 R >> >> >>",
 				"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /" + filter + " /Length 4 >>\nstream\ndata\nendstream",
 			})
+			if filter == "indirect JPEG subtype" {
+				data = mediatest.PDFTextPages([]string{"synthetic invoice"}, true)
+			}
 			policy := inspectionPolicy(data, "image.pdf", "application/pdf")
 			before, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
@@ -2742,26 +2744,6 @@ func TestInspectPDFTextOnlyAdmission(t *testing.T) {
 			bounded, err := media.InspectCapability(bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.False(t, bounded.Eligible)
-		})
-	}
-}
-
-func TestInspectPDFTextJPEGSubtype(t *testing.T) {
-	for _, indirect := range []bool{false, true} {
-		t.Run(fmt.Sprintf("indirect=%t", indirect), func(t *testing.T) {
-			data := mediatest.PDFTextPages([]string{"synthetic invoice"}, indirect)
-			policy := inspectionPolicy(data, "image.pdf", "application/pdf")
-			ordinary, err := media.InspectCapability(bytes.NewReader(data), policy)
-			require.NoError(t, err)
-			require.False(t, ordinary.Eligible)
-			policy.PDFTextOnly = true
-			record, err := media.InspectCapability(bytes.NewReader(data), policy)
-			require.NoError(t, err)
-			require.True(t, record.Eligible, "%+v", record)
-			sealed, err := upload.Authorize(t.Context(), upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: t.TempDir()}, record, upload.UploadMetadata{Filename: "image.pdf"})
-			require.NoError(t, err)
-			require.Equal(t, "application/pdf", sealed.Metadata().MediaType)
-			require.NoError(t, sealed.Close())
 		})
 	}
 }

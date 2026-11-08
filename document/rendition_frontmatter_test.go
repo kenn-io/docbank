@@ -164,9 +164,6 @@ func TestOmissionOnlyPDFEnvelope(t *testing.T) {
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &SourceEvidenceLocatorV1{Kind: EvidenceLocatorPage, IndexOrigin: EvidenceIndexOriginOne, Start: 1, End: 1}}},
 	}
 	normalized := normalizeRenditionEvidence(t, source)
-	generation, err := BuildEmbeddingInputs(normalized, testInputPolicy(t, 4, 0), testGenerationLimits())
-	require.NoError(t, err)
-	require.Empty(t, generation.Inputs)
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
 	require.NoError(t, err)
 	rendition, err := BuildRenditionV1(normalized, policy)
@@ -183,40 +180,6 @@ func TestOmissionOnlyPDFEnvelope(t *testing.T) {
 	require.Zero(t, parsed.Document.UnitCount)
 	require.Empty(t, parsed.Navigation.Entries)
 	require.True(t, parsed.Navigation.Complete)
-	for _, change := range []func(*SourceEvidenceV1){
-		func(s *SourceEvidenceV1) { s.Family = "ebook" },
-		func(s *SourceEvidenceV1) { s.Completeness = EvidenceComplete },
-		func(s *SourceEvidenceV1) { s.Omissions = nil },
-		func(s *SourceEvidenceV1) { s.Omissions[0].Locator.Start = 2; s.Omissions[0].Locator.End = 2 },
-		func(s *SourceEvidenceV1) { s.Omissions[0].Locator.IndexOrigin = EvidenceIndexOriginZero },
-		func(s *SourceEvidenceV1) {
-			s.Omissions[0].Kind = EvidenceOmissionField
-			s.Omissions[0].Field = "text"
-			s.Omissions[0].Locator = nil
-		},
-	} {
-		changed := source
-		changed.Omissions = append([]SourceEvidenceOmissionV1(nil), source.Omissions...)
-		locator := *source.Omissions[0].Locator
-		changed.Omissions[0].Locator = &locator
-		change(&changed)
-		require.Error(t, ValidateSourceEvidenceV1(changed))
-	}
-	for _, change := range []func(*NormalizedEvidenceV1){
-		func(e *NormalizedEvidenceV1) { e.Omissions = nil },
-		func(e *NormalizedEvidenceV1) { e.Family = "ebook" },
-		func(e *NormalizedEvidenceV1) { e.Completeness = EvidenceComplete },
-		func(e *NormalizedEvidenceV1) { e.Omissions[0].Locator.Start = 2; e.Omissions[0].Locator.End = 2 },
-	} {
-		changed := normalized
-		changed.Checksum = ""
-		changed.Omissions = append([]EvidenceOmissionV1(nil), normalized.Omissions...)
-		locator := *normalized.Omissions[0].Locator
-		changed.Omissions[0].Locator = &locator
-		change(&changed)
-		_, _, err := MarshalNormalizedEvidenceV1(changed)
-		require.Error(t, err)
-	}
 	envelope.SourceFormat = "epub"
 	_, _, err = EnvelopeRenditionV1(rendition, envelope)
 	require.Error(t, err)

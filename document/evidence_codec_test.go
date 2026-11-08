@@ -814,6 +814,50 @@ func TestSourceEvidenceV1AllowsBlankUnits(t *testing.T) {
 	normalized, err := document.NormalizeEvidenceV1(source, policy)
 	require.NoError(t, err)
 	assert.Empty(t, normalized.Units[0].Text)
+	source = document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Family: "pdf", UnitKind: document.EvidenceUnitPage, Completeness: document.EvidencePartial,
+		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionUnit, Reason: "no_text_layer", Locator: &document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}}},
+	}
+	normalized, err = document.NormalizeEvidenceV1(source, policy)
+	require.NoError(t, err)
+	for _, change := range []func(*document.SourceEvidenceV1){
+		func(s *document.SourceEvidenceV1) { s.Family = "ebook" },
+		func(s *document.SourceEvidenceV1) { s.Completeness = document.EvidenceComplete },
+		func(s *document.SourceEvidenceV1) { s.Omissions = nil },
+		func(s *document.SourceEvidenceV1) { s.Omissions[0].Locator.Start = 2; s.Omissions[0].Locator.End = 2 },
+		func(s *document.SourceEvidenceV1) {
+			s.Omissions[0].Locator.IndexOrigin = document.EvidenceIndexOriginZero
+		},
+		func(s *document.SourceEvidenceV1) {
+			s.Omissions[0].Kind = document.EvidenceOmissionField
+			s.Omissions[0].Field = "text"
+			s.Omissions[0].Locator = nil
+		},
+	} {
+		changed := source
+		changed.Omissions = append([]document.SourceEvidenceOmissionV1(nil), source.Omissions...)
+		locator := *source.Omissions[0].Locator
+		changed.Omissions[0].Locator = &locator
+		change(&changed)
+		require.Error(t, document.ValidateSourceEvidenceV1(changed))
+	}
+	for _, change := range []func(*document.NormalizedEvidenceV1){
+		func(e *document.NormalizedEvidenceV1) { e.Omissions = nil },
+		func(e *document.NormalizedEvidenceV1) { e.Family = "ebook" },
+		func(e *document.NormalizedEvidenceV1) { e.Completeness = document.EvidenceComplete },
+		func(e *document.NormalizedEvidenceV1) {
+			e.Omissions[0].Locator.Start = 2
+			e.Omissions[0].Locator.End = 2
+		},
+	} {
+		changed := normalized
+		changed.Checksum = ""
+		changed.Omissions = append([]document.EvidenceOmissionV1(nil), normalized.Omissions...)
+		locator := *normalized.Omissions[0].Locator
+		changed.Omissions[0].Locator = &locator
+		change(&changed)
+		_, _, err := document.MarshalNormalizedEvidenceV1(changed)
+		require.Error(t, err)
+	}
 }
 
 func TestNormalizeEvidenceV1AppliesCharacterLimitAfterCanonicalization(t *testing.T) {
