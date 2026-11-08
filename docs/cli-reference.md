@@ -1782,7 +1782,7 @@ docbank daemon stop
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Restart prints `restarted: ...` or
+"started_at"}`. Current daemons also include `"persistent"` as a boolean and `"idle_timeout"` as a duration string, with `"0s"` when idle shutdown is disabled. Older runtime records omit these lifetime fields. Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`

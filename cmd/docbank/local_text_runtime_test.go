@@ -375,15 +375,21 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	defer func() { _, _ = daemonconn.Stop(context.Background(), root) }()
+	data, err := exec.CommandContext(ctx, bin, "daemon", "start").CombinedOutput()
+	require.NoError(t, err, string(data))
+	before := waitForDaemon(t, root)
 	command := exec.CommandContext(ctx, bin, "processing", "local", "--server", "local")
 	// No stdin: the command must finish without asking a question.
 	command.Stdin = nil
-	data, err := command.CombinedOutput()
+	data, err = command.CombinedOutput()
 	require.NoError(t, err, string(data))
 	require.Contains(t, string(data), "Text indexing enabled for this vault and new imports.")
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
 	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	after := waitForDaemon(t, root)
+	require.NotEqual(t, before.PID, after.PID)
+	require.Equal(t, "0s", after.Metadata[daemonconn.MetaIdleTimeout])
 }
 
 func TestLocalTextCandidateRejections(t *testing.T) {

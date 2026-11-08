@@ -826,32 +826,42 @@ func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
 	for _, test := range []struct {
 		name                   string
 		background, persistent bool
-		timeout                string
-		watched                bool
 	}{
-		{"automatic", true, false, "30m", true},
-		{"disabled", true, false, "0s", false},
-		{"explicit", true, true, "30m", false},
-		{"foreground", false, false, "30m", false},
+		{"automatic", true, false},
+		{"explicit", true, true},
+		{"foreground", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[server]\nidle_timeout = \""+test.timeout+"\"\n"), 0o600))
-			t.Setenv("DOCBANK_HOME", root)
+			home := t.TempDir()
+			t.Setenv("DOCBANK_HOME", home)
 			t.Setenv(daemonconn.EnvBackgroundDaemon, map[bool]string{true: "1", false: "0"}[test.background])
 			t.Setenv(daemonconn.EnvPersistentDaemon, strconv.FormatBool(test.persistent))
-			startTestDaemon(t, root)
+			startTestDaemon(t, home)
+			automatic := test.background && !test.persistent
 			_, watched := jobNamed(daemonJobs(t), idleTimeoutJob)
-			assert.Equal(t, test.watched, watched)
-			rec, _, found, err := daemonconn.Find(t.Context(), root)
+			assert.Equal(t, automatic, watched, "only an automatically started daemon exits after idle_timeout")
+			rec, _, found, err := daemonconn.Find(t.Context(), home)
 			require.NoError(t, err)
 			require.True(t, found)
+			out, err := runCLI(t, "daemon", "status", "--json")
+			require.NoError(t, err)
+			var status map[string]any
+			require.NoError(t, json.Unmarshal([]byte(out), &status))
+			assert.Equal(t, !automatic, status["persistent"])
 			timeout := "0s"
-			if test.watched {
+			if automatic {
 				timeout = "30m0s"
 			}
-			assert.Equal(t, timeout, rec.Metadata[daemonconn.MetaIdleTimeout])
-			assert.Equal(t, strconv.FormatBool(test.persistent || !test.background), rec.Metadata[daemonconn.MetaPersistent])
+			assert.Equal(t, timeout, status["idle_timeout"])
+			delete(rec.Metadata, daemonconn.MetaIdleTimeout)
+			_, err = daemonconn.RuntimeStore(home).Write(rec)
+			require.NoError(t, err)
+			out, err = runCLI(t, "daemon", "status", "--json")
+			require.NoError(t, err)
+			status = nil
+			require.NoError(t, json.Unmarshal([]byte(out), &status))
+			assert.NotContains(t, status, "persistent")
+			assert.NotContains(t, status, "idle_timeout")
 		})
 	}
 }

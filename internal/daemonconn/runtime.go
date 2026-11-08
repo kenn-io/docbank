@@ -12,13 +12,11 @@ import (
 const (
 	// Service is the daemon's runtime-record service name.
 	Service = "docbank"
-	// EnvBackgroundDaemon marks a process as an detached background
+	// EnvBackgroundDaemon marks a process as an auto-spawned background
 	// daemon (as opposed to a foreground `docbank daemon run`).
 	EnvBackgroundDaemon = "DOCBANK_BACKGROUND_DAEMON"
 	// EnvPersistentDaemon carries explicit launch intent to a detached child.
 	EnvPersistentDaemon = "DOCBANK_PERSISTENT_DAEMON"
-	// MetaPersistent records whether replacement must preserve explicit lifetime.
-	MetaPersistent = "persistent"
 	// MetaIdleTimeout records the effective idle timeout, or 0s when disabled.
 	MetaIdleTimeout     = "idle_timeout"
 	metaShutdownToken   = "shutdown_token"
@@ -39,6 +37,11 @@ type EnsureResult struct {
 	// Replaced is the incompatible or automatic-lifetime daemon EnsureDaemon stopped before
 	// starting Record, nil when nothing was replaced.
 	Replaced *kitdaemon.RuntimeRecord
+}
+
+// Persistent reports whether the daemon's effective lifetime has no idle exit.
+func Persistent(rec kitdaemon.RuntimeRecord) bool {
+	return rec.Metadata[MetaIdleTimeout] == "0s"
 }
 
 // RuntimeStore returns the kit runtime-record store rooted at root.

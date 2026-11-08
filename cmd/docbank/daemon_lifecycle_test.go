@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -534,14 +532,22 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	assert.Contains(t, out, "started (was not running)")
+	out, err = run("daemon", "status")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "Stays running until docbank daemon stop")
 }
 
 func TestDaemonLifetimeTransitions(t *testing.T) {
 	oldBin := buildDocbank(t)
 	newBin := buildDocbankVersion(t, "v9.9.9-test")
-	for _, mode := range []string{"automatic", "explicit", "foreground"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, test := range []struct{ name, config string }{
+		{"ordinary", ""},
+		{"zero timeout", "[server]\nidle_timeout = \"0s\"\n"},
+		{"packing", "[storage]\npack_interval = \"24h\"\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte(test.config), 0o600))
 			run := func(bin string, args ...string) string {
 				cmd := exec.CommandContext(t.Context(), bin, args...)
 				cmd.Env = append(os.Environ(), "DOCBANK_HOME="+root)
@@ -549,66 +555,42 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 				require.NoError(t, err, string(out))
 				return string(out)
 			}
-			t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-			if mode == "foreground" {
-				cmd := exec.CommandContext(t.Context(), oldBin, "daemon", "run")
-				cmd.Env = append(os.Environ(), "DOCBANK_HOME="+root)
-				stderr, err := cmd.StderrPipe()
+			pid := func() int {
+				rec, _, found, err := daemonconn.Find(t.Context(), root)
 				require.NoError(t, err)
-				require.NoError(t, cmd.Start())
-				done := make(chan error, 1)
-				ready := make(chan bool, 1)
-				go func() {
-					scanner := bufio.NewScanner(stderr)
-					signaled := false
-					for scanner.Scan() {
-						if !signaled && strings.Contains(scanner.Text(), "docbank daemon listening") {
-							ready <- true
-							signaled = true
-						}
-					}
-					if !signaled {
-						ready <- false
-					}
-					done <- cmd.Wait()
-				}()
-				t.Cleanup(func() {
-					_, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root)
-					require.NoError(t, <-done)
-				})
-				require.True(t, <-ready, "foreground daemon must reach readiness")
-				waitForDaemon(t, root)
-				assert.Contains(t, run(oldBin, "daemon", "start"), "already running")
-			} else if mode == "explicit" {
-				run(oldBin, "daemon", "start")
+				require.True(t, found)
+				return rec.PID
+			}
+			t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
+
+			run(oldBin, "search", "missing")
+			automatic := pid()
+			if test.name == "ordinary" {
+				assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle")
 			} else {
-				run(oldBin, "search", "missing")
+				assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
 			}
-			before, _, found, err := daemonconn.Find(t.Context(), root)
-			require.NoError(t, err)
-			require.True(t, found)
-			if mode == "automatic" {
-				assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m0s idle")
+
+			run(oldBin, "daemon", "start")
+			explicit := pid()
+			if test.name == "ordinary" {
+				assert.NotEqual(t, automatic, explicit)
+			} else {
+				assert.Equal(t, automatic, explicit, "daemon start reuses a daemon already staying up")
 			}
+			run(oldBin, "daemon", "start")
+			assert.Equal(t, explicit, pid())
+			// Replacement inherits effective lifetime even if configuration changes.
+			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), nil, 0o600))
+			assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
+
+			// An upgrade's replacement keeps the explicit lifetime.
 			run(newBin, "search", "missing")
-			after, _, found, err := daemonconn.Find(t.Context(), root)
-			require.NoError(t, err)
-			require.True(t, found)
-			assert.NotEqual(t, before.PID, after.PID)
+			assert.NotEqual(t, explicit, pid())
 			var jobs api.JobList
 			require.NoError(t, json.Unmarshal([]byte(run(newBin, "jobs", "--json")), &jobs))
 			_, watched := jobNamed(jobs, idleTimeoutJob)
-			assert.Equal(t, mode == "automatic", watched)
-			run(newBin, "daemon", "start")
-			promoted, _, _, err := daemonconn.Find(t.Context(), root)
-			require.NoError(t, err)
-			if mode == "automatic" {
-				assert.NotEqual(t, after.PID, promoted.PID)
-			} else {
-				assert.Equal(t, after.PID, promoted.PID)
-			}
-			assert.Contains(t, run(newBin, "daemon", "status"), "Stays running until docbank daemon stop")
-			assert.Contains(t, run(newBin, "daemon", "start"), "already running")
+			assert.False(t, watched)
 			run(newBin, "daemon", "restart")
 			assert.Contains(t, run(newBin, "daemon", "status"), "Stays running until docbank daemon stop")
 		})

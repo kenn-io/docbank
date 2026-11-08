@@ -399,7 +399,7 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	rec.Metadata[MetaPersistent] = "true"
+	rec.Metadata[MetaIdleTimeout] = "0s"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	canonicalRoot, err := filepath.EvalSymlinks(root)
@@ -656,9 +656,14 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	stopped, err := Stop(t.Context(), root)
-	assert.True(t, stopped, "the live runtime PID must be recognized as stopping")
+	rec.Metadata[MetaIdleTimeout] = "0s"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
+	stopped, err := Stop(t.Context(), root)
+	require.NoError(t, err)
+	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
+	assert.Equal(t, rec.PID, stopped.PID)
+	assert.Equal(t, "0s", stopped.Metadata[MetaIdleTimeout])
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
@@ -701,7 +706,7 @@ func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	stopped, err := Stop(t.Context(), root)
 	require.NoError(t, err)
-	assert.False(t, stopped)
+	assert.Nil(t, stopped)
 	_, err = os.Stat(root)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }

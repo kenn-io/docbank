@@ -395,7 +395,7 @@ func ensureDaemonWithOptions(
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
-	if ok && (!persistent || rec.Metadata[MetaPersistent] == "true") {
+	if ok && (!persistent || Persistent(rec)) {
 		res.Record = rec
 		return res, nil
 	}
@@ -406,7 +406,7 @@ func ensureDaemonWithOptions(
 		if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
-		if ok && (!persistent || rec.Metadata[MetaPersistent] == "true") {
+		if ok && (!persistent || Persistent(rec)) {
 			res.Record = rec
 			return nil
 		}
@@ -453,7 +453,7 @@ func ensureDaemonWithOptions(
 			}
 		}
 
-		res.Record, err = startFn(ctx, root, persistent || (res.Replaced != nil && res.Replaced.Metadata[MetaPersistent] == "true"))
+		res.Record, err = startFn(ctx, root, persistent || (res.Replaced != nil && Persistent(*res.Replaced)))
 		res.Started = err == nil
 		return err
 	})
@@ -687,28 +687,28 @@ func proveOwnershipWithClient(
 
 // Stop gracefully stops the discovered daemon: token endpoint first,
 // SIGTERM only when the process identity still matches the recorded PID. Returns
-// false when no daemon was running.
-func Stop(ctx context.Context, root string) (bool, error) {
+// nil when no daemon was running.
+func Stop(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	rec, _, ok, err := Find(ctx, root)
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
-		return false, err
+		return nil, err
 	}
 	if ok {
-		return true, stopRecord(ctx, rec)
+		return &rec, stopRecord(ctx, rec)
 	}
 	// A daemon that already closed its listener can still be draining jobs.
 	// Recognize only an identity-verified runtime PID without ping evidence.
 	rec, ok, err = liveRuntimeRecord(root)
 	if err != nil || !ok {
-		return false, err
+		return nil, err
 	}
 	// Do not probe or send secrets to a listener that may have been rebound
 	// after the recorded daemon stopped answering. Signal only the verified PID.
-	return true, signalStopRecord(ctx, rec)
+	return &rec, signalStopRecord(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {

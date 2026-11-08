@@ -82,6 +82,10 @@ var daemonStatusCmd = &cobra.Command{
 				out["address"] = rec.Address
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
+				if timeout := rec.Metadata[daemonconn.MetaIdleTimeout]; timeout != "" {
+					out["idle_timeout"] = timeout
+					out["persistent"] = daemonconn.Persistent(rec)
+				}
 			}
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 			return json.MarshalEncode(enc, out)
@@ -96,7 +100,11 @@ var daemonStatusCmd = &cobra.Command{
 			if timeout == 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Stays running until docbank daemon stop")
 			} else {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Exits after %s idle\n", timeout)
+				duration := timeout.String()
+				if timeout%time.Minute == 0 {
+					duration = fmt.Sprintf("%dm", timeout/time.Minute)
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Exits after %s idle\n", duration)
 			}
 		}
 		return nil
@@ -117,7 +125,7 @@ var daemonStopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !stopped {
+		if stopped == nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no daemon running")
 			return nil
 		}
@@ -147,7 +155,7 @@ daemon was running. The daemon stays running until docbank daemon stop.`,
 			return err
 		}
 		rec := res.Record
-		if wasRunning {
+		if wasRunning != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restarted: pid %d at %s (%s)\n",
 				rec.PID, rec.Address, rec.Version)
 		} else {
