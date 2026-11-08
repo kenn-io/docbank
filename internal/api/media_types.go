@@ -104,7 +104,7 @@ type MediaTranscriptEvidence struct {
 
 type MediaTranscript struct {
 	ContractVersion  string                   `json:"contract_version"`
-	NodeID           string                   `json:"node_id,omitempty"`
+	NodeID           int64                    `json:"node_id,omitzero"`
 	SourceSHA256     string                   `json:"source_sha256,omitempty"`
 	VaultUID         string                   `json:"vault_uid"`
 	SourceID         string                   `json:"source_id"`
