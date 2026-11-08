@@ -124,6 +124,14 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			repeated, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 			require.NoError(t, err)
 			require.Equal(t, transcript, repeated)
+
+			if provider.allowM4A && os.Getenv("DOCBANK_CI_TRANSCRIPT_FIXTURE") == "1" {
+				raw, err := json.Marshal(transcript, json.Deterministic(true))
+				require.NoError(t, err)
+				directory := filepath.Join("..", "..", ".superpowers", "voice-contract")
+				require.NoError(t, os.MkdirAll(directory, 0700))
+				require.NoError(t, os.WriteFile(filepath.Join(directory, "media-transcript.json"), raw, 0600))
+			}
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())
 			assert.Zero(t, provider.authFailures.Load())
