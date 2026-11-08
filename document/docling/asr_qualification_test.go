@@ -31,10 +31,10 @@ func TestDoclingASRRealAudioQualification(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newASRFixture(t, test.mediaType, test.filename, test.source)
-			client, err := NewASR(ASRProfile{Profile: Profile{
+			client, err := NewASR(ASRProfile{
 				Origin: endpoint, Descriptor: fixture.descriptor, RequestTimeout: 30 * time.Second, TotalTimeout: 5 * time.Minute,
 				PollInterval: time.Second, MaxPollAttempts: 300, MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
-			}, MaxTranscriptChars: 100_000, AllowM4A: test.mediaType == "audio/mp4"}, nil, http.DefaultClient)
+				MaxTranscriptChars: 100_000, AllowM4A: test.mediaType == "audio/mp4"}, nil, http.DefaultClient)
 			require.NoError(t, err)
 			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			require.NoError(t, err, "synthetic ASR cause: %v", errors.Unwrap(err))

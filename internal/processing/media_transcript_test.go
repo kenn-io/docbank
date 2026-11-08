@@ -283,6 +283,7 @@ func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
 }
 
 func TestMediaTranscriptSpeechCompleteness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		truncated bool
@@ -302,6 +303,7 @@ func TestMediaTranscriptSpeechCompleteness(t *testing.T) {
 }
 
 func TestMediaTranscriptSpeechStateRefusesEmptyUntimedAndMissingRanges(t *testing.T) {
+	t.Parallel()
 	base := document.NormalizedEvidenceV1{UnitKind: document.EvidenceUnitSegment, Units: []document.NormalizedEvidenceUnitV1{{Text: "synthetic"}}}
 	for _, change := range []string{"empty", "blank", "untimed", "unit omission", "range omission"} {
 		t.Run(change, func(t *testing.T) {

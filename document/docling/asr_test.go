@@ -549,8 +549,8 @@ func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
 	descriptor.Fingerprint = ""
 	descriptor, err = document.NewRenditionDescriptor(descriptor)
 	require.NoError(t, err)
-	_, err = NewASR(ASRProfile{Profile: Profile{Origin: "http://127.0.0.1", Descriptor: descriptor}, MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
 	require.NoError(t, err)
-	_, err = NewASR(ASRProfile{Profile: Profile{Origin: "http://127.0.0.1", Descriptor: descriptor}, MaxTranscriptChars: 100_000}, nil, http.DefaultClient)
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000}, nil, http.DefaultClient)
 	require.Error(t, err, "old adapter must refuse M4A authority")
 }

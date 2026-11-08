@@ -16,7 +16,7 @@ import (
 // It does not upgrade the evidence's completeness or erase its omissions.
 func transcriptSpeechState(evidence document.NormalizedEvidenceV1, truncated bool) string {
 	if truncated || evidence.UnitKind != document.EvidenceUnitSegment || len(evidence.Units) == 0 {
-		return "partial"
+		return statusPartial
 	}
 	allowed := func(omissions []document.EvidenceOmissionV1) bool {
 		for _, omission := range omissions {
@@ -27,11 +27,11 @@ func transcriptSpeechState(evidence document.NormalizedEvidenceV1, truncated boo
 		return true
 	}
 	if !allowed(evidence.Omissions) {
-		return "partial"
+		return statusPartial
 	}
 	for _, unit := range evidence.Units {
 		if strings.TrimSpace(unit.Text) == "" || !allowed(unit.Omissions) {
-			return "partial"
+			return statusPartial
 		}
 	}
 	return "complete"

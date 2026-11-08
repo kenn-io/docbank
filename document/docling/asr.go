@@ -154,11 +154,12 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 	}
 	facts, local := carrier.CapabilityProof().Facts()
 	metadata := upload.Metadata()
+	supportedType := facts.MediaType == "audio/wav" || facts.MediaType == "audio/mpeg" || (client.allowM4A && facts.MediaType == "audio/mp4")
 	if !local || facts.Checksum != authorization.CapabilityRecordChecksum ||
 		facts.Checksum != metadata.CapabilityRecordChecksum || facts.SourceSHA256 != metadata.SHA256 ||
 		facts.SourceBytes != metadata.ByteLength || facts.DescriptorFingerprint != client.client.descriptor.Fingerprint ||
 		facts.MediaFamily != "audio" || facts.MediaFamily != metadata.MediaFamily || facts.MediaType != metadata.MediaType ||
-		(facts.MediaType != "audio/wav" && facts.MediaType != "audio/mpeg" && !(client.allowM4A && facts.MediaType == "audio/mp4")) ||
+		!supportedType ||
 		facts.DurationMS <= 0 || facts.DurationMS > (24*time.Hour).Milliseconds() {
 		return 0, provider.Classified(document.RenditionErrorPolicyRejected, "Docling ASR audio capability does not match the upload", nil)
 	}
