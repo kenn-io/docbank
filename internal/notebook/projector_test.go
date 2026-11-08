@@ -311,6 +311,21 @@ func TestNoteProjectorEmptyAliasDoesNotBlockNamespace(t *testing.T) {
 	require.Equal(t, "resolved", edges[0].State)
 }
 
+func TestNoteProjectorOversizedLookupDoesNotBlockNamespace(t *testing.T) {
+	t.Parallel()
+	f := newProjectorFixture(t)
+	scan := f.begin(t)
+	f.accept(t, scan, "source.md", "[["+strings.Repeat("x", 4096)+"]] [[target]]", 0)
+	f.accept(t, scan, "target.md", "# Target", 0)
+	f.complete(t, scan)
+	require.NoError(t, NewProjector(f.catalog, f.blobs).Process(t.Context(), f.target(t)))
+	require.NotEmpty(t, f.currentHead(t))
+	edges := f.edges(t, "source.md")
+	require.Len(t, edges, 2)
+	require.Equal(t, "unsupported", edges[0].State)
+	require.Equal(t, "resolved", edges[1].State)
+}
+
 func TestNoteProjectorCompleteNamespace(t *testing.T) {
 	t.Parallel()
 	f := newProjectorFixture(t)
