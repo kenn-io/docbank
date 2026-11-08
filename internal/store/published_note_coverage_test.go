@@ -198,6 +198,7 @@ func TestPublishedNoteCoverageBuildPages(t *testing.T) {
 // missing SQL authority clause changes totals and the exact serving/rebuild
 // intersection, even when those excluded heads still exist in the archive.
 func TestPublishedNoteCoverageSourceStateProperty(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "darwin" && runtime.GOARCH != "arm64" {
 		t.Skip("Hegel native engine requires macOS arm64")
 	}

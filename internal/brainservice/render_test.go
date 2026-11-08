@@ -151,16 +151,20 @@ func TestBrainServiceRenderArgv(t *testing.T) {
 				var task struct {
 					Principals struct {
 						Principal struct {
-							UserID              string `xml:"UserId"`
-							LogonType, RunLevel string
-						}
-					}
-					Settings struct{ MultipleInstancesPolicy, ExecutionTimeLimit string }
+							UserID    string `xml:"UserId"`
+							LogonType string `xml:"LogonType"`
+							RunLevel  string `xml:"RunLevel"`
+						} `xml:"Principal"`
+					} `xml:"Principals"`
+					Settings struct {
+						MultipleInstancesPolicy string `xml:"MultipleInstancesPolicy"`
+						ExecutionTimeLimit      string `xml:"ExecutionTimeLimit"`
+					} `xml:"Settings"`
 					Triggers struct {
 						LogonTrigger struct {
 							UserID string `xml:"UserId"`
-						}
-					}
+						} `xml:"LogonTrigger"`
+					} `xml:"Triggers"`
 				}
 				require.NoError(t, xml.Unmarshal(reg.Definition, &task))
 				require.Equal(t, spec.UserID, task.Principals.Principal.UserID)

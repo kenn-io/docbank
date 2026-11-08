@@ -144,10 +144,12 @@ func TestNoteProjectionPruneAndRestore(t *testing.T) {
 }
 
 func checkNoteProjectionSQLite(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNoteProjectionBackend(t, newTestStore(t))
 }
 func checkNoteProjectionPostgres(t *testing.T) {
+	t.Helper()
 	t.Parallel()
 	checkNoteProjectionBackend(t, newPostgresQueryStore(t))
 }

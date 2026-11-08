@@ -56,6 +56,7 @@ func TestPublishedNoteCoverageService(t *testing.T) {
 // wins: missing outranks rebuilding, required embeddings suppress optional ones.
 // Counts and identity must survive the shared report adapter unchanged.
 func TestPublishedNoteCoverageReportProperty(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "darwin" && runtime.GOARCH != "arm64" {
 		t.Skip("Hegel native engine requires macOS arm64")
 	}

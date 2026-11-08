@@ -13,6 +13,7 @@ import (
 )
 
 func TestNoteParseRecordValidationProperty(t *testing.T) {
+	t.Parallel()
 	note, err := notemarkdown.Parse(t.Context(), []byte("# Synthetic\n"))
 	require.NoError(t, err)
 	artifact, err := notemarkdown.CanonicalArtifact(t.Context(), note)
