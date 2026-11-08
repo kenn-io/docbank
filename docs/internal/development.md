@@ -538,6 +538,14 @@ GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnost
     ON documents.document_event_attempts TO docbank_runtime;
 GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
     ON documents.document_event_builds TO docbank_runtime;
+GRANT INSERT ON documents.document_people_generations, documents.document_people TO docbank_runtime;
+GRANT INSERT, UPDATE(event_generation_id, inputs_sha256, generation_id, unresolved_actors,
+    suppressed_actors, candidate_overflow, resolver_fingerprint, binding_epoch, node_revision,
+    edge_count, state, failure_reason, published_at)
+    ON documents.document_people_heads TO docbank_runtime;
+GRANT UPDATE(resolver_fingerprint) ON documents.document_people_state TO docbank_runtime;
+GRANT INSERT, UPDATE(state, scanned, published, failed, updated_at, finished_at)
+    ON documents.document_people_builds TO docbank_runtime;
 GRANT INSERT ON documents.processing_consent_grants, documents.processing_consent_revocations,
     documents.processing_profiles, documents.rendition_builds, documents.rendition_artifacts,
     documents.rendition_units, documents.rendition_lexical_segments,
@@ -1321,10 +1329,40 @@ custody writes run against a validated retained package fixture; this does not
 qualify package creation or import.
 
 General people discovery (including autocomplete, recent-first listing and photo
-summaries), query-selected photo browsing, document-person resolver publication
-and rebuilds, portable recovery, and public PostgreSQL vault opening remain
+summaries), query-selected photo browsing, portable recovery, and public
+PostgreSQL vault opening remain
 unqualified. Their retained catalogs and the curation operations above do not
 establish support for those producers or user entry points.
+
+#### Document-person resolution
+
+The shared Store prepares document-person inputs, publishes attribution, records
+failures and tracks rebuilds on both backends. Exact email and international phone
+identities can provision a person once; name-only claims remain review candidates.
+Retired identities and explicit external-identity unlinking retain their existing
+suppression rules. Inputs include current custodians and operator assertions.
+Preparing inputs in an audited vault does not create unaudited person authority.
+
+Preparation and publication use writer admission. Publication checks the person
+binding epoch, event generation and node revision before writing. Retained
+generations are insert-only; edges, the current head, publication epoch and change
+events commit together. An identical replay keeps the existing publication, and
+input-only changes do not emit a processed event when the result is unchanged.
+Provisioning an unbound identity does not invalidate unrelated attribution.
+
+Version readback and coverage use repeatable-read transactions, so one response
+cannot mix a retained head with later authority or counts. Stale attribution is
+withheld until republished. Rebuild creation advances the binding epoch and
+records its replay receipt atomically. Retryable failures keep a rebuild running;
+terminal unavailable results let it finish with failed coverage. Progress is
+recounted under writer admission before it commits.
+
+The `document-people` contracts run the existing input, publication, freshness and
+rebuild scenarios on both engines. PostgreSQL cases also commit changes between
+read statements and interrupt provisioning, publication and rebuild creation
+through the restricted runtime role. The Store port adds no schema or runtime SQL
+translation. General People discovery, query execution, recovery and public
+PostgreSQL vault opening remain separate qualification boundaries.
 
 #### Photo albums
 
