@@ -122,6 +122,7 @@ func TestPublishedNotePageReadinessBindsSnapshot(t *testing.T) {
 	require.NotNil(t, page.NoteReadiness)
 	require.Equal(t, "notebook", page.NoteReadiness.Publisher.Name)
 	require.Equal(t, page.Items[0].PublishedNote.NamespaceRevision, page.NoteReadiness.Publisher.NamespaceRevision)
+	require.Equal(t, "pending", page.NoteReadiness.ParseState)
 	require.Empty(t, page.NoteReadiness.Generation)
 	unscoped, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{}, nil, DocumentCatalogTraversalNext)
 	require.NoError(t, err)
@@ -144,12 +145,23 @@ func TestPublishedNotePageReadinessTracksCurrentGeneration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, page.NoteReadiness)
 	require.Equal(t, generation.ID, page.NoteReadiness.Generation)
+	require.Equal(t, "ready", page.NoteReadiness.ParseState)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE note_publications SET namespace_revision=namespace_revision+1 WHERE name=$1`, "notebook")
 	require.NoError(t, err)
 	page, err = s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
 	require.NoError(t, err)
 	require.NotNil(t, page.NoteReadiness)
 	require.Empty(t, page.NoteReadiness.Generation)
+}
+
+func TestPublishedNotePageReadinessReportsParseLimit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", terminal: "parser_limit"})
+	page, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{PublishedNotes: &PublishedNoteSelector{Publication: "notebook"}}, nil, DocumentCatalogTraversalNext)
+	require.NoError(t, err)
+	require.NotNil(t, page.NoteReadiness)
+	require.Equal(t, "limit", page.NoteReadiness.ParseState)
 }
 
 func TestPublishedNoteFinalRevalidation(t *testing.T) {

@@ -123,8 +123,13 @@ func validateDocumentPage(query api.DocumentQuery, page api.DocumentPage) error 
 		readiness := page.NoteReadiness
 		if query.PublishedNotes == nil || query.PublishedNotes.Publication == "" ||
 			!validNoteStatus(readiness.Publisher, query.PublishedNotes.Publication) ||
-			readiness.Parse.State != "unknown" || readiness.Coverage != nil || readiness.CoverageSelection != nil || readiness.CoverageObservedAt != "" {
+			readiness.Coverage != nil || readiness.CoverageSelection != nil || readiness.CoverageObservedAt != "" {
 			return errors.New("document catalog response has invalid note readiness")
+		}
+		switch readiness.Parse.State {
+		case "ready", "pending", "limit", "failed":
+		default:
+			return errors.New("document catalog response has invalid parse state")
 		}
 		switch readiness.Graph.State {
 		case "ready":

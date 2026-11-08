@@ -100,11 +100,11 @@ type DocumentCatalogPage struct {
 	HasNext       bool
 }
 
-// DocumentNoteReadiness binds publication and graph observations to the same
-// read transaction as the document page. Parse aggregation is not yet exposed.
+// DocumentNoteReadiness binds publication and projection observations to the
+// same read transaction as the document page.
 type DocumentNoteReadiness struct {
-	Publisher  NotePublicationStatus
-	Generation string
+	Publisher              NotePublicationStatus
+	Generation, ParseState string
 }
 
 // ListDocuments returns one flattened page of current, live file nodes. The
@@ -176,7 +176,31 @@ func (s *Store) ListDocuments(
 				return DocumentCatalogPage{}, err
 			}
 			if err == nil {
-				readiness := &DocumentNoteReadiness{Publisher: status}
+				readiness := &DocumentNoteReadiness{Publisher: status, ParseState: "pending"}
+				var pending, limited, failed int64
+				predicate, args := publishedNoteEligibilitySQLParameter(normalized.PublishedNotes, "$1")
+				args = append(args, notemarkdown.Recipe)
+				err = tx.QueryRowContext(ctx, `SELECT
+COALESCE(SUM(CASE WHEN g.state IS NULL OR g.state NOT IN ('ready','limit','failed') THEN 1 ELSE 0 END),0),
+COALESCE(SUM(CASE WHEN g.state='limit' THEN 1 ELSE 0 END),0),
+COALESCE(SUM(CASE WHEN g.state='failed' THEN 1 ELSE 0 END),0)
+FROM published_note_sources p JOIN nodes n ON n.id=p.node_id
+JOIN content_versions cv ON cv.version_id=n.current_version_id
+LEFT JOIN note_parse_bindings b ON b.content_version_id=cv.version_id AND b.recipe=$2
+LEFT JOIN note_parse_generations g ON g.generation_id=b.generation_id AND g.recipe=b.recipe
+ AND g.blob_hash=cv.blob_hash AND g.source_size=cv.size
+WHERE p.publication_name=$1 AND `+predicate, args...).Scan(&pending, &limited, &failed)
+				if err != nil {
+					return DocumentCatalogPage{}, err
+				}
+				switch {
+				case failed > 0:
+					readiness.ParseState = "failed"
+				case limited > 0:
+					readiness.ParseState = "limit"
+				case pending == 0 && !status.Incomplete && status.Conflicts == 0 && status.Unavailable == 0 && status.Unknown == 0:
+					readiness.ParseState = "ready"
+				}
 				err = tx.QueryRowContext(ctx, `SELECT g.generation_id FROM note_index_heads h
 JOIN note_index_generations g ON g.generation_id=h.generation_id
 WHERE h.publication_name=$1 AND g.completed=1 AND g.database_epoch=$2 AND g.namespace_revision=$3

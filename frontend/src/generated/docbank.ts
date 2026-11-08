@@ -2233,6 +2233,55 @@ export interface DocumentSummary {
   size: number;
 }
 
+export interface NoteCoverageSelection {
+  binding_id?: string;
+  profile: string;
+}
+
+export interface NoteProjectionReadiness {
+  generation?: string;
+  reason?: string;
+  recipe?: string;
+  state: string;
+}
+
+export interface NotePublicationScan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  database_epoch: string;
+  epoch: number;
+  namespace_revision: number;
+  policy_fingerprint: string;
+  scan_id: string;
+}
+
+export interface NotePublicationStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  absent: number;
+  active_scan?: NotePublicationScan;
+  conflicts: number;
+  database_epoch: string;
+  incomplete: boolean;
+  last_accepted_at: string;
+  last_complete_at: string;
+  name: string;
+  namespace_revision: number;
+  present: number;
+  recovery_pending: number;
+  unavailable: number;
+  unknown: number;
+}
+
+export interface NoteReadiness {
+  coverage?: CoverageReport;
+  coverage_observed_at?: string;
+  coverage_selection?: NoteCoverageSelection;
+  graph: NoteProjectionReadiness;
+  parse: NoteProjectionReadiness;
+  publisher: NotePublicationStatus;
+}
+
 export interface PublishedNoteSelector {
   /** @maxLength 64 */
   publication?: string;
@@ -2245,6 +2294,7 @@ export interface DocumentPage {
   /** @maxItems 250 */
   items: DocumentSummary[];
   next_cursor?: string;
+  note_readiness?: NoteReadiness;
   /**
      * @minimum 1
      * @maximum 250
@@ -4404,6 +4454,117 @@ export interface NoteArchiveHead {
   size: number;
 }
 
+export interface NoteSpan {
+  end: number;
+  start: number;
+}
+
+export interface NoteDiagnostic {
+  code: string;
+  span: NoteSpan;
+}
+
+export interface NoteEdge {
+  destination_span: NoteSpan;
+  embed: boolean;
+  form: string;
+  key: string;
+  label: string;
+  label_truncated: boolean;
+  raw_target: string;
+  source: PublishedNoteIdentity;
+  span: NoteSpan;
+  state: string;
+  target: string;
+  target_heading?: NoteSpan;
+  target_identity?: PublishedNoteIdentity;
+}
+
+export interface NoteMetadata {
+  aliases: string[];
+  aliases_omitted: number;
+  tags: string[];
+  tags_omitted: number;
+  title: string;
+}
+
+export interface NoteContextPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  archive_head?: NoteArchiveHead;
+  diagnostics: NoteDiagnostic[];
+  display_title: string;
+  items: NoteEdge[];
+  metadata: NoteMetadata;
+  next_cursor?: string;
+  readiness: NoteReadiness;
+  source: PublishedNoteIdentity;
+  truncated_fields: string[];
+}
+
+export interface ProcessingConsentRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  disclosure_fingerprint: string;
+  /** @nullable */
+  expires_at: string | null;
+  input_classes: string[];
+  principal: string;
+  profile_fingerprint: string;
+  retained_artifact_classes: string[];
+  scope: string;
+}
+
+export type ProcessingPlanConsentState = typeof ProcessingPlanConsentState[keyof typeof ProcessingPlanConsentState];
+
+
+export const ProcessingPlanConsentState = {
+  active: 'active',
+  required: 'required',
+  expired: 'expired',
+  revoked: 'revoked',
+} as const;
+
+export interface ProcessingEstimate {
+  /** @minimum 0 */
+  provider_calls: number;
+  /**
+     * Work beyond the selected source that consent starts.
+     * @maxLength 256
+     */
+  scope?: string;
+  /** @minimum 0 */
+  source_bytes: number;
+  /** @minimum 0 */
+  vector_spaces: number;
+}
+
+export interface ProcessingPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  backup_consequence: string;
+  consent_required: boolean;
+  consent_state: ProcessingPlanConsentState;
+  disclosed_classes: string[];
+  estimate: ProcessingEstimate;
+  /** @pattern ^[0-9a-f]{64}$ */
+  fingerprint: string;
+  flow: ProcessingFlowHop[];
+  /** @pattern ^[0-9a-f]{64}$ */
+  profile_fingerprint: string;
+  rendition_ineligible_reason?: string;
+  retained_classes: string[];
+  selector: ProcessingSelector;
+  vault_uid: string;
+}
+
+export interface NoteLocalTextPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consent_request: ProcessingConsentRequest;
+  plan: ProcessingPlan;
+}
+
 export interface NotePublicationAcceptLocalRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4419,16 +4580,6 @@ export interface NotePublicationAcceptLocalRequest {
   operation_id: string;
   /** @maxLength 4096 */
   source_ref: string;
-}
-
-export interface NotePublicationScan {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  database_epoch: string;
-  epoch: number;
-  namespace_revision: number;
-  policy_fingerprint: string;
-  scan_id: string;
 }
 
 export interface NotePublicationAck {
@@ -4499,30 +4650,19 @@ export interface NotePublicationSeenRequest {
   scan_id?: string;
 }
 
+export interface NotePublicationSourceSnapshot {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  database_epoch: string;
+  source: NotePublicationSource;
+}
+
 export interface NotePublicationSourcesPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   items: NotePublicationSource[];
   next?: string;
   scan: NotePublicationScan;
-}
-
-export interface NotePublicationStatus {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  absent: number;
-  active_scan?: NotePublicationScan;
-  conflicts: number;
-  database_epoch: string;
-  incomplete: boolean;
-  last_accepted_at: string;
-  last_complete_at: string;
-  name: string;
-  namespace_revision: number;
-  present: number;
-  recovery_pending: number;
-  unavailable: number;
-  unknown: number;
 }
 
 export interface NumberedFooter {
@@ -7464,19 +7604,6 @@ export interface ProcessingConsentReceipt {
   vault_id: string;
 }
 
-export interface ProcessingConsentRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  disclosure_fingerprint: string;
-  /** @nullable */
-  expires_at: string | null;
-  input_classes: string[];
-  principal: string;
-  profile_fingerprint: string;
-  retained_artifact_classes: string[];
-  scope: string;
-}
-
 export interface ProcessingConsentRevocation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7497,20 +7624,6 @@ export interface ProcessingConsentRevocationRequest {
   readonly $schema?: string;
   principal: string;
   scope: string;
-}
-
-export interface ProcessingEstimate {
-  /** @minimum 0 */
-  provider_calls: number;
-  /**
-     * Work beyond the selected source that consent starts.
-     * @maxLength 256
-     */
-  scope?: string;
-  /** @minimum 0 */
-  source_bytes: number;
-  /** @minimum 0 */
-  vector_spaces: number;
 }
 
 export interface ProcessingJob {
@@ -7561,35 +7674,6 @@ export interface ProcessingJobEvent {
   status?: ProcessingStatus;
   terminal?: boolean;
   type: ProcessingJobEventType;
-}
-
-export type ProcessingPlanConsentState = typeof ProcessingPlanConsentState[keyof typeof ProcessingPlanConsentState];
-
-
-export const ProcessingPlanConsentState = {
-  active: 'active',
-  required: 'required',
-  expired: 'expired',
-  revoked: 'revoked',
-} as const;
-
-export interface ProcessingPlan {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  backup_consequence: string;
-  consent_required: boolean;
-  consent_state: ProcessingPlanConsentState;
-  disclosed_classes: string[];
-  estimate: ProcessingEstimate;
-  /** @pattern ^[0-9a-f]{64}$ */
-  fingerprint: string;
-  flow: ProcessingFlowHop[];
-  /** @pattern ^[0-9a-f]{64}$ */
-  profile_fingerprint: string;
-  rendition_ineligible_reason?: string;
-  retained_classes: string[];
-  selector: ProcessingSelector;
-  vault_uid: string;
 }
 
 export interface ProcessingPlanRequest {
@@ -9937,6 +10021,13 @@ after?: string;
 limit?: number;
 };
 
+export type GetNotePublicationSourceParams = {
+/**
+ * @maxLength 4096
+ */
+source_ref: string;
+};
+
 export type UploadPublishedNoteParams = {
 /**
  * Virtual filename; must equal the multipart filename
@@ -9985,6 +10076,41 @@ export type UploadPublishedNoteHeaders = {
 export type UploadPublishedNoteBody = {
   file: Blob | File;
 };
+
+export type GetNoteContextParams = {
+/**
+ * @maxLength 64
+ */
+publication: string;
+/**
+ * @maxLength 4096
+ */
+source_ref: string;
+/**
+ * @maxLength 36
+ */
+content_version_id?: string;
+direction?: GetNoteContextDirection;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @maxLength 32768
+ */
+cursor?: string;
+coverage?: NoteCoverageSelection;
+};
+
+export type GetNoteContextDirection = typeof GetNoteContextDirection[keyof typeof GetNoteContextDirection];
+
+
+export const GetNoteContextDirection = {
+  outgoing: 'outgoing',
+  incoming: 'incoming',
+  unresolved: 'unresolved',
+} as const;
 
 export type ListPackagesParams = {
 direction?: ListPackagesDirection;
@@ -15840,6 +15966,39 @@ return sessionJSON<NotePublicationRecoveryGrant>(getAcceptLocalPublishedNoteUrl(
 
 
 
+export const getGetNotePublicationSourceUrl = (name: string,
+    params: GetNotePublicationSourceParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/note-publications/${encodeURIComponent(String(name))}/sources/current?${stringifiedParams}` : `/api/v1/note-publications/${encodeURIComponent(String(name))}/sources/current`
+}
+
+/**
+ * @summary Read an accepted source and current archive head without beginning an inventory
+ */
+export const getNotePublicationSource = async (name: string,
+    params: GetNotePublicationSourceParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NotePublicationSourceSnapshot> => {
+
+  return sessionJSON<NotePublicationSourceSnapshot>(getGetNotePublicationSourceUrl(name,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getUploadPublishedNoteUrl = (name: string,
     params: UploadPublishedNoteParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -15886,6 +16045,72 @@ return sessionJSON<NotePublicationReceipt>(getUploadPublishedNoteUrl(name,params
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) },
     body: formData
+  }
+);}
+
+
+
+export const getGetNoteContextUrl = (params: GetNoteContextParams,) => {
+  const normalizedParams = new URLSearchParams();
+  const deepObjectEntries: string[] = [];
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const deepObjectParameters = ["coverage"];
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && deepObjectParameters.includes(key)) {
+      Object.entries(value).forEach(([subKey, subValue]) => {
+        if (subValue !== undefined) {
+          deepObjectEntries.push(encodeURIComponent(key) + '[' + encodeURIComponent(subKey) + ']=' + (subValue === null ? 'null' : encodeURIComponent(String(subValue))));
+        }
+      });
+      return;
+    }
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = [normalizedParams.toString(), deepObjectEntries.join('&')].filter(Boolean).join('&');
+
+  return stringifiedParams.length > 0 ? `/api/v1/notes/context?${stringifiedParams}` : `/api/v1/notes/context`
+}
+
+/**
+ * @summary Read current authored-note context
+ */
+export const getNoteContext = async (params: GetNoteContextParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NoteContextPage> => {
+
+  return sessionJSON<NoteContextPage>(getGetNoteContextUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetNoteLocalTextPlanUrl = () => {
+
+
+
+
+  return `/api/v1/notes/local-text-plan`
+}
+
+/**
+ * @summary Preview local note text indexing consent
+ */
+export const getNoteLocalTextPlan = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<NoteLocalTextPlan> => {
+
+  return sessionJSON<NoteLocalTextPlan>(getGetNoteLocalTextPlanUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

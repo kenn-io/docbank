@@ -7262,6 +7262,57 @@ func (c *Client) AcceptLocalPublishedNote(ctx context.Context, options *AcceptLo
 	return responseParser(ctx, resp)
 }
 
+// GetNotePublicationSource Read an accepted source and current archive head without beginning an inventory
+func (c *Client) GetNotePublicationSource(ctx context.Context, options *GetNotePublicationSourceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNotePublicationSourceResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"source_ref": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/note-publications/{name}/sources/current",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNotePublicationSourceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNotePublicationSourceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNotePublicationSourceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNotePublicationSourceErrorResponse](resp, "GetNotePublicationSourceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/note-publications/{name}/sources/current")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UploadPublishedNote Upload verified original bytes with source and scan preconditions
 func (c *Client) UploadPublishedNote(ctx context.Context, options *UploadPublishedNoteRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadPublishedNoteResult, error) {
 	var err error
@@ -7323,6 +7374,108 @@ func (c *Client) UploadPublishedNote(ctx context.Context, options *UploadPublish
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNoteContext Read current authored-note context
+func (c *Client) GetNoteContext(ctx context.Context, options *GetNoteContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNoteContextResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"content_version_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"coverage":           {Style: "deepObject", Explode: &[]bool{false}[0]},
+		"cursor":             {Style: "form", Explode: &[]bool{false}[0]},
+		"direction":          {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":              {Style: "form", Explode: &[]bool{false}[0]},
+		"publication":        {Style: "form", Explode: &[]bool{false}[0]},
+		"source_ref":         {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/notes/context",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNoteContextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNoteContextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNoteContextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNoteContextErrorResponse](resp, "GetNoteContextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/context")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNoteLocalTextPlan Preview local note text indexing consent
+func (c *Client) GetNoteLocalTextPlan(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetNoteLocalTextPlanResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/notes/local-text-plan",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNoteLocalTextPlanResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNoteLocalTextPlanResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNoteLocalTextPlanResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNoteLocalTextPlanErrorResponse](resp, "GetNoteLocalTextPlanErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/local-text-plan")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -21317,6 +21470,44 @@ func (o *AcceptLocalPublishedNoteRequestOptions) GetHeader() (map[string]string,
 	return nil, nil
 }
 
+// GetNotePublicationSourceRequestOptions is the options needed to make a request to GetNotePublicationSource.
+type GetNotePublicationSourceRequestOptions struct {
+	PathParams *GetNotePublicationSourcePath
+	Query      *GetNotePublicationSourceQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNotePublicationSourceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNotePublicationSourceRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNotePublicationSourceRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNotePublicationSourceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UploadPublishedNoteRequestOptions is the options needed to make a request to UploadPublishedNote.
 type UploadPublishedNoteRequestOptions struct {
 	PathParams *UploadPublishedNotePath
@@ -21364,6 +21555,37 @@ func (o *UploadPublishedNoteRequestOptions) GetHeader() (map[string]string, erro
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// GetNoteContextRequestOptions is the options needed to make a request to GetNoteContext.
+type GetNoteContextRequestOptions struct {
+	Query *GetNoteContextQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNoteContextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNoteContextRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNoteContextRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNoteContextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // ListPackagesRequestOptions is the options needed to make a request to ListPackages.
@@ -27465,6 +27687,14 @@ const (
 	ListDocumentsQueryDirectionDesc ListDocumentsQueryDirection = "desc"
 )
 
+type GetNoteContextQueryDirection string
+
+const (
+	Incoming   GetNoteContextQueryDirection = "incoming"
+	Outgoing   GetNoteContextQueryDirection = "outgoing"
+	Unresolved GetNoteContextQueryDirection = "unresolved"
+)
+
 type ListPackagesQueryDirection string
 
 const (
@@ -27998,6 +28228,10 @@ type ListNotePublicationSourcesPath struct {
 }
 
 type AcceptLocalPublishedNotePath struct {
+	Name string `json:"name"`
+}
+
+type GetNotePublicationSourcePath struct {
 	Name string `json:"name"`
 }
 
@@ -28972,6 +29206,10 @@ type ListNotePublicationSourcesQuery struct {
 	Limit  *int64  `json:"limit,omitempty"`
 }
 
+type GetNotePublicationSourceQuery struct {
+	SourceRef string `json:"source_ref"`
+}
+
 type UploadPublishedNoteQuery struct {
 	// Name Virtual filename; must equal the multipart filename
 	Name                   string  `json:"name"`
@@ -28981,6 +29219,16 @@ type UploadPublishedNoteQuery struct {
 	OperationID            string  `json:"operation_id"`
 	ModifiedAt             *string `json:"modified_at,omitempty"`
 	ExpectedSourceRevision int64   `json:"expected_source_revision"`
+}
+
+type GetNoteContextQuery struct {
+	Publication      string                        `json:"publication"`
+	SourceRef        string                        `json:"source_ref"`
+	ContentVersionID *string                       `json:"content_version_id,omitempty"`
+	Direction        *GetNoteContextQueryDirection `json:"direction,omitempty"`
+	Limit            *int64                        `json:"limit,omitempty"`
+	Cursor           *string                       `json:"cursor,omitempty"`
+	Coverage         *NoteCoverageSelection        `json:"coverage,omitempty"`
 }
 
 type ListPackagesQuery struct {
@@ -29842,11 +30090,23 @@ type AcceptLocalPublishedNoteResponse = api.NotePublicationRecoveryGrant
 
 type AcceptLocalPublishedNoteErrorResponse = Error
 
+type GetNotePublicationSourceResponse = api.NotePublicationSourceSnapshot
+
+type GetNotePublicationSourceErrorResponse = Error
+
 type UploadPublishedNoteResponse = api.NotePublicationReceipt
 
 type UploadPublishedNoteResponseJSON = api.NotePublicationReceipt
 
 type UploadPublishedNoteErrorResponse = Error
+
+type GetNoteContextResponse = api.NoteContextPage
+
+type GetNoteContextErrorResponse = Error
+
+type GetNoteLocalTextPlanResponse = api.NoteLocalTextPlan
+
+type GetNoteLocalTextPlanErrorResponse = Error
 
 type ListPackagesResponse = api.PackagePage
 
@@ -31560,6 +31820,20 @@ type NodePage = api.NodePage
 
 type NoteArchiveHead = api.NoteArchiveHead
 
+type NoteContextPage = api.NoteContextPage
+
+type NoteCoverageSelection = api.NoteCoverageSelection
+
+type NoteDiagnostic = api.NoteDiagnostic
+
+type NoteEdge = api.NoteEdge
+
+type NoteLocalTextPlan = api.NoteLocalTextPlan
+
+type NoteMetadata = api.NoteMetadata
+
+type NoteProjectionReadiness = api.NoteProjectionReadiness
+
 type NotePublicationAcceptLocalRequest = api.NotePublicationAcceptLocalRequest
 
 type NotePublicationAck = api.NotePublicationAck
@@ -31578,9 +31852,15 @@ type NotePublicationSeenRequest = api.NotePublicationSeenRequest
 
 type NotePublicationSource = api.NotePublicationSource
 
+type NotePublicationSourceSnapshot = api.NotePublicationSourceSnapshot
+
 type NotePublicationSourcesPage = api.NotePublicationSourcesPage
 
 type NotePublicationStatus = api.NotePublicationStatus
+
+type NoteReadiness = api.NoteReadiness
+
+type NoteSpan = api.NoteSpan
 
 type NumberedDelivery = processing.NumberedDelivery
 
