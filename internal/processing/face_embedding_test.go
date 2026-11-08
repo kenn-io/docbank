@@ -180,7 +180,7 @@ func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 	require.ElementsMatch(t, []string{version, x.f.node.CurrentVersionID}, []string{sets.Sets[0].Set.ContentVersionID, sets.Sets[1].Set.ContentVersionID})
 }
 
-func TestFaceRankingContinuationWithUnavailableVectors(t *testing.T) {
+func TestFaceRankingUnmatchedFallbackAndUnavailableContinuation(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
 	ctx := t.Context()
@@ -377,72 +377,76 @@ func newNamedFacePickerFixture(t *testing.T) (*faceEmbeddingFixture, string) {
 
 func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 	t.Parallel()
-	x, personID := newNamedFacePickerFixture(t)
-	ctx := t.Context()
-	x.enable(t)
-	count, err := x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 5, count)
-	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
-	var people []store.PersonSearchResult
-	t.Run("payload scope", func(t *testing.T) {
-		people, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
-		require.NoError(t, err)
-		require.Len(t, people, 2)
-		require.Equal(t, 4, reader.opens)
-		reader.opens = 0
-		matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, false, options)
-		require.NoError(t, err)
-		require.Len(t, matches, 1)
-		require.Equal(t, personID, matches[0].PersonID)
-		require.Contains(t, matches[0].RecentRank, "#")
-		require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
-		for _, person := range people {
-			if person.PersonID == personID {
-				continuation := options
-				continuation.AfterRecent = person.RecentRank
-				_, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", person.DisplayNameFolded, person.PersonID, 24, false, continuation)
-				require.ErrorIs(t, err, store.ErrStaleRevision, "a different result population needs its own continuation")
+	for _, scenario := range []string{"payload scope", "indexed exactness", "late named freshness"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			x, personID := newNamedFacePickerFixture(t)
+			ctx := t.Context()
+			x.enable(t)
+			count, err := x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			require.Equal(t, 5, count)
+			reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
+			options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
+			people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+			require.NoError(t, err)
+			require.Len(t, people, 2)
+			if scenario == "payload scope" {
+				require.Equal(t, 4, reader.opens)
+				reader.opens = 0
+				matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, false, options)
+				require.NoError(t, err)
+				require.Len(t, matches, 1)
+				require.Equal(t, personID, matches[0].PersonID)
+				require.Contains(t, matches[0].RecentRank, "#")
+				require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
+				for _, person := range people {
+					if person.PersonID == personID {
+						continuation := options
+						continuation.AfterRecent = person.RecentRank
+						_, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", person.DisplayNameFolded, person.PersonID, 24, false, continuation)
+						require.ErrorIs(t, err, store.ErrStaleRevision, "a different result population needs its own continuation")
+					}
+				}
+				return
 			}
-		}
-	})
-	t.Run("indexed exactness", func(t *testing.T) {
-		index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-			Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
-			BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
-			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-				return x.f.catalog.ReadVectorIndexVectorSet(ctx, x.f.blobs, member)
-			},
+			index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+				Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
+				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+					return x.f.catalog.ReadVectorIndexVectorSet(ctx, x.f.blobs, member)
+				},
+			})
+			require.NoError(t, err)
+			spaces, err := x.f.catalog.ListVectorIndexSpaces(ctx)
+			require.NoError(t, err)
+			_, err = index.Rebuild(ctx, spaces[0])
+			require.NoError(t, err)
+			if scenario == "indexed exactness" {
+				reader.opens = 0
+				indexed, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+				require.NoError(t, err)
+				require.Equal(t, people, indexed, "the index preserves exact ordering and continuation")
+				require.Zero(t, reader.opens, "all current rows are in the built index")
+				return
+			}
+			late := x.f.addPhoto(t, "late-named.jpg", 705)
+			lateFace, _, err := x.f.catalog.CreatePhotoFace(ctx, late, uuid.New().String(), document.FaceBox{Y: .8, Width: .2, Height: .2}, "")
+			require.NoError(t, err)
+			x.worker.reconcileAt = time.Time{}
+			_, err = x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			newPerson, err := x.f.catalog.CreatePerson(ctx, "Aaron", "operator")
+			require.NoError(t, err)
+			_, err = x.f.catalog.DecidePhotoFace(ctx, late, store.PhotoFaceDecisionRequest{Action: "name", FaceID: lateFace.FaceID, Revision: 1, PersonID: newPerson.PersonID})
+			require.NoError(t, err)
+			reader.opens = 0
+			current, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+			require.NoError(t, err)
+			require.Equal(t, newPerson.PersonID, current[0].PersonID, "the unindexed named face contributes immediately")
+			require.Equal(t, 1, reader.opens, "only the photo missing from the index reads its file")
 		})
-		require.NoError(t, err)
-		spaces, err := x.f.catalog.ListVectorIndexSpaces(ctx)
-		require.NoError(t, err)
-		_, err = index.Rebuild(ctx, spaces[0])
-		require.NoError(t, err)
-		reader.opens = 0
-		indexed, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
-		require.NoError(t, err)
-		require.Equal(t, people, indexed, "the index preserves exact ordering and continuation")
-		require.Zero(t, reader.opens, "all current rows are in the built index")
-	})
-	t.Run("late named freshness", func(t *testing.T) {
-		late := x.f.addPhoto(t, "late-named.jpg", 705)
-		lateFace, _, err := x.f.catalog.CreatePhotoFace(ctx, late, uuid.New().String(), document.FaceBox{Y: .8, Width: .2, Height: .2}, "")
-		require.NoError(t, err)
-		x.worker.reconcileAt = time.Time{}
-		_, err = x.worker.ScanOnce(ctx)
-		require.NoError(t, err)
-		newPerson, err := x.f.catalog.CreatePerson(ctx, "Aaron", "operator")
-		require.NoError(t, err)
-		_, err = x.f.catalog.DecidePhotoFace(ctx, late, store.PhotoFaceDecisionRequest{Action: "name", FaceID: lateFace.FaceID, Revision: 1, PersonID: newPerson.PersonID})
-		require.NoError(t, err)
-		reader.opens = 0
-		current, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
-		require.NoError(t, err)
-		require.Equal(t, newPerson.PersonID, current[0].PersonID, "the unindexed named face contributes immediately")
-		require.Equal(t, 1, reader.opens, "only the photo missing from the index reads its file")
-	})
+	}
 }
 
 func TestFacePickerUsesNamedFacesFromQueryPhoto(t *testing.T) {
@@ -568,7 +572,11 @@ func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	t.Parallel()
 	x := newFaceEmbeddingFixture(t, false)
-	setup := FaceSetup{Service: x.service, Startup: func(context.Context) error { return nil }}
+	starts := 0
+	setup := FaceSetup{Service: x.service, Startup: func(context.Context) error {
+		starts++
+		return nil
+	}}
 	reviewed, err := setup.Plan(t.Context())
 	require.NoError(t, err)
 	require.Contains(t, reviewed.Scope, "throughout this vault")
@@ -579,6 +587,7 @@ func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	require.Zero(t, x.calls)
 	_, err = setup.Apply(t.Context(), "stale")
 	require.ErrorIs(t, err, ErrPlanChanged)
+	require.Zero(t, starts, "a stale plan must not start the runtime")
 	x.worker.reconcileAt = time.Time{}
 	n, err = x.worker.ScanOnce(t.Context())
 	require.NoError(t, err)
@@ -586,6 +595,7 @@ func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	require.Zero(t, x.calls)
 	_, err = setup.Apply(t.Context(), reviewed.Fingerprint)
 	require.NoError(t, err)
+	require.Equal(t, 1, starts)
 	x.worker.reconcileAt = time.Time{}
 	n, err = x.worker.ScanOnce(t.Context())
 	require.NoError(t, err)
