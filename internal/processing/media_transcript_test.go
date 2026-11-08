@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -273,4 +274,23 @@ func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.captions.MediaTranscript(t.Context(), requestB)
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestMediaTranscriptSpeechCompleteness(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		truncated bool
+		omissions []document.SourceEvidenceOmissionV1
+		want      string
+	}{
+		{name: "speech only", want: "complete"},
+		{name: "non speech", omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "non_speech_content"}}, want: "complete"},
+		{name: "truncated", truncated: true, want: "partial"},
+		{name: "missing speech", omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}, want: "partial"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := document.NormalizedEvidenceV1{Omissions: tc.omissions}
+			require.Equal(t, tc.want, transcriptSpeechState(evidence, tc.truncated))
+		})
+	}
 }

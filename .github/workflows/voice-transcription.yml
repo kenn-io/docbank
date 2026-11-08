@@ -1,0 +1,35 @@
+name: Voice transcription qualification
+on:
+  push:
+    branches: [feat/voice-memo-transcription]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: voice-transcription-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['1', '0']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Exercise audio contracts and lifecycle
+        run: go test -tags fts5 -timeout 20m ./document/docling ./document/media ./internal/processing ./internal/api ./internal/config ./cmd/docbank
