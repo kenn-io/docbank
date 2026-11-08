@@ -125,8 +125,9 @@ func (s *Store) noteContextEdgesTx(ctx context.Context, tx *sql.Tx, request Note
 	rows, err := tx.QueryContext(ctx, `SELECT e.source_ref,e.ordinal,length(e.edge_json),
  CASE WHEN length(e.edge_json)<=65536 THEN e.edge_json ELSE NULL END,
  p.node_id,p.content_version_id,p.blob_hash,p.size,p.source_revision
- FROM note_link_edges e JOIN published_note_sources p ON p.publication_name=$3 AND p.source_ref=e.source_ref
- WHERE e.generation_id=$1 AND `+filter+` AND (e.source_ref>$4 OR (e.source_ref=$4 AND e.ordinal>$5))
+ FROM note_link_edges e JOIN published_note_sources p ON e.generation_id=$1 AND `+filter+`
+ AND p.publication_name=$3 AND p.source_ref=e.source_ref
+ WHERE (e.source_ref>$4 OR (e.source_ref=$4 AND e.ordinal>$5))
  ORDER BY e.source_ref,e.ordinal LIMIT $6`, page.Generation.ID, request.SourceRef, request.Publication, afterRef, afterOrdinal, request.Limit+1)
 	if err != nil {
 		return err
