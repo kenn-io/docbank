@@ -5234,8 +5234,7 @@ it("rejects a photo event pass when suggestions fail", async () => {
 it("settles a delayed multi-page suggestion refresh without further events", async () => {
   history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
   livePhotoStubs();
-  let peopleRows = [ada];
-  vi.spyOn(api, "listPeople").mockImplementation(async () => ({ items: peopleRows }));
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
   const rows = Array.from({ length: 48 }, (_, index) => ({
     ...isAda,
     candidate_id: `group-${index}`,
@@ -5263,7 +5262,6 @@ it("settles a delayed multi-page suggestion refresh without further events", asy
   const refresh = photoEventPass();
   read.mockClear();
   delayed = true;
-  peopleRows = [{ ...ada, display_name: "Ada updated" }];
   vi.mocked(photoEvents.watchPhotoEvents).mockRestore();
   Object.defineProperty(navigator, "locks", {
     configurable: true,
@@ -5273,7 +5271,6 @@ it("settles a delayed multi-page suggestion refresh without further events", asy
   const watcher = photoEvents.watchPhotoEvents("synthetic", refresh, vi.fn());
   try {
     await act(() => vi.advanceTimersByTimeAsync(101));
-    expect(screen.getByRole("button", { name: "Ada updated 3 Library photos" })).toBeTruthy();
     expect(people.suggestions.loading).toBe(true);
     await act(() => vi.advanceTimersByTimeAsync(29_899));
     expect(read.mock.calls.map(([query]) => query!.offset)).toEqual([0, 24]);

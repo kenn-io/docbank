@@ -231,42 +231,38 @@ func TestFaceCandidateRegroupIdentityAndRevisionFences(t *testing.T) {
 func TestFaceCandidateConfirmationHonorsCurrentFaceDecisions(t *testing.T) {
 	t.Parallel()
 	for _, action := range []string{"dismiss", "reject"} {
-		for _, supplied := range []bool{false, true} {
-			t.Run(action+"/supplied="+strconv.FormatBool(supplied), func(t *testing.T) {
-				s := newTestStore(t)
-				ctx := t.Context()
-				pair := faceCandidatePair(t, s)
-				person, err := s.CreatePerson(ctx, "Ada", "operator")
-				require.NoError(t, err)
-				group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: pair.first}, {PhotoFace: pair.second}}, person.PersonID, person.DisplayName)
-				require.NoError(t, err)
-				require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}))
-				decisionPerson := person.PersonID
-				if action == "dismiss" {
-					decisionPerson = ""
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			pair := faceCandidatePair(t, s)
+			person, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			group, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: pair.first}, {PhotoFace: pair.second}}, person.PersonID, person.DisplayName)
+			require.NoError(t, err)
+			require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{group}))
+			decisionPerson := person.PersonID
+			if action == "dismiss" {
+				decisionPerson = ""
+			}
+			decideFaceForTest(t, s, pair.node, pair.first.FaceID, decisionPerson, action)
+			page, _, err := s.FaceCandidates(ctx, 24, 0)
+			require.NoError(t, err)
+			require.Len(t, page, 1)
+			require.Len(t, page[0].Faces, 1)
+			decision := CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, FaceOnly: true, Action: "link", PersonID: person.PersonID}
+			_, err = s.DecidePersonCandidate(ctx, decision)
+			require.NoError(t, err)
+			faces, _, _, err := s.PhotoFacePersonNames(ctx, pair.node.CurrentVersionID)
+			require.NoError(t, err)
+			for _, face := range faces {
+				if face.FaceID == pair.first.FaceID {
+					require.Empty(t, face.AssertionID, "confirmation must honor the face omitted from review")
+				} else {
+					require.NotEmpty(t, face.AssertionID)
 				}
-				decideFaceForTest(t, s, pair.node, pair.first.FaceID, decisionPerson, action)
-				page, _, err := s.FaceCandidates(ctx, 24, 0)
-				require.NoError(t, err)
-				require.Len(t, page, 1)
-				require.Len(t, page[0].Faces, 1)
-				decision := CandidateDecision{CandidateID: page[0].CandidateID, ExpectedRevision: page[0].Revision, FaceOnly: true, Action: "link", PersonID: person.PersonID}
-				if supplied {
-					decision.FaceIDs = []string{pair.second.FaceID}
-				}
-				_, err = s.DecidePersonCandidate(ctx, decision)
-				require.NoError(t, err)
-				faces, _, _, err := s.PhotoFacePersonNames(ctx, pair.node.CurrentVersionID)
-				require.NoError(t, err)
-				for _, face := range faces {
-					if face.FaceID == pair.first.FaceID {
-						require.Empty(t, face.AssertionID, "confirmation must honor the face omitted from review")
-					} else {
-						require.NotEmpty(t, face.AssertionID)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 

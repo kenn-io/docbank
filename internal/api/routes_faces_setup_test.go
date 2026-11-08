@@ -55,6 +55,7 @@ func TestFaceSetupRoutesRequireReviewedConsent(t *testing.T) {
 		} else {
 			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 			require.Contains(t, body, `"code":"consent_required"`)
+			require.Zero(t, starts.Load(), "refusing HTTP consent must precede runtime startup")
 		}
 	}
 	starts.Store(0)

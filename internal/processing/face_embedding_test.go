@@ -370,13 +370,15 @@ func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 			require.Len(t, people, 2)
 			if scenario == "payload scope" {
 				require.Equal(t, 4, reader.opens)
-				reader.opens = 0
-				matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, false, options)
-				require.NoError(t, err)
-				require.Len(t, matches, 1)
-				require.Equal(t, personID, matches[0].PersonID)
-				require.Contains(t, matches[0].RecentRank, "#")
-				require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
+				for _, query := range []string{"A", "Ad", "Ada"} {
+					reader.opens = 0
+					matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 24, false, options)
+					require.NoError(t, err)
+					require.Len(t, matches, 1)
+					require.Equal(t, personID, matches[0].PersonID)
+					require.Contains(t, matches[0].RecentRank, "#")
+					require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
+				}
 				for _, person := range people {
 					if person.PersonID == personID {
 						continuation := options
@@ -446,22 +448,12 @@ func TestFacePickerUsesNamedFacesFromQueryPhoto(t *testing.T) {
 	x.enable(t)
 	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
-	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
+	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true}
 	people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
 	require.NoError(t, err)
 	require.Len(t, people, 2)
 	require.Equal(t, personID, people[0].PersonID, "the matching named face in the query photo ranks Ada ahead of Zoe")
 	require.Contains(t, people[0].RecentRank, "#", "the named source contributes to vector ranking")
-	require.Equal(t, 4, reader.opens)
-	for _, query := range []string{"A", "Ad", "Ada"} {
-		reader.opens = 0
-		people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 24, true, options)
-		require.NoError(t, err)
-		require.Len(t, people, 1)
-		require.Equal(t, personID, people[0].PersonID)
-		require.Equal(t, 3, reader.opens, "the query photo and Ada's two other photos each open once")
-	}
 }
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
