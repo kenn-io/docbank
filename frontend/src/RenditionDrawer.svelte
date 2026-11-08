@@ -245,6 +245,12 @@
     font-size: var(--font-size-md);
     line-height: 1.65;
   }
+  /* With no text, the document area matches the cards' inset above it. */
+  .rendition-document:has(> .rendition-empty) {
+    min-height: 0;
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-md);
+  }
   .rendition-empty {
     margin: 0;
     color: var(--text-muted);
