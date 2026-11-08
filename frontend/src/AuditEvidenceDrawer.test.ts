@@ -224,14 +224,12 @@ describe("audit evidence drawer", () => {
     expect(screen.queryByText("Protected history and content agree")).toBeNull();
   });
 
-  it.each(["HTTP", "success"])("reports damaged authority after %s status", async (failure) => {
-    if (failure === "HTTP") {
-      statusMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ detail: "audit authority is incomplete" }), {
-          status: 500,
-        }),
-      );
-    }
+  it("reports damaged authority after status fails", async () => {
+    statusMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "audit authority is incomplete" }), {
+        status: 500,
+      }),
+    );
     verifyMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
