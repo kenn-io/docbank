@@ -95,7 +95,20 @@ func (w *limitedOutput) Write(p []byte) (int, error) {
 func commandRunner(ctx context.Context, executable string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executable, args...)
+	// Only these platform managers are used by the driver. Keep executable
+	// selection separate from structured arguments; never invoke a shell.
+	var cmd *exec.Cmd
+	switch executable {
+	case "systemctl":
+		cmd = exec.CommandContext(ctx, "systemctl")
+	case "launchctl":
+		cmd = exec.CommandContext(ctx, "launchctl")
+	case "schtasks":
+		cmd = exec.CommandContext(ctx, "schtasks")
+	default:
+		return nil, fmt.Errorf("%w: unknown launcher manager", ErrManager)
+	}
+	cmd.Args = append(cmd.Args, args...)
 	var out limitedOutput
 	cmd.Stdout = &out
 	cmd.Stderr = &out

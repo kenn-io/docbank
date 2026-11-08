@@ -20,6 +20,12 @@ func TestBrainServiceFailedNotFoundIsUnknown(t *testing.T) {
 	require.ErrorIs(t, err, ErrManager)
 	require.Equal(t, "unknown", status.State)
 }
+
+func TestBrainServiceRejectsUnknownManager(t *testing.T) {
+	output, err := commandRunner(t.Context(), "synthetic-unknown-manager", "ignored")
+	require.ErrorIs(t, err, ErrManager)
+	require.Empty(t, output)
+}
 func TestBrainServiceTaskXMLPreservesActionWhitespace(t *testing.T) {
 	reg, err := Render("windows", renderSpec("windows"))
 	require.NoError(t, err)
