@@ -35,8 +35,8 @@ jobs:
       - name: Exercise audio contracts and lifecycle
         run: >-
           go test -tags fts5 -timeout 20m
-          ./document/docling ./document/media ./internal/processing ./internal/api ./internal/config ./cmd/docbank
-          -run 'DoclingASR|DoclingM4A|MediaTranscript|M4A|Client.*Timeout|ReadExactStopsOnCancellation|Media.*(Capacity|Admission|Consent|Retry)'
+          ./document/docling ./document/media ./internal/processing ./internal/api ./internal/config ./cmd/docbank ./docbank
+          -run 'DoclingASR|DoclingM4A|MediaTranscript|MediaProcessingFreezesSelectedInputAndRevocation|LoomCaptionSearchHonorsExactFence|M4A|Client.*Timeout|ReadExactStopsOnCancellation|Media.*(Capacity|Admission|Consent|Retry)'
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: voice-transcript-contract-cgo-${{ matrix.cgo }}
