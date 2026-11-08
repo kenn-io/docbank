@@ -78,6 +78,9 @@ func (service *Service) searchMediaSources(
 		report.Truncated = true
 	}
 	report.RequestedMode = prepared.requestedMode
+	if prepared.requestedMode == retrieval.ModeHybrid && report.ActualMode == retrieval.ModeLexical {
+		report.Degradations = append(report.Degradations, retrieval.Degradation("semantic_unavailable"))
+	}
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	coverage := plan.coverage()
 	if actual == retrieval.ModeSemantic || actual == retrieval.ModeHybrid {

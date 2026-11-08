@@ -85,3 +85,34 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 		require.Equal(t, "incomplete", report.Coverage.State)
 	}
 }
+
+func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"replace", "hide", "revoke"} {
+		t.Run(action, func(t *testing.T) {
+			f := newMediaQualificationFixture(t)
+			record := f.manifest.Records[0]
+			require.NoError(t, f.control(t.Context(), "arm", ""))
+			type outcome struct {
+				report api.DocumentSearchReport
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
+				done <- outcome{report, err}
+			}()
+			require.NoError(t, f.control(t.Context(), "wait", ""))
+			require.NoError(t, f.control(t.Context(), action, record.ID))
+			require.NoError(t, f.control(t.Context(), "release", ""))
+			result := <-done
+			// A changed vector publication can fail closed before a report exists.
+			// A returned report must drop the affected source after query encoding.
+			require.Empty(t, result.report.Results)
+			if result.err == nil {
+				require.Equal(t, "incomplete", result.report.Coverage.State)
+				require.Zero(t, result.report.Coverage.CompleteDocuments)
+			}
+		})
+	}
+}

@@ -140,7 +140,7 @@ func addCandidateContribution(result *Result, candidate Candidate, lane Lane) {
 		result.rerankExcerpt = cmp.Or(result.rerankExcerpt, candidate.Excerpt)
 	} else {
 		result.SemanticRank = cmp.Or(result.SemanticRank, candidate.Rank)
-		if result.Excerpt == "" {
+		if result.Excerpt == "" && candidate.Document.BuildID != "" {
 			result.Excerpt = candidate.Excerpt
 		}
 		nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"

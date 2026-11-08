@@ -437,6 +437,7 @@ type SearchEvidenceIdentity struct {
 }
 
 type searchCandidateRevalidationJSON struct {
+	BuildID          string                   `json:"build_id,omitempty"`
 	NodeID           int64                    `json:"node_id"`
 	ContentVersionID string                   `json:"version_id"`
 	Evidence         []SearchEvidenceIdentity `json:"evidence"`
