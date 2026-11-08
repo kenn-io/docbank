@@ -32,15 +32,15 @@ func publishedNoteEligibilitySQL(selector *PublishedNoteSelector) (string, []any
 
 func normalizePublishedNoteSelector(selector *PublishedNoteSelector) (*PublishedNoteSelector, error) {
 	if selector == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil is the meaningful unscoped selector.
 	}
 	if selector.Publication != "" {
 		if err := ValidatePushName(selector.Publication); err != nil {
 			return nil, fmt.Errorf("%w: published note selector: %w", ErrInvalidDocumentQuery, err)
 		}
 	}
-	copy := *selector
-	return &copy, nil
+	normalized := *selector
+	return &normalized, nil
 }
 
 // PublishedNotesRevision binds a collection cursor to its database epoch and

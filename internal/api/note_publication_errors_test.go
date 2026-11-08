@@ -11,6 +11,7 @@ import (
 )
 
 func TestNotePublicationUploadErrorsKeepStorageDetailsPrivate(t *testing.T) {
+	t.Parallel()
 	privatePath := "/synthetic/owner-private/archive"
 	err := notePublicationUploadError(errors.New("opening " + privatePath + ": storage failed"))
 	require.Equal(t, 500, err.Status)

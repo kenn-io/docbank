@@ -59,6 +59,7 @@ type NotePublicationCompleteRequest struct {
 // database epoch makes an old process stale even if a restore repeats revisions.
 type noteScanState struct {
 	NotePublicationScan
+
 	Name, Destination, CompletedAt string
 	Sealed                         bool
 }

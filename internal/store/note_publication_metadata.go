@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.kenn.io/kit/packstore"
@@ -50,7 +51,7 @@ func validateNotePublicationRecord(v metadataNotePublication) error {
 		return err
 	}
 	if v.NamespaceRevision <= 0 || (v.Active != 0 && v.Active != 1) {
-		return fmt.Errorf("invalid note publication state")
+		return errors.New("invalid note publication state")
 	}
 	for _, at := range []string{v.LastCompleteAt, v.LastAcceptedAt} {
 		if at != "" {
@@ -65,7 +66,10 @@ func validateNotePublicationRecord(v metadataNotePublication) error {
 func validateNotePolicyFingerprint(value string) error {
 	// Policy is a stable SHA256 digest of the fixed recipe and explicit scope.
 	_, err := packstore.ParseHash(value)
-	return err
+	if err != nil {
+		return fmt.Errorf("invalid note policy fingerprint: %w", err)
+	}
+	return nil
 }
 
 func validatePublishedNoteSourceRecord(v metadataPublishedNoteSource) error {
@@ -99,7 +103,7 @@ func validateNotePublicationMetadata(ctx context.Context, q metadataQuerier) err
 		return err
 	}
 	if invalid != 0 {
-		return fmt.Errorf("published note authority has inconsistent retained bindings")
+		return errors.New("published note authority has inconsistent retained bindings")
 	}
 	return nil
 }
