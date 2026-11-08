@@ -10,19 +10,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func noteOperationID(t testing.TB) string {
-	t.Helper()
+func noteOperationID(tb testing.TB) string {
+	tb.Helper()
 	id, err := newUUIDv4()
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return id
 }
 
-func beginNoteScan(t testing.TB, s *Store) NotePublicationScan {
-	t.Helper()
-	scan, err := s.BeginNotePublicationScan(t.Context(), NotePublicationBeginRequest{
-		Name: "notebook", Destination: "/notes", PolicyFingerprint: fakeHash("ab"), OperationID: noteOperationID(t),
+func beginNoteScan(tb testing.TB, s *Store) NotePublicationScan {
+	tb.Helper()
+	scan, err := s.BeginNotePublicationScan(tb.Context(), NotePublicationBeginRequest{
+		Name: "notebook", Destination: "/notes", PolicyFingerprint: fakeHash("ab"), OperationID: noteOperationID(tb),
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return scan
 }
 

@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func publishedSource(t testing.TB, s *Store, scan NotePublicationScan) NotePublicationSource {
-	t.Helper()
-	page, err := s.NotePublicationSources(t.Context(), NotePublicationSourcesRequest{Name: "notebook", ScanID: scan.ScanID, Limit: 100})
-	require.NoError(t, err)
-	require.Len(t, page.Items, 1)
+func publishedSource(tb testing.TB, s *Store, scan NotePublicationScan) NotePublicationSource {
+	tb.Helper()
+	page, err := s.NotePublicationSources(tb.Context(), NotePublicationSourcesRequest{Name: "notebook", ScanID: scan.ScanID, Limit: 100})
+	require.NoError(tb, err)
+	require.Len(tb, page.Items, 1)
 	return page.Items[0]
 }
 
