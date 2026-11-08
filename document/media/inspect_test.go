@@ -2720,14 +2720,20 @@ func TestInspectPasswordProtectedPDF(t *testing.T) {
 func TestInspectPDFTextOnlyAdmission(t *testing.T) {
 	for _, filter := range []string{"DCTDecode", "JBIG2Decode", "JPXDecode", "indirect JPEG subtype"} {
 		t.Run(filter, func(t *testing.T) {
-			data := mediatest.PDFObjects("opaque image and link", []string{
-				"<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (https://example.org) >> >>",
-				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im 4 0 R >> >> >>",
-				"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /" + filter + " /Length 4 >>\nstream\ndata\nendstream",
-			})
+			var data []byte
 			if filter == "indirect JPEG subtype" {
 				data = mediatest.PDFTextPages([]string{"synthetic invoice"}, true)
+			} else {
+				catalog := "<< /Type /Catalog /Pages 2 0 R >>"
+				if filter == "DCTDecode" {
+					catalog = "<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (https://example.org) >> >>"
+				}
+				data = mediatest.PDFObjects("opaque image", []string{
+					catalog,
+					"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+					"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im 4 0 R >> >> >>",
+					"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /" + filter + " /Length 4 >>\nstream\ndata\nendstream",
+				})
 			}
 			policy := inspectionPolicy(data, "image.pdf", "application/pdf")
 			before, err := media.InspectCapability(bytes.NewReader(data), policy)
