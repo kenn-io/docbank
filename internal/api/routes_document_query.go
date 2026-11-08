@@ -300,13 +300,13 @@ func (service *documentQueryService) ListDocuments(ctx context.Context, input Do
 	if err != nil {
 		return DocumentPage{}, FromStoreError(err)
 	}
-	query.PublishedNotesRevision, err = service.store.PublishedNotesRevision(ctx, query.PublishedNotes)
-	if err != nil {
-		return DocumentPage{}, FromStoreError(err)
-	}
 	var boundary *store.DocumentCatalogPosition
 	traversal := store.DocumentCatalogTraversalNext
 	if input.Cursor != "" {
+		query.PublishedNotesRevision, err = service.store.PublishedNotesRevision(ctx, query.PublishedNotes)
+		if err != nil {
+			return DocumentPage{}, FromStoreError(err)
+		}
 		position, cursorTraversal, decodeErr := service.decodeCursor(input.Cursor, query)
 		if decodeErr != nil {
 			return DocumentPage{}, FromStoreError(decodeErr)

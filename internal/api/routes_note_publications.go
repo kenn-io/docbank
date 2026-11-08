@@ -256,6 +256,9 @@ func notePublicationError(err error) *Error {
 		{store.ErrPublicationOperationMismatch, 409, "publication_operation_mismatch"},
 		{store.ErrPublishedSourceDiverged, 409, "published_source_diverged"},
 		{store.ErrNoteSourceUnavailable, 410, "note_source_unavailable"},
+		{store.ErrExists, 409, "exists"},
+		{store.ErrNotDir, 422, "not_dir"},
+		{store.ErrInvalidName, 422, "validation"},
 		{store.ErrNotFound, 404, "not_found"},
 		{store.ErrInvalidNotePublication, 422, "validation"},
 	} {
@@ -267,6 +270,9 @@ func notePublicationError(err error) *Error {
 }
 
 func notePublicationUploadError(err error) *Error {
+	if errors.Is(err, store.ErrExists) || errors.Is(err, store.ErrNotDir) || errors.Is(err, store.ErrInvalidName) {
+		return notePublicationError(err)
+	}
 	mapped := uploadError(err)
 	if mapped.Status >= http.StatusInternalServerError {
 		return notePublicationError(err)
@@ -332,10 +338,7 @@ func handleNotePublicationUpload(w http.ResponseWriter, r *http.Request, d Deps,
 		commit: func(prepared *ingest.PreparedUpload) error {
 			var err error
 			receipt, err = prepared.CommitPublishedNote(r.Context(), request)
-			if err != nil {
-				return notePublicationError(err)
-			}
-			return nil
+			return err
 		},
 	}) {
 		return
