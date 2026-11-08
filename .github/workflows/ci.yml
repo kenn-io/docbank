@@ -142,10 +142,24 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
+      - name: Restore pinned uv archive
+        id: uv_archive
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .vercel-tools/downloads
+          key: release-uv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/vercel-install-docs.sh') }}
+
       - name: Install pinned documentation tools
         run: |
           kit-retry 3 5 ./scripts/vercel-install-docs.sh
           echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Save pinned uv archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.uv_archive.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .vercel-tools/downloads
+          key: ${{ steps.uv_archive.outputs.cache-primary-key }}
 
       - name: Install browser test dependencies
         run: kit-retry 3 5 npm ci --prefix frontend
@@ -666,8 +680,16 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
         if: matrix.goarch == 'arm64'
 
-      - name: Download ARM64 C compiler
+      - name: Restore pinned ARM64 compiler archive
         if: matrix.goarch == 'arm64'
+        id: llvm_mingw_archive
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/llvm-mingw.zip
+          key: release-llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_SHA256 }}
+
+      - name: Download ARM64 C compiler
+        if: matrix.goarch == 'arm64' && steps.llvm_mingw_archive.outputs.cache-hit != 'true'
         timeout-minutes: 10
         shell: bash
         run: kit-retry 3 30 kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
@@ -687,6 +709,13 @@ jobs:
           $cc = Join-Path $env:RUNNER_TEMP "$env:LLVM_MINGW_NAME\bin\aarch64-w64-mingw32-clang.exe"
           if (-not (Test-Path $cc)) { throw "CC not found at $cc" }
           Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
+
+      - name: Save pinned ARM64 compiler archive
+        if: matrix.goarch == 'arm64' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.llvm_mingw_archive.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/llvm-mingw.zip
+          key: ${{ steps.llvm_mingw_archive.outputs.cache-primary-key }}
 
       - name: Build
         if: matrix.shard == 4
