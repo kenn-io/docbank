@@ -101,6 +101,22 @@ func TestReviewEmptyListCannotInterruptParagraph(t *testing.T) {
 	require.Equal(t, 2, n.Headings[0].Level)
 }
 
+func TestReviewEmptyListIndentAndBlankBoundary(t *testing.T) {
+	for _, source := range []string{"-    \n  # Nested\n", "-\t\n  # Nested\n"} {
+		n, err := Parse(t.Context(), []byte(source))
+		require.NoError(t, err, source)
+		require.Empty(t, n.Headings, source)
+	}
+	for _, source := range []string{"-\n\n  # Root\n", "> -\n>\n>   # Nested in quote\n\n# Root\n"} {
+		n, err := Parse(t.Context(), []byte(source))
+		require.NoError(t, err, source)
+		require.Equal(t, []string{"Root"}, headingTexts(n.Headings), source)
+	}
+	n, err := Parse(t.Context(), []byte("- item\n\n  # Nested\n\n# Root\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"Root"}, headingTexts(n.Headings))
+}
+
 func TestReviewMultilineReferenceLabel(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[use][long label]\n\n[long\nlabel]: target.md\n"))
 	require.NoError(t, err)

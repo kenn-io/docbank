@@ -20,6 +20,7 @@ type blockContainer struct {
 	kind   byte // q quote, l list item
 	marker byte // list delimiter; siblings need not start at 1
 	indent int  // list content indentation relative to its parent
+	empty  bool // list item has not yet acquired content
 }
 
 func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) ([]sourceBlock, error) {
@@ -94,6 +95,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				}
 			} else {
 				if remainingBlank {
+					if c.empty {
+						break
+					}
 					matched++
 					continue
 				}
@@ -121,6 +125,9 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 						content++
 					}
 					virtualIndent += used - c.indent
+					if len(bytes.Trim(raw[content:], " \t")) != 0 {
+						containers[matched].empty = false
+					}
 				} else if interrupt, err := blockInterrupt(ctx, raw[content:], c.marker, b); err != nil {
 					return nil, err
 				} else if paragraph && !interrupt {
@@ -217,7 +224,10 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 					if err != nil {
 						return nil, err
 					}
-					if padding == 0 {
+					if padEnd == len(raw) {
+						c.empty = true
+						padding = 1
+					} else if padding == 0 {
 						padding = 1
 					} else if padding > 4 {
 						if raw[after] == '\t' {
