@@ -73,11 +73,11 @@ func TestProcessingBackfillsRegisterOnceAndPublishPhotoState(t *testing.T) {
 	))
 	registered := map[string]int{}
 	for _, job := range supervisor.Snapshot() {
-		if job.Name == "derive:document-events" || job.Name == "derive:document-people" || job.Name == "derive:photo-quality" || job.Name == "extract:photo-sidecars" {
+		if job.Name == "derive:document-events" || job.Name == "derive:document-people" || job.Name == "derive:notes" || job.Name == "derive:photo-quality" || job.Name == "extract:photo-sidecars" {
 			registered[job.Name]++
 		}
 	}
-	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1, "derive:photo-quality": 1, "extract:photo-sidecars": 1}, registered)
+	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1, "derive:notes": 1, "derive:photo-quality": 1, "extract:photo-sidecars": 1}, registered)
 	emptyQuery, err := query.Parse([]byte(`{}`))
 	require.NoError(t, err)
 	// The safety-net timeout never fires; Settle returns once the lanes are idle.
