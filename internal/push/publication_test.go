@@ -19,6 +19,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
@@ -307,7 +308,7 @@ func TestPublicationIdleIsFreshWithoutUploads(t *testing.T) {
 	require.Zero(t, report.Added+report.Updated)
 	require.NotEmpty(t, report.Publication.Current.LastCompleteAt)
 	require.EqualValues(t, 1, report.Publication.Current.Present)
-	require.True(t, len(events) > 0)
+	require.NotEmpty(t, events)
 	require.NotNil(t, events[len(events)-1].Current)
 	require.NotEmpty(t, events[len(events)-1].Current.LastCompleteAt)
 	p := &publicationPublisher{opts: opts}
@@ -613,7 +614,7 @@ func TestPublicationNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
 				}
 				body, _ := io.ReadAll(r.Body)
 				bodies.Add(int64(len(body)))
-				require.Equal(t, daemonauth.KeyChallengePath, r.URL.Path)
+				assert.Equal(t, daemonauth.KeyChallengePath, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"proof":"`+strings.Repeat("0", 64)+`"}`)
 			}))

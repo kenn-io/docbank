@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,9 +37,7 @@ func discardCommittedPublicationResponse(w http.ResponseWriter, r *http.Request,
 	if recorder.Code >= 200 && recorder.Code < 300 {
 		panic(http.ErrAbortHandler)
 	}
-	for key, values := range recorder.Header() {
-		w.Header()[key] = values
-	}
+	maps.Copy(w.Header(), recorder.Header())
 	w.WriteHeader(recorder.Code)
 	_, _ = w.Write(recorder.Body.Bytes())
 }
@@ -520,11 +519,17 @@ func TestPublicationReplacementNeverRetires(t *testing.T) {
 				}
 				switch kind {
 				case "root":
-					require.NoError(t, os.Rename(root, filepath.Join(parent, "moved")))
-					require.NoError(t, os.Mkdir(root, 0700))
+					// Windows can refuse to rename an open root. That failed
+					// replacement must also prevent inventory completion.
+					if err := os.Rename(root, filepath.Join(parent, "moved")); err != nil {
+						return err
+					}
+					return os.Mkdir(root, 0700)
 				case "file":
-					require.NoError(t, os.Rename(filepath.Join(root, "current.md"), filepath.Join(parent, "old.md")))
-					writePublicationFile(t, root, "current.md")
+					if err := os.Rename(filepath.Join(root, "current.md"), filepath.Join(parent, "old.md")); err != nil {
+						return err
+					}
+					return os.WriteFile(filepath.Join(root, "current.md"), []byte("# Synthetic note\n"), 0600)
 				case "cancel":
 					cancel()
 				}
