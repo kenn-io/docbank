@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -85,7 +86,11 @@ func (w *limitedOutput) Write(p []byte) (int, error) {
 	if len(p) > maxDefinition-w.Len() {
 		return 0, ErrOutputLimit
 	}
-	return w.Buffer.Write(p)
+	n, err := w.Buffer.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("buffering launcher manager output: %w", err)
+	}
+	return n, nil
 }
 func commandRunner(ctx context.Context, executable string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -177,12 +182,12 @@ func (d *serviceDriver) failed(ctx context.Context, s Spec, code string, cause e
 func lockService(ctx context.Context, s Spec) (func(), error) {
 	dir := filepath.Join(s.ConfigRoot, "services")
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("preparing launcher lock directory: %w", err)
 	}
 	lock := flock.New(filepath.Join(dir, "launcher.lock"))
 	ok, err := lock.TryLockContext(ctx, 25*time.Millisecond)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("acquiring launcher lock: %w", err)
 	}
 	if !ok {
 		return nil, ctx.Err()
@@ -201,7 +206,7 @@ func (d *serviceDriver) writeDefinition(name string, data []byte) error {
 		return ErrCollision
 	}
 	if err := safefileio.EnsurePrivateDir(filepath.Dir(name)); err != nil {
-		return err
+		return fmt.Errorf("preparing launcher definition directory: %w", err)
 	}
 	return d.write(name, data)
 }
