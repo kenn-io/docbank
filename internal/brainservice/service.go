@@ -52,15 +52,25 @@ type OperationError struct {
 }
 
 func (e *OperationError) Error() string {
-	if e.Status.State == "unknown" || e.Status.ProblemCode == "registration_unconfirmed" || e.Status.ProblemCode == "removal_unconfirmed" {
-		return "publisher launcher outcome could not be confirmed"
-	}
 	switch e.Status.ProblemCode {
 	case "receipt_write_failed", "definition_write_failed", "registration_failed":
+		if e.Status.State == "unknown" || e.Status.Installed {
+			return "publisher installation could not be confirmed"
+		}
 		return "publisher installation failed"
+	case "registration_unconfirmed":
+		return "publisher installation could not be confirmed"
 	case "stop_failed", "delete_failed", "definition_remove_failed", "reload_failed", "receipt_remove_failed":
+		if e.Status.State == "unknown" {
+			return "publisher removal could not be confirmed"
+		}
 		return "publisher removal failed"
+	case "removal_unconfirmed":
+		return "publisher removal could not be confirmed"
 	default:
+		if e.Status.State == "unknown" {
+			return "publisher launcher outcome could not be confirmed"
+		}
 		return "publisher launcher operation failed"
 	}
 }

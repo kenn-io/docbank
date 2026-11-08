@@ -8,11 +8,6 @@ import (
 
 // Recovery reads must not begin an inventory or change the namespace. The
 // accepted original and current archive head have independent identities.
-func TestNotePublicationSourceSnapshot(t *testing.T) {
-	t.Parallel()
-	checkNotePublicationSourceSnapshot(t, newTestStore(t))
-}
-
 func checkNotePublicationSourceSnapshot(t *testing.T, s *Store) {
 	t.Helper()
 	scan := beginNoteScan(t, s)

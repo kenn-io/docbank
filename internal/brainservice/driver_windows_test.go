@@ -47,5 +47,4 @@ func TestBrainServiceNativeDriver(t *testing.T) {
 		fmt.Fprintf(&want, "%q\n", arg)
 	}
 	require.Equal(t, want.String(), string(out))
-	TestBrainServiceOwnedLifecycle(t) // injected taskState; never calls COM
 }

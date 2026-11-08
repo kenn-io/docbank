@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -247,31 +246,6 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
-}
-
-func nativeArgvChild(t *testing.T) {
-	t.Helper()
-	spec := renderSpec(runtime.GOOS)
-	source, err := os.Executable()
-	require.NoError(t, err)
-	exe := filepath.Join(t.TempDir(), "Docbank café $&%", "docbank")
-	require.NoError(t, os.MkdirAll(filepath.Dir(exe), 0o700))
-	binary, err := os.ReadFile(source)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(exe, binary, 0o700))
-	spec.Executable = exe
-	reg, err := Render(runtime.GOOS, spec)
-	require.NoError(t, err)
-	args := decodedArgv(t, runtime.GOOS, reg.Definition)
-	cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
-	cmd.Env = append(os.Environ(), "DOCBANK_TEST_BRAIN_ARGV_CHILD=1")
-	out, err := cmd.Output()
-	require.NoError(t, err)
-	var expected strings.Builder
-	for _, arg := range []string{exe, "brain", "--config-root", spec.ConfigRoot, "run", spec.Name} {
-		fmt.Fprintf(&expected, "%q\n", arg)
-	}
-	require.Equal(t, expected.String(), string(out))
 }
 
 func TestBrainServiceSystemdLiteralExecutable(t *testing.T) {
