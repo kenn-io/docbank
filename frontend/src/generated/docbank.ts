@@ -4228,10 +4228,15 @@ export interface MediaTranscriptUnit {
 }
 
 export interface MediaTranscriptEvidence {
+  artifact_sha256?: string;
   build_id: string;
   completeness: string;
+  evidence_checksum: string;
   has_omissions: boolean;
+  language?: string;
   origin: string;
+  profile_fingerprint: string;
+  speech_state: string;
   supplied_input_id?: string;
   truncated: boolean;
   units: MediaTranscriptUnit[];
@@ -4241,10 +4246,13 @@ export interface MediaTranscript {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   content_version_id: string;
+  contract_version: string;
   coverage_state: string;
   evidence_state: string;
+  node_id?: number;
   operation_state: string;
   source_id: string;
+  source_sha256?: string;
   source_version_id: string;
   transcript?: MediaTranscriptEvidence;
   vault_uid: string;
@@ -9645,12 +9653,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaArtifactMetadata;
 };
 
@@ -10113,7 +10121,7 @@ export type UploadPushFileHeaders = {
 };
 
 export type UploadPushFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type ReadRenditionTextParams = {
@@ -10372,7 +10380,7 @@ export type UploadFileHeaders = {
 };
 
 export type UploadFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type GetContentVersionBytesHeaders = {
@@ -19353,7 +19361,7 @@ export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
     params: UploadPushFileParams,
     headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPushFileBody.file);
+formData.append(`file`, uploadPushFileBody.file instanceof Blob ? uploadPushFileBody.file : new Blob([uploadPushFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -21793,7 +21801,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file, params.name);
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
