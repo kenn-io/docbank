@@ -172,9 +172,19 @@ it("centers matches by scrolling only their text container", async () => {
   ) {
     return { top: this.tagName === "MARK" ? 1100 : 100 } as DOMRect;
   });
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(40);
+  vi.spyOn(HTMLElement.prototype, "scrollTop", "get").mockReturnValue(70);
   render(VerifiedPreview, props);
   await screen.findByText("Search match 1 of 2");
-  await waitFor(() => expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledWith({ top: 1000 }));
+  const text = screen.getByLabelText("Verified text of synthetic.pdf");
+  const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
+  await waitFor(() => {
+    expect(scrollTo).toHaveBeenCalledWith({ top: 890 });
+    const calls = scrollTo.mock.calls as unknown as [ScrollToOptions][];
+    const callIndex = calls.findIndex(([options]) => options?.top === 890);
+    expect(scrollTo.mock.contexts[callIndex]).toBe(text);
+  });
 });
 
 it("asks for a processing profile when the text selection is ambiguous", async () => {

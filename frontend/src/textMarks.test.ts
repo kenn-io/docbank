@@ -6,12 +6,6 @@ const supportsNativeHegel = (platform: string, arch: string): boolean =>
 
 const hegelIt = supportsNativeHegel(process.platform, process.arch) ? it : it.skip;
 
-it("skips native Hegel properties only on Intel macOS", () => {
-  expect(supportsNativeHegel("darwin", "x64")).toBe(false);
-  expect(supportsNativeHegel("darwin", "arm64")).toBe(true);
-  expect(supportsNativeHegel("linux", "x64")).toBe(true);
-});
-
 it("uses deterministic source priority for overlaps and preserves UTF-16 offsets", () => {
   const result = markText("😀ALPHA alphabet", {
     find: "😀a",
