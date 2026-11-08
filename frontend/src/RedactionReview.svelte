@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
   import RedactionNumbering from "./RedactionNumbering.svelte";
   import type { NumberingInputs } from "./redactionNumbering.js";
   import OriginalPreview from "./OriginalPreview.svelte";
@@ -654,8 +654,10 @@
               </section>{/if}
           </aside>
         </div>
-        {#if review || displayedNumberingInputs}<details>
-            <summary>Private review files</summary>
+        {#if review || displayedNumberingInputs}<Disclosure
+            variant="plain"
+            title="Private review files"
+          >
             <p>
               Keep these for offline verification. Preparation contains unredacted evidence; do not
               include it with the delivery.
@@ -670,7 +672,7 @@
                   Save all three before numbering to finish through the CLI if this tab closes.
                 </p>{/if}
             </div>
-          </details>{/if}
+          </Disclosure>{/if}
         {#if displayedNumberingInputs}{#key displayedNumberingInputs.review.sha256}<RedactionNumbering
               {session}
               inputs={displayedNumberingInputs}
@@ -906,14 +908,6 @@
     padding: var(--space-4);
     background: var(--bg-inset);
     font-size: var(--font-size-sm);
-  }
-  details {
-    font-size: var(--font-size-sm);
-    border-top: 1px solid var(--border-muted);
-    padding-top: var(--space-3);
-  }
-  details p {
-    margin-block: var(--space-3);
   }
   @media (max-width: 760px) {
     .review-workspace.active {
