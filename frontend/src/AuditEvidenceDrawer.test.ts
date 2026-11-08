@@ -32,12 +32,12 @@ function statusResponse(enabled = true): Response {
   );
 }
 
-let statusMock: ReturnType<typeof vi.fn>;
-let verifyMock: ReturnType<typeof vi.fn>;
+let statusMock: ReturnType<typeof vi.fn<typeof fetch>>;
+let verifyMock: ReturnType<typeof vi.fn<typeof fetch>>;
 
 beforeEach(() => {
-  statusMock = vi.fn(() => Promise.resolve(statusResponse()));
-  verifyMock = vi.fn();
+  statusMock = vi.fn<typeof fetch>(() => Promise.resolve(statusResponse()));
+  verifyMock = vi.fn<typeof fetch>();
   vi.spyOn(globalThis, "fetch").mockImplementation((url, options) => {
     if (url === "/api/v1/audit/status") return statusMock(url, options);
     if (url === "/api/v1/audit/verify") return verifyMock(url, options);
@@ -269,7 +269,7 @@ describe("audit evidence drawer", () => {
     });
     await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(1));
     expect(verifyMock).not.toHaveBeenCalled();
-    const signal = statusMock.mock.calls[0]![1].signal as AbortSignal;
+    const signal = statusMock.mock.calls[0]![1]!.signal as AbortSignal;
     await unmount();
     expect(signal.aborted).toBe(true);
     expect(verifyMock).not.toHaveBeenCalled();
