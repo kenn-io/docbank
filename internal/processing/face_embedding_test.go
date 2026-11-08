@@ -330,112 +330,147 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 
+func TestFacePickerReadsOneSharedPhoto(t *testing.T) {
+	t.Parallel()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	ctx := t.Context()
+	named := x.inputs[0]
+	_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
+	require.NoError(t, err)
+	x.enable(t)
+	_, err = x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
+	options := store.PeopleSearchOptions{FaceID: x.inputs[1].FaceID, FaceReader: reader, RecentFirst: true}
+	for _, query := range []string{"", "A", "Ad", "Ada"} {
+		reader.opens = 0
+		people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, false, options)
+		require.NoError(t, err)
+		require.Len(t, people, 1)
+		require.Equal(t, "Ada", people[0].DisplayName)
+		require.Equal(t, 1, reader.opens, "each query opens the shared photo only once")
+	}
+}
+
+func newNamedFacePickerFixture(t *testing.T) (*faceEmbeddingFixture, string) {
+	t.Helper()
+	ctx := t.Context()
+	x := newFaceEmbeddingFixture(t, false)
+	x.matchAll = true
+	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	personID := person.PersonID
+	zoe, err := x.f.catalog.CreatePerson(ctx, "Zoe", "operator")
+	require.NoError(t, err)
+	for i, id := range []string{personID, personID, zoe.PersonID} {
+		named := x.f.addPhoto(t, fmt.Sprintf("named-%d.jpg", i), 701+i)
+		_, _, err = x.f.catalog.CreatePhotoFace(ctx, named, uuid.New().String(), document.FaceBox{X: float64(i) / 10, Width: .2, Height: .2}, id)
+		require.NoError(t, err)
+	}
+	unrelated := x.f.addPhoto(t, "unnamed.jpg", 704)
+	_, _, err = x.f.catalog.CreatePhotoFace(ctx, unrelated, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	return x, personID
+}
+
 func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"same photo", "separate indexed and late named", "named source"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			x := newFaceEmbeddingFixture(t, false)
-			x.matchAll = true
-			ctx := t.Context()
-			face, personID, expectedReads, expectedPeople := x.inputs[1], "", 1, 1
-			if mode != "same photo" {
-				person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
-				require.NoError(t, err)
-				personID = person.PersonID
-				zoe, err := x.f.catalog.CreatePerson(ctx, "Zoe", "operator")
-				require.NoError(t, err)
-				for i, id := range []string{personID, personID, zoe.PersonID} {
-					named := x.f.addPhoto(t, fmt.Sprintf("named-%d.jpg", i), 701+i)
-					_, _, err = x.f.catalog.CreatePhotoFace(ctx, named, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, id)
-					require.NoError(t, err)
-				}
-				if mode == "named source" {
-					_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[1].ContentVersionID, store.PhotoFaceDecisionRequest{Action: "name", FaceID: x.inputs[1].FaceID, Revision: 1, PersonID: zoe.PersonID})
-					require.NoError(t, err)
-				}
-				unrelated := x.f.addPhoto(t, "unnamed.jpg", 704)
-				_, _, err = x.f.catalog.CreatePhotoFace(ctx, unrelated, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
-				require.NoError(t, err)
-				face, expectedReads, expectedPeople = x.inputs[0], 4, 2
-			} else {
-				named := x.inputs[0]
-				_, err := x.f.catalog.DecidePhotoFace(ctx, named.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: named.FaceID, Revision: named.Revision, Action: "name", PersonName: "Ada"})
-				require.NoError(t, err)
+	x, personID := newNamedFacePickerFixture(t)
+	ctx := t.Context()
+	x.enable(t)
+	count, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 5, count)
+	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
+	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
+	var people []store.PersonSearchResult
+	t.Run("payload scope", func(t *testing.T) {
+		people, _, err = x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+		require.NoError(t, err)
+		require.Len(t, people, 2)
+		require.Equal(t, 4, reader.opens)
+		reader.opens = 0
+		matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, false, options)
+		require.NoError(t, err)
+		require.Len(t, matches, 1)
+		require.Equal(t, personID, matches[0].PersonID)
+		require.Contains(t, matches[0].RecentRank, "#")
+		for _, person := range people {
+			if person.PersonID == personID {
+				before, _, _ := strings.Cut(person.RecentRank, "#")
+				after, _, _ := strings.Cut(matches[0].RecentRank, "#")
+				require.Equal(t, before, after)
 			}
-			x.enable(t)
-			count, err := x.worker.ScanOnce(ctx)
-			require.NoError(t, err)
-			if mode != "same photo" {
-				require.Equal(t, 5, count)
-			}
-			reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
-			options := store.PeopleSearchOptions{FaceID: face.FaceID, FaceReader: reader, RecentFirst: true}
-			visibleOnly := mode == "named source"
-			people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
-			require.NoError(t, err)
-			require.Len(t, people, expectedPeople)
-			require.Equal(t, expectedReads, reader.opens)
-			if mode == "same photo" {
-				for _, query := range []string{"A", "Ad", "Ada"} {
-					people, _, err := x.f.catalog.PeopleByDisplayName(ctx, query, "", "", 100, visibleOnly, options)
-					require.NoError(t, err)
-					require.Len(t, people, 1)
-				}
-				require.Equal(t, 4, reader.opens)
-				return
-			}
-			if mode == "named source" {
-				return
-			}
-			reader.opens = 0
-			matches, _, err := x.f.catalog.PeopleByDisplayName(ctx, "Ada", "", "", 24, visibleOnly, options)
-			require.NoError(t, err)
-			require.Len(t, matches, 1)
-			require.Equal(t, personID, matches[0].PersonID)
-			require.Contains(t, matches[0].RecentRank, "#")
-			for _, person := range people {
-				if person.PersonID == personID {
-					before, _, _ := strings.Cut(person.RecentRank, "#")
-					after, _, _ := strings.Cut(matches[0].RecentRank, "#")
-					require.Equal(t, before, after)
-				}
-			}
-			require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
-			index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
-				Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
-				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
-				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-					return x.f.catalog.ReadVectorIndexVectorSet(ctx, x.f.blobs, member)
-				},
-			})
-			require.NoError(t, err)
-			spaces, err := x.f.catalog.ListVectorIndexSpaces(ctx)
-			require.NoError(t, err)
-			_, err = index.Rebuild(ctx, spaces[0])
-			require.NoError(t, err)
-			reader.opens = 0
-			indexed, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
-			require.NoError(t, err)
-			require.Equal(t, people, indexed, "the index preserves exact ordering and continuation")
-			require.Zero(t, reader.opens, "all current rows are in the built index")
-			late := x.f.addPhoto(t, "late-named.jpg", 705)
-			lateFace, _, err := x.f.catalog.CreatePhotoFace(ctx, late, uuid.New().String(), document.FaceBox{Y: .8, Width: .2, Height: .2}, "")
-			require.NoError(t, err)
-			x.worker.reconcileAt = time.Time{}
-			_, err = x.worker.ScanOnce(ctx)
-			require.NoError(t, err)
-			newPerson, err := x.f.catalog.CreatePerson(ctx, "Aaron", "operator")
-			require.NoError(t, err)
-			_, err = x.f.catalog.DecidePhotoFace(ctx, late, store.PhotoFaceDecisionRequest{Action: "name", FaceID: lateFace.FaceID, Revision: 1, PersonID: newPerson.PersonID})
-			require.NoError(t, err)
-			reader.opens = 0
-			current, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, visibleOnly, options)
-			require.NoError(t, err)
-			require.Equal(t, newPerson.PersonID, current[0].PersonID, "the unindexed named face contributes immediately")
-			require.Equal(t, 1, reader.opens, "only the photo missing from the index reads its file")
+		}
+		require.Equal(t, 3, reader.opens, "read the source and both Ada photos, leaving Zoe's separate photo unopened")
+	})
+	t.Run("indexed exactness", func(t *testing.T) {
+		index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+			Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
+			BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+				return x.f.catalog.ReadVectorIndexVectorSet(ctx, x.f.blobs, member)
+			},
 		})
+		require.NoError(t, err)
+		spaces, err := x.f.catalog.ListVectorIndexSpaces(ctx)
+		require.NoError(t, err)
+		_, err = index.Rebuild(ctx, spaces[0])
+		require.NoError(t, err)
+		reader.opens = 0
+		indexed, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+		require.NoError(t, err)
+		require.Equal(t, people, indexed, "the index preserves exact ordering and continuation")
+		require.Zero(t, reader.opens, "all current rows are in the built index")
+	})
+	t.Run("late named freshness", func(t *testing.T) {
+		late := x.f.addPhoto(t, "late-named.jpg", 705)
+		lateFace, _, err := x.f.catalog.CreatePhotoFace(ctx, late, uuid.New().String(), document.FaceBox{Y: .8, Width: .2, Height: .2}, "")
+		require.NoError(t, err)
+		x.worker.reconcileAt = time.Time{}
+		_, err = x.worker.ScanOnce(ctx)
+		require.NoError(t, err)
+		newPerson, err := x.f.catalog.CreatePerson(ctx, "Aaron", "operator")
+		require.NoError(t, err)
+		_, err = x.f.catalog.DecidePhotoFace(ctx, late, store.PhotoFaceDecisionRequest{Action: "name", FaceID: lateFace.FaceID, Revision: 1, PersonID: newPerson.PersonID})
+		require.NoError(t, err)
+		reader.opens = 0
+		current, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
+		require.NoError(t, err)
+		require.Equal(t, newPerson.PersonID, current[0].PersonID, "the unindexed named face contributes immediately")
+		require.Equal(t, 1, reader.opens, "only the photo missing from the index reads its file")
+	})
+}
+
+func TestFacePickerUsesNamedFacesFromQueryPhoto(t *testing.T) {
+	t.Parallel()
+	x, personID := newNamedFacePickerFixture(t)
+	ctx := t.Context()
+	_, err := x.f.catalog.DecidePhotoFace(ctx, x.inputs[1].ContentVersionID, store.PhotoFaceDecisionRequest{Action: "name", FaceID: x.inputs[1].FaceID, Revision: 1, PersonID: personID})
+	require.NoError(t, err)
+	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+		values := make([]float32, 512)
+		if box.Y > 0 {
+			values[0] = 1
+		} else if box.X > .15 {
+			values[0], values[1] = .28, .96
+		} else {
+			values[1] = 1
+		}
+		return values
 	}
+	x.enable(t)
+	_, err = x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	reader := &facePayloadReads{RenditionBlobReader: x.f.blobs}
+	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: reader, RecentFirst: true}
+	people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
+	require.NoError(t, err)
+	require.Len(t, people, 2)
+	require.Equal(t, personID, people[0].PersonID, "the matching named face in the query photo ranks Ada ahead of Zoe")
+	require.Contains(t, people[0].RecentRank, "#", "the named source contributes to vector ranking")
+	require.Equal(t, 4, reader.opens)
 }
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
@@ -562,14 +597,11 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, damage string
-		fails        bool
 	}{
-		{"trashed photo", `UPDATE nodes SET trashed_at='2026-01-02T00:00:00Z' WHERE kind='file'`, false},
-		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`, false},
-		{"changed box", `UPDATE photo_faces SET width=width+0.01`, false},
-		{"replaced preview", "", false},
-		{"future vector set", `UPDATE embedding_vector_sets SET contract_version='review-future/v99'`, true},
-		{"future vector space", `UPDATE embedding_vector_spaces SET contract_version='review-future/v99'`, true},
+		{"trashed photo", ""},
+		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`},
+		{"changed box", `UPDATE photo_faces SET width=width+0.01`},
+		{"replaced preview", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -581,16 +613,20 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			before, err := x.f.catalog.FaceMatchingInputs(ctx)
 			require.NoError(t, err)
 			require.Len(t, before.Sets, 1)
+			set := before.Sets[0].Set
+			head := store.EmbeddingHeadRecord{
+				FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},
+				SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: set.ProcessingProfileFingerprint, PublishedAt: set.CreatedAt,
+			}
+			require.NoError(t, x.f.catalog.PublishEmbeddingHead(ctx, head), "the publication token is valid before the source changes")
 			db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
-			if tc.fails {
-				// Readers also validate retained authority, independently of writer triggers.
-				table := strings.Fields(tc.damage)[1]
-				_, err = db.ExecContext(ctx, "DROP TRIGGER "+table+"_immutable_update")
+			switch tc.name {
+			case "trashed photo":
+				_, _, err = x.f.catalog.Trash(ctx, x.f.node.ID, store.UnconditionalRev)
 				require.NoError(t, err)
-			}
-			if tc.name == "replaced preview" {
+			case "replaced preview":
 				// Regenerate the purged preview while retaining the earlier face vectors.
 				_, err = db.ExecContext(ctx, `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`)
 				require.NoError(t, err)
@@ -604,7 +640,7 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 				require.NoError(t, err)
 				_, err = x.f.catalog.PublishVisualPreviewGeneration(ctx, x.f.node.CurrentVersionID, canonical, new(processingBlobPhysical(t, written)))
 				require.NoError(t, err)
-			} else {
+			default:
 				for statement := range strings.SplitSeq(tc.damage, ";") {
 					_, err = db.ExecContext(ctx, statement)
 					require.NoError(t, err)
@@ -614,24 +650,42 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 			after, err := reopened.FaceMatchingInputs(ctx)
-			if tc.fails {
-				require.Error(t, err, "corrupt stored authority must remain an error")
-				if tc.name == "future vector set" {
-					_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
-					require.Error(t, err, "ranked search must reject unsupported authority")
-					require.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
-				}
-			} else {
-				require.NoError(t, err)
-				assert.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
-				require.ErrorIs(t, reopened.ReplaceFaceSuggestions(ctx, before, nil, false), store.ErrStaleRevision, "the captured suggestion pass must fence the same changed authority")
-				set := before.Sets[0].Set
-				err = reopened.PublishEmbeddingHead(ctx, store.EmbeddingHeadRecord{
-					FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},
-					SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: set.ProcessingProfileFingerprint, PublishedAt: set.CreatedAt,
-				})
-				require.ErrorIs(t, err, store.ErrEmbeddingAuthorityStale, "publication must fence the same stale face or preview evidence")
-			}
+			require.NoError(t, err)
+			assert.Empty(t, after.Sets, "fenced or missing authority must stop contributing")
+			require.ErrorIs(t, reopened.ReplaceFaceSuggestions(ctx, before, nil, false), store.ErrStaleRevision, "the captured suggestion pass must fence the same changed authority")
+			err = reopened.PublishEmbeddingHead(ctx, head)
+			require.ErrorIs(t, err, store.ErrEmbeddingAuthorityStale, "publication must fence the same stale face or preview evidence")
+		})
+	}
+}
+
+// A catalog retained by a newer binary can contain authority this reader does not support.
+func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
+	t.Parallel()
+	for _, table := range []string{"embedding_vector_sets", "embedding_vector_spaces"} {
+		t.Run(table, func(t *testing.T) {
+			t.Parallel()
+			x := newFaceEmbeddingFixture(t, false)
+			ctx := t.Context()
+			x.enable(t)
+			_, err := x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			// Model a downgrade fixture without allowing immutable authority writes in production.
+			_, err = db.ExecContext(ctx, "DROP TRIGGER "+table+"_immutable_update")
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, "UPDATE "+table+" SET contract_version='review-future/v99'")
+			require.NoError(t, err)
+			reopened, err := store.Open(ctx, x.f.databasePath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+			_, err = reopened.FaceMatchingInputs(ctx)
+			require.Error(t, err, "unsupported stored authority must remain an error")
+			_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
+			require.Error(t, err, "ranked search must reject unsupported authority")
+			require.Error(t, x.service.rebuildFaceSuggestions(ctx), "suggestion generation must reject unsupported authority")
 		})
 	}
 }

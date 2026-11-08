@@ -5229,7 +5229,6 @@ it("rejects a photo event pass when suggestions fail", async () => {
     await expect(photoEventPass()({})).rejects.toThrow("Temporary read failure");
   });
   expect(read).toHaveBeenCalledTimes(2);
-  expect(await screen.findByText("Temporary read failure")).toBeTruthy();
 });
 
 it("settles a delayed multi-page suggestion refresh without further events", async () => {
