@@ -205,44 +205,44 @@ func (f projectorFixture) accept(tb testing.TB, scan store.NotePublicationScan, 
 	return accepted.Source.Identity
 }
 
-func (f projectorFixture) complete(t testing.TB, scan store.NotePublicationScan) {
-	t.Helper()
-	_, err := f.catalog.CompleteNotePublicationScan(t.Context(), store.NotePublicationCompleteRequest{
+func (f projectorFixture) complete(tb testing.TB, scan store.NotePublicationScan) {
+	tb.Helper()
+	_, err := f.catalog.CompleteNotePublicationScan(tb.Context(), store.NotePublicationCompleteRequest{
 		Name: "notebook", ScanID: scan.ScanID, PolicyFingerprint: scan.PolicyFingerprint, InventoryComplete: true,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 }
 
-func (f projectorFixture) target(t testing.TB) store.NoteIndexTarget {
-	t.Helper()
-	status, err := f.catalog.NotePublicationStatus(t.Context(), "notebook")
-	require.NoError(t, err)
+func (f projectorFixture) target(tb testing.TB) store.NoteIndexTarget {
+	tb.Helper()
+	status, err := f.catalog.NotePublicationStatus(tb.Context(), "notebook")
+	require.NoError(tb, err)
 	return store.NoteIndexTarget{Name: status.Name, DatabaseEpoch: status.DatabaseEpoch, NamespaceRevision: status.NamespaceRevision}
 }
 
-func (f projectorFixture) edges(t testing.TB, ref string) []store.NoteIndexEdge {
-	t.Helper()
-	rows, err := f.db.QueryContext(t.Context(), `SELECT e.edge_json FROM note_link_edges e
+func (f projectorFixture) edges(tb testing.TB, ref string) []store.NoteIndexEdge {
+	tb.Helper()
+	rows, err := f.db.QueryContext(tb.Context(), `SELECT e.edge_json FROM note_link_edges e
  JOIN note_index_heads h ON h.generation_id=e.generation_id
  WHERE h.publication_name='notebook' AND e.source_ref=$1 ORDER BY e.ordinal`, ref)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
+	require.NoError(tb, err)
+	defer func() { require.NoError(tb, rows.Close()) }()
 	var edges []store.NoteIndexEdge
 	for rows.Next() {
 		var data []byte
-		require.NoError(t, rows.Scan(&data))
+		require.NoError(tb, rows.Scan(&data))
 		var edge store.NoteIndexEdge
-		require.NoError(t, json.Unmarshal(data, &edge))
+		require.NoError(tb, json.Unmarshal(data, &edge))
 		edges = append(edges, edge)
 	}
-	require.NoError(t, rows.Err())
+	require.NoError(tb, rows.Err())
 	return edges
 }
 
-func (f projectorFixture) currentHead(t testing.TB) string {
-	t.Helper()
+func (f projectorFixture) currentHead(tb testing.TB) string {
+	tb.Helper()
 	var id string
-	err := f.db.QueryRowContext(t.Context(), `SELECT h.generation_id FROM note_index_heads h
+	err := f.db.QueryRowContext(tb.Context(), `SELECT h.generation_id FROM note_index_heads h
  JOIN note_index_generations g ON g.generation_id=h.generation_id
  JOIN note_publications p ON p.name=h.publication_name AND p.namespace_revision=g.namespace_revision
  JOIN note_publication_state s ON s.singleton=1 AND s.database_epoch=g.database_epoch
@@ -250,7 +250,7 @@ func (f projectorFixture) currentHead(t testing.TB) string {
 	if err == sql.ErrNoRows {
 		return ""
 	}
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return id
 }
 
@@ -413,18 +413,18 @@ func TestNoteProjectorLimitAndMissingBytes(t *testing.T) {
 	})
 }
 
-func (f projectorFixture) seedParse(t testing.TB, id store.PublishedNoteIdentity, body string) store.NoteParseRecord {
-	t.Helper()
+func (f projectorFixture) seedParse(tb testing.TB, id store.PublishedNoteIdentity, body string) store.NoteParseRecord {
+	tb.Helper()
 	// Parser output is only the durable precondition of an interrupted attempt.
 	// Expected graph edges below are authored independently.
-	note, err := notemarkdown.Parse(t.Context(), []byte(body))
-	require.NoError(t, err)
-	data, err := notemarkdown.CanonicalArtifact(t.Context(), note)
-	require.NoError(t, err)
+	note, err := notemarkdown.Parse(tb.Context(), []byte(body))
+	require.NoError(tb, err)
+	data, err := notemarkdown.CanonicalArtifact(tb.Context(), note)
+	require.NoError(tb, err)
 	sum := sha256.Sum256(data)
 	record := store.NoteParseRecord{ContentVersionID: id.ContentVersionID, Hash: id.Hash, Size: id.Size,
 		Recipe: notemarkdown.Recipe, State: "ready", Checksum: hex.EncodeToString(sum[:]), Artifact: data}
-	require.NoError(t, f.catalog.RecordNoteParse(t.Context(), record))
+	require.NoError(tb, f.catalog.RecordNoteParse(tb.Context(), record))
 	return record
 }
 
