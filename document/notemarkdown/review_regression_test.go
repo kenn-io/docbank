@@ -262,3 +262,25 @@ func TestReviewDefinitionOnlySetext(t *testing.T) {
 	require.Len(t, n.Headings, 1)
 	require.Equal(t, "===", n.Headings[0].Text)
 }
+
+func TestReviewContainerMultilineDefinitionsBeforeBlocks(t *testing.T) {
+	src := "> [long\n> label]: note.md\n> <span>\n> [hidden](ghost.md)\n\n[use][long label]\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}
+
+func TestReviewInvalidFenceCannotInterruptContainer(t *testing.T) {
+	src := "> [link\n```bad`info\n> label](note.md)\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+}
+
+func TestReviewBlockScalarContentTab(t *testing.T) {
+	src := "---\ntitle: Good\nunknown: |-\n  \tcontent\n---\n"
+	n, err := Parse(t.Context(), []byte(src))
+	require.NoError(t, err)
+	require.Equal(t, "valid", n.FrontmatterState)
+	require.Equal(t, "Good", n.Metadata.Title)
+}

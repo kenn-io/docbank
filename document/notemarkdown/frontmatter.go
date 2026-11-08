@@ -124,9 +124,6 @@ func parseYAML(ctx context.Context, src []byte, b *budget) (yamlValue, error) {
 		}
 		raw = strings.TrimSuffix(raw, "\r")
 		indent := len(raw) - len(strings.TrimLeft(raw, " "))
-		if strings.HasPrefix(raw[indent:], "\t") {
-			return yamlValue{}, errYAML
-		}
 		p.lines = append(p.lines, yamlLine{raw, indent})
 	}
 	p.skipBlank()
@@ -198,6 +195,9 @@ func (p *yamlParser) block(indent, depth int) (yamlValue, error) {
 		}
 		line := p.lines[p.pos]
 		if line.indent != indent {
+			return yamlValue{}, errYAML
+		}
+		if strings.HasPrefix(line.text[indent:], "\t") {
 			return yamlValue{}, errYAML
 		}
 		text := line.text[indent:]

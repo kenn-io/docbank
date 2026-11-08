@@ -37,7 +37,6 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			return nil, err
 		}
 		raw := original[line.Start:line.End]
-		blank := len(bytes.Trim(raw, " \t")) == 0
 		content := 0
 		// A partially consumed tab can leave spaces before the next byte.
 		virtualIndent := 0
@@ -116,7 +115,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				htmlEnd = ""
 			}
 		}
-		blank = len(bytes.Trim(raw[content:], " \t")) == 0
+		blank := len(bytes.Trim(raw[content:], " \t")) == 0
 		if blank {
 			if fenceChar != 0 {
 				pos = next
@@ -143,11 +142,20 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 				return nil, err
 			}
 			if (list || html) && indent+virtualIndent <= 3 && previous.paragraph && previous.depth == len(containers) && previous.span.End == line.Start {
-				end, err := leadingDefinitionsEnd(ctx, original, previous.content, b)
+				first := len(blocks) - 1
+				for first > 0 && blocks[first].continuation {
+					first--
+				}
+				view, joined, _, err := prepareLinkSource(ctx, original, blocks[first:], b)
 				if err != nil {
 					return nil, err
 				}
-				if end >= previous.content.End {
+				paragraphContent := joined[len(joined)-1].content
+				end, err := leadingDefinitionsEnd(ctx, view, paragraphContent, b)
+				if err != nil {
+					return nil, err
+				}
+				if end >= paragraphContent.End {
 					paragraph = false
 				}
 			}
@@ -276,13 +284,13 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			text = raw[content:]
 			trimmed = bytes.Trim(text, " \t")
 		}
-		if indent <= 3 && len(trimmed) > 0 && (trimmed[0] == '`' || trimmed[0] == '~') {
-			n, err := byteRun(ctx, trimmed, trimmed[0], b)
+		if indent <= 3 {
+			marker, n, err := fenceOpener(ctx, trimmed, b)
 			if err != nil {
 				return nil, err
 			}
-			if n >= 3 && (trimmed[0] != '`' || !bytes.ContainsRune(trimmed[n:], '`')) {
-				fenceChar, fenceWidth, blockDepth = trimmed[0], n, depth
+			if marker != 0 {
+				fenceChar, fenceWidth, blockDepth = marker, n, depth
 				paragraph = false
 				pos = next
 				continue
@@ -521,17 +529,29 @@ func blockInterrupt(ctx context.Context, raw []byte, sibling byte, b *budget) (b
 	if end, ok := listMarker(text, 0); ok && (text[end-1] == sibling || listCanInterrupt(text, 0, end)) {
 		return true, nil
 	}
-	if text[0] == '`' || text[0] == '~' {
-		n, err := byteRun(ctx, text, text[0], b)
-		if err != nil {
-			return false, err
-		}
-		if n >= 3 {
-			return true, nil
-		}
+	marker, _, err := fenceOpener(ctx, text, b)
+	if err != nil {
+		return false, err
+	}
+	if marker != 0 {
+		return true, nil
 	}
 	_, html, err := htmlBlockStart(ctx, text, false, b)
 	return html, err
+}
+
+func fenceOpener(ctx context.Context, text []byte, b *budget) (byte, int, error) {
+	if len(text) == 0 || text[0] != '`' && text[0] != '~' {
+		return 0, 0, nil
+	}
+	n, err := byteRun(ctx, text, text[0], b)
+	if err != nil {
+		return 0, 0, err
+	}
+	if n < 3 || text[0] == '`' && bytes.ContainsRune(text[n:], '`') {
+		return 0, 0, nil
+	}
+	return text[0], n, nil
 }
 
 func byteRun(ctx context.Context, s []byte, c byte, b *budget) (int, error) {
