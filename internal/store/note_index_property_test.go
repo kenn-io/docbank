@@ -34,7 +34,7 @@ func TestNoteIndexEvidencePermutationProperty(t *testing.T) {
 	for i, r := range ledger {
 		specs[i] = indexNoteSpec{ref: r.ref, body: r.body, keys: r.keys}
 	}
-	_, notes := noteIndexFixture(t, s, specs...)
+	notes := noteIndexFixture(t, s, specs...)
 	g := beginIndexFixture(t, s)
 	stageIndexFixture(t, s, g, notes)
 	all := []NoteLookupKey{{"alias", "red"}, {"alias", "green"}, {"alias", "blue"}, {"alias", "紫"}, {"alias", "common"}, {"alias", "missing"}, {"alias", "Red"}, {"path", "a.md"}, {"path", "missing.md"}, {"basename", "a"}, {"basename", "h"}, {"alias", "a"}}

@@ -23,7 +23,7 @@ type indexNoteFixture struct {
 
 // Fixtures use real publication authority and canonical parser output. The
 // authored keys and expected lookup results are supplied independently.
-func noteIndexFixture(tb testing.TB, s *Store, specs ...indexNoteSpec) (NotePublicationScan, []indexNoteFixture) {
+func noteIndexFixture(tb testing.TB, s *Store, specs ...indexNoteSpec) []indexNoteFixture {
 	tb.Helper()
 	scan := beginNoteScan(tb, s)
 	items := make([]indexNoteFixture, len(specs))
@@ -59,7 +59,7 @@ func noteIndexFixture(tb testing.TB, s *Store, specs ...indexNoteSpec) (NotePubl
 	for i := range items {
 		items[i].source = byRef[items[i].source.Identity.SourceRef]
 	}
-	return scan, items
+	return items
 }
 
 func beginIndexFixture(tb testing.TB, s *Store) NoteIndexGeneration {
@@ -84,7 +84,7 @@ func TestNoteIndexGenerationCAS(t *testing.T) {
 	for _, change := range []string{"edit", "absence", "manual", "move", "restore", "policy"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
-			_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
+			notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
 			g := beginIndexFixture(t, s)
 			stageIndexFixture(t, s, g, notes)
 			require.NoError(t, s.StageNoteIndexEdges(t.Context(), g, "note.md", nil))
@@ -126,7 +126,7 @@ func TestNoteIndexGenerationCAS(t *testing.T) {
 func TestNoteIndexRejectsIncompleteBuild(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "a.md", body: "note", keys: []NoteLookupKey{{"path", "a.md"}, {"basename", "a"}}},
 		indexNoteSpec{ref: "b.md", body: "note", keys: []NoteLookupKey{{"path", "b.md"}, {"basename", "b"}}})
 	g := beginIndexFixture(t, s)
@@ -172,7 +172,7 @@ func TestNoteIndexEmptyAndAbandonedGenerations(t *testing.T) {
 func TestNoteIndexTerminalParseKeys(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "terminal.md", body: "note", terminal: "parser_limit", keys: []NoteLookupKey{{"path", "terminal.md"}, {"basename", "terminal"}}},
 		indexNoteSpec{ref: "pending.md", body: "note", terminal: "pending", keys: []NoteLookupKey{{"path", "pending.md"}, {"basename", "pending"}}})
 	g := beginIndexFixture(t, s)
@@ -186,7 +186,7 @@ func TestNoteIndexTerminalParseKeys(t *testing.T) {
 func TestNoteIndexLookupEvidenceBounds(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "a/note.md", body: "---\naliases: [shared, other]\n---\nnote", keys: []NoteLookupKey{{"path", "a/note.md"}, {"basename", "note"}, {"alias", "shared"}, {"alias", "other"}}},
 		indexNoteSpec{ref: "b/note.md", body: "---\naliases: [shared, other]\n---\nnote", keys: []NoteLookupKey{{"path", "b/note.md"}, {"basename", "note"}, {"alias", "shared"}, {"alias", "other"}}},
 		indexNoteSpec{ref: "c/note.md", body: "---\naliases: [shared]\n---\nnote", keys: []NoteLookupKey{{"path", "c/note.md"}, {"basename", "note"}, {"alias", "shared"}}})
@@ -216,7 +216,7 @@ func TestNoteIndexLookupEvidenceBounds(t *testing.T) {
 func TestNoteIndexExactEdgeOccurrences(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "source.md", body: "[[target#section]]", keys: []NoteLookupKey{{"path", "source.md"}, {"basename", "source"}}},
 		indexNoteSpec{ref: "target.md", body: "# Section\n", keys: []NoteLookupKey{{"path", "target.md"}, {"basename", "target"}}})
 	g := beginIndexFixture(t, s)
@@ -243,7 +243,7 @@ func TestNoteIndexExactEdgeOccurrences(t *testing.T) {
 
 func checkNoteIndexBackend(t *testing.T, s *Store) {
 	t.Helper()
-	_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
+	notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
 	g := beginIndexFixture(t, s)
 	stageIndexFixture(t, s, g, notes)
 	rows, err := s.NoteIndexCandidates(t.Context(), g, []NoteLookupKey{{"basename", "note"}})
@@ -270,7 +270,7 @@ func checkNoteIndexPostgres(t *testing.T) {
 func TestNoteIndexExtensionOnlySource(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: ".md", body: "note", keys: []NoteLookupKey{{"path", ".md"}}})
+	notes := noteIndexFixture(t, s, indexNoteSpec{ref: ".md", body: "note", keys: []NoteLookupKey{{"path", ".md"}}})
 	g := beginIndexFixture(t, s)
 	stageIndexFixture(t, s, g, notes)
 	rows, err := s.NoteIndexCandidates(t.Context(), g, []NoteLookupKey{{"path", ".md"}})
@@ -284,7 +284,7 @@ func TestNoteIndexExtensionOnlySource(t *testing.T) {
 func TestNoteIndexEdgePassRollsBackAndReplays(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "[[one]] [[two]]", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
+	notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "[[one]] [[two]]", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
 	g := beginIndexFixture(t, s)
 	stageIndexFixture(t, s, g, notes)
 	edges := []NoteIndexEdge{
@@ -309,7 +309,7 @@ func TestNoteIndexEdgePassRollsBackAndReplays(t *testing.T) {
 func TestNoteIndexTargetHeadingUsesHeadingSpan(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "source.md", body: "[[target#first]]", keys: []NoteLookupKey{{"path", "source.md"}, {"basename", "source"}}},
 		indexNoteSpec{ref: "target.md", body: "# First\nparagraph\n\n# Second\n", keys: []NoteLookupKey{{"path", "target.md"}, {"basename", "target"}}})
 	g := beginIndexFixture(t, s)

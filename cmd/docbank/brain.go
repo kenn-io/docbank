@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -75,8 +76,10 @@ func newBrainCmd() *cobra.Command {
 		if err := brainclient.New(r, brainclient.Dependencies{}).Connect(cmd.Context(), cfg); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Connection saved. Run it with docbank brain run", name)
-		return err
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Connection saved. Run it with docbank brain run", name); err != nil {
+			return fmt.Errorf("writing connection result: %w", err)
+		}
+		return nil
 	}}
 	connect.Flags().StringVar(&name, "name", "", "stable connection name")
 	connect.Flags().StringVar(&destination, "dest", "", "absolute destination in the vault")
@@ -107,8 +110,10 @@ func newBrainCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Added %d, updated %d, unchanged %d, failed %d\n", report.Added, report.Updated, report.Skipped, report.Failed)
-		return err
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Added %d, updated %d, unchanged %d, failed %d\n", report.Added, report.Updated, report.Skipped, report.Failed); err != nil {
+			return fmt.Errorf("writing publication result: %w", err)
+		}
+		return nil
 	}}
 	status := &cobra.Command{Use: "status <name>", Short: "Inspect a saved connection", Example: "  docbank brain status notes", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := registry()
@@ -119,7 +124,7 @@ func newBrainCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return json.MarshalWrite(cmd.OutOrStdout(), result)
+		return writeBrainJSON(cmd.OutOrStdout(), result)
 	}}
 	var expectedHead string
 	recovery := &cobra.Command{Use: "accept-local <name> <source-ref>", Short: "Allow the next local upload against an observed archive head", Example: "  docbank brain accept-local notes note.md --expected-head 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
@@ -131,13 +136,20 @@ func newBrainCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return json.MarshalWrite(cmd.OutOrStdout(), grant)
+		return writeBrainJSON(cmd.OutOrStdout(), grant)
 	}}
 	recovery.Flags().StringVar(&expectedHead, "expected-head", "", "observed archive content version")
 	_ = recovery.MarkFlagRequired("expected-head")
 	disconnect, service := newBrainLifecycleCommands(registry, func() string { return configRoot }, brainservice.NewDriver(nil))
 	cmd.AddCommand(connect, run, status, recovery, disconnect, service)
 	return cmd
+}
+
+func writeBrainJSON(w io.Writer, value any) error {
+	if err := json.MarshalWrite(w, value); err != nil {
+		return fmt.Errorf("writing brain result: %w", err)
+	}
+	return nil
 }
 
 func init() { rootCmd.AddCommand(newBrainCmd()) }

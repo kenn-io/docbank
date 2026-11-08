@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -69,8 +68,10 @@ func newBrainLifecycleCommands(registry func() (*brainclient.Registry, error), c
 		if err := client.Disconnect(cmd.Context(), args[0]); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Connection removed. Published and archived documents remain.")
-		return err
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Connection removed. Published and archived documents remain."); err != nil {
+			return fmt.Errorf("writing disconnect result: %w", err)
+		}
+		return nil
 	}}
 	service := &cobra.Command{Use: "service", Short: "Manage the per-user publisher launcher", Long: "Install, inspect, or remove the current user's publisher launcher."}
 	var dryRun bool
@@ -106,13 +107,13 @@ func newBrainLifecycleCommands(registry func() (*brainclient.Registry, error), c
 			if err != nil {
 				return err
 			}
-			return json.MarshalWrite(cmd.OutOrStdout(), registration)
+			return writeBrainJSON(cmd.OutOrStdout(), registration)
 		}
 		status, err := driver.InstallChecked(cmd.Context(), spec, check)
 		if err != nil {
 			return err
 		}
-		return json.MarshalWrite(cmd.OutOrStdout(), status)
+		return writeBrainJSON(cmd.OutOrStdout(), status)
 	}}
 	install.Flags().BoolVar(&dryRun, "dry-run", false, "show the registration without installing it")
 	status := &cobra.Command{Use: "status <name>", Short: "Inspect the per-user launcher", Example: "  docbank brain service status notes", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -124,7 +125,7 @@ func newBrainLifecycleCommands(registry func() (*brainclient.Registry, error), c
 		if err != nil {
 			return err
 		}
-		return json.MarshalWrite(cmd.OutOrStdout(), value)
+		return writeBrainJSON(cmd.OutOrStdout(), value)
 	}}
 	uninstall := &cobra.Command{Use: "uninstall <name>", Short: "Remove the owned launcher", Example: "  docbank brain service uninstall notes", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		spec, err := brainServiceSpec(cmd.Context(), args[0], configRoot())
@@ -134,8 +135,10 @@ func newBrainLifecycleCommands(registry func() (*brainclient.Registry, error), c
 		if err := driver.Uninstall(cmd.Context(), spec); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Launcher removed. Connection settings and archived documents remain.")
-		return err
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Launcher removed. Connection settings and archived documents remain."); err != nil {
+			return fmt.Errorf("writing launcher removal result: %w", err)
+		}
+		return nil
 	}}
 	service.AddCommand(install, status, uninstall)
 	return disconnect, service

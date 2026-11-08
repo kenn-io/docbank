@@ -10,7 +10,7 @@ import (
 func TestNoteContextCurrentGenerationAndStaleCursor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "source.md", body: "[[target#section]]", keys: []NoteLookupKey{{"path", "source.md"}, {"basename", "source"}}},
 		indexNoteSpec{ref: "target.md", body: "# Section\n", keys: []NoteLookupKey{{"path", "target.md"}, {"basename", "target"}}})
 	g := beginIndexFixture(t, s)
@@ -44,7 +44,7 @@ func TestNoteContextPagesPreserveEdgeOrder(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	const body = "[[target]] [[target]]"
-	_, notes := noteIndexFixture(t, s,
+	notes := noteIndexFixture(t, s,
 		indexNoteSpec{ref: "source.md", body: body, keys: []NoteLookupKey{{"path", "source.md"}, {"basename", "source"}}},
 		indexNoteSpec{ref: "target.md", body: "target", keys: []NoteLookupKey{{"path", "target.md"}, {"basename", "target"}}})
 	g := beginIndexFixture(t, s)
@@ -73,7 +73,7 @@ func TestNoteContextPagesPreserveEdgeOrder(t *testing.T) {
 
 func checkNoteContextBackend(t *testing.T, s *Store) {
 	t.Helper()
-	_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
+	notes := noteIndexFixture(t, s, indexNoteSpec{ref: "note.md", body: "note", keys: []NoteLookupKey{{"path", "note.md"}, {"basename", "note"}}})
 	g := beginIndexFixture(t, s)
 	stageIndexFixture(t, s, g, notes)
 	require.NoError(t, s.StageNoteIndexEdges(t.Context(), g, "note.md", nil))

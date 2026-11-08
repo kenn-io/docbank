@@ -13,7 +13,7 @@ import (
 func TestNoteIndexKeyset4097(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, notes := noteIndexFixture(t, s, indexNoteSpec{ref: "0000/note.md", body: "---\naliases: [shared]\n---\nnote", keys: []NoteLookupKey{{"path", "0000/note.md"}, {"basename", "note"}, {"alias", "shared"}}})
+	notes := noteIndexFixture(t, s, indexNoteSpec{ref: "0000/note.md", body: "---\naliases: [shared]\n---\nnote", keys: []NoteLookupKey{{"path", "0000/note.md"}, {"basename", "note"}, {"alias", "shared"}}})
 	seed := notes[0]
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
