@@ -1,7 +1,16 @@
 import { expect, it } from "vite-plus/test";
-import * as hegel from "@hegeldev/hegel";
-import * as gs from "@hegeldev/hegel/generators";
 import { markText, nextTextMatch } from "./textMarks.js";
+
+const supportsNativeHegel = (platform: string, arch: string): boolean =>
+  platform !== "darwin" || arch !== "x64";
+
+const hegelIt = supportsNativeHegel(process.platform, process.arch) ? it : it.skip;
+
+it("skips native Hegel properties only on Intel macOS", () => {
+  expect(supportsNativeHegel("darwin", "x64")).toBe(false);
+  expect(supportsNativeHegel("darwin", "arm64")).toBe(true);
+  expect(supportsNativeHegel("linux", "x64")).toBe(true);
+});
 
 it("uses deterministic source priority for overlaps and preserves UTF-16 offsets", () => {
   const result = markText("😀ALPHA alphabet", {
@@ -35,8 +44,13 @@ it("bounds matches without fabricating partial success", () => {
   expect(result.truncated).toBe(true);
 });
 
-it("wraps match navigation in both directions for every bounded match count", () =>
-  hegel.test(
+hegelIt("wraps match navigation in both directions for every bounded match count", async () => {
+  const [hegel, gs] = await Promise.all([
+    import("@hegeldev/hegel"),
+    import("@hegeldev/hegel/generators"),
+  ]);
+
+  await hegel.test(
     (tc) => {
       const count = tc.draw(gs.integers({ minValue: 1, maxValue: 5000 }));
       const index = tc.draw(gs.integers({ minValue: 0, maxValue: count - 1 }));
@@ -50,10 +64,16 @@ it("wraps match navigation in both directions for every bounded match count", ()
       expect(nextTextMatch(0, -1, count)).toBe(count - 1);
     },
     { testCases: 2000, database: hegel.Database.disabled },
-  ));
+  );
+});
 
-it("preserves arbitrary Unicode context around literal search terms", () =>
-  hegel.test(
+hegelIt("preserves arbitrary Unicode context around literal search terms", async () => {
+  const [hegel, gs] = await Promise.all([
+    import("@hegeldev/hegel"),
+    import("@hegeldev/hegel/generators"),
+  ]);
+
+  await hegel.test(
     (tc) => {
       const before = tc.draw(gs.text({ maxSize: 500 }));
       const term = tc.draw(gs.text({ minSize: 1, maxSize: 30 }));
@@ -68,7 +88,8 @@ it("preserves arbitrary Unicode context around literal search terms", () =>
       }
     },
     { testCases: 2000, database: hegel.Database.disabled },
-  ));
+  );
+});
 
 it("keeps navigation at zero when no text matches are available", () => {
   expect(nextTextMatch(0, 1, 0)).toBe(0);
