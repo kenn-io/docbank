@@ -127,7 +127,7 @@ func newBrainCmd() *cobra.Command {
 		return writeBrainJSON(cmd.OutOrStdout(), result)
 	}}
 	var expectedHead string
-	recovery := &cobra.Command{Use: "accept-local <name> <source-ref>", Short: "Allow the next local upload against an observed archive head", Example: "  docbank brain accept-local notes note.md --expected-head 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	recovery := &cobra.Command{Use: "accept-local <name> <source-ref>", Short: "Approve the next local upload", Example: "  docbank brain accept-local notes note.md --expected-head 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := registry()
 		if err != nil {
 			return err

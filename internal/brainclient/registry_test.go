@@ -30,6 +30,38 @@ func brainFixtureConfig(t *testing.T, name string) ConnectionConfig {
 	return ConnectionConfig{Name: name, SourceRoot: filepath.Join(root, "Notes α"), Destination: "/knowledge", LocalVaultRoot: filepath.Join(root, "archive"), Exclude: []string{".git", "cache/"}, SettleTime: 2 * time.Second, ScanInterval: 5 * time.Second}
 }
 
+func TestBrainConfigDiagnosticsKeepPathsExplicit(t *testing.T) {
+	t.Parallel()
+	base := brainFixtureConfig(t, "notes")
+	absolute, err := filepath.Abs("relative")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		change func(*ConnectionConfig)
+		want   string
+	}{
+		{"source", func(c *ConnectionConfig) { c.SourceRoot = "relative" }, fmt.Sprintf("use source path %q", absolute)},
+		{"vault", func(c *ConnectionConfig) { c.LocalVaultRoot = "relative" }, fmt.Sprintf("use vault path %q", absolute)},
+		{"key", func(c *ConnectionConfig) {
+			c.LocalVaultRoot = ""
+			c.RemoteOrigin = "https://daemon.example"
+			c.KeyFile = "relative"
+		}, fmt.Sprintf("use key-file path %q", absolute)},
+		{"local key", func(c *ConnectionConfig) { c.KeyFile = filepath.Join(t.TempDir(), "key") }, "remove the key file for a local daemon"},
+		{"invalid source", func(c *ConnectionConfig) { c.SourceRoot = "secret\x00value" }, "source path must be nonempty valid text without NUL"},
+		{"parent source", func(c *ConnectionConfig) { c.SourceRoot = "parent/../notes" }, "source path must be a canonical absolute path without .."},
+		{"destination", func(c *ConnectionConfig) { c.Destination = "/Cafe\u0301" }, "use --dest \"/Café\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := base
+			tc.change(&config)
+			err := config.validate()
+			require.EqualError(t, err, tc.want)
+			require.NotContains(t, err.Error(), "secret")
+		})
+	}
+}
+
 // Rejecting a valid record, silently repairing bad config, or leaking shared
 // slices would lose or redirect a saved publication.
 func TestBrainRegistryRoundTripAndValidation(t *testing.T) {

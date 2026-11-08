@@ -82,17 +82,17 @@ func (c ConnectionConfig) validate() error {
 		return err
 	}
 	if !canonicalLocalPath(c.SourceRoot) {
-		return errors.New("source root must be a canonical absolute path")
+		return localPathError("source", c.SourceRoot)
 	}
 	if (c.LocalVaultRoot == "") == (c.RemoteOrigin == "") {
 		return errors.New("select exactly one local vault root or remote origin")
 	}
 	if c.LocalVaultRoot != "" {
 		if !canonicalLocalPath(c.LocalVaultRoot) {
-			return errors.New("local vault root must be a canonical absolute path")
+			return localPathError("vault", c.LocalVaultRoot)
 		}
 		if c.KeyFile != "" {
-			return errors.New("a local daemon uses its own proven credential source")
+			return errors.New("remove the key file for a local daemon")
 		}
 	} else {
 		// Match NewPushConnection's accepted origin shape without allocating
@@ -102,7 +102,7 @@ func (c ConnectionConfig) validate() error {
 			return errors.New("remote target must be an HTTP(S) origin without credentials, path, query or fragment")
 		}
 		if c.KeyFile != "" && !canonicalLocalPath(c.KeyFile) {
-			return errors.New("key file reference must be a canonical absolute path")
+			return localPathError("key-file", c.KeyFile)
 		}
 	}
 	if err := store.ValidatePushDestination(c.Destination); err != nil {
@@ -111,14 +111,25 @@ func (c ConnectionConfig) validate() error {
 	if path.Clean(c.Destination) != c.Destination {
 		return errors.New("remove repeated or trailing slashes and . or .. from --dest")
 	}
-	for segment := range strings.SplitSeq(strings.TrimPrefix(c.Destination, "/"), "/") {
+	segments := strings.Split(strings.TrimPrefix(c.Destination, "/"), "/")
+	changed := false
+	for i, segment := range segments {
 		if segment == "" {
 			continue
 		}
 		normalized, err := store.NormalizeName(segment)
-		if err != nil || normalized != segment {
+		if err != nil {
 			return errors.New("destination names must be canonical")
 		}
+		changed = changed || normalized != segment
+		segments[i] = normalized
+	}
+	if changed {
+		suggestion := "/" + strings.Join(segments, "/")
+		if len(suggestion) <= 4096 {
+			return fmt.Errorf("use --dest %q", suggestion)
+		}
+		return errors.New("destination names must be canonical")
 	}
 	if c.SettleTime <= 0 || c.MinimumAge < 0 || c.ScanInterval <= 0 {
 		return errors.New("settle time and scan interval must be positive; minimum age must be nonnegative")
@@ -129,4 +140,22 @@ func (c ConnectionConfig) validate() error {
 
 func canonicalLocalPath(value string) bool {
 	return utf8.ValidString(value) && !strings.ContainsRune(value, 0) && filepath.IsAbs(value) && filepath.Clean(value) == value
+}
+
+func localPathError(label, value string) error {
+	if value == "" || !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+		return fmt.Errorf("%s path must be nonempty valid text without NUL", label)
+	}
+	// Cleaning .. across a symlink may name a different location. Ask the
+	// operator for a canonical path rather than suggesting a different target.
+	for part := range strings.SplitSeq(filepath.ToSlash(value), "/") {
+		if part == ".." {
+			return fmt.Errorf("%s path must be a canonical absolute path without ..", label)
+		}
+	}
+	absolute, err := filepath.Abs(value)
+	if err != nil || len(absolute) > 4096 {
+		return fmt.Errorf("%s path must be a canonical absolute path", label)
+	}
+	return fmt.Errorf("use %s path %q", label, absolute)
 }
