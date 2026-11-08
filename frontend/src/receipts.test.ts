@@ -276,3 +276,34 @@ describe("search result authority", () => {
     });
   });
 });
+
+it.each(["semantic", "hybrid"] as const)(
+  "accepts an unavailable %s receipt only for empty incomplete selected media",
+  (mode) => {
+    const request: DocumentSearchRequest = {
+      query: "fixture",
+      mode,
+      profile: "supplied-transcript",
+      fence: { vault_uid: vault, content_version_ids: [versions[0]] },
+      media_sources: [{ source_id: "source", source_version_id: "version", content_version_id: versions[0] }],
+    };
+    const report = {
+      requested_mode: mode,
+      actual_mode: "unavailable",
+      media_source_selection: true,
+      media_selections: [],
+      coverage: { binding_required: true, state: "incomplete", scoped_documents: 1, complete_documents: 0 },
+      results: [],
+      degradations: [],
+      truncated: false,
+      trace: [],
+    };
+    expect(validateDocumentSearchReport(report, request).actual_mode).toBe("unavailable");
+    expect(() => validateDocumentSearchReport({ ...report, media_source_selection: false }, request)).toThrow();
+    expect(() => validateDocumentSearchReport({ ...report, coverage: { ...report.coverage, state: "complete" } }, request)).toThrow();
+    expect(() => validateDocumentSearchReport({ ...report, coverage: { ...report.coverage, complete_documents: 1 } }, request)).toThrow();
+    expect(() => validateDocumentSearchReport({ ...report, results: [{}] }, request)).toThrow();
+    const { media_sources: _, ...ordinary } = request;
+    expect(() => validateDocumentSearchReport(report, ordinary)).toThrow();
+  },
+);

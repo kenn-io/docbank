@@ -26,7 +26,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Focused production retrieval contracts
-        run: go test -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api ./internal/config ./docbank ./cmd/docbank -run 'TestSelectedMedia|TestMediaSearch|FuzzSelectedMedia' -count=1 -timeout=15m
+        run: go test -tags fts5 ./internal/retrieval ./internal/store ./internal/processing ./internal/api ./internal/config ./docbank ./cmd/docbank ./internal/daemonconn -run 'TestSelectedMedia|TestMediaSearch|FuzzSelectedMedia' -count=1 -timeout=15m
 
       - name: Selected build fusion property
         run: go test -tags fts5 ./internal/retrieval -run '^$' -fuzz FuzzSelectedMediaFusionKeepsBuildIdentity -fuzztime=5s -parallel=2
@@ -52,7 +52,7 @@ jobs:
       - run: make generate-api
       - run: npm --prefix frontend run fmt
       - run: npm --prefix frontend run check
-      - run: npm --prefix frontend test -- src/generated-requests.test.ts
+      - run: npm --prefix frontend test -- src/generated-requests.test.ts src/receipts.test.ts
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
@@ -64,3 +64,4 @@ jobs:
             frontend/src/generated/docbank.ts
             frontend/orval.config.ts
             frontend/src/generated-requests.test.ts
+            frontend/src/receipts.test.ts

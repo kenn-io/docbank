@@ -238,6 +238,8 @@ func (p mediaQualificationTranscriber) Render(_ context.Context, _ document.Auth
 type mediaQualificationOptions struct {
 	TranscriptA string
 	ChunkTokens int
+	LaneLimit   int
+	Distractors int
 }
 
 func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOptions) *mediaQualificationFixture {
@@ -299,9 +301,15 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 			cfg.EmbeddingProviders = map[string]document.EmbeddingProvider{"semantic": encoder}
 			cfg.Tokenizers = map[string]document.Tokenizer{"semantic": mediaQualificationTokenizer{}}
 			cfg.Profile.Retrieval.LexicalLimit, cfg.Profile.Retrieval.VectorLimit = 100, 100
+			if option.LaneLimit > 0 {
+				cfg.Profile.Retrieval.LexicalLimit, cfg.Profile.Retrieval.VectorLimit = option.LaneLimit, option.LaneLimit
+			}
 		}
 		supplied, err = processing.WithSuppliedMediaEmbeddings(supplied, generated)
 		require.NoError(t, err)
+		if option.LaneLimit > 0 {
+			supplied.Profile.Retrieval.LexicalLimit, supplied.Profile.Retrieval.VectorLimit = option.LaneLimit, option.LaneLimit
+		}
 		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, Principal: "daemon:operator", SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: map[string]processing.ProfileConfig{name: supplied, "qualification-generated": generated}})
 		require.NoError(t, err)
 		t.Cleanup(service.Stop)
@@ -311,7 +319,7 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 	})
 	f.manifest.URL, f.manifest.Profile, f.manifest.VaultUID = f.server.URL, processing.SuppliedMediaProfileName, f.catalog.VaultID()
 	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
-	for i, item := range []struct {
+	records := []struct {
 		id, text  string
 		generated bool
 	}{
@@ -319,7 +327,14 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		{"a-v2", "The telescope delivery now arrives Monday at noon.", false},
 		{"b-v1", "The observatory receives its new telescope on Friday at 3 PM.", true},
 		{"c-v1", "The grocery delivery arrives Friday at three.", false},
-	} {
+	}
+	for i := range option.Distractors {
+		records = append(records, struct {
+			id, text  string
+			generated bool
+		}{fmt.Sprintf("distractor-%d", i), "The telescope delivery arrives Friday at three.", false})
+	}
+	for i, item := range records {
 		if item.id == "a-v1" && option.TranscriptA != "" {
 			item.text = option.TranscriptA
 		}

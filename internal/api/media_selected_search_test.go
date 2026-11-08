@@ -89,6 +89,8 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, report.Results)
 		require.Equal(t, "incomplete", report.Coverage.State)
+		require.Equal(t, mode, report.RequestedMode)
+		require.Equal(t, "unavailable", report.ActualMode)
 		f.encoder.mu.Lock()
 		require.Equal(t, before, f.encoder.calls, "ineligible scope must not encode query")
 		f.encoder.mu.Unlock()
@@ -205,4 +207,75 @@ func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
 	transcript, err := f.service.MediaTranscript(t.Context(), processing.MediaTranscriptRequest{SourceID: record.SourceID, SourceVersionID: record.SourceVersionID, ContentVersionID: record.ContentVersionID})
 	require.NoError(t, err)
 	require.Equal(t, text, transcript.Transcript.Units[0].Text, "display bound must not truncate retained evidence")
+}
+
+func TestSelectedMediaSearchSkipsUnavailableEmbeddings(t *testing.T) {
+	t.Parallel()
+	f := newMediaQualificationFixture(t)
+	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
+	supplied, generated := f.manifest.Records[0], f.manifest.Records[2]
+	for _, mode := range []string{"semantic", "hybrid"} {
+		f.encoder.mu.Lock()
+		before := f.encoder.calls
+		f.encoder.mu.Unlock()
+		report, err := client.SearchDocuments(t.Context(), f.request(supplied.Profile, mode, generated))
+		require.NoError(t, err)
+		require.Equal(t, mode, report.RequestedMode)
+		require.Equal(t, "incomplete", report.Coverage.State)
+		require.Zero(t, report.Coverage.CompleteDocuments)
+		require.Len(t, report.MediaSelections, 1)
+		require.NotEmpty(t, report.MediaSelections[0].BuildID)
+		if mode == "semantic" {
+			require.Equal(t, "unavailable", report.ActualMode)
+			require.Empty(t, report.Results)
+		} else {
+			require.Equal(t, "lexical", report.ActualMode)
+			require.Contains(t, report.Degradations, "semantic_unavailable")
+			require.Len(t, report.Results, 1)
+			require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
+		}
+		f.encoder.mu.Lock()
+		require.Equal(t, before, f.encoder.calls, "no eligible vector row must skip query encoding")
+		f.encoder.mu.Unlock()
+	}
+	// A scope that cannot perform any retrieval must not acquire query egress.
+	_, err := f.service.RevokeConsent(t.Context())
+	require.NoError(t, err)
+	request := f.request(supplied.Profile, "semantic", supplied)
+	request.MediaSources[0].SuppliedInputIDs = []string{}
+	report, err := client.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", report.ActualMode)
+}
+
+func TestSelectedMediaSearchFencesDistractorsBeforeLaneLimit(t *testing.T) {
+	t.Parallel()
+	f := newMediaQualificationFixture(t, mediaQualificationOptions{LaneLimit: 1, Distractors: 2})
+	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
+	target := f.manifest.Records[1] // Monday vector is orthogonal; three supplied Friday distractors outrank it.
+	for _, mode := range []string{"semantic", "hybrid"} {
+		wide := f.request(target.Profile, mode, f.manifest.Records...)
+		wide.Limit = 1
+		control, err := client.SearchDocuments(t.Context(), wide)
+		require.NoError(t, err)
+		require.Len(t, control.Results, 1)
+		require.NotEqual(t, target.ContentVersionID, control.Results[0].ContentVersionID)
+		require.True(t, control.Truncated)
+		request := f.request(target.Profile, mode, target)
+		request.Limit = 1
+		request.Fence = wide.Fence
+		report, err := client.SearchDocuments(t.Context(), request)
+		require.NoError(t, err)
+		require.Len(t, report.Results, 1)
+		require.Equal(t, mode, report.ActualMode)
+		require.Equal(t, target.ContentVersionID, report.Results[0].ContentVersionID)
+		require.Equal(t, "complete", report.Coverage.State)
+		require.Equal(t, 1, report.Coverage.ScopedDocuments)
+		require.False(t, report.Truncated)
+		for _, evidence := range report.Results[0].Evidence {
+			require.Equal(t, report.MediaSelections[0].BuildID, evidence.BuildID)
+			require.Len(t, evidence.MediaSources, 1)
+			require.Equal(t, target.SourceID, evidence.MediaSources[0].SourceID)
+		}
+	}
 }
