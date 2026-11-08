@@ -63,6 +63,10 @@ from `go.kenn.io/docbank/document/pdftext` with the same limits and copy
 limit changes the descriptor. Request the `structured_evidence` artifact role and
 select this rendition from a processing profile, as for EPUB.
 
+The Linux qualification processes a 500-page, 31 MiB scan in about a
+minute. Daemon authorizations expire after ten minutes, so a job can run
+out of time below the configured page limit.
+
 This provider reads the existing text layer. Each page with zero native
 characters records a `no_text_layer` omission. Pages whose extracted text is
 empty or only whitespace and control characters record a `no_readable_text`

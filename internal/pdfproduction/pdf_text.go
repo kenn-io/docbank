@@ -25,13 +25,9 @@ type PDFTextPage struct {
 // ReadPDFTextPage opens verified bytes in a fresh bounded runtime. Waiting for
 // another job's lease uses the caller's context; execution gets the page deadline.
 func ReadPDFTextPage(ctx context.Context, data []byte, index int, maxPages int64, maxBytes int) (result PDFTextPage, resultErr error) {
-	engine, err := NewPDFium(QualifiedRecipe())
+	e, err := newPDFium(QualifiedRecipe(), readProcessRSS)
 	if err != nil {
 		return result, err
-	}
-	e, ok := engine.(*pdfiumEngine)
-	if !ok {
-		return result, errors.New("PDF text requires the PDFium engine")
 	}
 	defer func() { resultErr = errors.Join(resultErr, e.Close()) }()
 	e.session, err = wasmBacking.acquire(ctx, uint64(e.recipe.WASMMemoryBytes)) //nolint:gosec // Qualified recipe has a positive, bounded memory limit.
