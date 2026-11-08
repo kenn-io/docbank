@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1029,6 +1030,9 @@ func TestPDFTextLargeScanPage(t *testing.T) {
 	pages := make([]string, 100)
 	pages[99] = "synthetic scanned page"
 	data := mediatest.PDFTextScanPages(pages)
+	// Fixture construction is outside the worker: release its JPEG and PDF
+	// assembly garbage before measuring extraction against the RSS ceiling.
+	debug.FreeOSMemory()
 	require.Greater(t, len(data), 30<<20)
 	page, err := ReadPDFTextPage(t.Context(), data, 99, 100, 1024)
 	require.NoError(t, err)
