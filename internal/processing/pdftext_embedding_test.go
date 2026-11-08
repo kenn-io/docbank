@@ -4,19 +4,23 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime/debug"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/internal/store"
 )
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestPDFTextOmissionOnlyCompletesWithoutEmbeddingRequests(t *testing.T) {
-	t.Parallel()
-	renderer, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 1 << 20, MaxPages: 10})
+	debug.FreeOSMemory()
+	native, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 1 << 20, MaxPages: 10})
 	require.NoError(t, err)
+	renderer := &pdfTextEmbeddingRenderer{Provider: native, t: t}
 	var calls atomic.Int64
 	provider := localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(context.Context) error { calls.Add(1); return nil }}
 	fixture, original := newLocalTextBackfillFixture(t, renderer, provider)
@@ -37,6 +41,7 @@ func TestPDFTextOmissionOnlyCompletesWithoutEmbeddingRequests(t *testing.T) {
 	setup := &LocalTextSetup{Service: service, Selected: "pdf"}
 	err = setup.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name})
 	require.NoError(t, err)
+	require.Empty(t, setup.skips, "PDF rendering must publish rather than skip the source")
 	require.Zero(t, calls.Load())
 	profile := service.profiles["pdf"]
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, profile.record.Fingerprint)
@@ -60,4 +65,18 @@ func TestPDFTextOmissionOnlyCompletesWithoutEmbeddingRequests(t *testing.T) {
 	err = setup.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Name: node.Name})
 	require.NoError(t, err)
 	require.Positive(t, calls.Load())
+}
+
+type pdfTextEmbeddingRenderer struct {
+	*pdftext.Provider
+
+	t *testing.T
+}
+
+func (renderer *pdfTextEmbeddingRenderer) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+	result, err := renderer.Provider.Render(ctx, upload, authorization)
+	if err != nil {
+		renderer.t.Logf("PDF text provider failed: %v; cause: %v", err, errors.Unwrap(err))
+	}
+	return result, err
 }

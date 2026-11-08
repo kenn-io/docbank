@@ -84,7 +84,7 @@ type RenditionEnvelopeV1 struct {
 // retained Markdown only. Units and lexical segments remain body-derived and
 // therefore never ingest frontmatter metadata.
 func EnvelopeRenditionV1(rendition RenditionV1, envelope RenditionEnvelopeV1) (RenditionV1, RenditionFrontMatterV1, error) {
-	if len(rendition.Markdown) == 0 && (envelope.SourceFormat != "pdf" || envelope.SourceMediaType != "application/pdf" || envelope.UnitKind != EvidenceUnitPage || rendition.Completeness != EvidencePartial || len(rendition.Units) != 0 || len(rendition.LexicalSegments) != 0) || rendition.MarkdownChecksum != checksumBytes(rendition.Markdown) {
+	if len(rendition.Markdown) == 0 && (len(rendition.Units) != 0 || len(rendition.LexicalSegments) != 0) || rendition.MarkdownChecksum != checksumBytes(rendition.Markdown) {
 		return RenditionV1{}, RenditionFrontMatterV1{}, errors.New("rendition Markdown body authority is invalid")
 	}
 	for name, value := range map[string]string{

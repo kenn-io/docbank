@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"mime"
 
 	"go.kenn.io/docbank/document"
 )
@@ -167,8 +166,7 @@ func (s *Store) ResolveRenditionText(
 	if len(rendition.Build.LexicalSegments) == 0 {
 		const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 		valid := view.Artifact.Size == 0 && view.Artifact.BlobHash == emptySHA256
-		mediaType, _, _ := mime.ParseMediaType(version.MimeType)
-		if rendition.Build.Completeness == document.EvidencePartial && len(rendition.Build.Units) == 0 && mediaType == "application/pdf" {
+		if !valid {
 			empty, _, err := document.EnvelopeRenditionV1(document.RenditionV1{Completeness: document.EvidencePartial, MarkdownChecksum: emptySHA256}, document.RenditionEnvelopeV1{
 				BuildID: rendition.Build.ID, SourceSHA256: version.BlobHash, SourceFormat: "pdf", SourceMediaType: "application/pdf",
 				RenditionRequestFingerprint: rendition.Build.RenditionRequestFingerprint, EvidenceLexicalFingerprint: rendition.Build.EvidenceLexicalFingerprint,
