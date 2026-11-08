@@ -469,6 +469,8 @@ retained. Generated timed speech can report `speech_state: "complete"` while
 overall evidence remains partial because it omits non-speech sounds.
 Supplied-origin transcripts always report `speech_state: "partial"`, including
 timed captions; this preserves provenance and does not assert missing speech.
+Provider-reported partial success also yields partial speech, even when the
+retained segments otherwise look complete.
 Empty ASR output fails. See [exact transcript attribution](../agents/integration.md#read-an-exact-media-transcript)
 for consumer readiness and lifecycle rules.
 

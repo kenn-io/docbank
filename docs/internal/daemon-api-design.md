@@ -659,7 +659,9 @@ describe sound effects, so the ordinary `completeness: "partial"` and
 `has_omissions: true` remain accurate. Other omissions yield
 `speech_state: "partial"`. Supplied-origin transcripts always report partial
 speech provenance, including timed captions; this rule does not assert that
-speech is missing. Speech readiness does not assert verbatim accuracy,
+speech is missing. A build whose provider reported partial success also yields
+`speech_state: "partial"`, even if its retained segments otherwise look complete.
+Speech readiness does not assert verbatim accuracy,
 identify people, or prove silence; empty ASR output fails.
 
 Consumers bind the exact vault/source/source-version/content-version and

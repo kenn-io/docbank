@@ -1949,6 +1949,7 @@ binds `node_id` and original `source_sha256`. Generated timed speech can report
 `speech_state: "complete"` while overall evidence is partial because it omits
 non-speech sounds. Supplied transcripts, including timed captions, always report
 `speech_state: "partial"` as provenance; this does not assert missing speech.
+A provider-reported partial-success build also reports partial speech.
 Empty or failed speech recognition is never empty success.
 Supplied transcripts also include `supplied_input_id`. See
 [how to verify search attribution](agents/integration.md#read-an-exact-media-transcript).
