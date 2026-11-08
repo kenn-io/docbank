@@ -259,8 +259,10 @@ type independentFilePart struct {
 func compileContractSchema(t *testing.T, location string, document []byte) *jsonschema.Schema {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
-	compiler.Draft = jsonschema.Draft2020
-	require.NoError(t, compiler.AddResource(location, bytes.NewReader(document)))
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	schemaDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(document))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource(location, schemaDocument))
 	compiled, err := compiler.Compile(location)
 	require.NoError(t, err)
 	return compiled

@@ -11,12 +11,9 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/yuin/goldmark/v2"
 	goldmarkast "github.com/yuin/goldmark/v2/ast"
-	"github.com/yuin/goldmark/v2/extension"
 	"github.com/yuin/goldmark/v2/renderer"
 	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
-	"github.com/yuin/goldmark/v2/util"
 	"golang.org/x/net/html"
 )
 
@@ -33,17 +30,8 @@ func sanitizeRenditionMarkdown(markdown string, maxLinkChars, maxSourceBytes, ma
 	var rendered bytes.Buffer
 	listTightness := make(map[int]bool)
 	rawSpans := make([]renditionRawSpan, 0)
-	parser := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRendererOptions(
-			goldmarkhtml.WithUnsafe(),
-			renderer.WithNodeRenderers(util.Prioritized(&renditionHTMLRenderer{
-				output: &rendered, tightness: listTightness, rawSpans: &rawSpans,
-			}, 0)),
-		),
-	)
-	source := []byte(markdown)
-	if err := parser.Convert(source, &rendered); err != nil {
+	recorder := &renditionHTMLRenderer{output: &rendered, tightness: listTightness, rawSpans: &rawSpans}
+	if err := renderProviderMarkdown(&rendered, []byte(markdown), recorder.decorators()); err != nil {
 		return "", false, false, fmt.Errorf("parse provider Markdown: %w", err)
 	}
 	writer := renditionHTMLWriter{maxLinkChars: maxLinkChars, listTightness: listTightness}
@@ -75,100 +63,52 @@ type renditionRawSpan struct {
 	endsActiveBody   bool
 }
 
-func (r *renditionHTMLRenderer) RegisterFuncs(registerer renderer.NodeRendererFuncRegisterer) {
-	registerer.Register(goldmarkast.KindList, r.renderList)
-	registerer.Register(goldmarkast.KindHTMLBlock, r.renderHTMLBlock)
-	registerer.Register(goldmarkast.KindRawHTML, r.renderRawHTML)
+// decorators wraps goldmark's own list and raw HTML renderers, so the
+// recorded offsets bracket exactly the bytes goldmark writes for each node.
+func (r *renditionHTMLRenderer) decorators() goldmarkhtml.Option {
+	return goldmarkhtml.WithNodeRendererDecorators(map[goldmarkast.NodeKind]goldmarkhtml.NodeRendererDecorator{
+		goldmarkast.KindList:      r.decorateList,
+		goldmarkast.KindHTMLBlock: r.decorateRawHTML(false),
+		goldmarkast.KindRawHTML:   r.decorateRawHTML(true),
+	})
 }
 
-func (r *renditionHTMLRenderer) offset(writer util.BufWriter) int {
-	return r.output.Len() + writer.Buffered()
+// offset is exact because goldmark writes a *bytes.Buffer without buffering.
+func (r *renditionHTMLRenderer) offset() int {
+	return r.output.Len()
 }
 
-func (r *renditionHTMLRenderer) appendRawSpan(start int, writer util.BufWriter, inline bool) {
-	end := r.offset(writer)
-	if end > start {
-		*r.rawSpans = append(*r.rawSpans, renditionRawSpan{start: start, end: end, inline: inline})
-	}
-}
-
-func (r *renditionHTMLRenderer) renderList(
-	writer util.BufWriter,
-	_ []byte,
-	node goldmarkast.Node,
-	entering bool,
-) (goldmarkast.WalkStatus, error) {
-	list, ok := node.(*goldmarkast.List)
-	if !ok {
-		return goldmarkast.WalkStop, fmt.Errorf("render list node: unexpected %T", node)
-	}
-	tag := "ul"
-	if list.IsOrdered() {
-		tag = "ol"
-	}
-	if entering {
-		r.tightness[r.offset(writer)] = list.IsTight
-		_ = writer.WriteByte('<')
-		_, _ = writer.WriteString(tag)
-		if list.IsOrdered() && list.Start != 1 {
-			_, _ = fmt.Fprintf(writer, " start=\"%d\"", list.Start)
+func (r *renditionHTMLRenderer) decorateList(next goldmarkhtml.NodeRenderer) goldmarkhtml.NodeRenderer {
+	return goldmarkhtml.NodeRendererFunc(func(
+		writer io.Writer, source []byte, node goldmarkast.Node, entering bool, rc renderer.Context,
+	) (goldmarkast.WalkStatus, error) {
+		list, ok := node.(*goldmarkast.List)
+		if !ok {
+			return goldmarkast.WalkStop, fmt.Errorf("render list node: unexpected %T", node)
 		}
-		if list.Attributes() != nil {
-			goldmarkhtml.RenderAttributes(writer, list, goldmarkhtml.ListAttributeFilter)
+		if entering {
+			r.tightness[r.offset()] = list.IsTight
 		}
-		_, _ = writer.WriteString(">\n")
-	} else {
-		_, _ = writer.WriteString("</")
-		_, _ = writer.WriteString(tag)
-		_, _ = writer.WriteString(">\n")
-	}
-	return goldmarkast.WalkContinue, nil
+		return next.Render(writer, source, node, entering, rc)
+	})
 }
 
-func (r *renditionHTMLRenderer) renderHTMLBlock(
-	writer util.BufWriter,
-	source []byte,
-	node goldmarkast.Node,
-	entering bool,
-) (goldmarkast.WalkStatus, error) {
-	block, ok := node.(*goldmarkast.HTMLBlock)
-	if !ok {
-		return goldmarkast.WalkStop, fmt.Errorf("render HTML block node: unexpected %T", node)
+func (r *renditionHTMLRenderer) decorateRawHTML(inline bool) goldmarkhtml.NodeRendererDecorator {
+	return func(next goldmarkhtml.NodeRenderer) goldmarkhtml.NodeRenderer {
+		return goldmarkhtml.NodeRendererFunc(func(
+			writer io.Writer, source []byte, node goldmarkast.Node, entering bool, rc renderer.Context,
+		) (goldmarkast.WalkStatus, error) {
+			start := r.offset()
+			status, err := next.Render(writer, source, node, entering, rc)
+			if err != nil {
+				return status, fmt.Errorf("render %s node: %w", node.Kind(), err)
+			}
+			if end := r.offset(); end > start {
+				*r.rawSpans = append(*r.rawSpans, renditionRawSpan{start: start, end: end, inline: inline})
+			}
+			return status, nil
+		})
 	}
-	start := r.offset(writer)
-	if entering {
-		lines := block.Lines()
-		for index := range lines.Len() {
-			segment := lines.At(index)
-			goldmarkhtml.DefaultWriter.SecureWrite(writer, segment.Value(source))
-		}
-	} else if block.HasClosure() {
-		goldmarkhtml.DefaultWriter.SecureWrite(writer, block.ClosureLine.Value(source))
-	}
-	r.appendRawSpan(start, writer, false)
-	return goldmarkast.WalkContinue, nil
-}
-
-func (r *renditionHTMLRenderer) renderRawHTML(
-	writer util.BufWriter,
-	source []byte,
-	node goldmarkast.Node,
-	entering bool,
-) (goldmarkast.WalkStatus, error) {
-	if !entering {
-		return goldmarkast.WalkContinue, nil
-	}
-	raw, ok := node.(*goldmarkast.RawHTML)
-	if !ok {
-		return goldmarkast.WalkStop, fmt.Errorf("render raw HTML node: unexpected %T", node)
-	}
-	start := r.offset(writer)
-	for index := range raw.Segments.Len() {
-		segment := raw.Segments.At(index)
-		_, _ = writer.Write(segment.Value(source))
-	}
-	r.appendRawSpan(start, writer, true)
-	return goldmarkast.WalkSkipChildren, nil
 }
 
 type renditionBlockKind uint8

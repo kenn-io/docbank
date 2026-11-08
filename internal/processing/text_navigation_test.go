@@ -211,8 +211,11 @@ func TestTextNavigationParsingReleasesCapture(t *testing.T) {
 		defer release()
 		f.Service.textParser = func() parser.Parser {
 			p := newTextSectionParser()
-			p.AddOptions(parser.WithASTTransformers(
-				util.Prioritized(navigationParsePause{entered, resume}, 1000)))
+			// goldmark v2 keeps AddOptions on its concrete parser only.
+			configurable, ok := p.(interface{ AddOptions(options ...parser.Option) })
+			require.True(t, ok, "goldmark parser no longer accepts added options")
+			configurable.AddOptions(parser.WithASTTransformers(
+				util.Prioritized[parser.ASTTransformer](navigationParsePause{entered, resume}, 1000)))
 			return p
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

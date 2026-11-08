@@ -28,6 +28,23 @@ type normalizedFigure struct {
 
 type figureKey struct{ kind, value string }
 
+// unescapePunctuation drops the backslash from Markdown escapes of ASCII
+// punctuation, such as `\$`, and leaves every other byte unchanged.
+func unescapePunctuation(text string) string {
+	if !strings.Contains(text, `\`) {
+		return text
+	}
+	var unescaped strings.Builder
+	unescaped.Grow(len(text))
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\\' && i+1 < len(text) && util.IsPunct(text[i+1]) {
+			i++
+		}
+		unescaped.WriteByte(text[i])
+	}
+	return unescaped.String()
+}
+
 // Only consume a whole sequence of existing literal tokens. Unrecognized input
 // remains exactly the same figure that the literal checker would have seen.
 func normalizedFigures(text string) []normalizedFigure {
@@ -35,7 +52,7 @@ func normalizedFigures(text string) []normalizedFigure {
 }
 
 func decodeFigureText(text string) string {
-	return string(util.UnescapePunctuations([]byte(text)))
+	return unescapePunctuation(text)
 }
 
 func decodedFigures(text string) []normalizedFigure {
