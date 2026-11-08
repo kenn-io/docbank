@@ -1122,7 +1122,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
 	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingASRM4AAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
+		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingASRM4AAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
 	}
 	if profile.AdapterContract == MistralOCRAdapterContract {
 		return validateMistralRuntime(profile, prefix)

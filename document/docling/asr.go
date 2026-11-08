@@ -77,7 +77,7 @@ func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint,
 	return providerutil.RenditionDisclosureFingerprint(ASRAdapterContract, descriptor, endpoint, deployment)
 }
 
-// NewASR constructs the transcript provider for the qualified WAV/MP3 deployment.
+// NewASR constructs the WAV/MP3 provider or the opt-in M4A-capable v2 provider.
 func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client) (*ASRClient, error) {
 	client, err := newTransportClient(profile.Profile, secrets, httpClient)
 	if err != nil {
@@ -86,7 +86,7 @@ func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client)
 	descriptor := client.descriptor
 	if descriptor.ReturnsMarkdown || !descriptor.ReturnsStructured ||
 		len(descriptor.ArtifactRoles) != 1 || descriptor.ArtifactRoles[0] != document.EvidenceArtifactTranscript ||
-		!qualifiedASRFormatsFor(descriptor.SupportedFormats, profile.AllowM4A) {
+		!qualifiedASRFormats(descriptor.SupportedFormats, profile.AllowM4A) {
 		return nil, errors.New("docling: ASR profile does not match the qualified deployment")
 	}
 	contract := ASRAdapterContract
@@ -167,11 +167,7 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 
 var errASRTimingUnavailable = errors.New("timing_unavailable")
 
-func qualifiedASRFormats(formats []document.RenditionFormatCapability) bool {
-	return qualifiedASRFormatsFor(formats, false)
-}
-
-func qualifiedASRFormatsFor(formats []document.RenditionFormatCapability, allowM4A bool) bool {
+func qualifiedASRFormats(formats []document.RenditionFormatCapability, allowM4A bool) bool {
 	count := 2
 	if allowM4A {
 		count++
