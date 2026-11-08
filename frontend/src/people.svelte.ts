@@ -14,6 +14,7 @@ import {
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
+import { settleReads } from "./photoEvents.js";
 import { uuidV4Pattern as uuid } from "./query.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
@@ -159,10 +160,12 @@ export class People {
   // as another tab's rename or merge. It keeps the search, at least as many
   // cards as were loaded, and the selection, with fresh names and revisions.
   // A failure keeps the current cards and throws so the photo event pass
-  // retries. Suggestions refresh alongside.
+  // retries. The pass waits for suggestions and cards to finish together.
   async refresh() {
-    if (this.suggestions.started) void this.suggestions.load();
-    await this.refreshCards();
+    await settleReads([
+      this.suggestions.started ? this.suggestions.load() : undefined,
+      this.refreshCards(),
+    ]);
   }
   async refreshCards() {
     if (this.disposed || this.loading || this.access?.lockError) return;

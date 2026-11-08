@@ -903,6 +903,7 @@
         people?.refresh(),
       ]);
       listRefreshed = true;
+      if (people?.suggestions.error) throw new Error(people.suggestions.error);
     } finally {
       // A viewer's unavailable result must land after any older list rows.
       await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));

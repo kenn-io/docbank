@@ -922,19 +922,21 @@ it.each(["initial load", "refresh"])(
   },
 );
 
-it("releases live refresh when face suggestions stall and can retry", async () => {
+it("updates person cards while suggestion refresh remains pending", async () => {
   vi.mocked(api.listFaceCandidates).mockRestore();
-  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
-  const fetcher = vi.fn(
-    (_url: string, options: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        options.signal!.addEventListener("abort", () => reject(options.signal!.reason), {
-          once: true,
-        });
-      }),
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+  let finish!: (response: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    ),
   );
-  vi.stubGlobal("fetch", fetcher);
   const people = new People("session", vi.fn());
+  people.items = [ada];
   people.suggestions.started = true;
   people.suggestions.items = [isAda];
   let refreshed = false;
@@ -942,15 +944,18 @@ it("releases live refresh when face suggestions stall and can retry", async () =
     refreshed = true;
   });
   try {
-    await vi.waitFor(() => expect(refreshed).toBe(true));
+    await vi.waitFor(() => expect(people.items).toEqual([grace]));
+    expect(refreshed).toBe(false);
     expect(people.suggestions.loading).toBe(true);
     expect(people.suggestions.items).toEqual([isAda]);
-    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ items: [unnamed], total: 1 })));
-    await people.refresh();
-    await vi.waitFor(() => expect(people.suggestions.items).toEqual([unnamed]));
+    finish(Response.json({ items: [unnamed], total: 1 }));
+    await pending;
+    expect(refreshed).toBe(true);
+    expect(people.suggestions.items).toEqual([unnamed]);
     expect(people.suggestions.error).toBe("");
   } finally {
     people.dispose();
+    finish?.(Response.json({ items: [], total: 0 }));
     await pending;
     vi.unstubAllGlobals();
   }
