@@ -3867,6 +3867,25 @@ export interface LocalTextPlanRequest {
   server: LocalTextPlanRequestServer;
 }
 
+export type LocalTextStatusProvider = typeof LocalTextStatusProvider[keyof typeof LocalTextStatusProvider];
+
+
+export const LocalTextStatusProvider = {
+  '': '',
+  local: 'local',
+  ollama: 'ollama',
+  configured: 'configured',
+} as const;
+
+export interface LocalTextStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  download_bytes: number;
+  provider: LocalTextStatusProvider;
+  restart_required: boolean;
+}
+
 export interface LookupPhotoFlagsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -19228,6 +19247,30 @@ return sessionJSON<LocalTextPlan>(getApplyLocalTextUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(localTextApplyRequest)
+  }
+);}
+
+
+
+export const getGetLocalTextStatusUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/status`
+}
+
+/**
+ * @summary Read search by meaning setup status
+ */
+export const getLocalTextStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextStatus> => {
+
+  return sessionJSON<LocalTextStatus>(getGetLocalTextStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
