@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -399,12 +400,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
+	var restartPending atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
-		Save: func(name, mode string) error {
-			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
-		},
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText),
 	}
 	localText.Candidate = func(mode, name string) (*processing.Service, error) {
 		profiles, _, err := candidateProfiles(mode, name)
@@ -716,7 +716,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText,
+		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
+		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,

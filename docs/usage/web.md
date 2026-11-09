@@ -52,7 +52,7 @@ album index at `/photos/albums`, People at `/photos/people`, or an album at `/ph
 Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
 **Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
-**Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
+**Protected folders**, **Usage reporting**, and **Search by meaning**. On a narrow screen, **Open navigation** reveals the
 same menu.
 
 Folder breadcrumbs let you jump to any parent. Each file has an icon and a
@@ -851,6 +851,8 @@ HTTP API for exhaustive automation. Provenance correction and external-content
 pinning are not browser workflows.
 
 ## Browse tags and search text
+
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
