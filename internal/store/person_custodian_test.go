@@ -362,9 +362,10 @@ func checkOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T, newS
 	require.ErrorIs(t, err, ErrCustodianConflict)
 }
 
-func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
+func checkPeopleByDisplayNameEvidenceVisibility(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("search-hidden"), "image/jpeg")
 	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
@@ -480,7 +481,7 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 	})
 	for _, state := range []string{"stale", "trashed"} {
 		t.Run(state, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			version := seedDocumentPeopleEvent(t, s, "retained-person.txt", "d9", nil)
 			person := publishLifecycleDocumentPeople(t, s, version.ID)
@@ -559,9 +560,10 @@ func TestPeopleByDisplayNameEvidenceVisibility(t *testing.T) {
 	})
 }
 
-func TestPeopleByDisplayNameOperatorCandidateAcceptance(t *testing.T) {
+func checkPeopleByDisplayNameOperatorCandidateAcceptance(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "candidate.txt", "b2", []document.DocumentEventActorV1{{ActorKey: "name_alias:alex sensitive", DisplayName: "Alex Sensitive", Claim: "Alex Sensitive", Role: "author", Sensitive: true}})
 	_, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
@@ -581,9 +583,10 @@ func TestPeopleByDisplayNameOperatorCandidateAcceptance(t *testing.T) {
 	require.Equal(t, decided.DecidedPersonID, browser[0].PersonID)
 }
 
-func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
+func checkPeopleByDisplayNameMatchesWordPrefixes(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE", "Rate %_One"} {
 		_, err := s.CreatePerson(ctx, name, "operator")
@@ -617,9 +620,10 @@ func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 	}
 }
 
-func TestPeopleSearchIdentityLabelsRespectEvidenceVisibility(t *testing.T) {
+func checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	visible := browsePhotoNode(t, s, "identity-visible.jpg", fakeHash("identity-visible"), "image/jpeg")
 	hidden := browsePhotoNode(t, s, "identity-hidden.jpg", fakeHash("identity-hidden"), "image/jpeg")
