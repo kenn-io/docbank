@@ -600,7 +600,7 @@ func TestNewerRuntimeProtocolKeepsOwnerRunning(t *testing.T) {
 	for _, action := range []string{"start", "restart"} {
 		out, err = run("daemon", action)
 		require.Error(t, err, out)
-		assert.Contains(t, out, "newer runtime protocol")
+		assert.Contains(t, out, "This command cannot replace the running daemon; use a matching or newer Docbank version.")
 		assert.Equal(t, rec.PID, waitForDaemon(t, root).PID)
 	}
 	out, err = run("daemon", "status")

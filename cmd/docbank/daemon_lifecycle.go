@@ -17,7 +17,8 @@ import (
 
 var daemonCmd = &cobra.Command{
 	Long: `Data commands start the daemon automatically and replace one from a different
-binary version. Use daemon restart to keep an automatic daemon running until daemon stop.`,
+binary version. Use daemon restart to keep an automatic daemon running until
+daemon stop.`,
 	GroupID: groupOperations,
 	Use:     "daemon",
 	Short:   "Manage the docbank daemon",

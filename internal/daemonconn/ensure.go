@@ -132,7 +132,7 @@ func runtimeProtocolError(rec kitdaemon.RuntimeRecord) error {
 	protocol, _ := strconv.Atoi(rec.Metadata[metaProtocolVersion])
 	supported, _ := strconv.Atoi(daemonProtocolVersion)
 	if protocol > supported {
-		return fmt.Errorf("daemon uses newer runtime protocol %d (supported: %d); use a matching or newer docbank binary", protocol, supported)
+		return errors.New("This command cannot replace the running daemon; use a matching or newer Docbank version.")
 	}
 	return nil
 }
