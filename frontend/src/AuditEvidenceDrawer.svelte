@@ -3,7 +3,7 @@
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import { Button, Chip, IconButton, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Chip, IconButton, Spinner } from "@kenn-io/kit-ui";
   import CommandBox from "./CommandBox.svelte";
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
@@ -157,8 +157,7 @@
       <InspectorDetails label="Verification summary" facts={summary} />
       {@render problems()}
 
-      <details class="details">
-        <summary>Details</summary>
+      <Disclosure variant="plain" title="Details">
         <div class="breakdown">
           <InspectorDetails label="Verified audit history" facts={identity} />
           <section aria-label="Verified audit scope heads">
@@ -181,7 +180,7 @@
             {/if}
           </section>
         </div>
-      </details>
+      </Disclosure>
     {/if}
   </div>
 </DrawerShell>
@@ -276,17 +275,6 @@
   code {
     overflow-wrap: anywhere;
     font-size: var(--font-size-sm);
-  }
-
-  summary {
-    cursor: pointer;
-    width: fit-content;
-    color: var(--text-secondary);
-  }
-
-  summary:focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 2px;
   }
 
   .breakdown,

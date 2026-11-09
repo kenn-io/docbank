@@ -28,7 +28,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
       - name: Check workflow download retries
         run: |
           GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
