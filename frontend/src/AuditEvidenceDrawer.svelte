@@ -19,6 +19,7 @@
   let { session, onclose, onauthfailure }: Props = $props();
 
   let report = $state<AuditVerifyReport | null>(null);
+  let protectionDisabled = $state(false);
   let loading = $state(true);
   let loaded = $state(false);
   let error = $state("");
@@ -83,6 +84,17 @@
     report = null;
     error = "";
     try {
+      const status = await generated
+        .auditStatus({}, { session: session, signal: active.signal })
+        .catch((cause) => {
+          if (cause instanceof APIError && cause.status === 401) throw cause;
+          return null;
+        });
+      if (request !== generation) return;
+      if (status?.enabled === false) {
+        protectionDisabled = true;
+        return;
+      }
       const next = await generated.verifyAudit({}, { session: session, signal: active.signal });
       if (request !== generation) return;
       report = next;
@@ -112,7 +124,7 @@
   {onclose}
 >
   {#snippet actions()}
-    {#if loaded && !(report && !report.enabled)}
+    {#if loaded && !protectionDisabled && !(report && !report.enabled)}
       <IconButton
         size="sm"
         ariaLabel="Run permanent audit verification again"
@@ -138,7 +150,7 @@
         <span>Protected history needs attention</span>
       </div>
       {@render problems()}
-    {:else if report && !report.enabled}
+    {:else if protectionDisabled || (report && !report.enabled)}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="empty">
         <p>No folders are protected. To protect one, run</p>
