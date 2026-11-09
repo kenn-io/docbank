@@ -63,6 +63,9 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = pg_catalog`); err != nil {
 		return uuid.Nil(), err
 	}
+	if err := validateEncoding(ctx, tx); err != nil {
+		return uuid.Nil(), err
+	}
 	var user string
 	if err := tx.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
 		return uuid.Nil(), err
@@ -151,6 +154,9 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = pg_catalog`); err != nil {
 		return uuid.Nil(), err
 	}
+	if err := validateEncoding(ctx, tx); err != nil {
+		return uuid.Nil(), err
+	}
 	var owner string
 	var canCreate, canAssumeOwner bool
 	// SET ROLE follows session_user, even if the pool changed current_user.
@@ -189,6 +195,18 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		return uuid.Nil(), err
 	}
 	return id, nil
+}
+
+func validateEncoding(ctx context.Context, tx *sql.Tx) error {
+	var encoding string
+	if err := tx.QueryRowContext(ctx, `SHOW server_encoding`).Scan(&encoding); err != nil {
+		return fmt.Errorf("read postgres database encoding: %w", err)
+	}
+	// Unicode word boundaries must operate on code points rather than bytes.
+	if encoding != "UTF8" {
+		return fmt.Errorf("postgres metadata requires UTF8 database encoding; got %s", encoding)
+	}
+	return nil
 }
 
 func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, error) {

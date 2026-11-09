@@ -371,7 +371,13 @@ transfer, backup recovery, multi-store placement and their storage-operation job
 remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
-and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
+and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
+both setup and runtime validation check `server_encoding` and reject any other
+value before accessing the vault schema. This keeps Unicode name matching
+consistent with SQLite. A different client encoding does not satisfy this
+requirement: provision a UTF-8 database before installing the schema.
+
+Setup creates a dedicated schema, canonical
 DDL, a UUIDv4 vault identity, a fresh processing-consent incarnation, the primary
 blob-store identity and ownership epoch, initial people-state epochs, and the
 root directory in one transaction, under a schema-specific PostgreSQL advisory
