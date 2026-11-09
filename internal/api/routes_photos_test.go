@@ -198,27 +198,31 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 
 func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, nil)
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	// A full Cull run fits the request bound, and so does its flat response.
-	run250k := make([]string, 250_000)
-	for i := range run250k {
-		run250k[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
-	}
-	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": run250k})
-	require.Equal(t, http.StatusOK, res.StatusCode)
-	require.Less(t, len(body), 16<<20)
-	var grouped api.GroupPhotoStacksResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
-	require.Empty(t, grouped.Groups)
-	require.Len(t, grouped.UnavailableIDs, 250_000)
-	// Repeats are rejected without echoing the run back once per repeat.
-	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{run250k[0], run250k[0]}})
-	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
-	require.Less(t, len(body), 64<<10)
-	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
-	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
-	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
+	// Bounds do not depend on the host finishing a full Cull run within the
+	// production request deadline. Keep server timers on the bubble's clock.
+	synctest.Test(t, func(t *testing.T) {
+		ts, _ := newBubbleTestServer(t, nil)
+		browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+		// A full Cull run fits the request bound, and so does its flat response.
+		run250k := make([]string, 250_000)
+		for i := range run250k {
+			run250k[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+		}
+		res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": run250k})
+		require.Equal(t, http.StatusOK, res.StatusCode, body[:min(len(body), 512)])
+		require.Less(t, len(body), 16<<20)
+		var grouped api.GroupPhotoStacksResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+		require.Empty(t, grouped.Groups)
+		require.Len(t, grouped.UnavailableIDs, 250_000)
+		// Repeats are rejected without echoing the run back once per repeat.
+		res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{run250k[0], run250k[0]}})
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+		require.Less(t, len(body), 64<<10)
+		require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
+		res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
+		require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
+	})
 }
 
 func TestPhotoStackGroupAcceptsSlowFullRunBody(t *testing.T) {
