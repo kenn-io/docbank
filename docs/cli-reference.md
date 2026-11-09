@@ -1776,13 +1776,17 @@ docbank daemon stop
 | Command | Behavior |
 |---------|----------|
 | `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
-| `daemon start` | Start detached in the background; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon start` | Reuse a compatible daemon unchanged, or start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
 | `daemon status` | Report pid, address, version, and uptime without starting a daemon |
 | `daemon restart` | Stop a running daemon, then start it; also works when none is running |
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Restart prints `restarted: ...` or
+"started_at"}`. Running daemons also report `explicit_start` as a boolean
+when launch intent is recorded, and `idle_timeout` as the effective duration
+string when recorded. Older records omit unavailable fields. Foreground
+daemons report `explicit_start: false` without `idle_timeout`.
+Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`

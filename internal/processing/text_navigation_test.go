@@ -212,7 +212,9 @@ func TestTextNavigationParsingReleasesCapture(t *testing.T) {
 		f.Service.textParser = func() parser.Parser {
 			p := newTextSectionParser()
 			// goldmark v2 keeps AddOptions on its concrete parser only.
-			configurable, ok := p.(interface{ AddOptions(options ...parser.Option) })
+			configurable, ok := p.(interface {
+				AddOptions(options ...parser.Option)
+			})
 			require.True(t, ok, "goldmark parser no longer accepts added options")
 			configurable.AddOptions(parser.WithASTTransformers(
 				util.Prioritized[parser.ASTTransformer](navigationParsePause{entered, resume}, 1000)))

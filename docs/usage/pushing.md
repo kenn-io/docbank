@@ -50,12 +50,13 @@ API key. The check cannot detect a process that relays the challenge to the
 real daemon, which requires access to the daemon itself. Use HTTPS when the
 path between the client and the daemon is not trusted.
 
-A long-running `--watch` also needs the target daemon to stay available. A
-background daemon with no configured `[[watch]]`, scheduled packing, or scheduled backups
+A long-running `--watch` also needs the target daemon to stay available. An
+automatically started daemon with no configured `[[watch]]`, scheduled packing, or scheduled backups
 shuts down after `[server] idle_timeout` (30 minutes by default) when no API
 requests arrive. Push sends no requests while the folder is unchanged, so it
-cannot wake a daemon that has already stopped. Before starting push watch, set
-`[server] idle_timeout = "0"` or run `docbank daemon run` in the foreground.
+cannot wake a daemon that has already stopped. Before starting push watch, run
+`docbank daemon restart`, set `[server] idle_timeout = "0"`, or run
+`docbank daemon run` in the foreground.
 See [daemon idle shutdown](../architecture/daemon.md#auto-start-and-idle-shutdown).
 
 The first push preserves the folder's relative hierarchy under `--dest`. The

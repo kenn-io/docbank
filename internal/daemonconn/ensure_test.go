@@ -130,7 +130,7 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Start(ctx, root)
+		_, err := Start(ctx, root, false)
 		done <- err
 	}()
 	// The child reports its PID once it runs, before any runtime record exists.
@@ -280,8 +280,8 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 				root = filepath.Join(root, "missing", "vault")
 			}
 			started := false
-			_, err := ensureDaemon(t.Context(), root,
-				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			_, err := ensureDaemon(t.Context(), root, false,
+				func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
 					started = true
 					if test.missing {
 						_, err := os.Stat(filepath.Dir(root))
@@ -355,11 +355,13 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
 	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	rec.Metadata[MetaExplicitStart] = "true"
 	rec.Metadata[metaProtocolVersion] = "119"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			assert.True(t, persistent, "replacement inherits the stopped owner's explicit lifetime")
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			started.Store(true)
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
@@ -382,8 +384,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	result, err := ensureDaemonWithOptions(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemonWithOptions(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", "127.0.0.1:3"), nil
 		}, webDiscoverOptions())
@@ -399,12 +401,16 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, gotRoot string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
 			started = true
+			assert.False(t, persistent, "a draining owner contributes no explicit launch intent")
 			assert.Equal(t, canonicalRoot, gotRoot)
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
 				"replacement must wait for the recorded owner to exit")
@@ -442,8 +448,8 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
 		})
@@ -652,9 +658,14 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	stopped, err := Stop(t.Context(), root)
-	assert.True(t, stopped, "the live runtime PID must be recognized as stopping")
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
+	stopped, err := Stop(t.Context(), root)
+	require.NoError(t, err)
+	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
+	assert.Equal(t, rec.PID, stopped.PID)
+	assert.False(t, Explicit(*stopped), "a draining owner contributes no explicit launch intent")
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
@@ -697,7 +708,7 @@ func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	stopped, err := Stop(t.Context(), root)
 	require.NoError(t, err)
-	assert.False(t, stopped)
+	assert.Nil(t, stopped)
 	_, err = os.Stat(root)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -791,4 +802,35 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 		assert.True(t, dead)
 		assert.Zero(t, time.Since(started), "an exited process ends the wait at once")
 	})
+}
+
+func TestRestartPreservesLifetime(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			root := t.TempDir()
+			assertLocked := func() {
+				t.Helper()
+				if !explicit {
+					return
+				}
+				lock, err := (home.Layout{Root: root}).TryLockLaunch()
+				if lock != nil {
+					_ = lock.Release()
+				}
+				require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
+			}
+			_, wasRunning, err := restart(t.Context(), root, false,
+				func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: strconv.FormatBool(explicit)}}, nil
+				},
+				func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					assert.Equal(t, explicit, persistent, "restarting a daemon keeps its lifetime")
+					return kitdaemon.RuntimeRecord{}, nil
+				})
+			require.NoError(t, err)
+			assert.True(t, wasRunning)
+		})
+	}
 }

@@ -137,7 +137,7 @@ api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
 api_key = ""          # empty = ephemeral per-run key (loopback only)
 allowed_hosts = []   # additional Host names, optionally with a port
-idle_timeout = "30m"  # background daemons only; "0" = never
+idle_timeout = "30m"  # automatically started daemons only; "0" = never
 
 [web]
 enabled = true
@@ -198,10 +198,12 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   a key at startup and publish it to same-user clients in the runtime record.
   Set a fixed key when a client cannot read that record, such as a client
   using an SSH tunnel from another machine.
-- **`idle_timeout`**: how long a background daemon waits without
+- **`idle_timeout`**: how long an automatically started daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out. A daemon
-  hosting MCP HTTP also never idles out.
+  A fresh `daemon start`, `daemon restart`, or foreground `daemon run` ignores
+  this and never idles out. `daemon start` reuses a compatible automatic daemon
+  with its existing idle policy; use `daemon restart` to keep it running.
+  A daemon hosting MCP HTTP also never idles out.
 - **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
