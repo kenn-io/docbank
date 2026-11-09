@@ -22,7 +22,145 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; query-driven discovery and resolver production remain separate.", scenarios: []backendScenario{
+	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
+		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
+		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
+		{"Rollback", nil, checkDocumentPeopleRollbackPostgres},
+		{"DocumentPeopleResolverInputsProvisionEligibleIdentityOnce", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleProvisioningKeepsPublishedVersionsCurrent", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleNameAliasIsOnlyASuggestion", func(t *testing.T) { t.Helper(); checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleReusedIdentitySuggestsOnlyActiveOwner", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleRetiredNameAliasKeepsUnassignedCandidate", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleDisplayOnlyActorRemainsUnresolved", func(t *testing.T) { t.Helper(); checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleLoadFailureHasNoPublishableInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleLoadFailureHasNoPublishableInputs(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleLoadFailureHasNoPublishableInputs(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleDerivationDoesNotMutateAuditedAuthority", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleResolverInputsOpensNameOnlyCandidate", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleResolverInputsHonorsExternalUIDUnlink", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentPeopleRejectsChangedInputsBeforeWriting", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentPeopleReplayInputIdentity", func(t *testing.T) { t.Helper(); checkPublishDocumentPeopleReplayInputIdentity(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleReplayInputIdentity(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFailureReplacesOlderSuccessfulCoverage", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleReadsWithholdStaleAttributionAndRetainHistory", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildReplay", func(t *testing.T) { t.Helper(); checkPeopleRebuildReplay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRebuildReplay(t, newPostgresQueryStore) }},
+		{"DocumentPeopleCoverageCountsCurrentVersionWaitingForEvents", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildWaitsForFailureRetryAndLateNodeRevision", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildCountsFailureAfterNodeRevisionChanges", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildStopsRetryingTerminalFailure", func(t *testing.T) { t.Helper(); checkPeopleRebuildStopsRetryingTerminalFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildStopsRetryingTerminalFailure(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; query-driven discovery remains separate; document-people covers resolver production.", scenarios: []backendScenario{
 		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkPeopleRollbackPostgres},
 		{"RetainedPackageCustody", nil, checkPeopleRetainedPackageCustodyPostgres},
