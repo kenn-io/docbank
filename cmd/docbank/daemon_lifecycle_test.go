@@ -1,21 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -560,6 +566,18 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	assert.Contains(t, out, "Exits after 30m idle (started automatically)")
 	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
 
+	// Protocol 123 on the default branch publishes neither lifetime field.
+	delete(reused.Metadata, daemonconn.MetaIdleTimeout)
+	delete(reused.Metadata, daemonconn.MetaExplicitStart)
+	_, err := daemonconn.RuntimeStore(root).Write(reused)
+	require.NoError(t, err)
+	out = run(oldBin, "daemon", "start")
+	assert.Contains(t, out, "Lifetime unavailable")
+	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
+	assert.Equal(t, automatic.PID, waitForDaemon(t, root).PID)
+	assert.Equal(t, automatic.Address, waitForDaemon(t, root).Address)
+	assert.Contains(t, run(oldBin, "daemon", "status"), "Lifetime unavailable")
+
 	run(oldBin, "daemon", "restart")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
 	var status map[string]any
@@ -592,4 +610,60 @@ func TestForegroundDaemonIsNotExplicit(t *testing.T) {
 	rec := waitForDaemon(t, root)
 	assert.False(t, daemonconn.Explicit(rec), "replacing a foreground daemon must start an automatic one")
 	assert.Empty(t, daemonLifetime(rec))
+}
+
+func TestNewerRuntimeProtocolKeepsOwnerRunning(t *testing.T) {
+	bin := buildDocbank(t)
+	root := t.TempDir()
+	run := func(args ...string) (string, error) {
+		cmd := exec.CommandContext(t.Context(), bin, args...)
+		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+root)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	out, err := run("daemon", "start")
+	require.NoError(t, err, out)
+	rec := waitForDaemon(t, root)
+	t.Cleanup(func() {
+		_, _ = daemonconn.RuntimeStore(root).Write(rec)
+		_, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root)
+	})
+	future := rec
+	future.Metadata = maps.Clone(rec.Metadata)
+	protocol, err := strconv.Atoi(future.Metadata["protocol_version"])
+	require.NoError(t, err)
+	future.Metadata["protocol_version"] = strconv.Itoa(protocol + 1)
+	future.Metadata[daemonconn.MetaExplicitStart] = "future-format"
+	_, err = daemonconn.RuntimeStore(root).Write(future)
+	require.NoError(t, err)
+	for _, action := range []string{"start", "restart"} {
+		out, err = run("daemon", action)
+		require.Error(t, err, out)
+		assert.Contains(t, out, "newer runtime protocol")
+		assert.Equal(t, rec.PID, waitForDaemon(t, root).PID)
+	}
+}
+
+func TestStartAdviceDistinguishesForegroundAndLegacyRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		metadata map[string]string
+		advice   bool
+		lifetime string
+	}{
+		{"foreground", map[string]string{daemonconn.MetaExplicitStart: "false"}, false, ""},
+		{"legacy", map[string]string{}, true, "Lifetime unavailable"},
+		{"automatic_no_idle", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "0s"}, true, "Idle exit is off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&out)
+			printEnsured(cmd, daemonconn.EnsureResult{Record: kitdaemon.RuntimeRecord{Metadata: tc.metadata}})
+			assert.Equal(t, tc.advice, strings.Contains(out.String(), "Run docbank daemon restart"))
+			if tc.lifetime != "" {
+				assert.Contains(t, daemonLifetime(kitdaemon.RuntimeRecord{Metadata: tc.metadata}), tc.lifetime)
+			}
+		})
+	}
 }

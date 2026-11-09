@@ -37,7 +37,7 @@ func printEnsured(cmd *cobra.Command, res daemonconn.EnsureResult) {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
 		res.Record.PID, res.Record.Address, res.Record.Version)
-	if !daemonconn.Explicit(res.Record) {
+	if !daemonconn.Explicit(res.Record) && (res.Record.Metadata[daemonconn.MetaIdleTimeout] != "" || res.Record.Metadata[daemonconn.MetaExplicitStart] == "") {
 		if lifetime := daemonLifetime(res.Record); lifetime != "" {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
 		}
@@ -115,7 +115,7 @@ var daemonStatusCmd = &cobra.Command{
 func daemonLifetime(rec kitdaemon.RuntimeRecord) string {
 	timeout, err := time.ParseDuration(rec.Metadata[daemonconn.MetaIdleTimeout])
 	if err != nil {
-		return ""
+		return unavailableDaemonLifetime(rec)
 	}
 	if daemonconn.Explicit(rec) {
 		return "Stays running until docbank daemon stop"
@@ -128,6 +128,13 @@ func daemonLifetime(rec kitdaemon.RuntimeRecord) string {
 		duration = fmt.Sprintf("%dm", timeout/time.Minute)
 	}
 	return fmt.Sprintf("Exits after %s idle (started automatically)", duration)
+}
+
+func unavailableDaemonLifetime(rec kitdaemon.RuntimeRecord) string {
+	if rec.Metadata[daemonconn.MetaExplicitStart] == "" {
+		return "Lifetime unavailable (daemon predates lifetime reporting)"
+	}
+	return ""
 }
 
 var daemonStopCmd = &cobra.Command{

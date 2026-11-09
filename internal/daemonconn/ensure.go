@@ -124,7 +124,17 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 	if err != nil {
 		return rec, info, ok, fmt.Errorf("discovering daemon: %w", err)
 	}
-	return rec, info, ok, nil
+	return rec, info, ok, runtimeProtocolError(rec)
+}
+
+// runtimeProtocolError refuses to interpret a newer owner's lifetime contract.
+func runtimeProtocolError(rec kitdaemon.RuntimeRecord) error {
+	protocol, _ := strconv.Atoi(rec.Metadata[metaProtocolVersion])
+	supported, _ := strconv.Atoi(daemonProtocolVersion)
+	if protocol > supported {
+		return fmt.Errorf("daemon uses newer runtime protocol %d (supported: %d); use a matching or newer docbank binary", protocol, supported)
+	}
+	return nil
 }
 
 // newProvenClientFor authenticates with the key the daemon itself published in
@@ -828,7 +838,7 @@ func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
 			kitdaemon.CompareRuntimeProcessIdentity(rec) != kitdaemon.ProcessIdentityMatch {
 			continue
 		}
-		return rec, true, nil
+		return rec, true, runtimeProtocolError(rec)
 	}
 	return kitdaemon.RuntimeRecord{}, false, nil
 }

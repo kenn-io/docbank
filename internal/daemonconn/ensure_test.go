@@ -825,3 +825,18 @@ func TestRestartHoldsLaunchLockAcrossStopAndStart(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, wasRunning)
 }
+
+func TestEnsureRejectsNewerPinglessRuntimeWithoutStoppingOwner(t *testing.T) {
+	root, rec := startUnresponsiveRuntime(t)
+	protocol, err := strconv.Atoi(daemonProtocolVersion)
+	require.NoError(t, err)
+	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocol + 1)
+	_, err = RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
+	_, err = ensureDaemon(t.Context(), root, true, func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
+		t.Error("a newer owner must not be replaced")
+		return kitdaemon.RuntimeRecord{}, nil
+	})
+	require.ErrorContains(t, err, "newer runtime protocol")
+	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
+}
