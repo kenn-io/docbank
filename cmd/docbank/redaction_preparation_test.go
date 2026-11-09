@@ -78,7 +78,7 @@ func qualifyRedactionSource(t *testing.T, fixture redactionFixture, runtime *pag
 	}
 	data, identity := downloadRedactionSource(t, redactionSourcePDF(t, fixture))
 	// From here on, input comes only from the verified download and its receipt.
-	inspection, err := pagerender.InspectSource(data, identity, "application/pdf")
+	inspection, err := pagerender.InspectSource(t.Context(), data, identity, "application/pdf")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Len(t, frames, 1)

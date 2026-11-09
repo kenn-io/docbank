@@ -263,7 +263,7 @@ func TestDetectFormatAcceptsRecoverablePDFs(t *testing.T) {
 			format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
 			require.NoError(t, err)
 			assert.Equal(t, "pdf", format.ID)
-			pages, err := formatdetect.CountPDFPages(content)
+			pages, err := formatdetect.CountPDFPages(t.Context(), content)
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), pages)
 		})

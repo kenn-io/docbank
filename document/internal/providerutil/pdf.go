@@ -1,6 +1,7 @@
 package providerutil
 
 import (
+	"context"
 	"errors"
 
 	"go.kenn.io/docbank/document"
@@ -8,12 +9,12 @@ import (
 )
 
 // DecryptUpload prepares an in-memory provider copy using local inspection evidence.
-func DecryptUpload(provider Provider, upload document.AuthorizedUpload, source []byte, maxBytes int64) ([]byte, string, error) {
+func DecryptUpload(ctx context.Context, provider Provider, upload document.AuthorizedUpload, source []byte, maxBytes int64) ([]byte, string, error) {
 	password, encrypted := document.UploadPDFPassword(upload)
 	if !encrypted {
 		return source, "", nil
 	}
-	unlocked, err := formatdetect.DecryptPDF(source, password, maxBytes)
+	unlocked, err := formatdetect.DecryptPDF(ctx, source, password, maxBytes)
 	if err != nil {
 		message := "PDF decryption failed"
 		if errors.Is(err, formatdetect.ErrPDFExpandedBytes) {

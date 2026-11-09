@@ -77,8 +77,11 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	pages, err := p.pageCount(data)
+	pages, err := p.pageCount(ctx, data)
 	if err != nil {
+		if operationErr := operation.Check(); operationErr != nil {
+			return document.RenditionResult{}, operationErr
+		}
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorUnsupportedInput, "PDF is malformed or unsupported", err)
 	}
 	if pages > p.profile.MaxPages {
@@ -145,8 +148,8 @@ func rejected(message string) error {
 
 var _ document.RenditionProvider = (*Provider)(nil)
 
-func (p *Provider) pageCount(data []byte) (int64, error) {
-	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{TextOnly: true, MaxExpandedBytes: p.profile.MaxDocumentBytes, MaxEntryBytes: p.profile.MaxDocumentBytes, MaxEntries: 100_000})
+func (p *Provider) pageCount(ctx context.Context, data []byte) (int64, error) {
+	measurements, err := formatdetect.InspectPDF(ctx, data, formatdetect.PDFLimits{TextOnly: true, MaxExpandedBytes: p.profile.MaxDocumentBytes, MaxEntryBytes: p.profile.MaxDocumentBytes, MaxEntries: 100_000})
 	if err != nil {
 		return 0, err
 	}

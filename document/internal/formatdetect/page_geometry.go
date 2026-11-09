@@ -2,6 +2,7 @@ package formatdetect
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -18,30 +19,30 @@ type PDFPageGeometry struct {
 	SimpleFontsOnly   bool
 }
 
-func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
+func ReadPDFPageGeometry(ctx context.Context, data []byte, maxPages int) ([]PDFPageGeometry, error) {
 	if len(data) == 0 || len(data) > 64<<20 || maxPages < 1 || maxPages > 1000 {
 		return nil, errors.New("PDF geometry exceeds source/page limits")
 	}
 	limits := PDFLimits{MaxExpandedBytes: 256 << 20, MaxEntryBytes: 64 << 20, MaxEntries: 100000}
-	ctx, err := api.ReadContext(bytes.NewReader(data), pdfConfiguration(len(data), limits))
+	pdfContext, err := api.ReadContext(ctx, bytes.NewReader(data), pdfConfiguration(len(data), limits))
 	if err != nil {
 		return nil, fmt.Errorf("read PDF geometry: %w", err)
 	}
 	// Validation may repair a missing font by substituting a different resource.
 	// Classify the original parsed dictionaries before those repairs occur.
-	domains := unvalidatedPageFontDomains(ctx, maxPages)
-	if err := api.ValidateContext(ctx); err != nil {
+	domains := unvalidatedPageFontDomains(ctx, pdfContext, maxPages)
+	if err := api.ValidateContext(ctx, pdfContext); err != nil {
 		return nil, fmt.Errorf("validate PDF geometry: %w", err)
 	}
-	if _, err := checkPDFReferences(ctx, false, false); err != nil {
+	if _, err := checkPDFReferences(pdfContext, false, false); err != nil {
 		return nil, err
 	}
-	if ctx.PageCount < 1 || ctx.PageCount > maxPages {
+	if pdfContext.PageCount < 1 || pdfContext.PageCount > maxPages {
 		return nil, errors.New("PDF page count exceeds limit")
 	}
-	frames := make([]PDFPageGeometry, ctx.PageCount)
-	for page := 1; page <= ctx.PageCount; page++ {
-		dict, _, attrs, err := ctx.PageDict(page, false)
+	frames := make([]PDFPageGeometry, pdfContext.PageCount)
+	for page := 1; page <= pdfContext.PageCount; page++ {
+		dict, _, attrs, err := pdfContext.PageDict(ctx, page, false)
 		if err != nil {
 			return nil, fmt.Errorf("reading PDF page geometry: %w", err)
 		}
@@ -55,7 +56,7 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 			}
 			for _, name := range []string{"Rotate", "UserUnit"} {
 				if obj, ok := ancestor.Find(name); ok {
-					v, err := ctx.DereferenceNumber(obj)
+					v, err := pdfContext.DereferenceNumber(obj)
 					if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || name == "UserUnit" && v != 1 || name == "Rotate" && (math.Mod(v, 90) != 0 || math.Abs(v) > 360000) {
 						return nil, errors.New("unsupported PDF rotation or UserUnit")
 					}
@@ -65,7 +66,7 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 			if !ok {
 				break
 			}
-			ancestor, err = ctx.DereferenceDict(parent)
+			ancestor, err = pdfContext.DereferenceDict(parent)
 			if err != nil {
 				return nil, fmt.Errorf("reading PDF page ancestor: %w", err)
 			}
@@ -80,7 +81,7 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 		frames[page-1] = PDFPageGeometry{
 			MediaBox: coordinates(attrs.MediaBox), CropBox: coordinates(crop),
 			Rotation:        ((attrs.Rotate % 360) + 360) % 360,
-			SimpleFontsOnly: len(domains) == ctx.PageCount && domains[page-1],
+			SimpleFontsOnly: len(domains) == pdfContext.PageCount && domains[page-1],
 		}
 	}
 	return frames, nil

@@ -220,7 +220,7 @@ func TestMistralPasswordFileProcessing(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
-	source, err := mediatest.EncryptedPDF("open", "owner", 256)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 256)
 	require.NoError(t, err)
 	transport := &passwordOCRTransport{}
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})

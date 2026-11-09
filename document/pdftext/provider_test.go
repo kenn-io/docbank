@@ -134,7 +134,7 @@ func TestPDFTextSealedAdmissionRetainsProviderBounds(t *testing.T) {
 	require.NoError(t, err)
 	metadata := newTestUpload(data).Metadata()
 	authorization := mediatest.Authorization(p.Descriptor(), metadata)
-	record, err := media.InspectCapability(bytes.NewReader(data), media.InspectionPolicy{
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), media.InspectionPolicy{
 		Filename: metadata.Filename, DeclaredMediaType: metadata.MediaType, ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: p.Descriptor().Fingerprint, ProfileFingerprint: strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile, PDFTextOnly: true,
 		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,

@@ -152,8 +152,11 @@ func (client *RenditionClient) Render(
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
-	source, uploadSHA256, err := providerutil.DecryptUpload(renditionProvider, upload, source, client.policy.values.MaxDocumentBytes)
+	source, uploadSHA256, err := providerutil.DecryptUpload(operation.Context(), renditionProvider, upload, source, client.policy.values.MaxDocumentBytes)
 	if err != nil {
+		if operationErr := operation.Check(); operationErr != nil {
+			return document.RenditionResult{}, operationErr
+		}
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
@@ -161,8 +164,11 @@ func (client *RenditionClient) Render(
 	if uploadSHA256 != "" {
 		sentMetadata.SHA256, sentMetadata.ByteLength = uploadSHA256, int64(len(source))
 	}
-	candidate, localUnits, err := client.verifySource(source, sentMetadata)
+	candidate, localUnits, err := client.verifySource(operation.Context(), source, sentMetadata)
 	if err != nil {
+		if operationErr := operation.Check(); operationErr != nil {
+			return document.RenditionResult{}, operationErr
+		}
 		return document.RenditionResult{}, err
 	}
 	providerResult, err := client.process(operation, source, sentMetadata, candidate, localUnits,
@@ -216,7 +222,7 @@ func (client *RenditionClient) Render(
 
 // verifySource re-detects the exact format and proves any registered local
 // unit count before any byte leaves the process.
-func (client *RenditionClient) verifySource(
+func (client *RenditionClient) verifySource(ctx context.Context,
 	source []byte, metadata document.AuthorizedUploadMetadata,
 ) (CandidateFormat, int64, error) {
 	candidate, err := formatdetect.DetectFormat(bytes.NewReader(source), int64(len(source)), metadata.MediaType)
@@ -233,7 +239,7 @@ func (client *RenditionClient) verifySource(
 	limitFailure := "Mistral OCR exceeds the complete unit limit"
 	switch {
 	case candidate.ID == formatIDPDF:
-		localUnits, err = formatdetect.CountPDFPages(source)
+		localUnits, err = formatdetect.CountPDFPages(ctx, source)
 		countFailure = "Mistral PDF page count could not be verified"
 		limitFailure = "Mistral PDF exceeds the complete unit limit"
 	case expectedUnitBound(candidate.ID) == UnitBoundLocalExact:
@@ -244,6 +250,9 @@ func (client *RenditionClient) verifySource(
 		return candidate, 0, nil
 	}
 	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return CandidateFormat{}, 0, contextErr
+		}
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
 			countFailure, err)
 	}

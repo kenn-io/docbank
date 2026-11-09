@@ -206,7 +206,7 @@ func (p *emailPDFProvider) Render(ctx context.Context, upload document.Authorize
 	if err != nil {
 		return fail(err)
 	}
-	verifiedPages, err := emailpdf.VerifyPDF(pdf)
+	verifiedPages, err := emailpdf.VerifyPDF(ctx, pdf)
 	if err != nil || pages != verifiedPages {
 		return fail(errors.Join(err, errors.New("email PDF renderer page receipt disagrees with independent parser")))
 	}
