@@ -1100,7 +1100,9 @@ dialogs and returns it to sign-in.
    loopback backend authority, or an exact entry in `[web] allowed_hosts`.
    Docbank also admits these authorities through the server Host allowlist.
    Entries are `host[:port]` values; schemes and wildcards are rejected.
-3. Open the public origin and enter the API key. Use HTTPS for remote access.
+3. Run `docbank daemon restart` to apply the configuration and keep the daemon
+   running until stopped. `daemon start` reuses a compatible daemon unchanged.
+4. Open the public origin and enter the API key. Use HTTPS for remote access.
    An HTTP origin is accepted on loopback; non-loopback HTTP requires
    `trust_private_network = true`, which explicitly trusts the private
    network and its proxy with the key and browser credentials.

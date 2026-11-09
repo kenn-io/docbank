@@ -17,6 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	kitdaemon "go.kenn.io/kit/daemon"
+
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
@@ -549,11 +551,11 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 		require.NoError(t, err, string(out))
 		return string(out)
 	}
-	pid := func() int {
+	record := func() kitdaemon.RuntimeRecord {
 		rec, _, found, err := daemonconn.Find(t.Context(), root)
 		require.NoError(t, err)
 		require.True(t, found)
-		return rec.PID
+		return rec
 	}
 	watched := func(bin string) bool {
 		var jobs api.JobList
@@ -564,30 +566,36 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
 	run(oldBin, "search", "missing")
-	automatic := pid()
-	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle")
-	run(oldBin, "daemon", "start")
-	explicit := pid()
-	assert.NotEqual(t, automatic, explicit)
+	automatic := record()
+	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
+	out := run(oldBin, "daemon", "start")
+	assert.Equal(t, automatic.PID, record().PID)
+	assert.Equal(t, automatic.Address, record().Address)
+	assert.Equal(t, automatic.Metadata["web_address"], record().Metadata["web_address"])
+	assert.True(t, watched(oldBin))
+	assert.Contains(t, out, "Exits after 30m idle (started automatically)")
+	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
+
+	run(oldBin, "daemon", "restart")
+	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
 	// An upgrade's replacement keeps the explicit lifetime.
 	run(newBin, "search", "missing")
-	assert.NotEqual(t, explicit, pid())
 	assert.False(t, watched(newBin))
 
-	// Explicit start stays up after configuration changes and version replacement.
+	// Reusing a config-held automatic daemon leaves its policy automatic.
 	run(newBin, "daemon", "stop")
 	require.NoError(t, os.WriteFile(config, []byte("[storage]\npack_interval = \"24h\"\n"), 0o600))
 	run(oldBin, "search", "missing")
-	run(oldBin, "daemon", "start")
+	automatic = record()
+	out = run(oldBin, "daemon", "start")
+	assert.Equal(t, automatic.PID, record().PID)
+	assert.Equal(t, automatic.Address, record().Address)
+	assert.Equal(t, automatic.Metadata["web_address"], record().Metadata["web_address"])
+	assert.False(t, watched(oldBin))
+	assert.Contains(t, out, "Idle exit is off (started automatically)")
+	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
+	assert.Contains(t, run(oldBin, "daemon", "status"), "Idle exit is off (started automatically)")
 	require.NoError(t, os.WriteFile(config, nil, 0o600))
-	run(newBin, "search", "missing")
-	assert.False(t, watched(newBin))
-
-	// A daemon kept up only by configuration follows the new configuration when replaced.
-	run(newBin, "daemon", "stop")
-	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"0s\"\n"), 0o600))
-	run(oldBin, "search", "missing")
-	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"2s\"\n"), 0o600))
 	run(newBin, "search", "missing")
 	assert.True(t, watched(newBin))
 }

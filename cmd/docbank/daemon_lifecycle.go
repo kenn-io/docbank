@@ -9,13 +9,15 @@ import (
 
 	"github.com/spf13/cobra"
 
+	kitdaemon "go.kenn.io/kit/daemon"
+
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 )
 
 var daemonCmd = &cobra.Command{
 	Long: `Data commands start the daemon automatically and replace one from a different
-binary version. Use daemon start to keep it running until daemon stop.`,
+binary version. Use daemon restart to keep an automatic daemon running until daemon stop.`,
 	GroupID: groupOperations,
 	Use:     "daemon",
 	Short:   "Manage the docbank daemon",
@@ -35,6 +37,12 @@ func printEnsured(cmd *cobra.Command, res daemonconn.EnsureResult) {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
 		res.Record.PID, res.Record.Address, res.Record.Version)
+	if !daemonconn.Explicit(res.Record) {
+		if lifetime := daemonLifetime(res.Record); lifetime != "" {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
+		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run docbank daemon restart to keep it running.")
+	}
 }
 
 var daemonStartCmd = &cobra.Command{
@@ -42,8 +50,9 @@ var daemonStartCmd = &cobra.Command{
 	Use:     "start",
 	Short:   "Start the daemon in the background",
 	Long: `Start a daemon for this vault in the background, replacing a running daemon
-whose version, protocol, or automatic lifetime does not match this request.
-The daemon stays running until docbank daemon stop.`,
+whose version or protocol does not match this request. Reuse a compatible
+daemon with its existing idle policy. A new daemon stays running until
+docbank daemon stop; use daemon restart to keep an automatic daemon running.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
@@ -82,11 +91,6 @@ var daemonStatusCmd = &cobra.Command{
 				out["address"] = rec.Address
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
-				if timeout := rec.Metadata[daemonconn.MetaIdleTimeout]; timeout != "" {
-					out["idle_timeout"] = timeout
-					out["persistent"] = timeout == "0s"
-					out["explicit_start"] = daemonconn.Explicit(rec)
-				}
 			}
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 			return json.MarshalEncode(enc, out)
@@ -97,22 +101,29 @@ var daemonStatusCmd = &cobra.Command{
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "running: pid %d at %s (%s), up %s\n",
 			rec.PID, rec.Address, info.Version, time.Since(rec.StartedAt).Round(time.Second))
-		if timeout, err := time.ParseDuration(rec.Metadata[daemonconn.MetaIdleTimeout]); err == nil {
-			lifetime := "Stays running until docbank daemon stop"
-			if timeout > 0 {
-				duration := timeout.String()
-				if timeout%time.Minute == 0 {
-					duration = fmt.Sprintf("%dm", timeout/time.Minute)
-				}
-				lifetime = fmt.Sprintf("Exits after %s idle", duration)
-			}
-			if rec.Metadata[daemonconn.MetaExplicitStart] == "false" {
-				lifetime += " (started automatically)"
-			}
+		if lifetime := daemonLifetime(rec); lifetime != "" {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
 		}
 		return nil
 	},
+}
+
+func daemonLifetime(rec kitdaemon.RuntimeRecord) string {
+	timeout, err := time.ParseDuration(rec.Metadata[daemonconn.MetaIdleTimeout])
+	if err != nil {
+		return ""
+	}
+	if daemonconn.Explicit(rec) {
+		return "Stays running until docbank daemon stop"
+	}
+	if timeout == 0 {
+		return "Idle exit is off (started automatically)"
+	}
+	duration := timeout.String()
+	if timeout%time.Minute == 0 {
+		duration = fmt.Sprintf("%dm", timeout/time.Minute)
+	}
+	return fmt.Sprintf("Exits after %s idle (started automatically)", duration)
 }
 
 var daemonStopCmd = &cobra.Command{

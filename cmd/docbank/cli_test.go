@@ -832,12 +832,6 @@ func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
 			startTestDaemon(t, home)
 			_, watched := jobNamed(daemonJobs(t), idleTimeoutJob)
 			assert.Equal(t, !persistent, watched, "only an automatically started daemon exits after idle_timeout")
-			out, err := runCLI(t, "daemon", "status", "--json")
-			require.NoError(t, err)
-			var status map[string]any
-			require.NoError(t, json.Unmarshal([]byte(out), &status))
-			assert.Equal(t, persistent, status["persistent"])
-			assert.Equal(t, persistent, status["explicit_start"])
 		})
 	}
 }

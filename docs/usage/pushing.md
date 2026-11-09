@@ -54,8 +54,10 @@ A long-running `--watch` also needs the target daemon to stay available. An
 automatically started daemon with no configured `[[watch]]`, scheduled packing, or scheduled backups
 shuts down after `[server] idle_timeout` (30 minutes by default) when no API
 requests arrive. Push sends no requests while the folder is unchanged, so it
-cannot wake a daemon that has already stopped. Before starting push watch, set
-`[server] idle_timeout = "0"` or run `docbank daemon run` in the foreground.
+cannot wake a daemon that has already stopped. Before starting push watch, run
+`docbank daemon restart` to keep the target running until stopped.
+Alternatively, set `[server] idle_timeout = "0"` and restart it, or run
+`docbank daemon run` in the foreground.
 See [daemon idle shutdown](../architecture/daemon.md#auto-start-and-idle-shutdown).
 
 The first push preserves the folder's relative hierarchy under `--dest`. The

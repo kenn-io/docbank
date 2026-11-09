@@ -394,7 +394,7 @@ func ensureDaemonWithOptions(
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return res, fmt.Errorf("discovering daemon: %w", err)
 	}
-	if ok && (!persistent || Explicit(rec)) {
+	if ok {
 		res.Record = rec
 		return res, nil
 	}
@@ -405,7 +405,7 @@ func ensureDaemonWithOptions(
 		if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
-		if ok && (!persistent || Explicit(rec)) {
+		if ok {
 			res.Record = rec
 			return nil
 		}

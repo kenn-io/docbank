@@ -1776,17 +1776,19 @@ docbank daemon stop
 | Command | Behavior |
 |---------|----------|
 | `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
-| `daemon start` | Start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon start` | Reuse a compatible daemon unchanged, or start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
 | `daemon status` | Report pid, address, version, and uptime without starting a daemon |
 | `daemon restart` | Stop a running daemon, then start it; also works when none is running |
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Current daemons also include `"persistent"` as a boolean and `"idle_timeout"` as a duration string, with `"0s"` when idle shutdown is disabled. `"explicit_start"` records whether `daemon start`, `daemon restart`, or foreground `daemon run` was requested. Automatic starts are labeled in human status. Older runtime records omit these fields. Restart prints `restarted: ...` or
+"started_at"}`. Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
 for explicit control, such as inspecting logs before sending data commands.
+It reuses a compatible daemon with its existing idle policy and advises
+`daemon restart` to keep an automatically started daemon running.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 

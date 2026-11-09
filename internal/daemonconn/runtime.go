@@ -36,7 +36,7 @@ type EnsureResult struct {
 	Record kitdaemon.RuntimeRecord
 	// Started is true when EnsureDaemon spawned a new daemon.
 	Started bool
-	// Replaced is the incompatible or automatic-lifetime daemon EnsureDaemon stopped before
+	// Replaced is the incompatible daemon EnsureDaemon stopped before
 	// starting Record, nil when nothing was replaced.
 	Replaced *kitdaemon.RuntimeRecord
 }
