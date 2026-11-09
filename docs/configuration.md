@@ -582,6 +582,10 @@ Detection scans visible, included display photos with ready previews. A complete
 
 ### Document conversion with Docling
 
+For a separately run gateway with durable input and repeatable result storage,
+see [Run a bounded conversion worker](usage/conversion-worker.md). Its stable-key
+protocol is separate from a native Docling endpoint.
+
 The daemon can send an original PDF, PPTX, XLSX, plain text, Markdown, PNG,
 or JPEG to the Docling Serve deployment you run, then retain searchable
 Markdown. Add a rendition profile with
