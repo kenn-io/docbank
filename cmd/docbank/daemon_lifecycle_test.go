@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -541,7 +540,6 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 
 func TestDaemonLifetimeTransitions(t *testing.T) {
 	oldBin := buildDocbank(t)
-	newBin := buildDocbankVersion(t, "v9.9.9-test")
 	root := t.TempDir()
 	run := func(bin string, args ...string) string {
 		cmd := exec.CommandContext(t.Context(), bin, args...)
@@ -560,45 +558,6 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 
 	run(oldBin, "daemon", "restart")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
-
-	// An upgrade's replacement keeps the explicit lifetime.
-	run(newBin, "search", "missing")
-	assert.True(t, daemonconn.Explicit(waitForDaemon(t, root)))
-}
-
-func TestNewerRuntimeProtocolKeepsOwnerRunning(t *testing.T) {
-	bin := buildDocbank(t)
-	root := t.TempDir()
-	run := func(args ...string) (string, error) {
-		cmd := exec.CommandContext(t.Context(), bin, args...)
-		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+root)
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
-	out, err := run("daemon", "start")
-	require.NoError(t, err, out)
-	rec := waitForDaemon(t, root)
-	t.Cleanup(func() {
-		_, _ = daemonconn.RuntimeStore(root).Write(rec)
-		_, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root)
-	})
-	future := rec
-	future.Metadata = maps.Clone(rec.Metadata)
-	protocol, err := strconv.Atoi(future.Metadata["protocol_version"])
-	require.NoError(t, err)
-	future.Metadata["protocol_version"] = strconv.Itoa(protocol + 1)
-	_, err = daemonconn.RuntimeStore(root).Write(future)
-	require.NoError(t, err)
-	for _, action := range []string{"start", "restart"} {
-		out, err = run("daemon", action)
-		require.Error(t, err, out)
-		assert.Contains(t, out, "this command cannot replace the running daemon; use a matching or newer Docbank version")
-		assert.Equal(t, rec.PID, waitForDaemon(t, root).PID)
-	}
-	out, err = run("daemon", "stop")
-	require.NoError(t, err, out)
-	assert.Contains(t, out, "stopped")
-	assert.False(t, kitdaemon.ProcessAlive(rec.PID), "explicit stop remains available for newer owners")
 }
 
 func startOutput(rec kitdaemon.RuntimeRecord) string {

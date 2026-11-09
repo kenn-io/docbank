@@ -357,7 +357,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
 }
 
-func TestLocalTextEnablesWithoutInputAndRestartsExplicitDaemon(t *testing.T) {
+func TestLocalTextEnablesWithoutInputAndPreservesExplicitLifetime(t *testing.T) {
 	bin := buildDocbank(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DO_NOT_TRACK", "1")
@@ -389,6 +389,7 @@ func TestLocalTextEnablesWithoutInputAndRestartsExplicitDaemon(t *testing.T) {
 	require.Equal(t, config.LocalTextProfile, choice.Profile)
 	after := waitForDaemon(t, root)
 	require.NotEqual(t, before.PID, after.PID)
+	require.True(t, daemonconn.Explicit(after))
 }
 
 func TestLocalTextCandidateRejections(t *testing.T) {

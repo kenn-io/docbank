@@ -355,11 +355,13 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
 	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	rec.Metadata[MetaExplicitStart] = "true"
 	rec.Metadata[metaProtocolVersion] = "119"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root, false,
 		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			assert.True(t, persistent, "replacement inherits the stopped owner's explicit lifetime")
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			started.Store(true)
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
@@ -829,20 +831,45 @@ func TestRestartHoldsLaunchLockAndPreservesLifetime(t *testing.T) {
 	}
 }
 
-func TestEnsureRejectsNewerPinglessRuntimeWithoutStoppingOwner(t *testing.T) {
-	root, rec := startUnresponsiveRuntime(t)
-	protocol, err := strconv.Atoi(daemonProtocolVersion)
-	require.NoError(t, err)
-	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocol + 1)
-	_, err = RuntimeStore(root).Write(rec)
-	require.NoError(t, err)
-	_, err = ensureDaemon(t.Context(), root, true, func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
-		t.Error("a newer owner must not be replaced")
-		return kitdaemon.RuntimeRecord{}, nil
-	})
-	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
-	_, err = StopForReplacement(t.Context(), root)
-	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
+func TestNewerRuntimeRefusesReplacementButAllowsExplicitStop(t *testing.T) {
+	for _, responsive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("responsive=%t", responsive), func(t *testing.T) {
+			root, rec := startUnresponsiveRuntime(t)
+			if responsive {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case kitdaemon.DefaultPingPath:
+						_ = json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: Service, Version: version.Version, PID: rec.PID})
+					case daemonauth.ChallengePath:
+						nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+						assert.NoError(t, err)
+						_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce)})
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				t.Cleanup(server.Close)
+				rec.Address = strings.TrimPrefix(server.URL, "http://")
+			}
+			protocol, err := strconv.Atoi(daemonProtocolVersion)
+			require.NoError(t, err)
+			rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocol + 1)
+			_, err = RuntimeStore(root).Write(rec)
+			require.NoError(t, err)
+			_, err = ensureDaemon(t.Context(), root, true, func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
+				t.Error("a newer owner must not be replaced")
+				return kitdaemon.RuntimeRecord{}, nil
+			})
+			require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
+			assert.True(t, kitdaemon.ProcessAlive(rec.PID))
+			_, err = StopForReplacement(t.Context(), root)
+			require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
+			assert.True(t, kitdaemon.ProcessAlive(rec.PID))
+			stopped, err := Stop(t.Context(), root)
+			require.NoError(t, err)
+			require.NotNil(t, stopped)
+			assert.Equal(t, rec.PID, stopped.PID)
+			assert.False(t, kitdaemon.ProcessAlive(rec.PID), "explicit stop remains available for newer owners")
+		})
+	}
 }
