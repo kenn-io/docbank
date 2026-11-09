@@ -359,10 +359,8 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 
 // EnsureDaemon converges the vault on exactly one version- and
 // protocol-matched daemon: it returns the running daemon when it is compatible
-// with this binary and stays up when requested, and otherwise replaces it
-// under the launch lock. `daemon start`, `daemon restart`, and data commands'
-// auto-start all share this path, so there is a single replacement policy and
-// no command ever leaves a stale daemon behind.
+// with this binary unchanged, and otherwise replaces it under the launch lock.
+// `daemon start` and data commands' auto-start share this replacement policy.
 func EnsureDaemon(ctx context.Context, root string, persistent bool) (EnsureResult, error) {
 	return ensureDaemon(ctx, root, persistent, Start)
 }
@@ -410,7 +408,7 @@ func ensureDaemonWithOptions(
 			return nil
 		}
 
-		// Replace an incompatible daemon or promote its automatic lifetime.
+		// Replace an incompatible daemon, preserving explicit launch intent.
 		old, _, found, findErr := Find(ctx, root)
 		if findErr != nil && !errors.Is(findErr, kitdaemon.ErrDaemonUnreachable) {
 			return findErr
@@ -457,6 +455,28 @@ func ensureDaemonWithOptions(
 		return err
 	})
 	return res, err
+}
+
+// Restart serializes stop and start with automatic launches. A persistent request
+// or the stopped daemon's explicit intent keeps the replacement running.
+func Restart(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, bool, error) {
+	return restart(ctx, root, persistent, Stop, Start)
+}
+
+func restart(ctx context.Context, root string, persistent bool,
+	stopFn func(context.Context, string) (*kitdaemon.RuntimeRecord, error),
+	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),
+) (rec kitdaemon.RuntimeRecord, wasRunning bool, err error) {
+	err = WithLaunchLock(ctx, root, func() error {
+		stopped, err := stopFn(ctx, root)
+		if err != nil {
+			return err
+		}
+		wasRunning = stopped != nil
+		rec, err = startFn(ctx, root, persistent || (stopped != nil && Explicit(*stopped)))
+		return err
+	})
+	return rec, wasRunning, err
 }
 
 // Start spawns a detached daemon and waits for a compatible ping.

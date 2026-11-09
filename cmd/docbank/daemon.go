@@ -595,9 +595,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
-	persistent := !background || os.Getenv(daemonconn.EnvPersistentDaemon) == "true"
+	persistent := os.Getenv(daemonconn.EnvPersistentDaemon) == "true"
 	var idleTimeout time.Duration
-	if !persistent && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 && cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+	if background && !persistent && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 && cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
 		idleTimeout = cfg.Server.IdleTimeout.Std()
 	}
 	rtStore := daemonconn.RuntimeStore(layout.Root)
@@ -606,7 +606,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		webAddress = webListener.Addr().String()
 	}
 	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
-	record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
+	if background {
+		record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
+	}
 	record.Metadata[daemonconn.MetaExplicitStart] = strconv.FormatBool(persistent)
 	if localListener != nil {
 		record.Metadata["network_address"] = listener.Addr().String()

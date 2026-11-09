@@ -91,6 +91,10 @@ var daemonStatusCmd = &cobra.Command{
 				out["address"] = rec.Address
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
+				if timeout := rec.Metadata[daemonconn.MetaIdleTimeout]; timeout != "" {
+					out["idle_timeout"] = timeout
+					out["explicit_start"] = daemonconn.Explicit(rec)
+				}
 			}
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 			return json.MarshalEncode(enc, out)
@@ -161,16 +165,11 @@ daemon was running.`,
 		if err != nil {
 			return err
 		}
-		wasRunning, err := daemonconn.Stop(cmd.Context(), layout.Root)
+		rec, wasRunning, err := daemonconn.Restart(cmd.Context(), layout.Root, true)
 		if err != nil {
 			return err
 		}
-		res, err := daemonconn.EnsureDaemon(cmd.Context(), layout.Root, true)
-		if err != nil {
-			return err
-		}
-		rec := res.Record
-		if wasRunning != nil {
+		if wasRunning {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restarted: pid %d at %s (%s)\n",
 				rec.PID, rec.Address, rec.Version)
 		} else {

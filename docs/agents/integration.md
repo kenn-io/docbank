@@ -158,10 +158,9 @@ a fixed loopback port and a strong API key:
 bind_addr = "127.0.0.1"
 api_port = 7486
 api_key = "replace-with-a-long-random-secret"
-idle_timeout = "0"
 ```
 
-Restart after changing config:
+Restart after changing config to keep the daemon running until stopped:
 
 ```bash
 docbank daemon restart

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -10,14 +11,13 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -534,9 +534,6 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	assert.Contains(t, out, "started (was not running)")
-	out, err = run("daemon", "status")
-	require.NoError(t, err, out)
-	assert.Contains(t, out, "Stays running until docbank daemon stop")
 }
 
 func TestDaemonLifetimeTransitions(t *testing.T) {
@@ -551,51 +548,99 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 		require.NoError(t, err, string(out))
 		return string(out)
 	}
-	record := func() kitdaemon.RuntimeRecord {
-		rec, _, found, err := daemonconn.Find(t.Context(), root)
-		require.NoError(t, err)
-		require.True(t, found)
-		return rec
-	}
-	watched := func(bin string) bool {
-		var jobs api.JobList
-		require.NoError(t, json.Unmarshal([]byte(run(bin, "jobs", "--json")), &jobs))
-		_, found := jobNamed(jobs, idleTimeoutJob)
-		return found
-	}
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
 	run(oldBin, "search", "missing")
-	automatic := record()
+	automatic := waitForDaemon(t, root)
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
+	var status map[string]any
+	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
+	assert.Equal(t, false, status["explicit_start"])
+	assert.Equal(t, "30m0s", status["idle_timeout"])
+
 	out := run(oldBin, "daemon", "start")
-	assert.Equal(t, automatic.PID, record().PID)
-	assert.Equal(t, automatic.Address, record().Address)
-	assert.Equal(t, automatic.Metadata["web_address"], record().Metadata["web_address"])
-	assert.True(t, watched(oldBin))
+	reused := waitForDaemon(t, root)
+	assert.Equal(t, automatic.PID, reused.PID)
+	assert.Equal(t, automatic.Address, reused.Address)
+	assert.Equal(t, automatic.Metadata["web_address"], reused.Metadata["web_address"])
+	assert.False(t, daemonconn.Explicit(reused))
+	assert.Equal(t, "30m0s", reused.Metadata[daemonconn.MetaIdleTimeout])
 	assert.Contains(t, out, "Exits after 30m idle (started automatically)")
 	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
 
 	run(oldBin, "daemon", "restart")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
+	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
+	assert.Equal(t, true, status["explicit_start"])
+	assert.Equal(t, "0s", status["idle_timeout"])
+
 	// An upgrade's replacement keeps the explicit lifetime.
 	run(newBin, "search", "missing")
-	assert.False(t, watched(newBin))
+	assert.True(t, daemonconn.Explicit(waitForDaemon(t, root)))
 
 	// Reusing a config-held automatic daemon leaves its policy automatic.
 	run(newBin, "daemon", "stop")
 	require.NoError(t, os.WriteFile(config, []byte("[storage]\npack_interval = \"24h\"\n"), 0o600))
 	run(oldBin, "search", "missing")
-	automatic = record()
+	automatic = waitForDaemon(t, root)
 	out = run(oldBin, "daemon", "start")
-	assert.Equal(t, automatic.PID, record().PID)
-	assert.Equal(t, automatic.Address, record().Address)
-	assert.Equal(t, automatic.Metadata["web_address"], record().Metadata["web_address"])
-	assert.False(t, watched(oldBin))
+	reused = waitForDaemon(t, root)
+	assert.Equal(t, automatic.PID, reused.PID)
+	assert.Equal(t, automatic.Address, reused.Address)
+	assert.Equal(t, automatic.Metadata["web_address"], reused.Metadata["web_address"])
+	assert.False(t, daemonconn.Explicit(reused))
+	assert.Equal(t, "0s", reused.Metadata[daemonconn.MetaIdleTimeout])
 	assert.Contains(t, out, "Idle exit is off (started automatically)")
 	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Idle exit is off (started automatically)")
+	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
+	assert.Equal(t, false, status["explicit_start"])
+	assert.Equal(t, "0s", status["idle_timeout"])
 	require.NoError(t, os.WriteFile(config, nil, 0o600))
 	run(newBin, "search", "missing")
-	assert.True(t, watched(newBin))
+	assert.False(t, daemonconn.Explicit(waitForDaemon(t, root)))
+	assert.Equal(t, "30m0s", waitForDaemon(t, root).Metadata[daemonconn.MetaIdleTimeout])
+}
+
+func TestForegroundReplacementUsesAutomaticLifetime(t *testing.T) {
+	oldBin := buildDocbank(t)
+	newBin := buildDocbankVersion(t, "v9.9.9-test")
+	root := t.TempDir()
+	foreground := exec.CommandContext(t.Context(), oldBin, "daemon", "run")
+	foreground.Env = append(os.Environ(), "DOCBANK_HOME="+root)
+	// Read the startup log before discovering the real listener.
+	read, write, err := os.Pipe()
+	require.NoError(t, err)
+	foreground.Stdout = write
+	foreground.Stderr = write
+	require.NoError(t, foreground.Start())
+	require.NoError(t, write.Close())
+	t.Cleanup(func() {
+		_, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root)
+		_ = foreground.Wait()
+		_ = read.Close()
+		_ = write.Close()
+	})
+	scanner := bufio.NewScanner(read)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), "daemon listening") {
+			break
+		}
+	}
+	require.NoError(t, scanner.Err())
+	before := waitForDaemon(t, root)
+	assert.False(t, daemonconn.Explicit(before))
+	status := exec.CommandContext(t.Context(), oldBin, "daemon", "status")
+	status.Env = foreground.Env
+	out, err := status.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.NotContains(t, string(out), "started automatically")
+	command := exec.CommandContext(t.Context(), newBin, "search", "missing")
+	command.Env = foreground.Env
+	out, err = command.CombinedOutput()
+	require.NoError(t, err, string(out))
+	after := waitForDaemon(t, root)
+	assert.NotEqual(t, before.PID, after.PID)
+	assert.False(t, daemonconn.Explicit(after))
+	assert.Equal(t, "30m0s", after.Metadata[daemonconn.MetaIdleTimeout])
 }

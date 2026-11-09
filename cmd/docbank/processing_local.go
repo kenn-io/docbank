@@ -50,10 +50,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			stopped, err := daemonconn.Stop(cmd.Context(), layout.Root)
-			if err == nil {
-				_, err = daemonconn.EnsureDaemon(cmd.Context(), layout.Root, stopped != nil && daemonconn.Explicit(*stopped))
-			}
+			_, _, err = daemonconn.Restart(cmd.Context(), layout.Root, false)
 			if err != nil {
 				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
 			}

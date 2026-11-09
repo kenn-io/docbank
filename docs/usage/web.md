@@ -1084,7 +1084,6 @@ dialogs and returns it to sign-in.
    [server]
    api_port = 7777
    api_key = "output-of-openssl-rand-hex-32"
-   idle_timeout = "0"
 
    [web]
    public_origin = "https://archive.example.test"
