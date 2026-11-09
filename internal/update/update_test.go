@@ -443,7 +443,7 @@ func TestUpdateRefusesNewerRuntimeWithoutStoppingOwner(t *testing.T) {
 	err = update.Run(t.Context(), io.Discard, update.Options{Yes: true, Client: &client, Root: root, Destination: dest,
 		Start: func(context.Context, string, bool) error { return nil },
 	})
-	require.ErrorContains(t, err, "This command cannot replace the running daemon; use a matching or newer Docbank version.")
+	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
 	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
 	data, err := os.ReadFile(dest)
 	require.NoError(t, err)

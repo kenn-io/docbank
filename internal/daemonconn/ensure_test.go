@@ -840,6 +840,6 @@ func TestEnsureRejectsNewerPinglessRuntimeWithoutStoppingOwner(t *testing.T) {
 		t.Error("a newer owner must not be replaced")
 		return kitdaemon.RuntimeRecord{}, nil
 	})
-	require.ErrorContains(t, err, "This command cannot replace the running daemon; use a matching or newer Docbank version.")
+	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
 	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
 }
