@@ -405,13 +405,7 @@ func ensureDaemonWithOptions(
 		if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 			return fmt.Errorf("discovering daemon: %w", err)
 		}
-		if ok && (!persistent || rec.Metadata[MetaIdleTimeout] == "0s") {
-			if persistent && !Explicit(rec) {
-				rec.Metadata[MetaExplicitStart] = "true"
-				if _, err := RuntimeStore(root).Write(rec); err != nil {
-					return fmt.Errorf("recording explicit daemon start: %w", err)
-				}
-			}
+		if ok && (!persistent || Explicit(rec)) {
 			res.Record = rec
 			return nil
 		}

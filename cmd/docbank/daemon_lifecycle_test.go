@@ -574,20 +574,11 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	assert.NotEqual(t, explicit, pid())
 	assert.False(t, watched(newBin))
 
-	run(newBin, "daemon", "stop")
-	require.NoError(t, os.WriteFile(config, []byte("[server]\nidle_timeout = \"0s\"\n"), 0o600))
-	run(oldBin, "search", "missing")
-	automatic = pid()
-	run(oldBin, "daemon", "start")
-	assert.Equal(t, automatic, pid(), "daemon start reuses an automatic daemon with no idle timeout")
-
-	// daemon start keeps a daemon that configuration keeps up, and it stays up after the configuration changes.
+	// Explicit start stays up after configuration changes and version replacement.
 	run(newBin, "daemon", "stop")
 	require.NoError(t, os.WriteFile(config, []byte("[storage]\npack_interval = \"24h\"\n"), 0o600))
 	run(oldBin, "search", "missing")
-	automatic = pid()
 	run(oldBin, "daemon", "start")
-	assert.Equal(t, automatic, pid(), "daemon start reuses a daemon already staying up")
 	require.NoError(t, os.WriteFile(config, nil, 0o600))
 	run(newBin, "search", "missing")
 	assert.False(t, watched(newBin))

@@ -23,16 +23,14 @@ func TestIdleWatchStopsDaemonAfterQuietTimeout(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			idleWatch(t.Context(), tracker, 2*time.Second, slog.New(slog.DiscardHandler), noPendingLocalText, func() { stops.Add(1) })
+			idleWatch(t.Context(), tracker, 30*time.Minute, slog.New(slog.DiscardHandler), noPendingLocalText, func() { stops.Add(1) })
 		}()
-		time.Sleep(2*time.Second - time.Nanosecond)
+		time.Sleep(30*time.Minute - time.Nanosecond)
 		synctest.Wait()
 		assert.Zero(t, stops.Load(), "a daemon quiet for less than idle_timeout keeps running")
 		time.Sleep(time.Nanosecond)
-		time.Sleep(3 * time.Second)
-		synctest.Wait()
-		assert.Equal(t, int64(1), stops.Load())
 		<-done
+		assert.Equal(t, int64(1), stops.Load())
 	})
 }
 
