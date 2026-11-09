@@ -543,7 +543,7 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 // must leave it reusable even when the chunk terminator trails the result.
 func TestProvenClientReusedAfterChangePage(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		const token = "synthetic-proof-token"
+		const token = "synthetic-change-page-token"
 		const head = "synthetic-change-head"
 		clientConn, serverConn := net.Pipe()
 		go func() {
