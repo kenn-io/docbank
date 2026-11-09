@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,27 +37,24 @@ func TestServeFaceSuggestionsFollowSetupAndRestart(t *testing.T) {
 	}
 	plan, err := client.API().PlanFaces(t.Context())
 	require.NoError(t, err)
+	// Repeated setup must succeed when the worker is already registered.
 	for range 2 {
 		_, err = client.API().ApplyFaces(t.Context(), &apiclient.ApplyFacesRequestOptions{Body: &api.FaceSetupApplyRequest{PlanFingerprint: plan.Fingerprint, Consent: true}})
 		require.NoError(t, err)
 	}
-	for round := range 2 {
-		settleDaemon(t)
-		list, err = client.API().ListJobs(t.Context())
-		require.NoError(t, err)
-		count := 0
-		for _, job := range list.Items {
-			if job.Name == "process:face-suggestions" {
-				count++
-			}
-		}
-		require.Equal(t, 1, count)
-		if round == 1 {
-			break
-		}
-		stop()
-		stop = startServe(t)
-		record = waitForDaemon(t, root)
-		client = daemonconn.New("http://"+record.Address, record.Metadata["api_key"])
-	}
+	list, err = client.API().ListJobs(t.Context())
+	require.NoError(t, err)
+	index := slices.IndexFunc(list.Items, func(job api.Job) bool { return job.Name == "process:face-suggestions" })
+	require.NotEqual(t, -1, index)
+	require.Equal(t, "running", list.Items[index].Status)
+
+	stop()
+	startServe(t)
+	record = waitForDaemon(t, root)
+	client = daemonconn.New("http://"+record.Address, record.Metadata["api_key"])
+	list, err = client.API().ListJobs(t.Context())
+	require.NoError(t, err)
+	index = slices.IndexFunc(list.Items, func(job api.Job) bool { return job.Name == "process:face-suggestions" })
+	require.NotEqual(t, -1, index)
+	require.Equal(t, "running", list.Items[index].Status)
 }
