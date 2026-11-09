@@ -203,7 +203,7 @@ func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, erro
 	if hashBytes(wasmBytes) != wasmSHA256 || recipe.RendererSHA256 != "" && recipe.RendererSHA256 != wasmSHA256 {
 		return nil, errors.New("qualified PDFium WASM asset unavailable or hash mismatch")
 	}
-	if err := checkRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
+	if err := admitRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
 		return nil, err
 	}
 	return &pdfiumEngine{gate: make(chan struct{}, 1), recipe: recipe, cache: wasmCode, scavenge: debug.FreeOSMemory, rssRead: read}, nil
