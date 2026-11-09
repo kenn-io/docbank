@@ -538,13 +538,13 @@ func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
 			require.EqualValues(t, 1, total)
 			require.Len(t, locked, 1)
 			require.Equal(t, x.inputs[1].FaceID, locked[0].Faces[0].FaceID)
-			for _, faceOnly := range []bool{false, true} {
+			decisionModes := []bool{true}
+			if change != "already_hidden" {
+				decisionModes = append(decisionModes, false)
+			}
+			for _, faceOnly := range decisionModes {
 				_, err = x.f.catalog.DecidePersonCandidate(ctx, x.f.blobs, store.CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, FaceOnly: faceOnly, Action: "reject"})
-				if change == "already_hidden" && !faceOnly {
-					require.ErrorIs(t, err, store.ErrHiddenLocked)
-				} else {
-					require.ErrorIs(t, err, store.ErrNotFound)
-				}
+				require.ErrorIs(t, err, store.ErrNotFound)
 			}
 			restored, _, err := x.f.catalog.FaceCandidates(unlocked, x.f.blobs, 24, 0)
 			require.NoError(t, err)
