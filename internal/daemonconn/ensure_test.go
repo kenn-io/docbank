@@ -801,7 +801,7 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 	})
 }
 
-func TestRestartHoldsLaunchLockAcrossStopAndStart(t *testing.T) {
+func TestRestartHoldsLaunchLockAndPreservesLifetime(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
 			root := t.TempDir()
@@ -840,6 +840,9 @@ func TestEnsureRejectsNewerPinglessRuntimeWithoutStoppingOwner(t *testing.T) {
 		t.Error("a newer owner must not be replaced")
 		return kitdaemon.RuntimeRecord{}, nil
 	})
+	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
+	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
+	_, err = StopForReplacement(t.Context(), root)
 	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
 	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
 }

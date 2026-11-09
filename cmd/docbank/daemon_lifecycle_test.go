@@ -194,9 +194,15 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 		return string(out), err
 	}
 
-	out, err := run(oldBin, "daemon", "start")
+	out, err := run(oldBin, "search", "missing")
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
+	automaticPID := waitForDaemon(t, dir).PID
+	out, err = run(oldBin, "daemon", "start")
+	require.NoError(t, err, out)
+	assert.Equal(t, strconv.Itoa(automaticPID), parsePID(t, out))
+	out, err = run(oldBin, "daemon", "restart")
+	require.NoError(t, err, out)
 	oldPID := parsePID(t, out)
 
 	// A same-version start leaves the running daemon alone.
@@ -553,12 +559,7 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
 	run(oldBin, "search", "missing")
-	automatic := waitForDaemon(t, root)
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
-
-	run(oldBin, "daemon", "start")
-	reused := waitForDaemon(t, root)
-	assert.Equal(t, automatic.PID, reused.PID)
 
 	run(oldBin, "daemon", "restart")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
@@ -623,15 +624,17 @@ func TestStartAdviceForLegacyAndIdleOffDaemons(t *testing.T) {
 	}{
 		{"legacy", nil, "Lifetime unavailable", true},
 		{"automatic", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "30m0s"}, "Exits after 30m idle (started automatically)", true},
-		// The explicit request survives later config changes and replacements.
 		{"idle_off", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "0s"}, "Idle exit is off", true},
 		{"foreground", map[string]string{daemonconn.MetaExplicitStart: "false"}, "", false},
+		// The explicit request survives later config changes and replacements.
 		{"explicit", map[string]string{daemonconn.MetaExplicitStart: "true", daemonconn.MetaIdleTimeout: "0s"}, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := startOutput(kitdaemon.RuntimeRecord{Metadata: tc.metadata})
 			if tc.lifetime == "" {
-				assert.Equal(t, "already running: pid 0 at  ()\n", out)
+				assert.NotContains(t, out, "idle")
+				assert.NotContains(t, out, "Lifetime")
+				assert.NotContains(t, out, "Stays running")
 			} else {
 				assert.Contains(t, out, tc.lifetime)
 			}

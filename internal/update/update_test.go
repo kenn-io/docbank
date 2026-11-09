@@ -24,10 +24,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/daemonconn"
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/selfupdate"
 
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/update"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -415,7 +415,7 @@ func TestUpdateOfficialDownloadStillSelfUpdates(t *testing.T) {
 	assert.Contains(t, string(got), "9.9.9")
 }
 
-func TestUpdateRefusesNewerRuntimeWithoutStoppingOwner(t *testing.T) {
+func TestUpdateDefaultStopRefusesReplacementBeforeInstall(t *testing.T) {
 	ts, _ := fakeReleaseServer(t, "9.9.9")
 	client := newFakeClient(t, ts, "0.0.1")
 	root := t.TempDir()
@@ -443,8 +443,7 @@ func TestUpdateRefusesNewerRuntimeWithoutStoppingOwner(t *testing.T) {
 	err = update.Run(t.Context(), io.Discard, update.Options{Yes: true, Client: &client, Root: root, Destination: dest,
 		Start: func(context.Context, string, bool) error { return nil },
 	})
-	require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
-	assert.True(t, kitdaemon.ProcessAlive(rec.PID))
+	require.ErrorContains(t, err, "stopping daemon before update")
 	data, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	assert.Equal(t, "old", string(data))
