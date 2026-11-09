@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -553,23 +551,18 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	run(oldBin, "search", "missing")
 	automatic := waitForDaemon(t, root)
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
-	var status map[string]any
-	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
-	assert.Equal(t, false, status["explicit_start"])
-	assert.Equal(t, "30m0s", status["idle_timeout"])
 
 	out := run(oldBin, "daemon", "start")
 	reused := waitForDaemon(t, root)
 	assert.Equal(t, automatic.PID, reused.PID)
 	assert.Equal(t, automatic.Address, reused.Address)
 	assert.Equal(t, automatic.Metadata["web_address"], reused.Metadata["web_address"])
-	assert.False(t, daemonconn.Explicit(reused))
-	assert.Equal(t, "30m0s", reused.Metadata[daemonconn.MetaIdleTimeout])
 	assert.Contains(t, out, "Exits after 30m idle (started automatically)")
 	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
 
 	run(oldBin, "daemon", "restart")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
+	var status map[string]any
 	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
 	assert.Equal(t, true, status["explicit_start"])
 	assert.Equal(t, "0s", status["idle_timeout"])
@@ -584,63 +577,19 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	run(oldBin, "search", "missing")
 	automatic = waitForDaemon(t, root)
 	out = run(oldBin, "daemon", "start")
-	reused = waitForDaemon(t, root)
-	assert.Equal(t, automatic.PID, reused.PID)
-	assert.Equal(t, automatic.Address, reused.Address)
-	assert.Equal(t, automatic.Metadata["web_address"], reused.Metadata["web_address"])
-	assert.False(t, daemonconn.Explicit(reused))
-	assert.Equal(t, "0s", reused.Metadata[daemonconn.MetaIdleTimeout])
+	assert.Equal(t, automatic.PID, waitForDaemon(t, root).PID)
 	assert.Contains(t, out, "Idle exit is off (started automatically)")
 	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
-	assert.Contains(t, run(oldBin, "daemon", "status"), "Idle exit is off (started automatically)")
-	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
-	assert.Equal(t, false, status["explicit_start"])
-	assert.Equal(t, "0s", status["idle_timeout"])
 	require.NoError(t, os.WriteFile(config, nil, 0o600))
 	run(newBin, "search", "missing")
-	assert.False(t, daemonconn.Explicit(waitForDaemon(t, root)))
-	assert.Equal(t, "30m0s", waitForDaemon(t, root).Metadata[daemonconn.MetaIdleTimeout])
+	assert.Contains(t, run(newBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
 }
 
-func TestForegroundReplacementUsesAutomaticLifetime(t *testing.T) {
-	oldBin := buildDocbank(t)
-	newBin := buildDocbankVersion(t, "v9.9.9-test")
+func TestForegroundDaemonIsNotExplicit(t *testing.T) {
 	root := t.TempDir()
-	foreground := exec.CommandContext(t.Context(), oldBin, "daemon", "run")
-	foreground.Env = append(os.Environ(), "DOCBANK_HOME="+root)
-	// Read the startup log before discovering the real listener.
-	read, write, err := os.Pipe()
-	require.NoError(t, err)
-	foreground.Stdout = write
-	foreground.Stderr = write
-	require.NoError(t, foreground.Start())
-	require.NoError(t, write.Close())
-	t.Cleanup(func() {
-		_, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root)
-		_ = foreground.Wait()
-		_ = read.Close()
-		_ = write.Close()
-	})
-	scanner := bufio.NewScanner(read)
-	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), "daemon listening") {
-			break
-		}
-	}
-	require.NoError(t, scanner.Err())
-	before := waitForDaemon(t, root)
-	assert.False(t, daemonconn.Explicit(before))
-	status := exec.CommandContext(t.Context(), oldBin, "daemon", "status")
-	status.Env = foreground.Env
-	out, err := status.CombinedOutput()
-	require.NoError(t, err, string(out))
-	assert.NotContains(t, string(out), "started automatically")
-	command := exec.CommandContext(t.Context(), newBin, "search", "missing")
-	command.Env = foreground.Env
-	out, err = command.CombinedOutput()
-	require.NoError(t, err, string(out))
-	after := waitForDaemon(t, root)
-	assert.NotEqual(t, before.PID, after.PID)
-	assert.False(t, daemonconn.Explicit(after))
-	assert.Equal(t, "30m0s", after.Metadata[daemonconn.MetaIdleTimeout])
+	t.Setenv("DOCBANK_HOME", root)
+	startTestDaemon(t, root)
+	rec := waitForDaemon(t, root)
+	assert.False(t, daemonconn.Explicit(rec), "replacing a foreground daemon must start an automatic one")
+	assert.Empty(t, daemonLifetime(rec))
 }

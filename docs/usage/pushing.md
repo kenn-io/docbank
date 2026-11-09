@@ -55,8 +55,7 @@ automatically started daemon with no configured `[[watch]]`, scheduled packing, 
 shuts down after `[server] idle_timeout` (30 minutes by default) when no API
 requests arrive. Push sends no requests while the folder is unchanged, so it
 cannot wake a daemon that has already stopped. Before starting push watch, run
-`docbank daemon restart` to keep the target running until stopped.
-Alternatively, set `[server] idle_timeout = "0"` and restart it, or run
+`docbank daemon restart`, set `[server] idle_timeout = "0"`, or run
 `docbank daemon run` in the foreground.
 See [daemon idle shutdown](../architecture/daemon.md#auto-start-and-idle-shutdown).
 

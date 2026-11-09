@@ -200,10 +200,9 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   using an SSH tunnel from another machine.
 - **`idle_timeout`**: how long an automatically started daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  A fresh `daemon start`, `daemon restart`, and foreground `daemon run` stay
-  up until stopped. `daemon start` reuses a compatible daemon with its existing
-  idle policy; use `daemon restart` to keep it running. A daemon hosting MCP
-  HTTP also never idles out.
+  A daemon from `daemon start` or `daemon restart`, or foreground `docbank
+  daemon run`, ignores this and never idles out. A daemon hosting MCP HTTP also
+  never idles out.
 - **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,

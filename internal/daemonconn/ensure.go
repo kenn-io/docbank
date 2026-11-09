@@ -408,7 +408,7 @@ func ensureDaemonWithOptions(
 			return nil
 		}
 
-		// Replace an incompatible daemon, preserving explicit launch intent.
+		// Any live incompatible daemon blocks the vault lock: replace it.
 		old, _, found, findErr := Find(ctx, root)
 		if findErr != nil && !errors.Is(findErr, kitdaemon.ErrDaemonUnreachable) {
 			return findErr

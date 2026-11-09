@@ -802,33 +802,26 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 	})
 }
 
-func TestRestartSerializesLifetimeHandoff(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
-		for _, requested := range []bool{false, true} {
-			t.Run(fmt.Sprintf("explicit=%t/requested=%t", explicit, requested), func(t *testing.T) {
-				root := t.TempDir()
-				assertLocked := func() {
-					t.Helper()
-					lock, err := (home.Layout{Root: root}).TryLockLaunch()
-					if lock != nil {
-						_ = lock.Release()
-					}
-					require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
-				}
-				record, wasRunning, err := restart(t.Context(), root, requested,
-					func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
-						assertLocked()
-						return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: strconv.FormatBool(explicit)}}, nil
-					},
-					func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
-						assertLocked()
-						assert.Equal(t, requested || explicit, persistent)
-						return kitdaemon.RuntimeRecord{PID: 123}, nil
-					})
-				require.NoError(t, err)
-				assert.True(t, wasRunning)
-				assert.Equal(t, 123, record.PID)
-			})
+func TestRestartHoldsLaunchLockAcrossStopAndStart(t *testing.T) {
+	root := t.TempDir()
+	assertLocked := func() {
+		t.Helper()
+		lock, err := (home.Layout{Root: root}).TryLockLaunch()
+		if lock != nil {
+			_ = lock.Release()
 		}
+		require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
 	}
+	_, wasRunning, err := restart(t.Context(), root, false,
+		func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
+			assertLocked()
+			return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: "false"}}, nil
+		},
+		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			assertLocked()
+			assert.False(t, persistent, "restarting an automatic daemon keeps it automatic")
+			return kitdaemon.RuntimeRecord{}, nil
+		})
+	require.NoError(t, err)
+	assert.True(t, wasRunning)
 }

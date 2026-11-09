@@ -50,7 +50,7 @@ var daemonStartCmd = &cobra.Command{
 	Use:     "start",
 	Short:   "Start the daemon in the background",
 	Long: `Start a daemon for this vault in the background, replacing a running daemon
-whose version or protocol does not match this request. Reuse a compatible
+whose version or protocol does not match this binary. Reuse a compatible
 daemon with its existing idle policy. A new daemon stays running until
 docbank daemon stop; use daemon restart to keep an automatic daemon running.`,
 	Args: cobra.NoArgs,

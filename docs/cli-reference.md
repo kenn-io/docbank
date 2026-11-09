@@ -1782,15 +1782,12 @@ docbank daemon stop
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Background daemons also report `"idle_timeout"` as a duration
-string and `"explicit_start"` as a boolean. A `"0s"` timeout disables idle exit;
-explicit intent survives replacements. Older records omit these fields. Restart prints `restarted: ...` or
+"started_at"}`, plus `"idle_timeout"` and `"explicit_start"` for a background
+daemon. Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
 for explicit control, such as inspecting logs before sending data commands.
-It reuses a compatible daemon with its existing idle policy and advises
-`daemon restart` to keep an automatically started daemon running.
 It normally invokes `daemon run` in the background; foreground use is useful
 for debugging.
 
