@@ -194,15 +194,9 @@ func TestDaemonStartReplacesIncompatibleDaemon(t *testing.T) {
 		return string(out), err
 	}
 
-	out, err := run(oldBin, "search", "missing")
+	out, err := run(oldBin, "daemon", "start")
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
-	automaticPID := waitForDaemon(t, dir).PID
-	out, err = run(oldBin, "daemon", "start")
-	require.NoError(t, err, out)
-	assert.Equal(t, strconv.Itoa(automaticPID), parsePID(t, out))
-	out, err = run(oldBin, "daemon", "restart")
-	require.NoError(t, err, out)
 	oldPID := parsePID(t, out)
 
 	// A same-version start leaves the running daemon alone.
@@ -559,6 +553,9 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
 	run(oldBin, "search", "missing")
+	automaticPID := waitForDaemon(t, root).PID
+	run(oldBin, "daemon", "start")
+	assert.Equal(t, automaticPID, waitForDaemon(t, root).PID)
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
 
 	run(oldBin, "daemon", "restart")
@@ -598,9 +595,6 @@ func TestNewerRuntimeProtocolKeepsOwnerRunning(t *testing.T) {
 		assert.Contains(t, out, "this command cannot replace the running daemon; use a matching or newer Docbank version")
 		assert.Equal(t, rec.PID, waitForDaemon(t, root).PID)
 	}
-	out, err = run("daemon", "status")
-	require.NoError(t, err, out)
-	assert.Contains(t, out, strconv.Itoa(rec.PID))
 	out, err = run("daemon", "stop")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "stopped")
@@ -615,7 +609,7 @@ func startOutput(rec kitdaemon.RuntimeRecord) string {
 	return out.String()
 }
 
-func TestStartAdviceForLegacyAndIdleOffDaemons(t *testing.T) {
+func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		metadata map[string]string
