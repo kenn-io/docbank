@@ -430,7 +430,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 					candidate := candidateForTest(t, "face:"+face.FaceID, "Ada", ada.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
 					candidate.Reason = "face_match"
 					opened := openCandidateForTest(t, s, candidate)
-					_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
+					_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
 				} else {
 					_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: ada.PersonID})
 				}

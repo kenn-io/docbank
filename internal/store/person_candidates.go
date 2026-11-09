@@ -293,7 +293,7 @@ func openPersonCandidateCount(ctx context.Context, q metadataQuerier) (int64, bo
 	return count, count >= maxOpenPersonCandidates, nil
 }
 
-func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDecision) (PersonMatchCandidate, error) {
+func (s *Store) DecidePersonCandidate(ctx context.Context, reader RenditionBlobReader, decision CandidateDecision) (PersonMatchCandidate, error) {
 	if validateUUIDv4(decision.CandidateID) != nil || decision.ExpectedRevision < 1 ||
 		!slices.Contains([]string{"link", faceDecisionReject, "new_person"}, decision.Action) ||
 		(decision.Action == "link") != (decision.PersonID != "") ||
@@ -323,6 +323,13 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			return err
 		}
 		if decision.FaceOnly && candidate.Reason != personCandidateReasonFaceMatch {
+			return ErrNotFound
+		}
+		allowed, err := s.authorizedFaceCandidatesTx(ctx, tx, reader, []string{candidate.CandidateID})
+		if err != nil {
+			return err
+		}
+		if !allowed[candidate.CandidateID] {
 			return ErrNotFound
 		}
 		if candidate.State != personCandidateStateOpen {

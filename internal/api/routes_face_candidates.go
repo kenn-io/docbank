@@ -29,7 +29,7 @@ func registerFaceCandidateRoutes(api huma.API, d Deps, g *gate) {
 		Limit  int `query:"limit" default:"24" minimum:"1" maximum:"250"`
 		Offset int `query:"offset" minimum:"0" maximum:"10000"`
 	}) (*struct{ Body FaceCandidatePage }, error) {
-		items, total, err := d.Store.FaceCandidates(ctx, in.Limit, in.Offset)
+		items, total, err := d.Store.FaceCandidates(ctx, d.Blobs, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -50,7 +50,7 @@ func registerFaceCandidateRoutes(api huma.API, d Deps, g *gate) {
 		var result store.PersonMatchCandidate
 		err = g.mutate(ctx, func() error {
 			var err error
-			result, err = d.Store.DecidePersonCandidate(browserPeopleScope(ctx), store.CandidateDecision{CandidateID: in.CandidateID, Action: in.Body.Action, PersonID: in.Body.PersonID, DisplayName: in.Body.DisplayName, FaceIDs: in.Body.FaceIDs, ExpectedRevision: revision, FaceOnly: true})
+			result, err = d.Store.DecidePersonCandidate(browserPeopleScope(ctx), d.Blobs, store.CandidateDecision{CandidateID: in.CandidateID, Action: in.Body.Action, PersonID: in.Body.PersonID, DisplayName: in.Body.DisplayName, FaceIDs: in.Body.FaceIDs, ExpectedRevision: revision, FaceOnly: true})
 			return FromStoreError(err)
 		})
 		if err != nil {

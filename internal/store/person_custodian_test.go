@@ -569,7 +569,7 @@ func TestPeopleByDisplayNameOperatorCandidateAcceptance(t *testing.T) {
 	candidates, _, err := s.PersonCandidates(ctx, "open", 10, 0)
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
-	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidates[0].CandidateID, Action: "new_person", ExpectedRevision: candidates[0].Revision})
+	decided, err := s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: candidates[0].CandidateID, Action: "new_person", ExpectedRevision: candidates[0].Revision})
 	require.NoError(t, err)
 	assertions, err := s.DocumentPersonAssertions(ctx, version.ID)
 	require.NoError(t, err)

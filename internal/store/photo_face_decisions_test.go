@@ -503,7 +503,7 @@ func checkPhotoFaceDecisionGroupedRejection(t *testing.T, newStore func(*testing
 			c := candidateForTest(t, "face:"+face.FaceID, "Ada", p.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}, {ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: other.FaceID}})
 			c.Reason = personCandidateReasonFaceMatch
 			c = openCandidateForTest(t, s, c)
-			_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "reject"})
+			_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "reject"})
 			require.NoError(t, err)
 			if test.retired {
 				_, err = s.RetirePerson(ctx, p.PersonID, p.Revision)
@@ -1390,7 +1390,7 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 		open, _, e = s.OpenPersonCandidate(ctx, tx, c)
 		return e
 	}))
-	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: open.CandidateID, ExpectedRevision: open.Revision, Action: "reject"})
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: open.CandidateID, ExpectedRevision: open.Revision, Action: "reject"})
 	require.ErrorIs(t, err, ErrPhotoFaceRejectionLimit)
 	updated, current, err := s.ReplaceContent(ctx, n.ID, n.Revision, fakeHash("b2"), 20, "image/jpeg")
 	require.NoError(t, err)
@@ -1404,7 +1404,7 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	grouped = openCandidateForTest(t, s, grouped)
 	_, err = s.PruneContentVersions(ctx, n.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
 	require.NoError(t, err)
-	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: grouped.CandidateID, ExpectedRevision: grouped.Revision, Action: "reject"})
+	decided, err := s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: grouped.CandidateID, ExpectedRevision: grouped.Revision, Action: "reject"})
 	require.NoError(t, err)
 	require.Equal(t, personCandidateStateRejected, decided.State)
 	faces, _, _, err = s.PhotoFacePersonNames(ctx, current.ID)
@@ -1436,7 +1436,7 @@ func checkPhotoFaceCandidateAcceptanceClearsDecisions(t *testing.T, newStore fun
 	candidate.Evidence, err = json.Marshal(occurrences)
 	require.NoError(t, err)
 	c := openCandidateForTest(t, s, candidate)
-	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "link", PersonID: p.PersonID})
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "link", PersonID: p.PersonID})
 	require.NoError(t, err)
 	faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
@@ -1537,7 +1537,7 @@ func checkPhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess(t *testing.T, n
 	count, _, err := s.OpenPersonCandidateCount(ctx)
 	require.NoError(t, err)
 	require.Zero(t, count)
-	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
 	require.ErrorIs(t, err, ErrHiddenLocked)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
@@ -1546,7 +1546,7 @@ func checkPhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess(t *testing.T, n
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.EqualValues(t, 1, total)
-	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
 	require.NoError(t, err)
 }
 
@@ -1560,7 +1560,7 @@ func TestPhotoFaceDecisionUndoRestoresLinkedCandidate(t *testing.T) {
 	candidate := candidateForTest(t, "face:"+f.FaceID, "Ada", p.PersonID, []PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
 	candidate.Reason = "face_match"
 	c := openCandidateForTest(t, s, candidate)
-	linked, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "link", PersonID: p.PersonID})
+	linked, err := s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "link", PersonID: p.PersonID})
 	require.NoError(t, err)
 	receipt := decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "reject")
 	_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
@@ -1639,7 +1639,7 @@ func checkPhotoFaceDecisionRepeatedGroupedDismissal(t *testing.T, newStore func(
 					decision.Action = "link"
 					decision.PersonID = p.PersonID
 				}
-				_, err = s.DecidePersonCandidate(ctx, decision)
+				_, err = s.DecidePersonCandidate(ctx, nil, decision)
 				require.NoError(t, err)
 			}
 			group := candidateForTest(t, "face:"+first.FaceID, "Ada", p.PersonID, []PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: first.FaceID}, {ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: other.FaceID}})
@@ -1700,7 +1700,7 @@ func TestPhotoFaceCandidateRejectAssignedPersonIsAtomic(t *testing.T) {
 	c := openCandidateForTest(t, s, candidate)
 	var before, after bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &before))
-	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "reject"})
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "reject"})
 	require.ErrorIs(t, err, ErrPersonIdentityConflict)
 	require.NoError(t, s.ExportMetadata(ctx, &after))
 	require.Equal(t, before.String(), after.String())
@@ -1845,7 +1845,7 @@ func checkFaceCandidateRetainsMembershipForReusedFaceID(t *testing.T, newStore f
 	})
 	candidate.Reason = personCandidateReasonFaceMatch
 	candidate = openCandidateForTest(t, s, candidate)
-	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
 	require.NoError(t, err)
 
 	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
@@ -1934,7 +1934,7 @@ func checkPhotoFaceNamingSupersedesOtherSuggestions(t *testing.T, newStore func(
 				receipt = decideFaceForTest(t, s, n, f.FaceID, named.PersonID, "name")
 			} else {
 				chosen := suggest(named.PersonID)
-				_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: chosen.CandidateID, ExpectedRevision: chosen.Revision, Action: "link", PersonID: named.PersonID})
+				_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: chosen.CandidateID, ExpectedRevision: chosen.Revision, Action: "link", PersonID: named.PersonID})
 				require.NoError(t, err)
 			}
 			open, _, err := s.PersonCandidates(ctx, "open", 250, 0)

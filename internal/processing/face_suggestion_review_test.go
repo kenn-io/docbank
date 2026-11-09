@@ -64,7 +64,7 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 	require.NoError(t, source.Close())
 	require.NoError(t, x.f.blobs.Remove(hash))
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	groups, _, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	groups, _, err := x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 	require.NoError(t, err)
 	require.Empty(t, groups)
 	// An unrelated write must not read vectors while the queue is full.
@@ -75,13 +75,13 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 	require.NoError(t, err)
 	before, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
-	_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
+	_, err = x.f.catalog.DecidePersonCandidate(ctx, nil, store.CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
 	require.NoError(t, err)
 	after, err := x.f.catalog.FaceMatchingInputs(ctx)
 	require.NoError(t, err)
 	require.Equal(t, before.Signature, after.Signature)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	groups, _, err = x.f.catalog.FaceCandidates(ctx, 24, 0)
+	groups, _, err = x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "freeing a document-candidate slot must admit the waiting face group")
 }
@@ -119,7 +119,7 @@ func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 		}
 	}
 	require.ErrorIs(t, x.service.rebuildFaceSuggestions(ctx), store.ErrVectorSetUnavailable)
-	groups, _, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	groups, _, err := x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	require.Len(t, groups[0].Faces, 2)
@@ -150,7 +150,7 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
 	require.Zero(t, reopened.WriteRevision(), "the first pass must run at a reopened store's initial revision")
-	_, total, err := reopened.FaceCandidates(ctx, 24, 0)
+	_, total, err := reopened.FaceCandidates(ctx, nil, 24, 0)
 	require.NoError(t, err)
 	require.Zero(t, total, "restart after saving vectors but before publishing groups")
 	synctest.Test(t, func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 			require.ErrorIs(t, <-finished, context.Canceled)
 		}()
 		require.Eventually(t, func() bool {
-			groups, total, err := reopened.FaceCandidates(t.Context(), 24, 0)
+			groups, total, err := reopened.FaceCandidates(t.Context(), nil, 24, 0)
 			return err == nil && total == 1 && len(groups) == 1 && len(groups[0].Faces) == 2
 		}, 5*time.Second, 10*time.Millisecond, "retained vectors must publish without another write")
 	})
@@ -206,7 +206,7 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(service.Stop)
 			require.NoError(t, service.rebuildFaceSuggestions(ctx))
-			page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+			page, total, err := x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 			require.NoError(t, err)
 			require.Empty(t, page, "partial groups must stay unpublished")
 			require.Zero(t, total)
@@ -223,7 +223,7 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 				require.NoError(t, service.rebuildFaceSuggestions(ctx))
 			}
 			require.NotEmpty(t, service.faceSuggestionsSignature)
-			_, total, err = x.f.catalog.FaceCandidates(ctx, 1, 0)
+			_, total, err = x.f.catalog.FaceCandidates(ctx, nil, 1, 0)
 			require.NoError(t, err)
 			require.Equal(t, expectedTotal, total, "only current evidence must reach publication")
 			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
@@ -235,7 +235,7 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 			if action == "name" {
 				found := false
 				for offset := 0; offset < 500; offset += 250 {
-					groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+					groups, _, err := x.f.catalog.FaceCandidates(ctx, nil, 250, offset)
 					require.NoError(t, err)
 					for _, group := range groups {
 						if group.SuggestedPersonID == personID {
@@ -275,7 +275,7 @@ func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
 		go func() { finished <- x.service.FaceSuggestionBackfill(laneContext, nil) }()
 		defer func() { cancel(); require.ErrorIs(t, <-finished, context.Canceled) }()
 		time.Sleep(3 * time.Second)
-		_, total, err := x.f.catalog.FaceCandidates(t.Context(), 24, 0)
+		_, total, err := x.f.catalog.FaceCandidates(t.Context(), nil, 24, 0)
 		require.NoError(t, err)
 		require.Zero(t, total)
 		before := x.f.catalog.WriteRevision()
@@ -283,7 +283,7 @@ func TestFaceSuggestionsRetryRepairedPayload(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, before, x.f.catalog.WriteRevision())
 		time.Sleep(30 * time.Second)
-		_, total, err = x.f.catalog.FaceCandidates(t.Context(), 24, 0)
+		_, total, err = x.f.catalog.FaceCandidates(t.Context(), nil, 24, 0)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, total, "restored payload must become a suggestion without a catalog write")
 	})
@@ -349,7 +349,7 @@ func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 			require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
 		}
 		require.Nil(t, x.service.faceSuggestionsPending)
-		_, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+		_, total, err := x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 		require.NoError(t, err)
 		require.Positive(t, total, "unchanged groups must publish while imports continue")
 	}
@@ -361,7 +361,7 @@ func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 	require.Equal(t, current.Signature, x.service.faceSuggestionsSignature)
 	seen := map[string]bool{}
 	for offset := 0; offset < 750; offset += 250 {
-		groups, _, err := x.f.catalog.FaceCandidates(ctx, 250, offset)
+		groups, _, err := x.f.catalog.FaceCandidates(ctx, nil, 250, offset)
 		require.NoError(t, err)
 		for _, group := range groups {
 			for _, face := range group.Faces {
@@ -390,13 +390,13 @@ func TestExactGroupRejectionAllowsLargerNamedGroup(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	groups, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	groups, total, err := x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)
 	require.Len(t, groups, 1)
 	require.Equal(t, ada.PersonID, groups[0].SuggestedPersonID)
 	require.Len(t, groups[0].Faces, 2)
-	_, err = x.f.catalog.DecidePersonCandidate(ctx, store.CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
+	_, err = x.f.catalog.DecidePersonCandidate(ctx, nil, store.CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
 	require.NoError(t, err)
 	imported := x.f.addPhoto(t, "new-lookalike.jpg", 730)
 	_, _, err = x.f.catalog.CreatePhotoFace(ctx, imported, uuid.New().String(), document.FaceBox{X: .2, Y: .2, Width: .2, Height: .3}, "")
@@ -405,7 +405,7 @@ func TestExactGroupRejectionAllowsLargerNamedGroup(t *testing.T) {
 	_, err = x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	groups, total, err = x.f.catalog.FaceCandidates(ctx, 24, 0)
+	groups, total, err = x.f.catalog.FaceCandidates(ctx, nil, 24, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)
 	for _, group := range groups {

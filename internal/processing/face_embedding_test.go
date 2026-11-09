@@ -458,64 +458,153 @@ func TestFacePickerUsesNamedFacesFromQueryPhoto(t *testing.T) {
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
-	x.matchAll = true
-	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
-		values := make([]float32, 512)
-		values[0] = 1
-		if box.Y > .5 {
-			values[0] = -1
-		}
-		return values
-	}
-	ctx := t.Context()
-	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[0].ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: x.inputs[0].FaceID, Revision: x.inputs[0].Revision, Action: "name", PersonID: person.PersonID})
-	require.NoError(t, err)
-	hiddenVersion := x.f.addPhoto(t, "private.jpg", 710)
-	for _, left := range []float64{.1, .6} {
-		_, _, err = x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{X: left, Y: .6, Width: .2, Height: .2}, person.PersonID)
-		require.NoError(t, err)
-	}
-	hiddenQuery, _, err := x.f.catalog.CreatePhotoFace(ctx, hiddenVersion, uuid.New().String(), document.FaceBox{X: .4, Y: .6, Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	queryVersion := x.f.addPhoto(t, "query.jpg", 711)
-	_, _, err = x.f.catalog.CreatePhotoFace(ctx, queryVersion, uuid.New().String(), document.FaceBox{Y: .6, Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	x.enable(t)
-	count, err := x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 3, count)
-	require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	version, err := x.f.catalog.ContentVersionByID(ctx, hiddenVersion)
-	require.NoError(t, err)
-	asset, err := x.f.catalog.PhotoAssetForNode(ctx, version.NodeID)
-	require.NoError(t, err)
-	_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, total)
-	require.Len(t, page, 1)
-	require.Equal(t, person.PersonID, page[0].SuggestedPersonID)
-	require.Len(t, page[0].Faces, 1)
-	require.Equal(t, x.inputs[1].FaceID, page[0].Faces[0].FaceID, "visible matches must agree with the visible-only naming evidence")
-	token, _, err := x.f.catalog.UnlockPhotoHidden(ctx, "synthetic-passcode")
-	require.NoError(t, err)
-	page, total, err = x.f.catalog.FaceCandidates(store.WithPhotoHiddenToken(ctx, token), 24, 0)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, total)
-	var hiddenFaces []string
-	for _, candidate := range page {
-		for _, face := range candidate.Faces {
-			if face.Hidden {
-				hiddenFaces = append(hiddenFaces, face.FaceID)
+	for _, change := range []string{"already_hidden", "target_becomes_visible", "references_become_hidden"} {
+		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			x := newFaceEmbeddingFixture(t, false)
+			x.matchAll = true
+			x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+				values := make([]float32, 512)
+				values[0] = 1
+				if box.Y > .5 {
+					values[0] = -1
+				}
+				return values
 			}
-		}
+			ctx := t.Context()
+			person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[0].ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: x.inputs[0].FaceID, Revision: x.inputs[0].Revision, Action: "name", PersonID: person.PersonID})
+			require.NoError(t, err)
+			reference := x.f.addPhoto(t, "private-reference.jpg", 710)
+			for _, left := range []float64{.1, .6} {
+				_, _, err = x.f.catalog.CreatePhotoFace(ctx, reference, uuid.New().String(), document.FaceBox{X: left, Y: .6, Width: .2, Height: .2}, person.PersonID)
+				require.NoError(t, err)
+			}
+			var hiddenQuery store.PhotoFace
+			if change == "already_hidden" {
+				hiddenQuery, _, err = x.f.catalog.CreatePhotoFace(ctx, reference, uuid.New().String(), document.FaceBox{X: .4, Y: .6, Width: .2, Height: .2}, "")
+				require.NoError(t, err)
+			}
+			target := x.f.addPhoto(t, "private-target.jpg", 711)
+			face, _, err := x.f.catalog.CreatePhotoFace(ctx, target, uuid.New().String(), document.FaceBox{Y: .6, Width: .2, Height: .2}, "")
+			require.NoError(t, err)
+			x.enable(t)
+			_, err = x.worker.ScanOnce(ctx)
+			require.NoError(t, err)
+			require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+
+			if change != "references_become_hidden" {
+				toHide := []string{reference}
+				if change == "target_becomes_visible" {
+					toHide = append(toHide, target)
+				}
+				for _, id := range toHide {
+					v, err := x.f.catalog.ContentVersionByID(ctx, id)
+					require.NoError(t, err)
+					asset, err := x.f.catalog.PhotoAssetForNode(ctx, v.NodeID)
+					require.NoError(t, err)
+					_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+					require.NoError(t, err)
+				}
+			}
+			require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+			token, _, err := x.f.catalog.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			require.NoError(t, err)
+			unlocked := store.WithPhotoHiddenToken(ctx, token)
+			full, _, err := x.f.catalog.FaceCandidates(unlocked, x.f.blobs, 24, 0)
+			require.NoError(t, err)
+			if change == "already_hidden" {
+				face = hiddenQuery
+				require.Len(t, full, 2)
+			}
+			var candidate store.FaceCandidate
+			for _, c := range full {
+				for _, f := range c.Faces {
+					if f.FaceID == face.FaceID {
+						candidate = c
+					}
+				}
+			}
+			require.NotEmpty(t, candidate.CandidateID)
+			require.Equal(t, person.PersonID, candidate.SuggestedPersonID)
+			if change != "already_hidden" {
+				changed := reference
+				if change == "target_becomes_visible" {
+					changed = target
+				}
+				v, err := x.f.catalog.ContentVersionByID(unlocked, changed)
+				require.NoError(t, err)
+				asset, err := x.f.catalog.PhotoAssetForNode(unlocked, v.NodeID)
+				require.NoError(t, err)
+				_, err = x.f.catalog.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, change == "references_become_hidden")
+				require.NoError(t, err)
+				require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
+			}
+			locked, total, err := x.f.catalog.FaceCandidates(ctx, x.f.blobs, 24, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Len(t, locked, 1)
+			require.Equal(t, x.inputs[1].FaceID, locked[0].Faces[0].FaceID)
+			_, err = x.f.catalog.DecidePersonCandidate(ctx, x.f.blobs, store.CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, FaceOnly: true, Action: "reject"})
+			require.ErrorIs(t, err, store.ErrNotFound)
+			restored, _, err := x.f.catalog.FaceCandidates(unlocked, x.f.blobs, 24, 0)
+			require.NoError(t, err)
+			found := false
+			for _, c := range restored {
+				if c.CandidateID == candidate.CandidateID {
+					found = true
+					require.Equal(t, candidate.Revision, c.Revision)
+				}
+			}
+			require.True(t, found)
+			if change == "already_hidden" {
+				require.True(t, candidate.Faces[0].Hidden)
+				return
+			}
+			if change == "target_becomes_visible" {
+				_, err = x.f.catalog.DecidePersonCandidate(ctx, x.f.blobs, store.CandidateDecision{CandidateID: locked[0].CandidateID, ExpectedRevision: locked[0].Revision, FaceOnly: true, Action: "link", PersonID: person.PersonID})
+				require.NoError(t, err, "currently visible evidence must still authorize confirmation")
+				return
+			}
+			referenceVersion, err := x.f.catalog.ContentVersionByID(unlocked, reference)
+			require.NoError(t, err)
+			referenceAsset, err := x.f.catalog.PhotoAssetForNode(unlocked, referenceVersion.NodeID)
+			require.NoError(t, err)
+			_, err = x.f.catalog.SetPhotoAssetHidden(unlocked, referenceAsset.ID, referenceAsset.Revision, false)
+			require.NoError(t, err)
+			spareVersion := x.f.addPhoto(t, "unrelated-private.jpg", 712)
+			spare, err := x.f.catalog.ContentVersionByID(ctx, spareVersion)
+			require.NoError(t, err)
+			spareAsset, err := x.f.catalog.PhotoAssetForNode(ctx, spare.NodeID)
+			require.NoError(t, err)
+			_, err = x.f.catalog.SetPhotoAssetHidden(ctx, spareAsset.ID, spareAsset.Revision, true)
+			require.NoError(t, err)
+			visibleAgain, _, err := x.f.catalog.FaceCandidates(ctx, x.f.blobs, 24, 0)
+			require.NoError(t, err)
+			found = false
+			for _, c := range visibleAgain {
+				if c.CandidateID == candidate.CandidateID {
+					found = true
+				}
+			}
+			require.True(t, found, "unhiding references restores their current match")
+			snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+			require.NoError(t, err)
+			removed := false
+			for _, item := range snapshot.Sets {
+				if item.Set.ContentVersionID == reference {
+					require.NoError(t, x.f.blobs.Remove(item.Set.VectorSet.PayloadBlobHash))
+					removed = true
+				}
+			}
+			require.True(t, removed)
+			incomplete, total, err := x.f.catalog.FaceCandidates(ctx, x.f.blobs, 24, 0)
+			require.NoError(t, err)
+			require.Empty(t, incomplete)
+			require.Zero(t, total, "partial visible references cannot authorize a different centroid")
+		})
 	}
-	require.Equal(t, []string{hiddenQuery.FaceID}, hiddenFaces, "Hidden-source matching remains available after unlock")
 }
 
 func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
@@ -538,7 +627,7 @@ func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 	_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
-	page, total, err := x.f.catalog.FaceCandidates(ctx, 24, 0)
+	page, total, err := x.f.catalog.FaceCandidates(ctx, x.f.blobs, 24, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, total)
 	require.Len(t, page, 1)
@@ -659,6 +748,27 @@ func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
 			x.enable(t)
 			_, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
+
+			person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			_, err = x.f.catalog.DecidePhotoFace(ctx, x.inputs[0].ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: x.inputs[0].FaceID, Revision: x.inputs[0].Revision, Action: "name", PersonID: person.PersonID})
+			require.NoError(t, err)
+			candidate, err := store.NewFaceCandidate([]store.FaceSuggestionFace{{PhotoFace: x.inputs[1]}}, person.PersonID, person.DisplayName)
+			require.NoError(t, err)
+			captured, err := x.f.catalog.FaceMatchingInputs(ctx)
+			require.NoError(t, err)
+			require.NoError(t, x.f.catalog.ReplaceFaceSuggestions(ctx, captured, []store.PersonMatchCandidate{candidate}))
+			retained, _, err := x.f.catalog.PersonCandidates(ctx, "open", 24, 0)
+			require.NoError(t, err)
+			require.Len(t, retained, 1)
+			hiddenVersion := x.f.addPhoto(t, "unrelated-hidden.jpg", 713)
+			hiddenNode, err := x.f.catalog.ContentVersionByID(ctx, hiddenVersion)
+			require.NoError(t, err)
+			asset, err := x.f.catalog.PhotoAssetForNode(ctx, hiddenNode.NodeID)
+			require.NoError(t, err)
+			require.NoError(t, x.f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			_, err = x.f.catalog.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
 			db, err := store.DefaultSQLiteDriver().Open(x.f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -679,6 +789,10 @@ func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
 			_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
 			require.ErrorContains(t, err, contractError)
 			require.ErrorContains(t, x.service.rebuildFaceSuggestions(ctx), contractError)
+			_, _, err = reopened.FaceCandidates(ctx, x.f.blobs, 24, 0)
+			require.ErrorContains(t, err, contractError)
+			_, err = reopened.DecidePersonCandidate(ctx, x.f.blobs, store.CandidateDecision{CandidateID: retained[0].CandidateID, ExpectedRevision: retained[0].Revision, Action: "reject", FaceOnly: true})
+			require.ErrorContains(t, err, contractError)
 		})
 	}
 }

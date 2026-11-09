@@ -25,9 +25,12 @@ type FaceSuggestionSet struct {
 	Faces []FaceSuggestionFace
 }
 
-func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, candidates string, args []any) ([]FaceSuggestionSet, error) {
+func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, candidates, versionFilter string, args []any) ([]FaceSuggestionSet, error) {
 	d := metadataJSONDialect{s.postgresSchema != ""}
 	versions := `SELECT h.content_version_id FROM embedding_heads h WHERE h.input_kind='face'`
+	if versionFilter != "" {
+		versions += ` AND (` + versionFilter + `)`
+	}
 	if faceID != "" {
 		namedPeople := ""
 		if candidates != "" {
@@ -228,7 +231,7 @@ type FaceCandidate struct {
 	Faces             []FaceSuggestionFace `json:"faces"`
 }
 
-func (s *Store) FaceCandidates(ctx context.Context, limit, offset int) ([]FaceCandidate, int64, error) {
+func (s *Store) FaceCandidates(ctx context.Context, reader RenditionBlobReader, limit, offset int) ([]FaceCandidate, int64, error) {
 	if limit < 1 || limit > 250 || offset < 0 || offset > 10000 {
 		return nil, 0, ErrInvalidPerson
 	}
@@ -251,13 +254,18 @@ func (s *Store) FaceCandidates(ctx context.Context, limit, offset int) ([]FaceCa
 		}
 		args := []any{1, locked, locked}
 		visible += ` AND (SELECT COUNT(*) FROM (SELECT 1 FROM person_candidate_faces e JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id JOIN content_versions cv ON cv.version_id=f.content_version_id JOIN nodes n ON n.id=cv.node_id JOIN photo_files pf ON pf.node_id=n.id JOIN photo_assets a ON a.asset_id=pf.asset_id WHERE e.candidate_id=person_match_candidates.candidate_id AND f.assertion_id IS NULL AND a.kind='photo' AND a.excluded_at IS NULL AND ` + currentPhotoSourcePredicate("pf", "n", "f.content_version_id") + ` AND NOT ` + faceSuggestionDecided("f.face_id", "f.content_version_id", "person_match_candidates.suggested_person_id") + ` LIMIT 2) eligible_faces) >= CASE WHEN person_match_candidates.suggested_person_id IS NULL THEN 2 ELSE 1 END`
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open' AND reason='face_match' AND `+visible, args...).Scan(&total); err != nil {
-			return err
-		}
-		ids, err := stringColumnTx(ctx, tx, "face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND `+visible+` ORDER BY created_at,candidate_id LIMIT $4 OFFSET $5`, append(args, limit, offset)...)
+		ids, err := stringColumnTx(ctx, tx, "face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND `+visible+` ORDER BY created_at,candidate_id`, args...)
 		if err != nil {
 			return err
 		}
+		allowed, err := s.authorizedFaceCandidatesTx(ctx, tx, reader, ids)
+		if err != nil {
+			return err
+		}
+		ids = slices.DeleteFunc(ids, func(id string) bool { return !allowed[id] })
+		total = int64(len(ids))
+		start := min(offset, len(ids))
+		ids = ids[start:min(start+limit, len(ids))]
 		quality, err := document.CurrentPhotoQualityFingerprints()
 		if err != nil {
 			return err

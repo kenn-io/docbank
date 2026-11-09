@@ -45,7 +45,7 @@ The background job embeds detected faces and boxes you draw on current image and
 
 In **Photos → People**, **Suggestions** shows likely matches and groups of similar unnamed faces. Open a card to review its crops. Use the sheet’s **Not X** button to reject a named group and close the sheet, or **Skip** to leave an unnamed face out of this review. Reopen a named group to confirm its remaining faces. For an unnamed group, choose an existing person or type a new name. **Dismiss** keeps that exact group rejected while its faces remain available for later matches; rejecting a named group keeps that exact group rejected. The **Not X** control on an individual face keeps that face from being suggested for the same person again. Decisions survive backup and restore.
 
-The inspector's name picker puts similar people first when the selected face has a vector. Namesakes stay together. Faces without a vector keep the usual ordering. Suggestions, crops, and similarity ranking follow the current Hidden access scope.
+The inspector's name picker puts similar people first when the selected face has a vector. Namesakes stay together. Faces without a vector keep the usual ordering. Suggestions, crops, and similarity ranking follow the current Hidden access scope. When the vault contains Hidden photos, locking Hidden withholds a named group unless its remaining faces match the named reference faces currently visible in Library. Unlock Hidden to review groups supported only by Hidden references.
 
 ## List and search
 

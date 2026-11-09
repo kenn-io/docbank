@@ -12,9 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
-// FaceMatchDistance follows Kit's expanded AuraFace acceptance corpus in docs/kennembed.md.
-const FaceMatchDistance = 1.189402
-
 type faceVector = store.FaceVector
 
 const faceSuggestionComparisonBatch = 64_000
@@ -39,7 +36,7 @@ type faceSuggestionPass struct {
 
 func newFaceSuggestionPass(vectors []faceVector) *faceSuggestionPass {
 	slices.SortFunc(vectors, func(a, b faceVector) int { return strings.Compare(a.Face.FaceID, b.Face.FaceID) })
-	return &faceSuggestionPass{vectors: vectors, centroids: store.FacePersonCentroids(vectors, true), visibleCentroids: store.FacePersonCentroids(vectors, false), known: map[string]int{}, closest: -1, distance: FaceMatchDistance}
+	return &faceSuggestionPass{vectors: vectors, centroids: store.FacePersonCentroids(vectors, true), visibleCentroids: store.FacePersonCentroids(vectors, false), known: map[string]int{}, closest: -1, distance: store.FaceMatchDistance}
 }
 
 // advance preserves the exact leader order while releasing the maintenance gate
@@ -103,17 +100,17 @@ nextFace:
 				i := p.group
 				p.group++
 				g := p.groups[i]
-				if g.person == "" && g.space == v.Space && g.faces[0].Hidden == v.Face.Hidden && vectorindex.Euclidean(v.Values, g.leader) <= FaceMatchDistance {
+				if g.person == "" && g.space == v.Space && g.faces[0].Hidden == v.Face.Hidden && vectorindex.Euclidean(v.Values, g.leader) <= store.FaceMatchDistance {
 					p.groups[i].faces = append(p.groups[i].faces, v.Face)
 					p.face++
-					p.centroid, p.group, p.closest, p.distance = 0, 0, -1, FaceMatchDistance
+					p.centroid, p.group, p.closest, p.distance = 0, 0, -1, store.FaceMatchDistance
 					continue nextFace
 				}
 			}
 			p.groups = append(p.groups, faceSuggestionGroup{space: v.Space, leader: v.Values, faces: []store.FaceSuggestionFace{v.Face}})
 		}
 		p.face++
-		p.centroid, p.group, p.closest, p.distance = 0, 0, -1, FaceMatchDistance
+		p.centroid, p.group, p.closest, p.distance = 0, 0, -1, store.FaceMatchDistance
 	}
 	return true, nil
 }

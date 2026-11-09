@@ -44,7 +44,7 @@ func checkPeopleSnapshotsPostgres(t *testing.T) {
 		candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:ada", "Ada", "", []PersonCandidateOccurrence{{ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "synthetic-author"}}))
 		var writeErr error
 		reader := postgresSnapshotReader(t, s, func() {
-			_, writeErr = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
+			_, writeErr = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
 		})
 		items, total, err := reader.PersonCandidates(ctx, "open", 10, 0)
 		require.NoError(t, writeErr)

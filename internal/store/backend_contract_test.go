@@ -23,6 +23,7 @@ type backendSuite struct {
 
 var backendSuites = []backendSuite{
 	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; query-driven discovery and resolver production remain separate.", scenarios: []backendScenario{
+		{"FaceCandidateCurrentScope", func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkPeopleRollbackPostgres},
 		{"RetainedPackageCustody", nil, checkPeopleRetainedPackageCustodyPostgres},
