@@ -6,6 +6,7 @@ import (
 	"runtime/metrics"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -79,21 +80,24 @@ func TestRSSAdmissionFreesMemoryBeforeRefusing(t *testing.T) {
 }
 
 func TestRSSMonitorFreesMemoryBeforeCancelling(t *testing.T) {
-	start := forcedGCCount()
-	var running atomic.Bool
-	reclaimable := func(context.Context) (uint64, error) {
-		if running.Load() && forcedGCCount() == start {
-			return 2048, nil
+	synctest.Test(t, func(t *testing.T) {
+		start := forcedGCCount()
+		var running atomic.Bool
+		reclaimable := func(context.Context) (uint64, error) {
+			if running.Load() && forcedGCCount() == start {
+				return 2048, nil
+			}
+			return 512, nil
 		}
-		return 512, nil
-	}
-	ctx, stop, err := watchRSS(t.Context(), 1024, reclaimable)
-	require.NoError(t, err)
-	defer stop()
-	running.Store(true)
-	require.Eventually(t, func() bool { return forcedGCCount() > start }, time.Second, time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
-	require.NoError(t, context.Cause(ctx))
+		ctx, stop, err := watchRSS(t.Context(), 1024, reclaimable)
+		require.NoError(t, err)
+		defer stop()
+		running.Store(true)
+		time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
+		require.Greater(t, forcedGCCount(), start)
+		require.NoError(t, context.Cause(ctx))
+	})
 }
 
 func forcedGCCount() uint64 {
