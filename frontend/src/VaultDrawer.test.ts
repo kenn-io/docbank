@@ -85,7 +85,12 @@ it("keeps navigation and close inside the active tool's dialog", async () => {
 
 it("keeps keyboard focus on the selected tab when switching drawer contents", async () => {
   mockSystemRequests();
-  render(VaultDrawer, { session: "synthetic", onclose: vi.fn(), onauthfailure: vi.fn() });
+  render(VaultDrawer, {
+    session: "synthetic",
+    ...searchProps(),
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
   const disk = screen.getByRole("tab", { name: "Disk use" });
   disk.focus();
   await fireEvent.keyDown(disk, { key: "ArrowRight" });
