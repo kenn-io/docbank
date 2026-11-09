@@ -127,16 +127,6 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 	return rec, info, ok, nil
 }
 
-// runtimeProtocolError refuses to interpret a newer owner's lifetime contract.
-func runtimeProtocolError(rec kitdaemon.RuntimeRecord) error {
-	protocol, _ := strconv.Atoi(rec.Metadata[metaProtocolVersion])
-	supported, _ := strconv.Atoi(daemonProtocolVersion)
-	if protocol > supported {
-		return errors.New("this command cannot replace the running daemon; use a matching or newer Docbank version")
-	}
-	return nil
-}
-
 // newProvenClientFor authenticates with the key the daemon itself published in
 // its runtime record (configured or ephemeral) rather than re-reading
 // config.toml. Before the key can cross the socket, the endpoint must prove it
@@ -424,11 +414,12 @@ func ensureDaemonWithOptions(
 			return findErr
 		}
 		if found {
-			if err := stopReplacementRecord(ctx, old, stopRecord); err != nil {
+			if err := stopRecord(ctx, old); err != nil {
 				return fmt.Errorf("stopping incompatible daemon (pid %d, %s): %w",
 					old.PID, old.Version, err)
 			}
 			res.Replaced = &old
+			persistent = persistent || Explicit(old)
 		} else {
 			// Shutdown closes the listener before background jobs finish. During
 			// that window ping-based discovery returns no daemon even though the
@@ -444,7 +435,7 @@ func ensureDaemonWithOptions(
 				// port and forge the public ping fields. Stop only the identity-checked
 				// recorded PID, then replace it after exit; never send its API key to a
 				// listener that appeared during this transition.
-				if err := stopReplacementRecord(ctx, stopping, signalStopRecord); err != nil {
+				if err := signalStopRecord(ctx, stopping); err != nil {
 					return fmt.Errorf("stopping pingless daemon (pid %d): %w",
 						stopping.PID, err)
 				}
@@ -460,7 +451,7 @@ func ensureDaemonWithOptions(
 			}
 		}
 
-		res.Record, err = startFn(ctx, root, persistent || (res.Replaced != nil && Explicit(*res.Replaced)))
+		res.Record, err = startFn(ctx, root, persistent)
 		res.Started = err == nil
 		return err
 	})
@@ -470,7 +461,7 @@ func ensureDaemonWithOptions(
 // Restart serializes stop and start with automatic launches. A persistent request
 // or the stopped daemon's explicit intent keeps the replacement running.
 func Restart(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, bool, error) {
-	return restart(ctx, root, persistent, StopForReplacement, Start)
+	return restart(ctx, root, persistent, Stop, Start)
 }
 
 func restart(ctx context.Context, root string, persistent bool,
@@ -716,18 +707,9 @@ func proveOwnershipWithClient(
 
 // Stop gracefully stops the discovered daemon: token endpoint first,
 // SIGTERM only when the process identity still matches the recorded PID. Returns
-// nil when no daemon was running.
+// nil when no daemon was running. A pingless owner's record carries no explicit
+// intent for a replacement.
 func Stop(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
-	return stop(ctx, root, false)
-}
-
-// StopForReplacement refuses newer runtime contracts before stopping an owner
-// whose explicit launch intent the caller will preserve in a replacement.
-func StopForReplacement(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
-	return stop(ctx, root, true)
-}
-
-func stop(ctx context.Context, root string, forReplacement bool) (*kitdaemon.RuntimeRecord, error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return nil, err
@@ -741,23 +723,12 @@ func stop(ctx context.Context, root string, forReplacement bool) (*kitdaemon.Run
 		// A draining owner has no proven endpoint; signal only its verified PID.
 		rec, ok, err = liveRuntimeRecord(root)
 		stopFn = signalStopRecord
+		delete(rec.Metadata, MetaExplicitStart)
 	}
 	if err != nil || !ok {
 		return nil, err
 	}
-	if forReplacement {
-		return &rec, stopReplacementRecord(ctx, rec, stopFn)
-	}
 	return &rec, stopFn(ctx, rec)
-}
-
-func stopReplacementRecord(ctx context.Context, rec kitdaemon.RuntimeRecord,
-	stopFn func(context.Context, kitdaemon.RuntimeRecord) error,
-) error {
-	if err := runtimeProtocolError(rec); err != nil {
-		return err
-	}
-	return stopFn(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {

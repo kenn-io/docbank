@@ -80,30 +80,30 @@ var daemonStatusCmd = &cobra.Command{
 			return err
 		}
 		rec, info, ok, err := daemonconn.Find(cmd.Context(), layout.Root)
-		if err != nil {
+		out := map[string]any{"running": ok}
+		switch {
+		case err != nil:
 			return err
-		}
-		if daemonStatusJSON {
-			out := map[string]any{"running": ok}
-			if ok {
-				out["pid"] = rec.PID
-				out["address"] = rec.Address
-				out["version"] = info.Version
-				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
-			}
-			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
-			return json.MarshalEncode(enc, out)
-		}
-		if !ok {
+		case !daemonStatusJSON && !ok:
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "daemon not running")
 			return errors.New("daemon not running")
+		case !daemonStatusJSON:
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "running: pid %d at %s (%s), up %s\n", rec.PID, rec.Address, info.Version, time.Since(rec.StartedAt).Round(time.Second))
+			if lifetime := daemonLifetime(rec); lifetime != "" {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
+			}
+			return nil
+		case ok:
+			out["pid"], out["address"] = rec.PID, rec.Address
+			out["version"], out["started_at"] = info.Version, rec.StartedAt.Format(time.RFC3339)
+			if _, found := rec.Metadata[daemonconn.MetaExplicitStart]; found {
+				out["explicit_start"] = daemonconn.Explicit(rec)
+			}
+			if timeout, found := rec.Metadata[daemonconn.MetaIdleTimeout]; found {
+				out["idle_timeout"] = timeout
+			}
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "running: pid %d at %s (%s), up %s\n",
-			rec.PID, rec.Address, info.Version, time.Since(rec.StartedAt).Round(time.Second))
-		if lifetime := daemonLifetime(rec); lifetime != "" {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
-		}
-		return nil
+		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  ")), out)
 	},
 }
 

@@ -142,7 +142,7 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 	}
 	stopFn := opts.Stop
 	if stopFn == nil {
-		stopFn = daemonconn.StopForReplacement
+		stopFn = daemonconn.Stop
 	}
 	startFn := opts.Start
 	if startFn == nil {

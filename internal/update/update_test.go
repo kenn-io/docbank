@@ -10,11 +10,9 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -413,45 +411,4 @@ func TestUpdateOfficialDownloadStillSelfUpdates(t *testing.T) {
 	got, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	assert.Contains(t, string(got), "9.9.9")
-}
-
-func TestUpdateDefaultStopRefusesReplacementBeforeInstall(t *testing.T) {
-	ts, _ := fakeReleaseServer(t, "9.9.9")
-	client := newFakeClient(t, ts, "0.0.1")
-	root := t.TempDir()
-	testBinary, err := os.Executable()
-	require.NoError(t, err)
-	child := exec.CommandContext(t.Context(), testBinary, "-test.run=^TestUpdateRuntimeOwnerHelper$")
-	child.Env = append(os.Environ(), "DOCBANK_UPDATE_OWNER_HELPER=1")
-	input, err := child.StdinPipe()
-	require.NoError(t, err)
-	require.NoError(t, child.Start())
-	t.Cleanup(func() { _ = input.Close(); _ = child.Wait() })
-	identity, ok := kitdaemon.ReadProcessIdentity(child.Process.Pid)
-	require.True(t, ok)
-	rec := daemonconn.NewRecord("127.0.0.1:1", "key", "token", "")
-	rec.PID = child.Process.Pid
-	rec.ProcessIdentity = ""
-	rec.ProcessIdentityV2 = identity
-	protocol, err := strconv.Atoi(rec.Metadata["protocol_version"])
-	require.NoError(t, err)
-	rec.Metadata["protocol_version"] = strconv.Itoa(protocol + 1)
-	_, err = daemonconn.RuntimeStore(root).Write(rec)
-	require.NoError(t, err)
-	dest := filepath.Join(t.TempDir(), "docbank")
-	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
-	err = update.Run(t.Context(), io.Discard, update.Options{Yes: true, Client: &client, Root: root, Destination: dest,
-		Start: func(context.Context, string, bool) error { return nil },
-	})
-	require.ErrorContains(t, err, "stopping daemon before update")
-	data, err := os.ReadFile(dest)
-	require.NoError(t, err)
-	assert.Equal(t, "old", string(data))
-}
-
-func TestUpdateRuntimeOwnerHelper(t *testing.T) {
-	if os.Getenv("DOCBANK_UPDATE_OWNER_HELPER") != "1" {
-		return
-	}
-	_, _ = io.Copy(io.Discard, os.Stdin)
 }

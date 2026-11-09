@@ -412,7 +412,7 @@ func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 			result, err := ensureDaemon(t.Context(), root, false,
 				func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
 					started = true
-					assert.Equal(t, explicit, persistent, "replacement preserves launch intent despite the failed ping")
+					assert.False(t, persistent, "a draining owner contributes no explicit launch intent")
 					assert.Equal(t, canonicalRoot, gotRoot)
 					assert.False(t, kitdaemon.ProcessAlive(rec.PID),
 						"replacement must wait for the recorded owner to exit")
@@ -662,9 +662,14 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	stopped, err := Stop(t.Context(), root)
-	assert.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
+	stopped, err := Stop(t.Context(), root)
+	require.NoError(t, err)
+	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
+	assert.Equal(t, rec.PID, stopped.PID)
+	assert.False(t, Explicit(*stopped), "a draining owner contributes no explicit launch intent")
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
@@ -827,49 +832,6 @@ func TestRestartHoldsLaunchLockAndPreservesLifetime(t *testing.T) {
 				})
 			require.NoError(t, err)
 			assert.True(t, wasRunning)
-		})
-	}
-}
-
-func TestNewerRuntimeRefusesReplacementButAllowsExplicitStop(t *testing.T) {
-	for _, responsive := range []bool{false, true} {
-		t.Run(fmt.Sprintf("responsive=%t", responsive), func(t *testing.T) {
-			root, rec := startUnresponsiveRuntime(t)
-			if responsive {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					switch r.URL.Path {
-					case kitdaemon.DefaultPingPath:
-						_ = json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: Service, Version: version.Version, PID: rec.PID})
-					case daemonauth.ChallengePath:
-						nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-						assert.NoError(t, err)
-						_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce)})
-					default:
-						http.NotFound(w, r)
-					}
-				}))
-				t.Cleanup(server.Close)
-				rec.Address = strings.TrimPrefix(server.URL, "http://")
-			}
-			protocol, err := strconv.Atoi(daemonProtocolVersion)
-			require.NoError(t, err)
-			rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocol + 1)
-			_, err = RuntimeStore(root).Write(rec)
-			require.NoError(t, err)
-			_, err = ensureDaemon(t.Context(), root, true, func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
-				t.Error("a newer owner must not be replaced")
-				return kitdaemon.RuntimeRecord{}, nil
-			})
-			require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
-			assert.True(t, kitdaemon.ProcessAlive(rec.PID))
-			_, err = StopForReplacement(t.Context(), root)
-			require.ErrorContains(t, err, "this command cannot replace the running daemon; use a matching or newer Docbank version")
-			assert.True(t, kitdaemon.ProcessAlive(rec.PID))
-			stopped, err := Stop(t.Context(), root)
-			require.NoError(t, err)
-			require.NotNil(t, stopped)
-			assert.Equal(t, rec.PID, stopped.PID)
-			assert.False(t, kitdaemon.ProcessAlive(rec.PID), "explicit stop remains available for newer owners")
 		})
 	}
 }
