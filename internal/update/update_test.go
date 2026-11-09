@@ -431,6 +431,7 @@ func TestUpdateRefusesNewerRuntimeWithoutStoppingOwner(t *testing.T) {
 	require.True(t, ok)
 	rec := daemonconn.NewRecord("127.0.0.1:1", "key", "token", "")
 	rec.PID = child.Process.Pid
+	rec.ProcessIdentity = ""
 	rec.ProcessIdentityV2 = identity
 	protocol, err := strconv.Atoi(rec.Metadata["protocol_version"])
 	require.NoError(t, err)

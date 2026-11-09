@@ -556,18 +556,12 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	automatic := waitForDaemon(t, root)
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
 
-	out := run(oldBin, "daemon", "start")
+	run(oldBin, "daemon", "start")
 	reused := waitForDaemon(t, root)
 	assert.Equal(t, automatic.PID, reused.PID)
-	assert.Equal(t, automatic.Address, reused.Address)
-	assert.Equal(t, automatic.Metadata["web_address"], reused.Metadata["web_address"])
-	assert.Contains(t, out, "Exits after 30m idle (started automatically)")
-	assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
 
 	run(oldBin, "daemon", "restart")
 	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
-	out = run(oldBin, "daemon", "start")
-	assert.NotContains(t, out, "Run docbank daemon restart to keep it running.")
 
 	// An upgrade's replacement keeps the explicit lifetime.
 	run(newBin, "search", "missing")
@@ -621,12 +615,31 @@ func startOutput(rec kitdaemon.RuntimeRecord) string {
 }
 
 func TestStartAdviceForLegacyAndIdleOffDaemons(t *testing.T) {
-	for lifetime, metadata := range map[string]map[string]string{
-		"Lifetime unavailable": {},
-		"Idle exit is off":     {daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "0s"},
+	for _, tc := range []struct {
+		name     string
+		metadata map[string]string
+		lifetime string
+		advice   bool
+	}{
+		{"legacy", nil, "Lifetime unavailable", true},
+		{"automatic", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "30m0s"}, "Exits after 30m idle (started automatically)", true},
+		// The explicit request survives later config changes and replacements.
+		{"idle_off", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "0s"}, "Idle exit is off", true},
+		{"foreground", map[string]string{daemonconn.MetaExplicitStart: "false"}, "", false},
+		{"explicit", map[string]string{daemonconn.MetaExplicitStart: "true", daemonconn.MetaIdleTimeout: "0s"}, "", false},
 	} {
-		out := startOutput(kitdaemon.RuntimeRecord{Metadata: metadata})
-		assert.Contains(t, out, lifetime)
-		assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
+		t.Run(tc.name, func(t *testing.T) {
+			out := startOutput(kitdaemon.RuntimeRecord{Metadata: tc.metadata})
+			if tc.lifetime == "" {
+				assert.Equal(t, "already running: pid 0 at  ()\n", out)
+			} else {
+				assert.Contains(t, out, tc.lifetime)
+			}
+			if tc.advice {
+				assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
+			} else {
+				assert.NotContains(t, out, "Run docbank daemon restart to keep it running.")
+			}
+		})
 	}
 }

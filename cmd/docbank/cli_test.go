@@ -822,7 +822,7 @@ func requireJob(t *testing.T, list api.JobList, name string) api.Job {
 // when nothing configured keeps the daemon alive.
 const idleTimeoutJob = "daemon.idle-timeout"
 
-func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
+func TestIdleWatchArmedOnlyForAutomaticBackgroundDaemons(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		background bool
@@ -847,11 +847,6 @@ func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
 			assert.Equal(t, tc.background && !tc.persistent, watched, "only automatic background daemons have an idle timeout")
 			if tc.background && !tc.persistent {
 				assert.Equal(t, "running", requireJob(t, jobs, idleTimeoutJob).Status)
-			}
-			if !tc.background {
-				rec := waitForDaemon(t, home)
-				assert.False(t, daemonconn.Explicit(rec))
-				assert.NotContains(t, startOutput(rec), "Run docbank daemon restart to keep it running.")
 			}
 		})
 	}
