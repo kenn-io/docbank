@@ -4,10 +4,10 @@
   "supported_historical_writers": ["docbank-fresh-objects/v2"],
   "go_pdfium": {
     "module": "github.com/klippa-app/go-pdfium",
-    "version": "v1.20.0",
-    "commit": "6ff9abaa8b4119050917fc6e3bfba458e88a295d",
-    "module_sum": "h1:cK4fkjUznvJRysfXp+F2f11pBLvzY6ma2zWWwnlUwpw=",
-    "go_mod_sum": "h1:EMZOJ22zrm4HBO2u/7mpOzNfPCUaoCkleBaj02ZuS24=",
+    "version": "v1.21.4",
+    "commit": "7d0f255cd091ad18e4696cf0c7cf301657ef4b52",
+    "module_sum": "h1:CalrAbIUyPIBkGU9qJX2z7yGitDrcuJT62FQT5m5CPU=",
+    "go_mod_sum": "h1:d55Qev3QNMBTjv/VKA7pAV9hSyN47WZqiHI7bGc8fbc=",
     "license": "MIT"
   },
   "wasm": {

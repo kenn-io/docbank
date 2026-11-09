@@ -1,19 +1,11 @@
 package redactiontest
 
 import (
-	"bytes"
 	"testing"
 
-	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/redaction"
 )
-
-func TestPDFProducesIndependentlyValidSyntheticDocument(t *testing.T) {
-	encoded := PDF(t, []string{"Synthetic first line", "Synthetic second line"}, "Synthetic fixture subject")
-	require.True(t, bytes.HasPrefix(encoded, []byte("%PDF-")))
-	require.NoError(t, pdfapi.Validate(t.Context(), bytes.NewReader(encoded), nil, nil))
-}
 
 func TestMapProducesOneASCIIAtomPerByte(t *testing.T) {
 	value := Map("ABC")

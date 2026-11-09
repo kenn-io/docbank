@@ -149,7 +149,7 @@ func TestReleaseNoticesIdentifyDistributedDependencies(t *testing.T) {
 	// Git may check this text file out with CRLF on Windows.
 	notice = bytes.ReplaceAll(notice, []byte("\r\n"), []byte("\n"))
 	ordered := [][]byte{
-		[]byte("go-pdfium v1.20.0\n\nMIT License\n\nCopyright (c) 2022 Klippa App BV"),
+		[]byte("go-pdfium v1.21.4\n\nMIT License\n\nCopyright (c) 2022 Klippa App BV"),
 		[]byte("wazero v1.12.0\n\nwazero\nCopyright 2020-2023 wazero authors"),
 		[]byte("The complete Apache License 2.0 terms for wazero are provided in the bundled root LICENSE."),
 		[]byte("PDFium Chromium 8044 and third-party notices"),
