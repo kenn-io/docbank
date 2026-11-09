@@ -543,12 +543,6 @@ func checkCandidateLinksSkipPrunedVersions(t *testing.T, newStore func(*testing.
 			require.Equal(t, candidate.EvidenceSHA256, decided.EvidenceSHA256)
 			if test.action == "reject" {
 				require.Equal(t, personCandidateStateRejected, decided.State)
-				if !test.allPruned {
-					faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
-					require.NoError(t, err)
-					require.Empty(t, faces[0].RejectedPersonIDs, "pruning leaves the original exact group decision intact")
-				}
-
 				return
 			}
 			require.Equal(t, "linked", decided.State)

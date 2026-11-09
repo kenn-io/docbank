@@ -706,20 +706,31 @@ it("ranks a group's name search by its first face", async () => {
 
 it("refreshes suggestions with the cards and reports a failure", async () => {
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const initial = Array.from({ length: 48 }, (_, index) => ({
+    ...isAda,
+    candidate_id: `group-${index}`,
+  }));
+  const updated = initial.map((row) => ({ ...unnamed, candidate_id: row.candidate_id }));
   const list = vi
     .spyOn(api, "listFaceCandidates")
-    .mockResolvedValueOnce({ items: [isAda], total: 1 })
-    .mockResolvedValueOnce({ items: [unnamed], total: 1 })
+    .mockResolvedValueOnce({ items: initial.slice(0, 24), total: 48 })
+    .mockResolvedValueOnce({ items: initial.slice(24), total: 48 })
+    .mockResolvedValueOnce({ items: updated.slice(0, 24), total: 48 })
+    .mockResolvedValueOnce({ items: updated.slice(24), total: 48 })
     .mockRejectedValue(new APIError("Unavailable", 503, "unavailable"));
   const people = new People("session", vi.fn());
   await people.load();
-  await vi.waitFor(() => expect(people.suggestions.items).toEqual([isAda]));
+  await vi.waitFor(() => expect(people.suggestions.items).toEqual(initial.slice(0, 24)));
+  await people.suggestions.load(true);
+  expect(people.suggestions.items).toEqual(initial);
   await people.refresh();
-  expect(people.suggestions.items).toEqual([unnamed]);
+  expect(people.suggestions.items).toEqual(updated);
+  expect(list.mock.calls.map(([query]) => query!.offset)).toEqual([0, 24, 0, 24]);
+  expect(people.suggestions.loading).toBe(false);
   await expect(people.refresh()).resolves.toBeUndefined();
   await vi.waitFor(() => expect(people.suggestions.error).toBe("Unavailable"));
-  expect(people.suggestions.items).toEqual([unnamed]);
-  expect(list).toHaveBeenCalledTimes(3);
+  expect(people.suggestions.items).toEqual(updated);
+  expect(list).toHaveBeenCalledTimes(5);
   people.dispose();
 });
 

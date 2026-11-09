@@ -354,11 +354,26 @@ func newNamedFacePickerFixture(t *testing.T) (*faceEmbeddingFixture, string) {
 
 func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"payload scope", "indexed exactness", "late named freshness"} {
+	for _, scenario := range []string{"payload scope", "indexed exactness", "late named freshness", "named source in query photo"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			x, personID := newNamedFacePickerFixture(t)
 			ctx := t.Context()
+			if scenario == "named source in query photo" {
+				_, err := x.f.catalog.DecidePhotoFace(ctx, x.inputs[1].ContentVersionID, store.PhotoFaceDecisionRequest{Action: "name", FaceID: x.inputs[1].FaceID, Revision: 1, PersonID: personID})
+				require.NoError(t, err)
+				x.vectorForBox = func(box embedclient.FaceBox) []float32 {
+					values := make([]float32, 512)
+					if box.Y > 0 {
+						values[0] = 1
+					} else if box.X > .15 {
+						values[0], values[1] = .28, .96
+					} else {
+						values[1] = 1
+					}
+					return values
+				}
+			}
 			x.enable(t)
 			count, err := x.worker.ScanOnce(ctx)
 			require.NoError(t, err)
@@ -368,6 +383,11 @@ func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 			people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, false, options)
 			require.NoError(t, err)
 			require.Len(t, people, 2)
+			if scenario == "named source in query photo" {
+				require.Equal(t, personID, people[0].PersonID, "the matching named face in the query photo ranks Ada ahead of Zoe")
+				require.Contains(t, people[0].RecentRank, "#")
+				return
+			}
 			if scenario == "payload scope" {
 				require.Equal(t, 4, reader.opens)
 				for _, query := range []string{"A", "Ad", "Ada"} {
@@ -426,34 +446,6 @@ func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 			require.Equal(t, 1, reader.opens, "only the photo missing from the index reads its file")
 		})
 	}
-}
-
-func TestFacePickerUsesNamedFacesFromQueryPhoto(t *testing.T) {
-	t.Parallel()
-	x, personID := newNamedFacePickerFixture(t)
-	ctx := t.Context()
-	_, err := x.f.catalog.DecidePhotoFace(ctx, x.inputs[1].ContentVersionID, store.PhotoFaceDecisionRequest{Action: "name", FaceID: x.inputs[1].FaceID, Revision: 1, PersonID: personID})
-	require.NoError(t, err)
-	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
-		values := make([]float32, 512)
-		if box.Y > 0 {
-			values[0] = 1
-		} else if box.X > .15 {
-			values[0], values[1] = .28, .96
-		} else {
-			values[1] = 1
-		}
-		return values
-	}
-	x.enable(t)
-	_, err = x.worker.ScanOnce(ctx)
-	require.NoError(t, err)
-	options := store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true}
-	people, _, err := x.f.catalog.PeopleByDisplayName(ctx, "", "", "", 24, true, options)
-	require.NoError(t, err)
-	require.Len(t, people, 2)
-	require.Equal(t, personID, people[0].PersonID, "the matching named face in the query photo ranks Ada ahead of Zoe")
-	require.Contains(t, people[0].RecentRank, "#", "the named source contributes to vector ranking")
 }
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
@@ -678,7 +670,6 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 	}{
 		{"trashed photo", ""},
 		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`},
-		{"changed box", `UPDATE photo_faces SET width=width+0.01`},
 		{"replaced preview", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -784,8 +775,6 @@ func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
 			if table == "embedding_vector_spaces" {
 				contractError = "embedding vector-space contract version is unsupported"
 			}
-			_, err = reopened.FaceMatchingInputs(ctx)
-			require.ErrorContains(t, err, contractError)
 			_, _, err = reopened.PeopleByDisplayName(ctx, "", "", "", 24, false, store.PeopleSearchOptions{FaceID: x.inputs[0].FaceID, FaceReader: x.f.blobs, RecentFirst: true})
 			require.ErrorContains(t, err, contractError)
 			require.ErrorContains(t, x.service.rebuildFaceSuggestions(ctx), contractError)

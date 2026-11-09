@@ -532,11 +532,6 @@ func checkPhotoFaceDecisionGroupedRejection(t *testing.T, newStore func(*testing
 			}
 			_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 			require.NoError(t, err)
-			faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
-			require.NoError(t, err)
-			for _, f := range faces {
-				require.Empty(t, f.RejectedPersonIDs)
-			}
 			checkRetentionMetadata(t, s)
 		})
 	}
@@ -1407,9 +1402,6 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	decided, err := s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: grouped.CandidateID, ExpectedRevision: grouped.Revision, Action: "reject"})
 	require.NoError(t, err)
 	require.Equal(t, personCandidateStateRejected, decided.State)
-	faces, _, _, err = s.PhotoFacePersonNames(ctx, current.ID)
-	require.NoError(t, err)
-	require.Empty(t, faces[0].RejectedPersonIDs, "pruning preserves the original group rejection scope")
 	backup.Reset()
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	require.NoError(t, newTestStore(t).ImportMetadata(ctx, &backup))

@@ -65,14 +65,10 @@ func (snapshot FaceMatchingSnapshot) signature(versions map[string]bool) (string
 			sets = append(sets, item)
 		}
 	}
-	data, err := json.Marshal(struct {
+	return requestDigest(struct {
 		Sets     []FaceSuggestionSet
 		Rejected []string
-	}{sets, snapshot.rejected}, json.Deterministic(true))
-	if err != nil {
-		return "", err
-	}
-	return LengthPrefixedSHA256(string(data)), nil
+	}{sets, snapshot.rejected})
 }
 
 // faceRankingInputsTx keeps the source and every named contribution in the
