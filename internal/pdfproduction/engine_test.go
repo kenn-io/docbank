@@ -3,6 +3,7 @@ package pdfproduction
 import (
 	"context"
 	"errors"
+	"runtime/metrics"
 	"sync/atomic"
 	"testing"
 
@@ -56,4 +57,27 @@ func TestNativeEnginePageDeadline(t *testing.T) {
 	require.True(t, entered)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, t.Context().Err())
+}
+
+func TestRSSAdmissionFreesMemoryBeforeRefusing(t *testing.T) {
+	forcedGCs := func() uint64 {
+		sample := []metrics.Sample{{Name: "/gc/cycles/forced:gc-cycles"}}
+		metrics.Read(sample)
+		return sample[0].Value.Uint64()
+	}
+	start := forcedGCs()
+	reclaimable := func(context.Context) (uint64, error) {
+		if forcedGCs() == start {
+			return 2048, nil
+		}
+		return 512, nil
+	}
+	_, stop, err := watchRSS(t.Context(), 1024, reclaimable)
+	require.NoError(t, err)
+	stop()
+
+	_, _, err = watchRSS(t.Context(), 1024, func(context.Context) (uint64, error) { return 2048, nil })
+	cause, ok := errors.AsType[*RSSLimitError](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, uint64(2048), cause.ObservedBytes)
 }
